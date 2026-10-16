@@ -28,20 +28,55 @@ use std::sync::{Arc, Mutex};
 
 // ─── Shared response store ──────────────────────────────────────────────────
 
-/// Thread-safe store for asset bytes received from the WebSocket server.
+/// Outcome of an asset request: the file bytes, or the server's error code.
+pub type AssetResult = Result<Vec<u8>, String>;
+
+#[derive(Default)]
+struct StoreInner {
+    /// Responses that arrived before any reader asked for them.
+    ready: HashMap<String, AssetResult>,
+    /// Readers waiting for a response, keyed by `file://` URI.
+    waiters: HashMap<String, Vec<async_channel::Sender<AssetResult>>>,
+}
+
+/// Thread-safe rendezvous between [`WsAssetReader`] and the websocket system.
 ///
-/// Shared (via `Arc`) between the [`WsAssetReader`] and the Bevy system that
-/// processes incoming WebSocket messages. Both sides use the `file://` URI
-/// (without the `file://` prefix) as the key.
-pub type SharedResponseStore = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+/// Readers register a waiter and sleep on a channel; the websocket system
+/// wakes them in [`WsAssetResponseStore::deliver`]. Both sides key by the
+/// full `file://` URI.
+#[derive(Resource, Clone, Default)]
+pub struct WsAssetResponseStore(Arc<Mutex<StoreInner>>);
 
-/// Bevy resource wrapper so systems can access the shared response store.
-#[derive(Resource, Clone)]
-pub struct WsAssetResponseStore(pub SharedResponseStore);
+impl WsAssetResponseStore {
+    /// Hand a response to every reader waiting on `uri`, or keep it until one asks.
+    pub fn deliver(&self, uri: &str, result: AssetResult) {
+        let mut inner = self.0.lock().unwrap();
+        match inner.waiters.remove(uri) {
+            Some(waiters) => {
+                for tx in waiters {
+                    let _ = tx.try_send(result.clone());
+                }
+            }
+            None => {
+                inner.ready.insert(uri.to_string(), result);
+            }
+        }
+    }
 
-impl Default for WsAssetResponseStore {
-    fn default() -> Self {
-        Self(Arc::new(Mutex::new(HashMap::new())))
+    /// Wait for the response for `uri`.
+    async fn wait_for(&self, uri: &str) -> AssetResult {
+        let rx = {
+            let mut inner = self.0.lock().unwrap();
+            if let Some(result) = inner.ready.remove(uri) {
+                return result;
+            }
+            let (tx, rx) = async_channel::bounded(1);
+            inner.waiters.entry(uri.to_string()).or_default().push(tx);
+            rx
+        };
+        rx.recv()
+            .await
+            .unwrap_or_else(|_| Err("asset store closed".to_string()))
     }
 }
 
@@ -59,7 +94,7 @@ pub struct PendingWsAssetRequests {
 /// Reads asset bytes from the shared response store, which is populated
 /// by WebSocket "asset" responses.
 struct WsAssetReader {
-    store: SharedResponseStore,
+    store: WsAssetResponseStore,
 }
 
 impl AssetReader for WsAssetReader {
@@ -69,29 +104,15 @@ impl AssetReader for WsAssetReader {
     ) -> Result<impl Reader + 'a, AssetReaderError> {
         let key = format!("file:///{}", path.to_string_lossy());
         info!("WsAssetReader: waiting for bytes for '{}'", key);
-
-        // Poll the shared store until the WebSocket system delivers our bytes.
-        // On WASM, yield_now() gives control back to the browser event loop so
-        // WebSocket callbacks and Bevy systems can run between polls.
-        let mut polls = 0u32;
-        loop {
-            {
-                let mut store = self.store.lock().unwrap();
-                if let Some(bytes) = store.remove(&key) {
-                    info!("WsAssetReader: received {} bytes for '{}'", bytes.len(), key);
-                    return Ok(VecReader::new(bytes));
-                }
+        match self.store.wait_for(&key).await {
+            Ok(bytes) => {
+                info!("WsAssetReader: received {} bytes for '{}'", bytes.len(), key);
+                Ok(VecReader::new(bytes))
             }
-            polls += 1;
-            if polls % 100 == 0 {
-                info!("WsAssetReader: still waiting for '{}' (poll #{})", key, polls);
+            Err(e) => {
+                warn!("WsAssetReader: '{}' failed: {}", key, e);
+                Err(AssetReaderError::NotFound(path.to_path_buf()))
             }
-            if polls > 6000 {
-                // ~60 seconds at 10ms per poll
-                warn!("WsAssetReader: timeout waiting for '{}'", key);
-                return Err(AssetReaderError::NotFound(path.to_path_buf()));
-            }
-            bevy::tasks::futures_lite::future::yield_now().await;
         }
     }
 
@@ -158,7 +179,7 @@ impl Plugin for AssetProxyPlugin {
     fn build(&self, app: &mut App) {
         // Create the shared response store
         let store = WsAssetResponseStore::default();
-        let reader_store = store.0.clone();
+        let reader_store = store.clone();
 
         // Register the "wsasset" source with our custom reader
         app.register_asset_source(
