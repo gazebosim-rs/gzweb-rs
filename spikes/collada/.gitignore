@@ -1,0 +1,4 @@
+corpus/
+target/
+js/node_modules/
+out/

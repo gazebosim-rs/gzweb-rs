@@ -1,0 +1,9 @@
+{
+  "name": "collada-spike-js",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^30.1.3",
+    "three": "0.141.0"
+  }
+}
