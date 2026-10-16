@@ -1,0 +1,12 @@
+[package]
+name = "gz-core"
+version = "0.1.0"
+edition = "2021"
+description = "Platform- and renderer-independent core of gzweb-rs: websocket protocol, Gazebo scene rules, snapshots"
+license = "Apache-2.0"
+
+[dependencies]
+gz-proto.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true

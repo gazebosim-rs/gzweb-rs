@@ -1,0 +1,16 @@
+[package]
+name = "gzweb"
+version = "0.1.0"
+edition = "2021"
+description = "Gazebo web visualizer (native and WebAssembly)"
+license = "Apache-2.0"
+
+[dependencies]
+gz-bevy.workspace = true
+bevy = { version = "0.18", features = ["webgpu", "webgl2"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+# Needed by Bevy's dependencies to pick the browser RNG.
+getrandom = { version = "0.3", features = ["wasm_js"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
