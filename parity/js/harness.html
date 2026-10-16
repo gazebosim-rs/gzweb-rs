@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>gz-parity gzweb harness</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+      }
+      #gz-scene {
+        width: 1280px;
+        height: 720px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="gz-scene"></div>
+    <!-- three + gzweb (+ its deps), bundled by snapshot.mjs with esbuild -->
+    <script src="/bundle.js"></script>
+    <script src="/dump.js"></script>
+    <script>
+      (function () {
+        const params = new URLSearchParams(location.search);
+        const url = params.get("ws");
+        const key = params.get("key") || undefined;
+        const hooks = (window.__gzParityHooks = {
+          pendingAssets: new Map(), // uri -> outstanding request count
+          pendingDefault: 0,
+          errors: [],
+        });
+        window.addEventListener("error", (e) =>
+          hooks.errors.push(String(e.message || e)),
+        );
+
+        // Instrument three's DefaultLoadingManager (used by loaders gzweb
+        // creates without a manager, e.g. the default sky CubeTextureLoader).
+        const dlm = THREE.DefaultLoadingManager;
+        const start = dlm.itemStart.bind(dlm);
+        const end = dlm.itemEnd.bind(dlm);
+        dlm.itemStart = (u) => {
+          hooks.pendingDefault++;
+          start(u);
+        };
+        dlm.itemEnd = (u) => {
+          hooks.pendingDefault--;
+          end(u);
+        };
+
+        // Construct without a URL so we can hook the transport before any
+        // frame is exchanged, then connect exactly as gzweb would.
+        const mgr = new gzweb.SceneManager({ elementId: "gz-scene" });
+        const transport = mgr.transport;
+        const getAsset = transport.getAsset.bind(transport);
+        transport.getAsset = (uri, cb) => {
+          const p = hooks.pendingAssets;
+          p.set(uri, (p.get(uri) || 0) + 1);
+          getAsset(uri, (data, err) => {
+            const n = (p.get(uri) || 1) - 1;
+            if (n <= 0) p.delete(uri);
+            else p.set(uri, n);
+            return cb(data, err);
+          });
+        };
+        mgr.connect(url, key);
+        hooks.statusHistory = [];
+        transport
+          .getConnectionStatus()
+          .subscribe((st) => hooks.statusHistory.push(st));
+        window.__gzSceneManager = mgr;
+      })();
+    </script>
+  </body>
+</html>

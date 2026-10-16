@@ -1,0 +1,20 @@
+{
+  "name": "gz-parity-js",
+  "private": true,
+  "version": "0.1.0",
+  "description": "gzweb side of the gzweb/gzweb-rs parity harness: snapshots the real gzweb scene graph from headless Chromium.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "gz-parity-snapshot": "./snapshot.mjs"
+  },
+  "scripts": {
+    "snapshot": "node ./snapshot.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.25.10",
+    "playwright": "1.60.0"
+  }
+}
