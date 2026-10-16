@@ -12,25 +12,23 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 - **Dual-target**: browser (WASM + WebGPU) and native desktop (Vulkan/Metal/DX12 via wgpu).
 - **Real-time** connection to a live Gazebo simulation websocket server.
 - **Clean ECS architecture** using Bevy's Entity-Component-System model.
+- **Bevy for everything visual**: rendering and UI (bevy_ui). No DOM-built UI.
+- **Parity with gzweb** (`../gzweb`, the TypeScript/three.js original), checked by differential tests.
 
 ---
 
 ## Technology Stack
 
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Language | Rust | stable (edition 2021) |
-| Game engine / ECS | [Bevy](https://bevyengine.org/) | 0.18 |
-| GPU rendering | WebGPU via `wgpu` | 27.0.1 |
-| Web target | `wasm32-unknown-unknown` | — |
-| JS/WASM bridge | `wasm-bindgen`, `web-sys`, `js-sys` | 0.2/0.3 |
-| Protobuf decode | `prost` | 0.13 |
-| Serialisation | `serde` + `serde_json` | 1.0 |
-| Camera controls | `bevy_panorbit_camera` | 0.34.0 |
-| Mesh loaders | `bevy_stl`, `bevy_obj` | 0.18.0 / 0.18.2 |
-| Native WebSocket | `tungstenite` | 0.26 |
-| Channel (threading) | `crossbeam-channel` | 0.5 |
-| UUID generation | `uuid` (v4 + js feature) | 1.21 |
+| Component | Technology |
+|-----------|-----------|
+| Language | Rust stable (edition 2021) |
+| Engine, ECS, rendering, UI | [Bevy](https://bevyengine.org/) 0.18 (wgpu 27; WebGPU + WebGL2 fallback; bevy_ui) |
+| Web target | `wasm32-unknown-unknown`, `wasm-bindgen`, `web-sys` |
+| Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs (Harmonic) |
+| Native websocket | `tungstenite` 0.26 |
+| Camera controls | `bevy_panorbit_camera` 0.34 |
+| Mesh loaders | Bevy glTF, `bevy_obj`, `bevy_stl` (Collada: see `spikes/collada/REPORT.md`) |
+| Parity harness | `gz-parity` (Rust) + Playwright/three.js (`parity/js`) |
 
 ---
 
@@ -38,62 +36,61 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 
 ```
 gzweb-rs/
-├── .agent/              # Agent context & design docs (you are here)
-│   ├── CONTEXT.md       # This file — project overview and patterns
-│   └── DESIGN.md        # Architecture patterns and design decisions
-├── src/
-│   ├── main.rs          # App entry point, Bevy App setup, UI overlay systems
-│   ├── websocket.rs     # WebSocket abstraction (native + WASM), message routing
-│   ├── scene.rs         # Gazebo scene → Bevy entity spawning
-│   └── gz_msgs.rs       # Hand-written prost protobuf structs (gz.msgs.*)
-├── index.html           # Browser shell (canvas, status overlay, JS init)
-├── build.sh             # WASM build script (wasm-bindgen, cargo)
-├── run.sh               # Dev HTTP server (python3, port 8000)
-├── Cargo.toml           # Workspace manifest
-└── Cargo.lock
+├── .agent/          CONTEXT (this), DESIGN, PORT_PLAN, PARITY, WORKLOG
+├── crates/
+│   ├── gz-proto/    generated gz.msgs types (proto/ = vendored .proto files)
+│   ├── gz-core/     protocol, scene rules, URIs, snapshot types (no Bevy)
+│   ├── gz-bevy/     Bevy plugin
+│   ├── gzweb/       the app (native + wasm)
+│   └── gz-parity/   record / replay / compare tool
+├── parity/          run.sh + js/ (gzweb reference exporter)
+├── tests/           corpus/ (recorded sessions), parity/allowlist.toml
+├── spikes/          standalone experiments (not in the workspace)
+├── index.html       browser host page
+├── build.sh         wasm build (release) + wasm-bindgen
+└── Dockerfile.gazebo  Gazebo Harmonic + websocket server
 ```
 
 ---
 
 ## Build & Run
 
-### Native (desktop)
-
 ```bash
-cargo run
-# or
-cargo build --release && ./target/release/bevy_webgpu_demo
+cargo test --workspace                       # unit tests
+cargo run -p gzweb -- --url ws://localhost:9002
+cargo run -p gzweb -- --url ws://localhost:9002 --snapshot out.json   # headless
+./build.sh && ./run.sh                       # wasm; open http://localhost:8000/?url=ws://localhost:9002
 ```
 
-### WASM (browser)
+| Setting | Native | Browser |
+|---|---|---|
+| Server | `--url ws://host:port` or `--port N` / `GZ_WEBSOCKET_PORT` | `?url=ws://host:port` or `?port=N` |
+| Auth key | `--key KEY` | `?key=KEY` |
+
+The default is `ws://localhost:9002`. In the browser the default host is the
+page's hostname.
+
+### Gazebo for development
 
 ```bash
-./build.sh            # compiles to WASM + generates JS bindings
-./run.sh              # starts python HTTP server on :8000
-# open http://localhost:8000 in Chrome 113+ (WebGPU required)
+docker build -t gz-websocket -f Dockerfile.gazebo .
+docker run --rm -p 9002:9002 gz-websocket shapes.sdf
 ```
 
-### Configuration — WebSocket Port
+### Parity check against gzweb
 
-| Method | How |
-|--------|-----|
-| Compile-time default | `GZ_WEBSOCKET_PORT=9002 ./build.sh` |
-| Native runtime | `GZ_WEBSOCKET_PORT=9090 cargo run` |
-| WASM runtime | `http://localhost:8000?port=9090` |
+```bash
+(cd ../gzweb && npm ci && npm run build)    # once
+parity/run.sh shapes                        # uses tests/corpus/shapes
+```
 
-Default port: **9002**
-
----
-
-## Prerequisites
-
-- Rust stable + `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- `wasm-bindgen-cli` 0.2.108 (auto-installed by `build.sh`)
-- A running **Gazebo simulation** with `gz-transport` websocket server plugin enabled
-- Chrome 113+ or any WebGPU-capable browser for the WASM target
+See [`PARITY.md`](./PARITY.md).
 
 ---
 
 ## See Also
 
-- [`DESIGN.md`](./DESIGN.md) — architecture patterns, ECS design, platform abstractions, and known limitations
+- [`DESIGN.md`](./DESIGN.md): architecture, data flow, coordinate frames, protocol
+- [`PORT_PLAN.md`](./PORT_PLAN.md): gap analysis and phased plan
+- [`PARITY.md`](./PARITY.md): differential test harness spec
+- [`WORKLOG.md`](./WORKLOG.md): dated log of what changed and what was verified

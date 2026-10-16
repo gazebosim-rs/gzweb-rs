@@ -1,102 +1,72 @@
-# Bevy WebGPU Demo
+# gzweb-rs
 
-A Rust/Bevy application that connects to a Gazebo simulation via WebSocket, deserializes the scene (models, lights, geometry, materials), and renders it in 3D using Bevy's rendering engine. Targets both native desktop and WebAssembly (browser via WebGPU).
+A Rust/Bevy port of [gzweb](https://github.com/gazebo-web/gzweb). It renders a
+live [Gazebo](https://gazebosim.org/) simulation from the Gazebo websocket
+server. The same code runs as a native desktop app (Vulkan, Metal or DX12) and
+in the browser (WebAssembly with WebGPU, falling back to WebGL2).
 
-## Features
+Status: early. Primitive shapes, glTF/OBJ/STL meshes, lights, basic materials
+and live pose updates work. Collada, textures and most of gzweb's UI are still
+to come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
 
-- Connects to the Gazebo websocket transport server
-- Deserializes `gz.msgs.Scene` protobuf messages (using manually defined [prost](https://crates.io/crates/prost) structs)
-- Spawns Bevy entities for lights (Point, Directional, Spot) and model visuals
-- Supports primitive geometry: Box, Cylinder, Sphere, Plane, Capsule, Cone
-- Applies materials (diffuse color, emissive, PBR metalness/roughness, transparency)
-- Pan-orbit camera controls (left-drag to orbit, right-drag to pan, scroll to zoom)
+## Layout
 
-## Prerequisites
+| Path | What |
+|---|---|
+| `crates/gzweb` | The app (native binary + wasm entry) |
+| `crates/gz-bevy` | Bevy plugin: connection, asset sources, scene spawning, camera, HUD |
+| `crates/gz-core` | Protocol, gzweb's scene rules, URI resolution (no Bevy) |
+| `crates/gz-proto` | `gz.msgs` types generated from vendored gz-msgs protos |
+| `crates/gz-parity` + `parity/` | Differential tests against the original gzweb |
 
-- [Rust](https://rustup.rs/) (stable)
-- `wasm32-unknown-unknown` target (for WASM builds): `rustup target add wasm32-unknown-unknown`
-- A running [Gazebo](https://gazebosim.org/) simulation with the websocket server plugin
+Architecture: [`.agent/DESIGN.md`](.agent/DESIGN.md).
 
 ## Running Gazebo (Docker)
 
-To easily run a Gazebo Harmonic simulation with the websocket server enabled, you can use the provided `Dockerfile.gazebo`. This creates an isolated environment with Gazebo configured to expose its websocket server on port `9002`, which is required for this application to connect.
-
-### Build the Image
+`Dockerfile.gazebo` builds Gazebo Harmonic with the websocket server on port 9002:
 
 ```bash
 docker build -t gz-websocket -f Dockerfile.gazebo .
+docker run --rm -p 9002:9002 gz-websocket shapes.sdf     # default world: empty.sdf
 ```
 
-### Run the Container
-
-You can start the simulation by running the container. By default, it will load `empty.sdf`:
+## Native
 
 ```bash
-docker run --rm -p 9002:9002 gz-websocket
+cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 ```
 
-To specify a different world (e.g., `shapes.sdf`), pass it as an argument:
+`--port N` and `GZ_WEBSOCKET_PORT` are shorthands for `ws://localhost:N`.
+
+`--snapshot out.json` runs headless, with no window or GPU. It writes a scene
+snapshot once everything has loaded, then exits.
+
+## Browser
 
 ```bash
-docker run --rm -p 9002:9002 gz-websocket shapes.sdf
+rustup target add wasm32-unknown-unknown
+./build.sh     # release wasm + wasm-bindgen (installs the matching CLI if needed)
+./run.sh       # serves the repo on http://localhost:8000
 ```
 
-## Building
+Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
+browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
+connects to port 9002 on its own host.
 
-### Native (Desktop)
+## Tests
 
 ```bash
-cargo build --release
+cargo test --workspace
 ```
 
-### WebAssembly
+To compare against gzweb, check out gzweb next to this repo, then:
 
 ```bash
-./build.sh
+(cd ../gzweb && npm ci && npm run build)
+parity/run.sh shapes      # or: empty
 ```
 
-This compiles to WASM, installs the required version of `wasm-bindgen-cli` if needed, and generates JS bindings in `target/wasm32-unknown-unknown/release/`.
-
-## Running
-
-### Native
-
-```bash
-cargo run
-```
-
-### WebAssembly
-
-After building with `./build.sh`, serve the project directory with any HTTP server and open `index.html` in a WebGPU-capable browser (e.g. Chrome 113+).
-
-## Configuring the WebSocket Port
-
-The application connects to `ws://localhost:<port>`. The default port is **9002**.
-
-### Compile-time (env var)
-
-Set `GZ_WEBSOCKET_PORT` when building to bake in a different default:
-
-```bash
-GZ_WEBSOCKET_PORT=9090 cargo build --release
-# or for WASM:
-GZ_WEBSOCKET_PORT=9090 ./build.sh
-```
-
-### Runtime — Native (env var)
-
-On native builds, `GZ_WEBSOCKET_PORT` is also checked at **runtime** and takes precedence over the compile-time default:
-
-```bash
-GZ_WEBSOCKET_PORT=9090 cargo run
-```
-
-### Runtime — WASM (URL query parameter)
-
-When running in the browser, append `?port=<port>` to the URL:
-
-```
-http://localhost:8000/index.html?port=9090
-```
-
-The URL parameter takes precedence over the compile-time default.
+This replays a recorded Gazebo session (`tests/corpus/<name>`) to both gzweb
+(in headless Chromium) and gzweb-rs (headless). It then diffs their scene
+snapshots and the messages each one sent. See
+[`.agent/PARITY.md`](.agent/PARITY.md).

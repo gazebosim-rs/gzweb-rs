@@ -28,6 +28,20 @@ worklog yet — start `.agent/WORKLOG.md` (dated entries: what changed, what was
 
 ### 1.2 Defects in the current Rust code
 
+> **Status (2026-10-16), on `feature/port-foundation`:**
+> - **Fixed:** 1–6 and 10. The fix for 3 holds by construction (raw meshes
+>   under the Z-up root, as in gzweb) but has no mesh corpus to test it yet.
+> - **7, partly fixed:** URL and auth key are configurable. `wss://` still
+>   needs TLS in the native driver.
+> - **8, partly fixed:** light direction is now relative to the light pose,
+>   attenuation feeds the intensity formula, and the scene dump is gone.
+>   `visible`, `cast_shadows`, `scene.shadows`, sky and grid are still to do.
+> - **9, partly fixed:** the crate is renamed and the debug background removed.
+> - **New defect, fixed:** asset replies are serialized `gz.msgs.Bytes` and
+>   were treated as raw bytes.
+>
+> See WORKLOG.md.
+
 1. **`src/websocket.rs:431`** — on a binary `authorized`/`invalid` frame it calls
    `ws.receiver.try_recv()` again, silently **dropping the next real message**. Also the
    auth reply is never acted on in that path (gzweb re-sends `protos` on `authorized`).
@@ -136,7 +150,11 @@ Export a `GzWeb` class mirroring `SceneManager`: `new(canvasSelector, {url, key,
 `snapshot`, `play`, `pause`, `stop`, `subscribe`, `advertise`, `publish`. Commands flow into
 Bevy via a channel resource; events flow out via callbacks. Same API backs native CLI flags.
 
-### 2.4 Intentional divergences from gzweb (do not replicate)
+### 2.4 Non-goals
+- **Ogre material scripts** (`<material><script>`, e.g. `Gazebo/Grey`) are not supported
+  (decided 2026-10-16). gzweb doesn't support them either.
+
+### 2.5 Intentional divergences from gzweb (do not replicate)
 Parity tests allow-list these with a reason string:
 - Pose updates matched by **entity id** first, name second (gzweb: first DFS name match).
 - Spot penumbra not clamped to ≥ 1; directional shadow map 4096 (not 4094).
@@ -268,7 +286,7 @@ bbox, grid internals).
   export so the *same Playwright run* can snapshot the wasm build too.
 - **Comparator.** Match nodes by name path, unordered children; floats ε = 1e-5 (pose),
   1e-3 (derived AABBs); quaternions compared up to sign; colours ε = 1/255. Reports:
-  missing/extra nodes, field diffs, and diffs suppressed by the §2.4 allow-list (each must
+  missing/extra nodes, field diffs, and diffs suppressed by the §2.5 allow-list (each must
   cite a reason id). Output is a JSON + HTML report artifact.
 
 ### 4.5 Test layers
@@ -318,6 +336,9 @@ greater than 10% fail the nightly job.
 ---
 
 ## 5. Immediate next steps
+
+> **Done 2026-10-16:** all four. See WORKLOG.md. The next work is to grow the
+> corpus, then Phase 1, then Collada.
 1. Fix defect 1 (dropped message) and defect 6 (busy-poll) — small and isolated.
 2. Workspace split + generated protos + `GzWorldRoot` hierarchy.
 3. Build the recorder, replay server and both snapshot exporters; record `shapes.sdf` and
