@@ -92,6 +92,21 @@ Branch `feature/port-foundation`.
 - **Recommendation:** vendor its `collada` module, rewrite the instancing
   layer, and emit a Bevy `Scene`. Estimate 6–8 days.
 
+### Browser smoke test
+
+- **Result:** the release wasm build (`./build.sh`) works in Playwright
+  Chromium with hardware WebGPU (Vulkan) against `gz-parity replay` of the
+  shapes corpus.
+  - It reaches Ready and renders the scene at 60 FPS.
+  - It sends the same client frames as gzweb and native gzweb-rs.
+  - Shape positions and orientations match gzweb's screenshot. Shading differs
+    until the Phase 2 light calibration.
+- **Not possible headless:** SwiftShader's software WebGPU rejects a buffer
+  wgpu creates, so the smoke test can't run in a GPU-less browser.
+- **No WebGL2 fallback.** With WebGPU disabled, the build panics with "Unable
+  to find a GPU": Bevy's `webgpu` feature overrides `webgl2` on wasm. The
+  fallback the docs claimed never existed. It needs a second build (Phase 7).
+
 ### gzweb behaviours confirmed against real Gazebo
 
 These are findings for the plan, not changes:

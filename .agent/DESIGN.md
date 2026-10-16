@@ -153,8 +153,11 @@ simulation.
 - Platform code uses `#[cfg(target_arch = "wasm32")]` / `not(...)`, never runtime
   flags. Platform-specific dependencies go under `[target.'cfg(...)'.dependencies]`.
 - `GzConnection` is a **non-send** resource: the wasm socket is a JS object.
-- Keep the Bevy `webgpu` feature. WebGPU is a hard requirement, and `webgl2`
-  is the fallback.
+- Keep the Bevy `webgpu` feature; WebGPU is a hard requirement. On wasm,
+  Bevy's `webgpu` feature *overrides* `webgl2`, so the current browser build is
+  WebGPU-only and panics with "Unable to find a GPU" where WebGPU is missing.
+  A WebGL2 fallback needs a second wasm build that the page picks when
+  `navigator.gpu` is absent (PORT_PLAN.md Phase 7).
 - Use bevy_ui for all UI. The host page only carries the canvas and a status
   line.
 - When gzweb-rs deliberately differs from gzweb, list it in PORT_PLAN.md §2.5

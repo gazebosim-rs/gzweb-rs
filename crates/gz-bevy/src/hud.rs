@@ -31,7 +31,7 @@ pub fn spawn_hud(mut commands: Commands) {
     commands.spawn((Text::new("Backend: ..."), font.clone(), TextColor(Color::WHITE), line(40.0), AdapterText));
     commands.spawn((Text::new("WS: ..."), font, TextColor(Color::WHITE), line(70.0), StatusText));
     commands.spawn((
-        Text::new("Left drag: orbit · Right drag: pan · Scroll: zoom · Left click: orbit around point"),
+        Text::new("Left drag: orbit | Right drag: pan | Scroll: zoom | Left click: orbit around point"),
         TextFont {
             font_size: 16.0,
             ..default()

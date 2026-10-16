@@ -3,11 +3,12 @@
 A Rust/Bevy port of [gzweb](https://github.com/gazebo-web/gzweb). It renders a
 live [Gazebo](https://gazebosim.org/) simulation from the Gazebo websocket
 server. The same code runs as a native desktop app (Vulkan, Metal or DX12) and
-in the browser (WebAssembly with WebGPU, falling back to WebGL2).
+in the browser (WebAssembly with WebGPU; a WebGL2 build is planned).
 
-Status: early. Primitive shapes, glTF/OBJ/STL meshes, lights, basic materials
-and live pose updates work. Collada, textures and most of gzweb's UI are still
-to come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
+Status: early. Primitive shapes, lights, basic materials and live pose updates
+work, and match gzweb on the recorded test worlds. glTF/OBJ/STL loading is wired
+up but not yet checked against a mesh world. Collada, textures and most of
+gzweb's UI are still to come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
 
 ## Layout
 

@@ -227,7 +227,9 @@ Parity tests allow-list these with a reason string:
   auto-scale. SpawnModel. Thumbnails.
 
 **Phase 7: Performance and packaging**
-- Benchmarks (§4.8), wasm size budget (`wasm-opt`), WebGL2 fallback verified, release
+- Benchmarks (§4.8), wasm size budget (`wasm-opt`), a WebGL2 fallback build (Bevy's
+  `webgpu` feature overrides `webgl2`, so this needs a second wasm build chosen by
+  the page when `navigator.gpu` is absent), release
   pipeline (native binaries + npm package wrapping the wasm `GzWeb`).
 
 ---
