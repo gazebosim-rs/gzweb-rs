@@ -36,6 +36,7 @@ const { values: args } = parseArgs({
     precision: { type: "string", default: "6" },
     gzweb: { type: "string", default: DEFAULT_GZWEB },
     key: { type: "string" },
+    "http-mirror": { type: "string" },
     "allow-pending": { type: "boolean", default: false },
     headed: { type: "boolean", default: false },
     help: { type: "boolean", short: "h", default: false },
@@ -48,7 +49,7 @@ if (args.help || !args.url || !args.out) {
     "usage: snapshot.mjs --url ws://host:port --out file.json [--settle-ms 1000]\n" +
       "         [--timeout-ms 60000] [--screenshot file.png] [--console-log file]\n" +
       "         [--precision 6] [--gzweb <path to gzweb checkout>] [--key <auth key>]\n" +
-      "         [--allow-pending] [--headed]\n",
+      "         [--http-mirror http://127.0.0.1:9101] [--allow-pending] [--headed]\n",
   );
   process.exit(args.help ? 0 : 2);
 }
@@ -192,6 +193,23 @@ async function main() {
         `[requestfailed] ${r.url()} ${r.failure()?.errorText ?? ""}`,
       ),
     );
+
+    if (args["http-mirror"]) {
+      // Send every HTTPS asset through gz-parity's mirror: <mirror>/<host>/<path>.
+      const mirror = args["http-mirror"].replace(/\/$/, "");
+      await page.route(/^https:\/\//, async (route) => {
+        const u = new URL(route.request().url());
+        const resp = await fetch(`${mirror}/${u.host}${u.pathname}${u.search}`);
+        await route.fulfill({
+          status: resp.status,
+          headers: {
+            "content-type": resp.headers.get("content-type") ?? "application/octet-stream",
+            "access-control-allow-origin": "*",
+          },
+          body: Buffer.from(await resp.arrayBuffer()),
+        });
+      });
+    }
 
     const q = new URLSearchParams({ ws: args.url });
     if (args.key) q.set("key", args.key);

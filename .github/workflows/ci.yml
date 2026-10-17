@@ -120,15 +120,46 @@ jobs:
       - name: Install the parity harness and Chromium
         working-directory: gzweb-rs/parity/js
         run: npm ci && npx playwright install --with-deps chromium
-      - name: Parity (shapes)
+      # Worlds without web assets; the Fuel ones run in the `fuel` job.
+      - name: Parity
         working-directory: gzweb-rs
-        run: parity/run.sh shapes
-      - name: Parity (empty)
-        working-directory: gzweb-rs
-        run: parity/run.sh empty
+        env:
+          GZ_HTTP_OFFLINE: "true"
+        run: |
+          status=0
+          for c in empty shapes lights nested_model diff_drive polylines; do
+            echo "::group::$c"
+            parity/run.sh "$c" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: parity-reports
           path: gzweb-rs/target/parity/
           if-no-files-found: ignore
+
+  # Worlds whose meshes and textures come from fuel.gazebosim.org. They are
+  # served from a cache keyed on the lock files, so Fuel is only contacted on
+  # a cache miss. Kept out of the other jobs so a Fuel outage only fails this.
+  fuel:
+    name: Fuel worlds (cached)
+    runs-on: ubuntu-24.04
+    env:
+      GZ_HTTP_CACHE: ${{ github.workspace }}/.http-cache
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuel
+      - uses: actions/cache@v4
+        with:
+          path: .http-cache
+          key: http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}
+          restore-keys: http-cache-
+      - run: cargo test --locked -p gzweb --test headless -- --ignored
+      - name: Every fetched file is in a lock file
+        run: git diff --exit-code -- tests/corpus

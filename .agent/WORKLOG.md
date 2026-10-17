@@ -196,3 +196,17 @@ These are findings for the plan, not changes:
 - **Gaps found:** heightmaps, Collada (`import_mesh`), and HTTP asset capture
   (Fuel meshes and textures are fetched live, so those worlds aren't
   hermetic).
+
+## 2026-10-17: Fuel assets without committing them
+
+- `gz-parity mirror`: a caching HTTP mirror with SHA-256 lock files; spec in
+  PARITY.md §1. Measured cost of committing the files instead: 25 MB for
+  three worlds, so they stay out of the repo.
+- gzweb-rs `--http-mirror URL` (wasm: `?http_mirror=`); HTTP asset URLs now
+  encode spaces.
+- `gaps.toml` per corpus for not-yet-ported features; `heightmap` and
+  `import_mesh` now pass with gaps.
+- CI: a separate `fuel` job; the browser parity job covers all six offline
+  worlds and never contacts Fuel.
+- Fixed `parity/run.sh`'s exit trap, which `set -e` cut short and left the
+  second server running.

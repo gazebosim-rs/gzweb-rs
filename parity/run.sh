@@ -10,6 +10,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CORPUS_DIR=$ROOT/tests/corpus/$CORPUS
 OUT=$ROOT/target/parity/$CORPUS
 PORT=${PARITY_PORT:-9100}
+MIRROR_PORT=${PARITY_MIRROR_PORT:-9101}
+# Web assets (Fuel meshes and textures) come through a caching mirror; the
+# lock file pins each one's SHA-256. Only written if the world fetches any.
+HTTP_CACHE=${GZ_HTTP_CACHE:-$ROOT/target/http-cache}
+HTTP_LOCK=$CORPUS_DIR/http.lock.json
+GAPS=$CORPUS_DIR/gaps.toml
 ALLOW=$ROOT/tests/parity/allowlist.toml
 GZWEB_DIR=${GZWEB_DIR:-$ROOT/../gzweb}
 mkdir -p "$OUT"
@@ -39,27 +45,35 @@ replay() { # <client-log>
 }
 EXTRA=("$@")
 replay_args() { [ ${#EXTRA[@]} -gt 0 ] && printf '%s\n' "${EXTRA[@]}"; true; }
-trap '[ -n "${REPLAY_PID:-}" ] && kill "$REPLAY_PID" 2>/dev/null || true' EXIT
+cleanup() {
+  for pid in ${REPLAY_PID:-} ${MIRROR_PID:-}; do kill "$pid" 2>/dev/null || true; done
+}
+trap cleanup EXIT
+
+"$PARITY" mirror --port "$MIRROR_PORT" --cache "$HTTP_CACHE" --lock "$HTTP_LOCK" \
+  --offline "${GZ_HTTP_OFFLINE:-false}" >"$OUT/mirror.txt" 2>&1 &
+MIRROR_PID=$!
+MIRROR=http://127.0.0.1:$MIRROR_PORT
 
 status=0
 
 echo "== gzweb (reference)"
 replay "$OUT/gzweb.client.log" $(replay_args)
 node "$ROOT/parity/js/snapshot.mjs" --url "ws://127.0.0.1:$PORT" --gzweb "$GZWEB_DIR" \
-  --out "$OUT/gzweb.json" --screenshot "$OUT/gzweb.png" --console-log "$OUT/gzweb.console.txt" \
+  --out "$OUT/gzweb.json" --screenshot "$OUT/gzweb.png" --console-log "$OUT/gzweb.console.txt" --http-mirror "$MIRROR" \
   || status=$?
 kill "$REPLAY_PID" 2>/dev/null || true; wait "$REPLAY_PID" 2>/dev/null || true
 
 echo "== gzweb-rs"
 replay "$OUT/rs.client.log" $(replay_args)
-RUST_LOG=${RUST_LOG:-warn} "$GZWEB_RS" --url "ws://127.0.0.1:$PORT" --snapshot "$OUT/rs.json" \
+RUST_LOG=${RUST_LOG:-warn} "$GZWEB_RS" --url "ws://127.0.0.1:$PORT" --snapshot "$OUT/rs.json" --http-mirror "$MIRROR" \
   --settle-ms 1000 --timeout-ms 60000 >"$OUT/rs.log" 2>&1 || status=$?
 kill "$REPLAY_PID" 2>/dev/null || true; wait "$REPLAY_PID" 2>/dev/null || true
 [ $status -ne 0 ] && { echo "a snapshot step failed (exit $status); see $OUT" >&2; exit $status; }
 
 echo "== compare snapshots"
 "$PARITY" compare --expected "$OUT/gzweb.json" --actual "$OUT/rs.json" --allow "$ALLOW" \
-  --report "$OUT/snapshot-report.json" || status=1
+  $([ -f "$GAPS" ] && echo --gaps "$GAPS") --report "$OUT/snapshot-report.json" || status=1
 echo "== compare protocol"
 "$PARITY" compare-protocol "$OUT/gzweb.client.log" "$OUT/rs.client.log" \
   --report "$OUT/protocol-report.json" || status=1

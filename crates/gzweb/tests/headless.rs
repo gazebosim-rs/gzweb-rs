@@ -17,6 +17,7 @@ use gz_core::msgs;
 use gz_core::snapshot::{SnapNode, Snapshot};
 use gz_parity::compare;
 use gz_parity::corpus::{Builder, Corpus};
+use gz_parity::mirror::{self, MirrorOptions};
 use gz_parity::replay::{self, ReplayOptions};
 
 fn repo() -> PathBuf {
@@ -88,6 +89,22 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
+/// Starts `gz-parity mirror` on `lock`; the cache is `GZ_HTTP_CACHE` or
+/// `target/http-cache`, and `GZ_HTTP_OFFLINE=true` forbids fetching.
+fn start_mirror(lock: &Path) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let opts = MirrorOptions {
+        cache: std::env::var_os("GZ_HTTP_CACHE")
+            .map_or_else(|| repo().join("target/http-cache"), PathBuf::from),
+        lock: Some(lock.to_path_buf()),
+        upstream: None,
+        offline: std::env::var("GZ_HTTP_OFFLINE").is_ok_and(|v| v == "true"),
+    };
+    std::thread::spawn(move || mirror::serve_on(listener, opts));
+    base
+}
+
 /// Replays a recorded corpus and diffs gzweb-rs against gzweb's committed
 /// snapshot and client frame log.
 fn recorded_corpus_matches_gzweb(name: &str) {
@@ -95,14 +112,27 @@ fn recorded_corpus_matches_gzweb(name: &str) {
     let tmp = scratch(name);
     let log = tmp.join("rs.client.log");
     let url = start_replay(Corpus::load(&dir).unwrap(), Some(log.clone()), None);
-    let (output, snap) = snapshot(&url, &tmp.join("rs.json"), &[]);
+    // Worlds with web assets get them through a caching mirror, pinned by
+    // the corpus's lock file.
+    let lock = dir.join("http.lock.json");
+    let mirror = lock.exists().then(|| start_mirror(&lock));
+    let extra: Vec<&str> = match &mirror {
+        Some(m) => vec!["--http-mirror", m],
+        None => vec![],
+    };
+    let (output, snap) = snapshot(&url, &tmp.join("rs.json"), &extra);
     assert!(output.status.success(), "{}", stderr(&output));
     let actual = snap.unwrap();
 
     let expected: Snapshot =
         serde_json::from_str(&std::fs::read_to_string(dir.join("gzweb.snapshot.json")).unwrap())
             .unwrap();
-    let allow = compare::load_allowlist(&repo().join("tests/parity/allowlist.toml")).unwrap();
+    let mut allow = compare::load_allowlist(&repo().join("tests/parity/allowlist.toml")).unwrap();
+    // Features the world needs that aren't ported yet.
+    let gaps = dir.join("gaps.toml");
+    if gaps.exists() {
+        allow.extend(compare::load_allowlist(&gaps).unwrap());
+    }
     let report = compare::compare_snapshots(&expected, &actual, &allow, Default::default());
     assert!(report.passed(), "{name}: {:#?}", report.diffs);
 
@@ -120,6 +150,22 @@ fn shapes_matches_gzweb() {
 #[test]
 fn empty_matches_gzweb() {
     recorded_corpus_matches_gzweb("empty");
+}
+
+// Worlds with Fuel meshes or textures. Ignored by default because a cold
+// cache fetches from fuel.gazebosim.org; CI runs them in the `fuel` job with
+// `cargo test -p gzweb --test headless -- --ignored`.
+
+#[test]
+#[ignore = "fetches from fuel.gazebosim.org on a cold cache"]
+fn heightmap_matches_gzweb() {
+    recorded_corpus_matches_gzweb("heightmap");
+}
+
+#[test]
+#[ignore = "fetches from fuel.gazebosim.org on a cold cache"]
+fn import_mesh_matches_gzweb() {
+    recorded_corpus_matches_gzweb("import_mesh");
 }
 
 #[test]

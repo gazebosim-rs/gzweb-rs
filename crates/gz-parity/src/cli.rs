@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gz_core::snapshot::Snapshot;
 
-use crate::{compare, corpus, record, replay};
+use crate::{compare, corpus, mirror, record, replay};
 
 /// Runs the CLI and maps errors to exit code 2.
 pub fn main_with(args: impl IntoIterator<Item = String>) -> ExitCode {
@@ -75,7 +75,7 @@ fn write_report<T: serde::Serialize>(
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     let Some((cmd, rest)) = args.split_first() else {
         return Err(
-            "usage: gz-parity <record|replay|compare|compare-protocol> ... (see .agent/PARITY.md)"
+            "usage: gz-parity <record|replay|mirror|compare|compare-protocol> ... (see .agent/PARITY.md)"
                 .into(),
         );
     };
@@ -124,13 +124,29 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
             replay::serve(&corpus, &opts)?;
             Ok(ExitCode::SUCCESS)
         }
+        "mirror" => {
+            let port: u16 = num(&flags, "port", 9101)?;
+            let listener =
+                std::net::TcpListener::bind(("127.0.0.1", port)).map_err(crate::message)?;
+            let opts = mirror::MirrorOptions {
+                cache: PathBuf::from(need(&flags, "cache")?),
+                lock: flags.get("lock").map(PathBuf::from),
+                upstream: flags.get("upstream").cloned(),
+                offline: num(&flags, "offline", false)?,
+            };
+            mirror::serve_on(listener, opts)?;
+            Ok(ExitCode::SUCCESS)
+        }
         "compare" => {
             let expected = read_snapshot(need(&flags, "expected")?)?;
             let actual = read_snapshot(need(&flags, "actual")?)?;
-            let allow = match flags.get("allow") {
-                Some(p) => compare::load_allowlist(std::path::Path::new(p))?,
-                None => Vec::new(),
-            };
+            // `--gaps`: a corpus's known, not-yet-ported features, same format.
+            let mut allow = Vec::new();
+            for key in ["allow", "gaps"] {
+                if let Some(p) = flags.get(key) {
+                    allow.extend(compare::load_allowlist(std::path::Path::new(p))?);
+                }
+            }
             let report = compare::compare_snapshots(&expected, &actual, &allow, Default::default());
             write_report(&flags, &report)?;
             for d in &report.suppressed {

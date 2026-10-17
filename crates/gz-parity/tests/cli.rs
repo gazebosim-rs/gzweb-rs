@@ -95,6 +95,23 @@ fn argument_errors() {
         "bad --duration-ms value 'soon'"
     );
     assert_eq!(err(&["replay"]), "missing --corpus");
+    assert_eq!(err(&["mirror", "--port", "0"]), "missing --cache");
+    assert_eq!(
+        err(&[
+            "mirror",
+            "--port",
+            "0",
+            "--cache",
+            "c",
+            "--offline",
+            "maybe"
+        ]),
+        "bad --offline value 'maybe'"
+    );
+    let file = scratch("mirror-cli").join("a-file");
+    std::fs::write(&file, "").unwrap();
+    let cache = file.to_string_lossy();
+    assert!(err(&["mirror", "--port", "0", "--cache", &cache]).contains("a-file"));
 }
 
 #[test]
@@ -158,6 +175,19 @@ fn compare_passes_fails_suppresses_and_reports() {
             "--actual",
             &a,
             "--allow",
+            &allow_s
+        ]),
+        success()
+    );
+    // The same entries as a corpus's known gaps.
+    assert_eq!(
+        ok(&[
+            "compare",
+            "--expected",
+            &e,
+            "--actual",
+            &a,
+            "--gaps",
             &allow_s
         ]),
         success()

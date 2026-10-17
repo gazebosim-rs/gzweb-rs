@@ -1,0 +1,14 @@
+# Features this world needs that gzweb-rs doesn't have yet. Same format as
+# tests/parity/allowlist.toml; delete an entry once the feature lands.
+
+[[allow]]
+id = "gap-collada"
+path = "Electrical Box/link/visual"
+field = "geometry.*"
+reason = "Collada (.dae) loading is not implemented yet."
+
+[[allow]]
+id = "gap-collada-material"
+path = "Electrical Box/link/visual"
+field = "material"
+reason = "The texture comes from the Collada file."

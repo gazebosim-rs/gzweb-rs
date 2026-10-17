@@ -26,13 +26,30 @@ image from `Dockerfile.gazebo`). Status of the recorded worlds:
 | Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
 |---|---|---|---|
 | empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
-| heightmap | committed | FAIL: no heightmap geometry yet | no |
-| import_mesh | committed | FAIL: no Collada yet; mesh fetched live from Fuel | no |
+| heightmap | committed | PASS with gaps (no heightmap geometry yet) | `--ignored` |
+| import_mesh | committed | PASS with gaps (no Collada yet) | `--ignored` |
 | sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
 | particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
 
-Fuel meshes and textures are fetched over HTTP by both clients, so they are
-not in the corpus yet; worlds that use them depend on fuel.gazebosim.org.
+Optional files next to `manifest.json`:
+
+- `gaps.toml`: features the world needs that gzweb-rs doesn't have yet, in
+  the allow-list format. Delete an entry when the feature lands.
+- `http.lock.json`: URL → SHA-256 of every web asset (Fuel meshes and
+  textures) the world loads. The files themselves are **not** committed.
+
+**Web assets.** Both clients fetch Fuel files over HTTP, not the websocket.
+`gz-parity mirror` serves them as `http://127.0.0.1:<port>/<host>/<path>`
+from a local cache (`target/http-cache`, or `GZ_HTTP_CACHE`), fetching from
+the real host on a miss. Each body is checked against the lock; a URL not in
+the lock is added to it. `GZ_HTTP_OFFLINE=true` makes a miss a 404.
+`parity/run.sh` always runs the mirror: gzweb's HTTPS requests are rerouted
+by Playwright, gzweb-rs gets `--http-mirror`.
+
+Fuel-world tests are `#[ignore]`d, so `cargo test` and the coverage gate stay
+offline. CI runs them in the `fuel` job (`cargo test -p gzweb --test headless
+-- --ignored`) with the cache restored from a key on the lock files, so Fuel
+is contacted only on a cache miss, and only that job fails if Fuel is down.
 
 - `manifest.json`:
   ```json

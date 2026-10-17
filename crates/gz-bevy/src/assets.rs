@@ -50,11 +50,17 @@ fn ws_request_uri(path: &Path) -> Option<String> {
     }
 }
 
-fn http_url(path: &Path) -> String {
-    let p = path.to_string_lossy().replace('\\', "/");
-    match p.strip_prefix("http:/") {
-        Some(rest) => format!("http://{rest}"),
-        None => format!("https://{p}"),
+/// Inverse of [`asset_path`] for the HTTP source. With a `mirror`, HTTPS
+/// URLs become `<mirror>/<host>/<path>` (see `gz-parity mirror`).
+fn http_url(path: &Path, mirror: Option<&str>) -> String {
+    let p = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace(' ', "%20");
+    match (p.strip_prefix("http:/"), mirror) {
+        (Some(rest), _) => format!("http://{rest}"),
+        (None, Some(m)) => format!("{}/{p}", m.trim_end_matches('/')),
+        (None, None) => format!("https://{p}"),
     }
 }
 
@@ -179,11 +185,13 @@ impl AssetReader for WsAssetReader {
 
 // ─── HTTP(S) assets (Fuel and other web URLs) ───────────────────────────────
 
-struct HttpAssetReader;
+struct HttpAssetReader {
+    mirror: Option<String>,
+}
 
 impl AssetReader for HttpAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        let url = http_url(path);
+        let url = http_url(path, self.mirror.as_deref());
         match fetch_bytes(&url).await {
             Ok(bytes) => Ok(VecReader::new(bytes)),
             Err(e) => {
@@ -241,7 +249,11 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
 
 /// Registers the `wsasset://` and `gzhttps://` sources. **Must be added
 /// before `DefaultPlugins`**, because `AssetPlugin` builds the sources.
-pub struct GzAssetSourcesPlugin;
+#[derive(Default)]
+pub struct GzAssetSourcesPlugin {
+    /// Fetch HTTPS assets through this `gz-parity mirror` base URL.
+    pub http_mirror: Option<String>,
+}
 
 impl Plugin for GzAssetSourcesPlugin {
     fn build(&self, app: &mut App) {
@@ -257,7 +269,14 @@ impl Plugin for GzAssetSourcesPlugin {
         )
         .register_asset_source(
             HTTP_SOURCE,
-            AssetSourceBuilder::new(|| Box::new(HttpAssetReader)),
+            AssetSourceBuilder::new({
+                let mirror = self.http_mirror.clone();
+                move || {
+                    Box::new(HttpAssetReader {
+                        mirror: mirror.clone(),
+                    })
+                }
+            }),
         )
         .insert_resource(store);
     }
@@ -291,8 +310,18 @@ mod tests {
             "gzhttps://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"
         );
         assert_eq!(
-            http_url(Path::new("fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb")),
-            "https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"
+            http_url(
+                Path::new("fuel.gazebosim.org/1.0/o/models/m m/1/files/a.glb"),
+                None
+            ),
+            "https://fuel.gazebosim.org/1.0/o/models/m%20m/1/files/a.glb"
+        );
+        assert_eq!(
+            http_url(
+                Path::new("fuel.gazebosim.org/1.0/a.glb"),
+                Some("http://127.0.0.1:9101/")
+            ),
+            "http://127.0.0.1:9101/fuel.gazebosim.org/1.0/a.glb"
         );
     }
 
@@ -303,7 +332,7 @@ mod tests {
             "gzhttps://http:/127.0.0.1:8/a.obj"
         );
         assert_eq!(
-            http_url(Path::new("http:/127.0.0.1:8/a.obj")),
+            http_url(Path::new("http:/127.0.0.1:8/a.obj"), Some("http://m")),
             "http://127.0.0.1:8/a.obj"
         );
         assert_eq!(ws_request_uri(Path::new("elsewhere/a.obj")), None);
@@ -437,7 +466,7 @@ mod tests {
     #[test]
     fn http_reader_fetches_and_maps_failures_to_not_found() {
         let base = http_server(b"mesh");
-        let reader = HttpAssetReader;
+        let reader = HttpAssetReader { mirror: None };
         block_on(async {
             assert_eq!(
                 read_all(&reader, &format!("{base}/ok")).await.unwrap(),
@@ -457,7 +486,7 @@ mod tests {
     fn plugin_registers_both_sources_and_the_store() {
         let mut app = App::new();
         app.add_plugins((
-            GzAssetSourcesPlugin,
+            GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             bevy::time::TimePlugin,
             TaskPoolPlugin::default(),

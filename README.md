@@ -102,6 +102,10 @@ an in-process replay server. The cases:
   and HTTP, lights, nested models, pose updates and `scene/info` additions.
 - **Failures:** bad auth and connection loss.
 
+Worlds that load Fuel meshes or textures are `#[ignore]`d because a cold
+cache downloads them (see `.agent/PARITY.md` §1). Run them with
+`cargo test -p gzweb --test headless -- --ignored`.
+
 To run the full comparison against a live gzweb, check out gzweb next to this
 repo, then:
 

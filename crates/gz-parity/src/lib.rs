@@ -5,14 +5,18 @@
 //!                   [--max-stream-frames 200] [--world-file shapes.sdf] [--timeout-ms 20000]
 //! gz-parity replay  --corpus tests/corpus/shapes --port 9100 [--client-log FILE]
 //!                   [--stream-limit N] [--connections N] [--key KEY]
-//! gz-parity compare --expected gzweb.json --actual rs.json [--allow allowlist.toml] [--report out.json]
+//! gz-parity compare --expected gzweb.json --actual rs.json [--allow allowlist.toml]
+//!                   [--gaps gaps.toml] [--report out.json]
 //! gz-parity compare-protocol EXPECTED.log ACTUAL.log [--report out.json]
+//! gz-parity mirror  --cache target/http-cache --port 9101 [--lock http.lock.json]
+//!                   [--upstream URL] [--offline true]
 //! ```
 //! See `.agent/PARITY.md`.
 
 pub mod cli;
 pub mod compare;
 pub mod corpus;
+pub mod mirror;
 pub mod record;
 pub mod replay;
 

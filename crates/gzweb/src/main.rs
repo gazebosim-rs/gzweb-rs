@@ -20,9 +20,11 @@ const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
 struct Args {
     config: GzConfig,
     snapshot: Option<gz_bevy::snapshot::SnapshotRequest>,
+    /// Fetch HTTPS assets through a `gz-parity mirror`.
+    http_mirror: Option<String>,
 }
 
-const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] \
+const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--http-mirror URL] \
                      [--snapshot OUT.json [--settle-ms MS] [--timeout-ms MS]]";
 
 /// What the command line asked for.
@@ -45,6 +47,7 @@ fn parse_args(
     let mut url = None;
     let mut key = None;
     let mut snapshot = None;
+    let mut http_mirror = None;
     let mut settle_ms = 1000.0;
     let mut timeout_ms = 60000.0;
 
@@ -60,6 +63,7 @@ fn parse_args(
             "--url" => url = Some(value()?),
             "--port" => port = value()?,
             "--key" => key = Some(value()?),
+            "--http-mirror" => http_mirror = Some(value()?),
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
             "--settle-ms" => settle_ms = millis()?,
             "--timeout-ms" => timeout_ms = millis()?,
@@ -80,6 +84,7 @@ fn parse_args(
             settle_secs: settle_ms / 1000.0,
             timeout_secs: timeout_ms / 1000.0,
         }),
+        http_mirror,
     }))
 }
 
@@ -114,6 +119,7 @@ fn command() -> Result<Command, String> {
             ..Default::default()
         },
         snapshot: None,
+        http_mirror: get("http_mirror"),
     }))
 }
 
@@ -175,7 +181,9 @@ fn main() -> AppExit {
     };
 
     let mut app = App::new();
-    app.add_plugins(GzAssetSourcesPlugin);
+    app.add_plugins(GzAssetSourcesPlugin {
+        http_mirror: args.http_mirror.clone(),
+    });
 
     app.add_plugins(default_plugins(args.config.headless));
     if args.config.headless {
@@ -254,6 +262,9 @@ mod tests {
         );
         assert_eq!(a.config.url, "ws://gz:9002");
         assert_eq!(a.config.key.as_deref(), Some("k"));
+        assert_eq!(a.http_mirror, None);
+        let m = run_args(&["--http-mirror", "http://127.0.0.1:9101"], None);
+        assert_eq!(m.http_mirror.as_deref(), Some("http://127.0.0.1:9101"));
     }
 
     #[test]

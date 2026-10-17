@@ -97,7 +97,7 @@ pub(crate) mod test_util {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
-            GzAssetSourcesPlugin,
+            GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             TransformPlugin,
         ))
@@ -140,7 +140,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
-            GzAssetSourcesPlugin,
+            GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             bevy::input::InputPlugin,
             TransformPlugin,
@@ -178,7 +178,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
-            GzAssetSourcesPlugin,
+            GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             TransformPlugin,
         ))
