@@ -10,7 +10,6 @@ gz-core.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 bevy = { version = "0.18", features = ["webgpu", "webgl2"] }
-bevy_panorbit_camera = "0.34.0"
 bevy_obj = "0.18.2"
 bevy_stl = { version = "0.18.0", default-features = false }
 async-channel = "2"

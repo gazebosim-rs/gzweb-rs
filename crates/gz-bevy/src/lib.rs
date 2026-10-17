@@ -13,7 +13,6 @@ pub mod snapshot;
 pub mod spawn;
 
 use bevy::prelude::*;
-use bevy_panorbit_camera::PanOrbitCameraPlugin;
 
 pub use assets::GzAssetSourcesPlugin;
 
@@ -70,20 +69,17 @@ impl Plugin for GzWebPlugin {
             );
 
         if !self.config.headless {
-            app.add_plugins((
-                PanOrbitCameraPlugin,
-                bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
-            ))
-            .add_systems(Startup, hud::spawn_hud)
-            .add_systems(
-                Update,
-                (
-                    camera::update_orbit_focus,
-                    hud::update_fps,
-                    hud::update_adapter,
-                    hud::update_status,
-                ),
-            );
+            app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
+                .add_systems(Startup, hud::spawn_hud)
+                .add_systems(
+                    Update,
+                    (
+                        camera::orbit_controls,
+                        hud::update_fps,
+                        hud::update_adapter,
+                        hud::update_status,
+                    ),
+                );
         }
     }
 }

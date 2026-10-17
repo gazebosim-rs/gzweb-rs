@@ -133,6 +133,23 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 Light intensities use gzweb's three.js semantics in `LightDesc`. The Bevy unit
 mapping in `spawn::spawn_light` is provisional and gets calibrated in Phase 2.
 
+## Camera controls
+
+`camera::GzOrbitControls` ports gzweb's patched three.js `OrbitControls`
+(`gzweb/include/OrbitControls.js`, mouse handlers in `Scene.ts`). The camera
+is never re-aimed at its pivot:
+
+- Any button press or wheel step sets the pivot to the point under the cursor.
+  It uses the nearest visible mesh (`MeshRayCast`), else the Gazebo z = 0 plane.
+  A miss keeps the old pivot; gzweb resets it to the origin (PORT_PLAN §2.5).
+- Left drag: `rotate_around(pivot)`, yaw about world up then pitch about the
+  camera's right axis, by `2π·Δpx / height`. The offset's polar angle is
+  clamped to (0, π).
+- Right drag: screen-space pan, scaled by `distance·tan(fov/2)`.
+- Wheel / middle drag: dolly along camera→pivot by `0.95` per step.
+
+Not used in headless mode.
+
 ## Headless snapshot mode
 
 `gzweb --snapshot out.json` runs `DefaultPlugins` with no window, no winit and

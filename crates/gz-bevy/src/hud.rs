@@ -50,7 +50,7 @@ pub fn spawn_hud(mut commands: Commands) {
     ));
     commands.spawn((
         Text::new(
-            "Left drag: orbit | Right drag: pan | Scroll: zoom | Left click: orbit around point",
+            "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point",
         ),
         TextFont {
             font_size: 16.0,

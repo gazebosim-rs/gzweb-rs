@@ -2,6 +2,17 @@
 
 Dated entries: what changed, and what was verified. Newest first.
 
+## 2026-10-16: Camera controls match gzweb
+
+- **Bug:** a left click re-centred the view on the clicked point.
+  `bevy_panorbit_camera` always aims the camera at its focus.
+- **Fix:** replaced it with `GzOrbitControls`, a port of gzweb's patched
+  OrbitControls. Clicking only picks the pivot; dragging orbits the camera
+  about it, without re-aiming. Picking uses Bevy `MeshRayCast`, falling back
+  to the ground plane. See DESIGN.md "Camera controls".
+- **Verified:** by hand against live Gazebo `shapes.sdf` (native, by the user).
+  Tests, clippy and the wasm32 build pass.
+
 ## 2026-10-16: Foundation (PORT_PLAN.md §5 next steps 1–4)
 
 Branch `feature/port-foundation`.
