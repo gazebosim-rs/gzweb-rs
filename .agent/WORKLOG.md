@@ -283,3 +283,21 @@ These are findings for the plan, not changes:
   timeout covers a capture that never arrives, `.png` only.
 - `GzConfig.headless` split into `interactive` and `gpu`; spot lights use
   `spot_inner_angle`; unset light intensity means 1.
+## 2026-10-17: Collada
+
+- New crate `gz-collada`: mesh-loader 0.1.13's COLLADA parsers vendored
+  (`src/vendor/`, changes marked `gz-collada:`), scene assembly rewritten
+  (`src/assemble.rs`). Fixes the spike's four bugs: parent-first transforms,
+  `<unit>` as a root scale, a mesh and material per primitive, instances
+  rather than geometries. Adds node names/ids, `<library_nodes>` +
+  `<instance_node>`, `<bump>` in `<extra>`, and errors instead of panics on
+  bad indices. Fixed upstream's `<double_sided>`/`<faceted>`/`<wireframe>`
+  reading a missing attribute (failed the whole parse).
+- Verified: all 14 Fuel meshes and the 3 probes match three.js triangle
+  counts and world bounds; `import_mesh` passes browser parity with no gaps.
+- `gz_bevy::collada::ColladaLoader` → Bevy `Scene` (labelled meshes and
+  materials, sRGB colour and linear normal textures, tangents for normal
+  maps). The pink placeholder is gone.
+- Coverage: the vendored code is excluded (`COVERAGE_IGNORE` in
+  `scripts/check.sh`); `assemble.rs` and the loader are gated.
+- Not done: `<submesh>`/`center`.

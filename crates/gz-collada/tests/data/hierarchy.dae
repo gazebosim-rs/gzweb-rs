@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Derived from probe.dae: only the rotate-parent / translate-child pair.
+     Hand-written probe for the spike: node hierarchy (rotate parent, translate
+     child), a geometry instanced 3 times (incl. via library_nodes /
+     instance_node), a two-material geometry (triangles + polylist quad),
+     centimeter units with node translations, Y_UP, FCOLLADA bump map,
+     transparency. Node names deliberately differ from geometry ids. -->
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset>
+    <unit name="centimeter" meter="0.01"/>
+    <up_axis>Y_UP</up_axis>
+  </asset>
+  <library_images>
+    <image id="probe-png" name="probe-png"><init_from>../materials/textures/probe.png</init_from></image>
+    <image id="probe-normal-png" name="probe-normal-png"><init_from>../materials/textures/probe_normal.png</init_from></image>
+  </library_images>
+  <library_effects>
+    <effect id="red-effect">
+      <profile_COMMON>
+        <technique sid="common">
+          <lambert>
+            <diffuse><color>1 0 0 1</color></diffuse>
+          </lambert>
+        </technique>
+      </profile_COMMON>
+    </effect>
+    <effect id="tex-effect">
+      <profile_COMMON>
+        <newparam sid="probe-surface"><surface type="2D"><init_from>probe-png</init_from></surface></newparam>
+        <newparam sid="probe-sampler"><sampler2D><source>probe-surface</source></sampler2D></newparam>
+        <newparam sid="normal-surface"><surface type="2D"><init_from>probe-normal-png</init_from></surface></newparam>
+        <newparam sid="normal-sampler"><sampler2D><source>normal-surface</source></sampler2D></newparam>
+        <technique sid="common">
+          <phong>
+            <diffuse><texture texture="probe-sampler" texcoord="UVMap"/></diffuse>
+            <specular><color>0.5 0.5 0.5 1</color></specular>
+            <shininess><float>20</float></shininess>
+            <transparent opaque="A_ONE"><color>1 1 1 1</color></transparent>
+            <transparency><float>0.5</float></transparency>
+          </phong>
+          <extra>
+            <technique profile="FCOLLADA">
+              <bump><texture texture="normal-sampler" texcoord="UVMap"/></bump>
+            </technique>
+          </extra>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_materials>
+    <material id="red-material" name="Red"><instance_effect url="#red-effect"/></material>
+    <material id="tex-material" name="Textured"><instance_effect url="#tex-effect"/></material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="tri-mesh" name="Tri">
+      <mesh>
+        <source id="tri-pos">
+          <float_array id="tri-pos-array" count="9">0 0 0 1 0 0 0 1 0</float_array>
+          <technique_common><accessor source="#tri-pos-array" count="3" stride="3">
+            <param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/>
+          </accessor></technique_common>
+        </source>
+        <source id="tri-nrm">
+          <float_array id="tri-nrm-array" count="3">0 0 1</float_array>
+          <technique_common><accessor source="#tri-nrm-array" count="1" stride="3">
+            <param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/>
+          </accessor></technique_common>
+        </source>
+        <vertices id="tri-vtx"><input semantic="POSITION" source="#tri-pos"/></vertices>
+        <triangles material="red-sym" count="1">
+          <input semantic="VERTEX" source="#tri-vtx" offset="0"/>
+          <input semantic="NORMAL" source="#tri-nrm" offset="1"/>
+          <p>0 0 1 0 2 0</p>
+        </triangles>
+      </mesh>
+    </geometry>
+    <geometry id="twomat-mesh" name="TwoMat">
+      <mesh>
+        <source id="tm-pos">
+          <float_array id="tm-pos-array" count="21">0 0 0 1 0 0 0 1 0  2 0 0 3 0 0 3 1 0 2 1 0</float_array>
+          <technique_common><accessor source="#tm-pos-array" count="7" stride="3">
+            <param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/>
+          </accessor></technique_common>
+        </source>
+        <source id="tm-uv">
+          <float_array id="tm-uv-array" count="8">0 0 1 0 1 1 0 1</float_array>
+          <technique_common><accessor source="#tm-uv-array" count="4" stride="2">
+            <param name="S" type="float"/><param name="T" type="float"/>
+          </accessor></technique_common>
+        </source>
+        <vertices id="tm-vtx"><input semantic="POSITION" source="#tm-pos"/></vertices>
+        <triangles material="red-sym" count="1">
+          <input semantic="VERTEX" source="#tm-vtx" offset="0"/>
+          <input semantic="TEXCOORD" source="#tm-uv" offset="1" set="0"/>
+          <p>0 0 1 1 2 3</p>
+        </triangles>
+        <polylist material="tex-sym" count="1">
+          <input semantic="VERTEX" source="#tm-vtx" offset="0"/>
+          <input semantic="TEXCOORD" source="#tm-uv" offset="1" set="0"/>
+          <vcount>4</vcount>
+          <p>3 0 4 1 5 2 6 3</p>
+        </polylist>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_nodes>
+    <node id="LibNode" name="LibNode">
+      <scale>2 2 2</scale>
+      <instance_geometry url="#tri-mesh">
+        <bind_material><technique_common>
+          <instance_material symbol="red-sym" target="#red-material"/>
+        </technique_common></bind_material>
+      </instance_geometry>
+    </node>
+  </library_nodes>
+  <library_visual_scenes>
+    <visual_scene id="Scene" name="Scene">
+      <node id="Parent" name="ParentNode">
+        <rotate>0 0 1 90</rotate>
+        <node id="Child" name="ChildNode">
+          <translate>100 0 0</translate>
+          <instance_geometry url="#tri-mesh">
+            <bind_material><technique_common>
+              <instance_material symbol="red-sym" target="#red-material"/>
+            </technique_common></bind_material>
+          </instance_geometry>
+        </node>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#Scene"/></scene>
+</COLLADA>

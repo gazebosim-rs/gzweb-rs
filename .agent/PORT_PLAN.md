@@ -213,7 +213,8 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
   and de-dup.
-- **Collada:** evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
+- **Collada** (done 2026-10-17, see DESIGN.md "Assets"; `<submesh>`/`center` still
+  to do): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
   `AssetLoader`. Fall back to a purpose-built loader if its material/texture coverage is
   insufficient. Honour `<up_axis>` and `<unit>`.
 - OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`).

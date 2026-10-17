@@ -27,7 +27,7 @@ image from `Dockerfile.gazebo`). Status of the recorded worlds:
 |---|---|---|---|
 | empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
 | heightmap | committed | PASS with gaps (no heightmap geometry yet) | `--ignored` |
-| import_mesh | committed | PASS with gaps (no Collada yet) | `--ignored` |
+| import_mesh | committed | PASS (Collada) | `--ignored` |
 | sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
 | particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
 

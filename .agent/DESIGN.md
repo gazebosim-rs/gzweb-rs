@@ -172,7 +172,23 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 | glTF/GLB | Bevy |
 | OBJ | `bevy_obj` |
 | STL | `bevy_stl` |
-| Collada (`.dae`) | Not yet: pink placeholder, excluded from snapshots. See [`spikes/collada/REPORT.md`](../spikes/collada/REPORT.md). |
+| Collada (`.dae`) | `gz_bevy::collada::ColladaLoader` on `gz-collada` (below) |
+
+**Collada.** `gz-collada` vendors mesh-loader's XML, geometry and effect
+parsers (`src/vendor/`, Apache-2.0, excluded from the coverage gate) and
+replaces its scene assembly (`src/assemble.rs`): the instantiated visual
+scene as a node tree with names and local transforms (parent first), one
+mesh per primitive, per-instance material binding, `<instance_node>`, and
+normal maps from `<extra><technique><bump>`. The loader emits a Bevy
+`Scene`: a root scaled by `<unit>` (no `<up_axis>` rotation, like gz-common
+and gzweb), an entity per node with its `Name`, and a child per primitive.
+Textures load through the `.dae`'s own source, relative to it (or through
+`asset_path` when absolute). Effects map onto PBR: diffuse (white under a
+texture) × opacity, roughness `sqrt(2/(n+2))` from the Phong exponent,
+emission in scene-referred units, `constant` = unlit. On the 14 Fuel meshes
+in `spikes/collada/corpus`, triangle counts and world bounds match gzweb's
+three.js loader (`cargo test -p gz-collada -- --ignored`). Not done:
+`<submesh>`/`center` selection.
 
 ## Rendering
 
