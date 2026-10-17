@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use bevy::asset::io::{AssetReader, AssetReaderError, AssetSourceBuilder, PathStream, Reader, VecReader};
+use bevy::asset::io::{
+    AssetReader, AssetReaderError, AssetSourceBuilder, PathStream, Reader, VecReader,
+};
 use bevy::prelude::*;
 
 pub const WS_SOURCE: &str = "wsasset";
@@ -149,7 +151,10 @@ impl AssetReader for WsAssetReader {
         Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
     }
 
-    async fn read_directory<'a>(&'a self, path: &'a Path) -> Result<Box<PathStream>, AssetReaderError> {
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
         Err(AssetReaderError::NotFound(path.to_path_buf()))
     }
 
@@ -178,7 +183,10 @@ impl AssetReader for HttpAssetReader {
         Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
     }
 
-    async fn read_directory<'a>(&'a self, path: &'a Path) -> Result<Box<PathStream>, AssetReaderError> {
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
         Err(AssetReaderError::NotFound(path.to_path_buf()))
     }
 
@@ -233,7 +241,10 @@ impl Plugin for GzAssetSourcesPlugin {
                 })
             }),
         )
-        .register_asset_source(HTTP_SOURCE, AssetSourceBuilder::new(|| Box::new(HttpAssetReader)))
+        .register_asset_source(
+            HTTP_SOURCE,
+            AssetSourceBuilder::new(|| Box::new(HttpAssetReader)),
+        )
         .insert_resource(store);
     }
 }
@@ -244,10 +255,22 @@ mod tests {
 
     #[test]
     fn paths_round_trip() {
-        assert_eq!(asset_path("/home/u/m/a.dae"), "wsasset://abs/home/u/m/a.dae");
-        assert_eq!(ws_request_uri(Path::new("abs/home/u/m/a.dae")).unwrap(), "/home/u/m/a.dae");
-        assert_eq!(asset_path("pkg/meshes/a.stl"), "wsasset://rel/pkg/meshes/a.stl");
-        assert_eq!(ws_request_uri(Path::new("rel/pkg/meshes/a.stl")).unwrap(), "pkg/meshes/a.stl");
+        assert_eq!(
+            asset_path("/home/u/m/a.dae"),
+            "wsasset://abs/home/u/m/a.dae"
+        );
+        assert_eq!(
+            ws_request_uri(Path::new("abs/home/u/m/a.dae")).unwrap(),
+            "/home/u/m/a.dae"
+        );
+        assert_eq!(
+            asset_path("pkg/meshes/a.stl"),
+            "wsasset://rel/pkg/meshes/a.stl"
+        );
+        assert_eq!(
+            ws_request_uri(Path::new("rel/pkg/meshes/a.stl")).unwrap(),
+            "pkg/meshes/a.stl"
+        );
         assert_eq!(
             asset_path("https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"),
             "gzhttps://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"

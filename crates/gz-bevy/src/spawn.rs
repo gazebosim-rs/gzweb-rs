@@ -12,8 +12,8 @@ use std::f32::consts::FRAC_PI_2;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 use gz_core::scene::{
-    BuildOptions, GeometryDesc, LightDesc, LightType, MaterialDesc, Node, NodeKind, PathAllocator, Pose,
-    SceneDesc, VisualDesc,
+    BuildOptions, GeometryDesc, LightDesc, LightType, MaterialDesc, Node, NodeKind, PathAllocator,
+    Pose, SceneDesc, VisualDesc,
 };
 use gz_core::uri;
 
@@ -187,7 +187,11 @@ fn spawn_node(ctx: &mut SpawnCtx, node: &Node, parent: Entity) {
     if node.id != 0 {
         ctx.index.by_id.insert(node.id, entity);
     }
-    ctx.index.by_name.entry(node.name.clone()).or_default().push(entity);
+    ctx.index
+        .by_name
+        .entry(node.name.clone())
+        .or_default()
+        .push(entity);
 
     if let Some(visual) = &node.visual {
         ctx.commands.entity(entity).insert(GzVisual(visual.clone()));
@@ -213,28 +217,45 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
             Transform::IDENTITY,
         ),
         GeometryDesc::Cylinder { radius, length } => (
-            Cylinder::new(*radius as f32, *length as f32).mesh().resolution(32).into(),
+            Cylinder::new(*radius as f32, *length as f32)
+                .mesh()
+                .resolution(32)
+                .into(),
             axis_to_z,
         ),
         GeometryDesc::Capsule { radius, length } => (
-            Capsule3d::new(*radius as f32, *length as f32).mesh().longitudes(32).latitudes(16).into(),
+            Capsule3d::new(*radius as f32, *length as f32)
+                .mesh()
+                .longitudes(32)
+                .latitudes(16)
+                .into(),
             axis_to_z,
         ),
         GeometryDesc::Cone { radius, length } => (
-            Cone::new(*radius as f32, *length as f32).mesh().resolution(32).into(),
+            Cone::new(*radius as f32, *length as f32)
+                .mesh()
+                .resolution(32)
+                .into(),
             axis_to_z,
         ),
-        GeometryDesc::Sphere { radius } => (Sphere::new(*radius as f32).mesh().uv(32, 32), Transform::IDENTITY),
+        GeometryDesc::Sphere { radius } => (
+            Sphere::new(*radius as f32).mesh().uv(32, 32),
+            Transform::IDENTITY,
+        ),
         GeometryDesc::Ellipsoid { radii } => (
             Sphere::new(1.0).mesh().uv(32, 32),
             Transform::from_scale(Vec3::new(radii[0] as f32, radii[1] as f32, radii[2] as f32)),
         ),
         GeometryDesc::Plane { normal, size } => {
-            let n = Vec3::new(normal[0] as f32, normal[1] as f32, normal[2] as f32).normalize_or(Vec3::Z);
+            let n = Vec3::new(normal[0] as f32, normal[1] as f32, normal[2] as f32)
+                .normalize_or(Vec3::Z);
             (
-                Plane3d::new(Vec3::Z, Vec2::new(size[0] as f32 / 2.0, size[1] as f32 / 2.0))
-                    .mesh()
-                    .into(),
+                Plane3d::new(
+                    Vec3::Z,
+                    Vec2::new(size[0] as f32 / 2.0, size[1] as f32 / 2.0),
+                )
+                .mesh()
+                .into(),
                 Transform::from_rotation(Quat::from_rotation_arc(Vec3::Z, n)),
             )
         }
@@ -248,13 +269,25 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
         }
     };
 
-    let material = ctx.materials.add(standard_material(&visual.material, visual.transparency));
+    let material = ctx
+        .materials
+        .add(standard_material(&visual.material, visual.transparency));
     let mesh = ctx.meshes.add(mesh);
-    ctx.commands
-        .spawn((Mesh3d(mesh), MeshMaterial3d(material), local, ChildOf(parent)));
+    ctx.commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        local,
+        ChildOf(parent),
+    ));
 }
 
-fn spawn_mesh_file(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name: &str, load_uri: &str) {
+fn spawn_mesh_file(
+    ctx: &mut SpawnCtx,
+    visual: &VisualDesc,
+    parent: Entity,
+    name: &str,
+    load_uri: &str,
+) {
     let path = assets::asset_path(load_uri);
     match uri::extension(load_uri).as_str() {
         "glb" | "gltf" => {
@@ -262,22 +295,32 @@ fn spawn_mesh_file(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name
                 .asset_server
                 .load(GltfAssetLabel::Scene(0).from_asset(path));
             ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands.spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            ctx.commands
+                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
         }
         "obj" => {
             let scene: Handle<Scene> = ctx.asset_server.load(path);
             ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands.spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            ctx.commands
+                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
         }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
             ctx.loads.0.push(mesh.clone().untyped());
-            let material = ctx.materials.add(standard_material(&visual.material, visual.transparency));
-            ctx.commands
-                .spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::IDENTITY, ChildOf(parent)));
+            let material = ctx
+                .materials
+                .add(standard_material(&visual.material, visual.transparency));
+            ctx.commands.spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Transform::IDENTITY,
+                ChildOf(parent),
+            ));
         }
         "dae" => {
-            warn!("visual '{name}': Collada is not supported yet ({load_uri}); showing a placeholder");
+            warn!(
+                "visual '{name}': Collada is not supported yet ({load_uri}); showing a placeholder"
+            );
             let mesh = ctx.meshes.add(Cuboid::new(0.5, 0.5, 0.5));
             let material = ctx.materials.add(StandardMaterial {
                 base_color: Color::srgb(1.0, 0.08, 0.58),
@@ -315,8 +358,16 @@ pub fn standard_material(mat: &MaterialDesc, transparency: f64) -> StandardMater
         metallic,
         perceptual_roughness,
         double_sided: mat.double_sided,
-        cull_mode: if mat.double_sided { None } else { Some(Face::Back) },
-        alpha_mode: if alpha < 1.0 { AlphaMode::Blend } else { AlphaMode::Opaque },
+        cull_mode: if mat.double_sided {
+            None
+        } else {
+            Some(Face::Back)
+        },
+        alpha_mode: if alpha < 1.0 {
+            AlphaMode::Blend
+        } else {
+            AlphaMode::Opaque
+        },
         ..default()
     }
 }
@@ -330,13 +381,21 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
     if let Some([x, y, z]) = light.direction {
         let dir = Vec3::new(x as f32, y as f32, z as f32);
         if dir.length_squared() > 0.0 {
-            let up = if dir.cross(Vec3::Z).length_squared() < 1e-8 { Vec3::Y } else { Vec3::Z };
+            let up = if dir.cross(Vec3::Z).length_squared() < 1e-8 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
             local = local.looking_to(dir, up);
         }
     }
     // Rendering units are provisional (Phase 2 calibrates them against gzweb).
     let intensity = light.intensity as f32;
-    let range = if light.range > 0.0 { light.range as f32 } else { 1000.0 };
+    let range = if light.range > 0.0 {
+        light.range as f32
+    } else {
+        1000.0
+    };
     let mut e = ctx.commands.spawn((GzLightEmitter, local, ChildOf(parent)));
     match light.ty {
         LightType::Point => {
@@ -375,7 +434,11 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
 /// Applies `dynamic_pose/info` poses as local transforms. Entities are found
 /// by id first (gzweb uses the first name match, which is ambiguous for
 /// repeated names such as `link`), then by name.
-pub fn apply_poses(mut inbox: ResMut<GzInbox>, index: Res<GzIndex>, mut transforms: Query<&mut Transform>) {
+pub fn apply_poses(
+    mut inbox: ResMut<GzInbox>,
+    index: Res<GzIndex>,
+    mut transforms: Query<&mut Transform>,
+) {
     if inbox.poses.is_empty() {
         return;
     }

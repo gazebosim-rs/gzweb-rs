@@ -8,14 +8,16 @@ use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
 use gz_core::scene::NodeKind;
 use gz_core::snapshot::{
-    Aabb, CameraInfo, GeometryInfo, LightInfo, Maps, MaterialInfo, SceneInfo, SkyInfo, SnapNode, Snapshot,
-    Xform, FORMAT,
+    Aabb, CameraInfo, GeometryInfo, LightInfo, Maps, MaterialInfo, SceneInfo, SkyInfo, SnapNode,
+    Snapshot, Xform, FORMAT,
 };
 use gz_core::transport::Status;
 
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
-use crate::spawn::{GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot};
+use crate::spawn::{
+    GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
+};
 
 #[derive(Resource, Clone)]
 pub struct SnapshotRequest {
@@ -49,7 +51,9 @@ pub fn snapshot_when_settled(
     let loads_done = loads.0.iter().all(|h| {
         matches!(
             asset_server.get_recursive_dependency_load_state(h.id()),
-            Some(RecursiveDependencyLoadState::Loaded) | Some(RecursiveDependencyLoadState::Failed(_)) | None
+            Some(RecursiveDependencyLoadState::Loaded)
+                | Some(RecursiveDependencyLoadState::Failed(_))
+                | None
         )
     });
     // A loaded glTF/OBJ scene is instanced a frame later.
@@ -86,7 +90,11 @@ pub fn snapshot_when_settled(
         Ok(()) => info!("snapshot written to {}", req.out.display()),
         Err(e) => error!("failed to write {}: {e}", req.out.display()),
     }
-    exit.write(if timed_out { AppExit::from_code(2) } else { AppExit::Success });
+    exit.write(if timed_out {
+        AppExit::from_code(2)
+    } else {
+        AppExit::Success
+    });
 }
 
 type NodeData = (
@@ -110,7 +118,16 @@ pub struct SnapshotQueries<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     meshes_q: Query<'w, 's, MeshData, Without<GzPlaceholder>>,
     emitters: Query<'w, 's, &'static GlobalTransform, With<GzLightEmitter>>,
-    camera: Query<'w, 's, (&'static GlobalTransform, &'static Projection, &'static Camera), With<MainCamera>>,
+    camera: Query<
+        'w,
+        's,
+        (
+            &'static GlobalTransform,
+            &'static Projection,
+            &'static Camera,
+        ),
+        With<MainCamera>,
+    >,
     target: Res<'w, GzCameraTarget>,
     ambient: Res<'w, GlobalAmbientLight>,
     clear: Res<'w, ClearColor>,
@@ -242,7 +259,12 @@ fn descendant_meshes(entity: Entity, q: &SnapshotQueries, out: &mut Vec<Entity>)
     }
 }
 
-fn geometry_info(entity: Entity, proto_type: &str, to_gz: Mat4, q: &SnapshotQueries) -> GeometryInfo {
+fn geometry_info(
+    entity: Entity,
+    proto_type: &str,
+    to_gz: Mat4,
+    q: &SnapshotQueries,
+) -> GeometryInfo {
     let mut mesh_entities = Vec::new();
     descendant_meshes(entity, q, &mut mesh_entities);
     let mut min = Vec3::splat(f32::INFINITY);
@@ -250,9 +272,15 @@ fn geometry_info(entity: Entity, proto_type: &str, to_gz: Mat4, q: &SnapshotQuer
     let mut vertex_count = 0u64;
     let mut mesh_count = 0u32;
     for e in mesh_entities {
-        let Ok((mesh3d, global, _)) = q.meshes_q.get(e) else { continue };
-        let Some(mesh) = q.meshes.get(&mesh3d.0) else { continue };
-        let Some(VertexAttributeValues::Float32x3(positions)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+        let Ok((mesh3d, global, _)) = q.meshes_q.get(e) else {
+            continue;
+        };
+        let Some(mesh) = q.meshes.get(&mesh3d.0) else {
+            continue;
+        };
+        let Some(VertexAttributeValues::Float32x3(positions)) =
+            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
             continue;
         };
         mesh_count += 1;
@@ -266,7 +294,10 @@ fn geometry_info(entity: Entity, proto_type: &str, to_gz: Mat4, q: &SnapshotQuer
     }
     GeometryInfo {
         ty: proto_type.to_string(),
-        aabb_world: (vertex_count > 0).then(|| Aabb { min: v3(min), max: v3(max) }),
+        aabb_world: (vertex_count > 0).then(|| Aabb {
+            min: v3(min),
+            max: v3(max),
+        }),
         mesh_count,
         vertex_count,
     }
@@ -285,7 +316,11 @@ fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
         color: [base.red as f64, base.green as f64, base.blue as f64],
         opacity: base.alpha as f64,
         transparent: matches!(m.alpha_mode, AlphaMode::Blend),
-        emissive: [m.emissive.red as f64, m.emissive.green as f64, m.emissive.blue as f64],
+        emissive: [
+            m.emissive.red as f64,
+            m.emissive.green as f64,
+            m.emissive.blue as f64,
+        ],
         metalness: Some(m.metallic as f64),
         roughness: Some(m.perceptual_roughness as f64),
         maps: Maps {

@@ -27,11 +27,31 @@ pub fn spawn_hud(mut commands: Commands) {
         font_size: 20.0,
         ..default()
     };
-    commands.spawn((Text::new("FPS: N/A"), font.clone(), TextColor(Color::WHITE), line(10.0), FpsText));
-    commands.spawn((Text::new("Backend: ..."), font.clone(), TextColor(Color::WHITE), line(40.0), AdapterText));
-    commands.spawn((Text::new("WS: ..."), font, TextColor(Color::WHITE), line(70.0), StatusText));
     commands.spawn((
-        Text::new("Left drag: orbit | Right drag: pan | Scroll: zoom | Left click: orbit around point"),
+        Text::new("FPS: N/A"),
+        font.clone(),
+        TextColor(Color::WHITE),
+        line(10.0),
+        FpsText,
+    ));
+    commands.spawn((
+        Text::new("Backend: ..."),
+        font.clone(),
+        TextColor(Color::WHITE),
+        line(40.0),
+        AdapterText,
+    ));
+    commands.spawn((
+        Text::new("WS: ..."),
+        font,
+        TextColor(Color::WHITE),
+        line(70.0),
+        StatusText,
+    ));
+    commands.spawn((
+        Text::new(
+            "Left drag: orbit | Right drag: pan | Scroll: zoom | Left click: orbit around point",
+        ),
         TextFont {
             font_size: 16.0,
             ..default()
@@ -83,13 +103,22 @@ pub fn update_adapter(
     }
 }
 
-pub fn update_status(status: Res<GzStatus>, mut query: Query<(&mut Text, &mut TextColor), With<StatusText>>) {
+pub fn update_status(
+    status: Res<GzStatus>,
+    mut query: Query<(&mut Text, &mut TextColor), With<StatusText>>,
+) {
     if !status.is_changed() {
         return;
     }
     let (label, color) = match &status.status {
-        Status::Disconnected => (format!("Disconnected ({})", status.url), Color::srgb(1.0, 1.0, 0.0)),
-        Status::Connecting => (format!("Connecting to {}", status.url), Color::srgb(1.0, 1.0, 0.0)),
+        Status::Disconnected => (
+            format!("Disconnected ({})", status.url),
+            Color::srgb(1.0, 1.0, 0.0),
+        ),
+        Status::Connecting => (
+            format!("Connecting to {}", status.url),
+            Color::srgb(1.0, 1.0, 0.0),
+        ),
         Status::Connected => ("Connected".to_string(), Color::srgb(0.5, 1.0, 0.5)),
         Status::Ready => (
             format!("Ready: {}", status.world.as_deref().unwrap_or("?")),

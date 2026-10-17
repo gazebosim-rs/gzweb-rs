@@ -1,8 +1,8 @@
 //! Drives the websocket: driver bytes → [`Transport`] → Bevy resources.
 
 use bevy::prelude::*;
-use gz_core::transport::{Event, Status, Transport};
 use gz_core::msgs;
+use gz_core::transport::{Event, Status, Transport};
 use prost::Message;
 
 use crate::assets::WsAssetStore;
@@ -93,7 +93,8 @@ pub fn pump(
                     if let Some(world) = conn.transport.world().map(str::to_string) {
                         conn.transport
                             .subscribe(&format!("/world/{world}/dynamic_pose/info"));
-                        conn.transport.subscribe(&format!("/world/{world}/scene/info"));
+                        conn.transport
+                            .subscribe(&format!("/world/{world}/scene/info"));
                     }
                 }
                 status.status = s;
@@ -114,9 +115,7 @@ pub fn pump(
                 inbox.scene = Some(scene);
                 inbox.last_activity_secs = time.elapsed_secs_f64();
             }
-            Event::Publish {
-                topic, payload, ..
-            } => {
+            Event::Publish { topic, payload, .. } => {
                 if topic.ends_with("/dynamic_pose/info") {
                     match msgs::PoseV::decode(payload.as_slice()) {
                         Ok(v) => inbox.poses.extend(v.pose),

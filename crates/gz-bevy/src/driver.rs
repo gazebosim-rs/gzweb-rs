@@ -114,7 +114,10 @@ pub fn connect(url: &str) -> Driver {
             let _ = event_tx.send(DriverEvent::Closed(Some(format!("{e:?}"))));
             // A socket that never opens keeps the Driver shape uniform.
             let dummy = WebSocket::new("ws://0.0.0.0:0").expect("websocket constructor");
-            return Driver { events: event_rx, socket: dummy };
+            return Driver {
+                events: event_rx,
+                socket: dummy,
+            };
         }
     };
     socket.set_binary_type(BinaryType::Arraybuffer);
@@ -152,5 +155,8 @@ pub fn connect(url: &str) -> Driver {
     socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
     on_close.forget();
 
-    Driver { events: event_rx, socket }
+    Driver {
+        events: event_rx,
+        socket,
+    }
 }
