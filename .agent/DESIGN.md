@@ -167,7 +167,8 @@ simulation.
 
 ## Conventions
 
-- **Quality gate:** `scripts/check.sh`, run by pre-commit and CI. It covers:
+- **Quality gate:** `scripts/check.sh`, run by the git hooks and CI (coverage
+  runs at pre-push, the rest at pre-commit). It covers:
   - rustfmt;
   - clippy `-D warnings` on native (all targets) and wasm32;
   - rustdoc `-D warnings`;

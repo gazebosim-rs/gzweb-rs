@@ -80,8 +80,9 @@ cargo install cargo-llvm-cov cargo-deny --locked
 pipx install pre-commit && pre-commit install
 ```
 
-The pre-commit hooks run the same checks. The coverage hook runs the full test
-suite, which takes a minute or two on a warm build. CI
+The git hooks run the same checks. The coverage check runs the full test suite,
+which takes a minute or two on a warm build, so it runs on `git push` rather than
+on every commit. CI
 (`.github/workflows/ci.yml`) also runs RustSec advisories, a wasm build, and the
 browser parity check against a pinned gzweb.
 

@@ -1,12 +1,16 @@
 # Pre-commit hooks (https://pre-commit.com). Install once per clone:
 #
 #   pip install pre-commit        # or: pipx install pre-commit
-#   pre-commit install
+#   pre-commit install            # installs both pre-commit and pre-push hooks
 #
 # The Rust hooks call scripts/check.sh, the same gate CI runs. The coverage
-# hook runs the whole test suite under cargo-llvm-cov and fails below 95%
-# line coverage; it takes a minute or two on a warm build.
-# Run everything by hand with: pre-commit run --all-files
+# hook runs at pre-push only: it runs the whole test suite under
+# cargo-llvm-cov and fails below 95% line coverage, which takes a minute or
+# two on a warm build.
+# Run everything by hand with: pre-commit run --all-files --hook-stage pre-push
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
 
 # Vendored upstream sources and recorded binary fixtures are left as they are.
 exclude: ^(crates/gz-proto/proto/|tests/corpus/.*\.bin$|spikes/collada/synthetic/)
@@ -62,5 +66,6 @@ repos:
         name: tests + coverage >= 95%
         entry: scripts/check.sh coverage
         language: system
+        stages: [pre-push]
         files: (\.rs|Cargo\.(toml|lock)|\.proto|tests/corpus/.*|tests/parity/.*)$
         pass_filenames: false
