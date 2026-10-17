@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8" />
-    <title>Bevy WebGPU Demo</title>
+    <title>gzweb</title>
     <style>
         html,
         body {
@@ -32,8 +32,7 @@
         style="position: absolute; top: 40px; right: 10px; color: white; font-family: monospace; font-size: 16px; background: rgba(0,0,0,0.5); padding: 5px;">
         Bevy Status: Waiting...
     </div>
-    <!-- CSS Debug: Red background to see if canvas is transparent or not loaded -->
-    <canvas id="bevy-canvas" style="background-color: red;"></canvas>
+    <canvas id="bevy-canvas"></canvas>
     <script>
         // Check for WebGPU support in the browser
         const statusDiv = document.getElementById('webgpu-status');
@@ -63,7 +62,7 @@
         }
     </script>
     <script type="module">
-        import init from './target/wasm32-unknown-unknown/release/bevy_webgpu_demo.js';
+        import init from './target/wasm32-unknown-unknown/release/gzweb.js';
         init().catch((error) => {
             if (!error.message.startsWith("Using exceptions for control flow,")) {
                 throw error;

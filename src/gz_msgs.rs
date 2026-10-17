@@ -744,6 +744,16 @@ pub struct StringMsg {
     pub data: String,
 }
 
+// ===== Bytes (asset responses) =====
+
+#[derive(Clone, PartialEq, Message)]
+pub struct Bytes {
+    #[prost(message, optional, tag = "1")]
+    pub header: Option<Header>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub data: Vec<u8>,
+}
+
 // ===== StringMsg_V (for worlds list) =====
 
 #[allow(dead_code)]

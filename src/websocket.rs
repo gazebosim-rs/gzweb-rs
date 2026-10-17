@@ -120,9 +120,16 @@ pub fn update_websocket_status(
                                 ws.status = "Protos Received".to_string();
                             }
                             continue;
-                        } else if trimmed == "authorized" || trimmed == "invalid" {
-                            // Auth responses that arrived as binary
-                            let _ = ws.receiver.try_recv(); // already consumed
+                        } else if trimmed == "authorized" {
+                            info!("Received authorized message, re-requesting protos");
+                            if let Err(e) = ws.send_message("protos,,,") {
+                                error!("Failed to send protos request: {}", e);
+                            }
+                            ws.status = "Authorized, Requesting Protos...".to_string();
+                            continue;
+                        } else if trimmed == "invalid" {
+                            error!("Invalid key");
+                            ws.status = "Auth Failed: Invalid Key".to_string();
                             continue;
                         }
                     }
@@ -239,16 +246,24 @@ fn parse_binary_message(
                 return;
             }
 
-            // Check for error responses (StringMsg = error message)
-            if msg_type == "gazebo.msgs.StringMsg" || msg_type == "ignition.msgs.StringMsg" {
-                let error_str = std::str::from_utf8(payload).unwrap_or("unknown error");
-                warn!("Asset error for '{}': {}", topic, error_str);
-                return;
-            }
-
-            // Success: store the raw bytes for WsAssetReader to pick up
-            info!("Asset received: '{}' ({} bytes)", topic, payload.len());
-            asset_store.0.lock().unwrap().insert(topic.to_string(), payload.to_vec());
+            // Error replies carry a serialized StringMsg (e.g. "asset_not_found");
+            // successful replies carry a serialized Bytes message.
+            let result = if msg_type.ends_with(".StringMsg") {
+                let code = <crate::gz_msgs::StringMsg as prost::Message>::decode(payload)
+                    .map(|m| m.data)
+                    .unwrap_or_else(|_| "undecodable error".to_string());
+                warn!("Asset error for '{}': {}", topic, code);
+                Err(code)
+            } else {
+                match <crate::gz_msgs::Bytes as prost::Message>::decode(payload) {
+                    Ok(bytes) => {
+                        info!("Asset received: '{}' ({} bytes)", topic, bytes.data.len());
+                        Ok(bytes.data)
+                    }
+                    Err(e) => Err(format!("failed to decode Bytes: {e}")),
+                }
+            };
+            asset_store.deliver(topic, result);
         }
         _ => {
             // Suppress unhandled operations to avoid flooding logs

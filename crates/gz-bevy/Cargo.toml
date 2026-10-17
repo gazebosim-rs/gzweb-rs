@@ -1,0 +1,44 @@
+[package]
+name = "gz-bevy"
+version = "0.1.0"
+edition = "2021"
+description = "Bevy plugin that renders a live Gazebo simulation from the gz websocket server"
+license = "Apache-2.0"
+
+[dependencies]
+gz-core.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+bevy = { version = "0.18", features = ["webgpu", "webgl2"] }
+bevy_obj = "0.18.2"
+bevy_stl = { version = "0.18.0", default-features = false }
+async-channel = "2"
+wgpu-types = "27"
+crossbeam-channel = "0.5"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tungstenite = "0.26"
+ureq = "3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+version = "0.3"
+features = [
+    "Window",
+    "Document",
+    "Element",
+    "Location",
+    "WebSocket",
+    "MessageEvent",
+    "ErrorEvent",
+    "CloseEvent",
+    "BinaryType",
+    "Blob",
+    "Request",
+    "RequestInit",
+    "Response",
+]

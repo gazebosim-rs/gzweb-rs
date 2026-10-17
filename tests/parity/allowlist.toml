@@ -1,0 +1,15 @@
+# Known, intentional differences between gzweb and gzweb-rs.
+# Each entry needs a reason. See .agent/PARITY.md section 4.
+
+[[allow]]
+id = "gzweb-ignores-background"
+path = "<scene>"
+field = "scene.clear_color"
+reason = """gzweb always clears to 0xb2b2b2 and ignores <scene><background>. gzweb-rs \
+honours an explicit background (alpha > 0). PORT_PLAN.md section 2.5."""
+
+[[allow]]
+id = "gzweb-light-colour-ignored"
+field = "light.color"
+reason = """gzweb passes the gz.msgs.Color object to `new THREE.*Light(color)`, which \
+three ignores, so every gzweb light is white. gzweb-rs uses the diffuse colour."""

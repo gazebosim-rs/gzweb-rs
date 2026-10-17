@@ -1,271 +1,181 @@
-# gzweb-rs — Architecture & Design Patterns
+# gzweb-rs: Architecture & Design
 
-## Core Architecture
+Plan and parity rationale: [`PORT_PLAN.md`](./PORT_PLAN.md). Test harness:
+[`PARITY.md`](./PARITY.md). History: [`WORKLOG.md`](./WORKLOG.md).
 
-The application is structured as a **Bevy ECS application** with three functional layers:
-
-```
-┌─────────────────────────────────────────────────────┐
-│  Bevy App (ECS)                                     │
-│  ┌───────────┐  ┌──────────────┐  ┌─────────────┐  │
-│  │  main.rs  │  │  scene.rs    │  │websocket.rs │  │
-│  │ App setup │  │ Scene →      │  │ WS bridge   │  │
-│  │ UI overlay│  │ Bevy entities│  │ (native/wasm│  │
-│  └───────────┘  └──────────────┘  └─────────────┘  │
-│                        ↑                  ↓         │
-│                  gz_msgs.rs        crossbeam channel │
-│              (protobuf structs)                      │
-└─────────────────────────────────────────────────────┘
-         ↕ WebSocket (ws://localhost:<port>)
-┌─────────────────────────────────────────────────────┐
-│  Gazebo Simulation  (gz-transport websocket plugin)  │
-└─────────────────────────────────────────────────────┘
-```
-
----
-
-## Platform Abstraction Pattern
-
-The same codebase targets **WASM** and **native** using Rust's `cfg` conditional compilation. Use the following idiom for platform-specific code:
-
-```rust
-// Native-only block
-#[cfg(not(target_arch = "wasm32"))]
-{
-    // tungstenite, std::thread, std::env, etc.
-}
-
-// WASM-only block
-#[cfg(target_arch = "wasm32")]
-{
-    // web-sys, wasm-bindgen, JS callbacks, etc.
-}
-```
-
-**Native-only Cargo dependencies** go under:
-```toml
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-```
-
-**WASM-only Cargo dependencies** go under:
-```toml
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-```
-
----
-
-## Bevy ECS Conventions
-
-### Resources
-
-| Resource | Type | Purpose |
-|----------|------|---------|
-| `GzWebSocket` | `NonSendResource` | WebSocket state; **must be NonSend** (contains JS callbacks on WASM) |
-| `SceneState` | `Resource` | Scene loading state machine |
-| `GlobalAmbientLight` | `Resource` | Set from gz scene data (Bevy 0.18+) |
-| `ClearColor` | `Resource` | Background colour from gz scene |
-
-> **IMPORTANT**: `GzWebSocket` must always be registered as a `NonSendResource` (`world.insert_non_send_resource(...)`) and accessed via `Option<NonSendMut<GzWebSocket>>`. This is required because the WASM `web_sys::WebSocket` is not `Send`.
-
-### Components
-
-| Component | Purpose |
-|-----------|---------|
-| `GzSceneEntity { gz_name }` | Marker on all entities spawned from Gazebo scene |
-| `FpsText` | Marker for FPS overlay text |
-| `AdapterText` | Marker for GPU backend overlay text |
-| `WebsocketStatusText` | Marker for WS status overlay text |
-| `MainCamera` | Marker for the primary 3D camera |
-| `PanOrbitCamera` | Camera controller (from `bevy_panorbit_camera`) |
-
-### Systems and Ordering
-
-Systems are registered in `main.rs`:
+## Crates
 
 ```
-Startup:
-  setup                   — camera, lights, UI text entities
-  setup_websocket_system  — WebSocket init (NonSend resource)
-
-Update (every frame):
-  update_fps              — FPS Bevy overlay
-  update_adapter_info     — GPU backend Bevy overlay
-  update_dom_status       — DOM status element (WASM only)
-  update_orbit_focus      — raycast-based orbit focus on left click
-  update_websocket_status — drain WS channel, update status text
-  process_scene           — scene loading state machine
+crates/
+  gz-proto/   gz.msgs types generated at build time (prost-build + protox, no protoc)
+              from the vendored gz-msgs Harmonic .proto files in proto/.
+  gz-core/    No Bevy. Builds for native and wasm.
+                frame      `op,topic,type,payload` codec
+                transport  sans-IO client state machine (handshake, subs, assets)
+                scene      gzweb's rules: gz.msgs.Scene → SceneDesc node tree
+                uri        Fuel / file:// / model:// resolution (gzweb createFuelUri)
+                snapshot   gz-parity-snapshot/1 types
+  gz-bevy/    Bevy plugin: drivers, asset sources, spawning, poses, camera, HUD,
+              snapshot exporter.
+  gzweb/      The app: native binary (+ headless --snapshot mode) and wasm entry.
+  gz-parity/  Native tool: record / replay / compare / compare-protocol.
+parity/       run.sh driver + js/ (gzweb reference exporter, Playwright).
+tests/corpus/ Recorded websocket sessions. tests/parity/allowlist.toml.
+spikes/       Standalone experiments, not in the workspace (spikes/collada).
 ```
 
----
+Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`, and
+`gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
+can be tested without a GPU. `gz-bevy` only instantiates them.
 
-## WebSocket Message Protocol
-
-Gazebo uses `gz-transport` over WebSocket with a custom framing format.
-
-### Text messages (JSON)
-Outgoing requests are JSON arrays:
-```json
-["protos", "", "", ""]      // Request proto definitions
-["worlds", "", "", ""]      // Request list of worlds
-["scene", "<world>", "", ""] // Request scene for a world
-```
-
-Incoming:
-- Proto definition text (stored in `GzWebSocket.protos`)
-- `"authorized"` — re-request protos after auth
-- `"invalid"` — auth failed
-
-### Binary messages (gz-transport frame)
-```
-<operation>,<topic>,<msgType>,<protobuf_payload>
-```
-Where the first three comma-delimited fields are ASCII and the remainder is a raw protobuf payload.
-
-Current handled topics:
-- `pub/worlds` → decodes `gz.msgs.StringMsgV` → stores world name in `SceneState`
-- `pub/scene`  → stores raw bytes in `GzWebSocket.scene_data` for protobuf decode
-
-### Scene Loading State Machine (`SceneState`)
+## Data flow
 
 ```
-[Initial]
-    │ protos received
-    ▼
-[Request Worlds] → worlds_requested = true
-    │ world name received
-    ▼
-[Request Scene]  → scene_requested = true
-    │ scene_data received
-    ▼
-[Decode & Spawn] → loaded = true
+socket ─► driver (native thread / web_sys callbacks)
+       ─► DriverEvent ─► connection::pump ─► Transport::on_message
+                                               │ events
+            ┌──────────────────────────────────┼───────────────────────────┐
+            ▼                                  ▼                           ▼
+     GzInbox.scene / scene_updates      GzInbox.poses              WsAssetStore.deliver
+            ▼                                  ▼                           ▼
+     spawn::apply_scene                 spawn::apply_poses          WsAssetReader wakes
+     (SceneDesc → entities)             (set local Transform)       (Bevy loaders)
 ```
 
----
+Outgoing frames go the other way: `Transport::poll_outgoing` → `Driver::send`.
+Asset requests start in `WsAssetReader`, which queues the URI in the store.
+`pump` then turns it into an `asset,,,<uri>` frame.
 
-## Protobuf Structs (`gz_msgs.rs`)
+## Coordinate frames
 
-Protobuf structs are **hand-written** using `prost` derive macros — there is no `.proto` file compile step. When adding new message types, follow the existing pattern in `gz_msgs.rs`:
-
-```rust
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct MyNewMsg {
-    #[prost(string, tag = "1")]
-    pub name: String,
-    // ...
-}
-```
-
-Field tag numbers must match the actual `gz.msgs` proto definitions from the Gazebo source.
-
----
-
-## Scene → Bevy Entity Mapping
-
-Scene spawning follows the hierarchy in `scene.rs`:
+There is one `GzWorldRoot` entity, rotated `Rx(-90°)`, so gz `(x, y, z)` maps to
+Bevy `(x, z, -y)`. Everything Gazebo is a descendant of it and carries **raw
+Gazebo local poses**:
 
 ```
-gz::Scene
-├── Light[]         → PointLight / DirectionalLight / SpotLight
-└── Model[]
-    ├── Visual[]    → Mesh3d + MeshMaterial3d
-    ├── Link[]
-    │   ├── Visual[]
-    │   └── Light[]
-    └── Model[]     (nested, recursive)
+GzWorldRoot
+├── model (GzEntity kind=model, Transform = model pose)
+│   ├── link
+│   │   ├── visual (GzVisual, Transform = visual pose, scale = <mesh><scale>)
+│   │   │   └── geometry child (Mesh3d / SceneRoot; primitive-specific local transform)
+│   │   └── light (GzLight) └── emitter child (Bevy light, looks along direction)
+│   └── nested model …
+└── top-level light
 ```
 
-### Geometry Support
+This mirrors gzweb's three.js tree, so:
 
-| gz geometry | Bevy mesh |
-|-------------|-----------|
-| Box | `Cuboid` |
-| Cylinder | `Cylinder` |
-| Sphere | `Sphere` |
-| Plane | `Plane3d` |
-| Capsule | `Capsule3d` |
-| Cone | `Cone` |
-| Mesh (.glb/.gltf) | `SceneRoot` via `AssetServer` |
-| Mesh (.stl) | `Mesh3d` via `AssetServer` |
-| Mesh (.obj) | `SceneRoot` via `AssetServer` |
-| Mesh (.dae) | ⚠️ Hot-pink placeholder (Collada not supported) |
+- Mesh files load untouched. gzweb does not rotate Collada for `up_axis`, and
+  neither do we.
+- `dynamic_pose/info` updates are plain local-transform writes. They match by
+  entity id first, then by name.
+- Snapshots compare Bevy local transforms directly with three.js locals.
 
-### Mesh Loading
+Primitive conventions follow gzweb `Scene.ts`:
 
-External mesh files are loaded asynchronously via Bevy's `AssetServer`.
-
-**Plugins registered** (in `main.rs`):
-- `bevy_obj::ObjPlugin` — Wavefront OBJ + MTL loader (v0.18.2)
-- `bevy_stl::StlPlugin` — STL loader (v0.18.0)
-- glTF/GLB is built into `DefaultPlugins` (`bevy_gltf`)
-
-**URI resolution** (`resolve_mesh_uri` in `scene.rs`):
-
-| Gazebo URI | AssetServer path |
+| Primitive | Convention |
 |---|---|
-| `model://pkg/meshes/foo.stl` | `assets/pkg/meshes/foo.stl` |
-| `file:///abs/path/foo.glb` | `assets/foo.glb` (filename only) |
-| bare path | passed through |
+| Cylinder, capsule, cone | Axis along +Z (child rotated +90° about X) |
+| Plane | `Plane3d` facing +Z, rotated by `from_rotation_arc(Z, normal)` |
+| Ellipsoid | Unit UV sphere scaled by the radii |
 
-**WASM serving**: For WASM targets, `AssetServer` fetches assets via HTTP. Gazebo model files must be available under `/assets/<pkg>/...` beside the web app.
+## Websocket protocol
 
-Collada (`.dae`) conversion to glTF is the recommended workaround: use Blender or `assimp`.
+Text frames from the client, binary frames from the server, both in the form
+`op,topic,type,payload` (gz-launch / gz-sim `WebsocketServer.cc`):
 
-### Coordinate Transforms
+```
+open → auth,,,<key> (if key) → "authorized" → protos,,,
+     → protos,,,
+<protos text> → topics-types,,,  worlds,,,          status Connected
+pub,worlds    → scene,<world>,,
+pub,scene                                         status Ready
+Ready → sub,/world/<w>/dynamic_pose/info,,   sub,/world/<w>/scene/info,,
+asset,,,<uri> → asset,<uri>,gz.msgs.Bytes,<Bytes>   (or gz.msgs.StringMsg error code)
+```
 
-Gazebo uses right-hand Z-up; Bevy uses right-hand Y-up. Transforms are applied using `combine_transforms(parent, child)` which correctly composes position + rotation + scale through the model/link/visual hierarchy.
+The proto definitions arrive as a *binary* frame. Asset payloads are
+serialized `gz.msgs.Bytes`, not raw file bytes.
 
-> **TODO**: A coordinate system swap (Gz → Bevy) may be required for correct orientation. Currently transforms are passed through without axis remapping.
+## Assets
 
-### Materials
+`gz_core::uri::mesh_load_uri` strips `file://` and `model://`, then applies
+`createFuelUri`. `gz_bevy::assets::asset_path` maps the result to a source:
 
-Materials are mapped from `gz.msgs.Material` to Bevy `StandardMaterial` (PBR):
-- Diffuse → `base_color`
-- Emissive → `emissive`
-- PBR metalness/roughness → `metallic` / `perceptual_roughness`
-- Transparency → `AlphaMode::Blend`
-- Double-sided → `double_sided` + `cull_mode: None`
+| Load URI | Bevy path | Source |
+|---|---|---|
+| `https://…` | `gzhttps://…` | HTTP (ureq / fetch) |
+| `/abs/path` | `wsasset://abs/abs/path` | websocket `asset` request |
+| `rel/path` | `wsasset://rel/rel/path` | websocket `asset` request |
 
----
+Keeping the directory structure in the Bevy path makes relative references
+inside meshes (glTF buffers, OBJ `.mtl`, textures) resolve to the right
+server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
+**must be added before `DefaultPlugins`**.
 
-## Rendering — WebGPU Priority
+| Format | Loader |
+|---|---|
+| glTF/GLB | Bevy |
+| OBJ | `bevy_obj` |
+| STL | `bevy_stl` |
+| Collada (`.dae`) | Not yet: pink placeholder, excluded from snapshots. See [`spikes/collada/REPORT.md`](../spikes/collada/REPORT.md). |
 
-- Bevy is configured with both `webgpu` AND `webgl2` features enabled.
-- **WebGPU is preferred**: the backend is selected by the browser; Chrome 113+ will use WebGPU.
-- On native, wgpu selects Vulkan/Metal/DX12 automatically.
-- The GPU backend is displayed in the HUD (green = modern API, blue = WebGL, yellow = other).
-- Release profile uses `opt-level = "s"`, `lto = true`, `codegen-units = 1` for compact WASM size.
-- **Bevy 0.18** / **wgpu 27.0.1** — upgrade complete.
+## Rendering defaults (from gzweb)
 
-Do **not** remove the `webgpu` Bevy feature — it is a hard project requirement.
+| Setting | Value |
+|---|---|
+| Camera position | (-6, 0, 6), looking at the origin |
+| Field of view | 60° vertical |
+| Near / far planes | 0.01 / 1000 |
+| Clear colour | `0xb2b2b2`, unless the scene sets a background |
+| Ambient light | `0x191919` until the scene sets it |
 
----
+Light intensities use gzweb's three.js semantics in `LightDesc`. The Bevy unit
+mapping in `spawn::spawn_light` is provisional and gets calibrated in Phase 2.
 
-## UI Overlay
+## Camera controls
 
-Two parallel overlay systems exist:
+`camera::GzOrbitControls` ports gzweb's patched three.js `OrbitControls`
+(`gzweb/include/OrbitControls.js`, mouse handlers in `Scene.ts`). The camera
+is never re-aimed at its pivot:
 
-1. **Bevy UI** (works on both platforms): FPS, GPU backend, WS status, controls hint — spawned as Bevy `Text` entities with `Node` positioning.
-2. **DOM manipulation** (WASM only): `#bevy-status` element in `index.html` is updated directly via `web_sys` to show status even before the canvas renders.
+- Any button press or wheel step sets the pivot to the point under the cursor.
+  It uses the nearest visible mesh (`MeshRayCast`), else the Gazebo z = 0 plane.
+  A miss keeps the old pivot; gzweb resets it to the origin (PORT_PLAN §2.5).
+- Left drag: `rotate_around(pivot)`, yaw about world up then pitch about the
+  camera's right axis, by `2π·Δpx / height`. The offset's polar angle is
+  clamped to (0, π).
+- Right drag: screen-space pan, scaled by `distance·tan(fov/2)`.
+- Wheel / middle drag: dolly along camera→pivot by `0.95` per step.
 
----
+Not used in headless mode.
 
-## Known Limitations & Future Work
+## Headless snapshot mode
 
-- **Mesh loading (DAE only)**: Collada (`.dae`) is not natively supported; converts to a hot-pink placeholder. Use glTF instead.
-- **Dynamic updates**: Only the initial scene load is handled. Live entity updates (model pose changes, spawns/deletions) are not yet supported.
-- **Coordinate system**: Potential Y/Z axis swap between Gazebo (Z-up) and Bevy (Y-up) not yet applied.
-- **Authentication**: Partial support — handles `authorized`/`invalid` messages but no credential input UI.
-- **Texture/material loading**: Only vertex colors and PBR properties; no texture maps yet.
-- **Model file loading**: Gazebo model resources (meshes, textures) need a resource server or bundling strategy for WASM.
+`gzweb --snapshot out.json` runs `DefaultPlugins` with no window, no winit and
+`WgpuSettings { backends: None }`, so it needs no GPU. Meshes stay in the main
+world, which is what makes AABBs computable. Once the scene has settled, it
+writes the snapshot and exits:
 
----
+- status is `Ready`;
+- the scene is spawned and every asset load has finished;
+- glTF/OBJ scenes are instanced;
+- the settle time has passed since the last structural message.
 
-## Code Style Guidelines
+Pose streams don't count as activity, because they never stop on a live
+simulation.
 
-- Use Bevy's standard `prelude::*` imports.
-- All platform-specific code must use `#[cfg(...)]` — no runtime feature flags.
-- New Gazebo message types go in `gz_msgs.rs` following the existing prost pattern.
-- New scene geometry types go in `scene.rs` in the `spawn_visual` match block.
-- Use `info!` / `warn!` / `error!` from `bevy::prelude` (re-exports `tracing`).
-- `GzWebSocket` must always remain a `NonSendResource`.
-- Prefer `Option<NonSendMut<GzWebSocket>>` in system parameters to gracefully handle init.
+## Conventions
+
+- Platform code uses `#[cfg(target_arch = "wasm32")]` / `not(...)`, never runtime
+  flags. Platform-specific dependencies go under `[target.'cfg(...)'.dependencies]`.
+- `GzConnection` is a **non-send** resource: the wasm socket is a JS object.
+- Keep the Bevy `webgpu` feature; WebGPU is a hard requirement. On wasm,
+  Bevy's `webgpu` feature *overrides* `webgl2`, so the current browser build is
+  WebGPU-only and panics with "Unable to find a GPU" where WebGPU is missing.
+  A WebGL2 fallback needs a second wasm build that the page picks when
+  `navigator.gpu` is absent (PORT_PLAN.md Phase 7).
+- Use bevy_ui for all UI. The host page only carries the canvas and a status
+  line.
+- When gzweb-rs deliberately differs from gzweb, list it in PORT_PLAN.md §2.5
+  and in `tests/parity/allowlist.toml`, with a reason.

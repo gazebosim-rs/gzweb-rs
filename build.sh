@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-# Check if wasm-bindgen is installed and matches version
-REQUIRED_VERSION="0.2.108"
+# The wasm-bindgen CLI must match the wasm-bindgen crate version in Cargo.lock.
+REQUIRED_VERSION=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
 
 install_wasm_bindgen() {
     echo "Installing wasm-bindgen-cli v$REQUIRED_VERSION..."
@@ -20,9 +20,9 @@ else
 fi
 
 echo "Building WASM binary..."
-cargo build --target wasm32-unknown-unknown --release
+cargo build -p gzweb --target wasm32-unknown-unknown --release
 
 echo "Generating JS bindings..."
-wasm-bindgen --out-dir ./target/wasm32-unknown-unknown/release/ --target web ./target/wasm32-unknown-unknown/release/bevy_webgpu_demo.wasm
+wasm-bindgen --out-dir ./target/wasm32-unknown-unknown/release/ --target web ./target/wasm32-unknown-unknown/release/gzweb.wasm
 
 echo "Build complete."
