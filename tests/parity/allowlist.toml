@@ -13,3 +13,9 @@ id = "gzweb-light-colour-ignored"
 field = "light.color"
 reason = """gzweb passes the gz.msgs.Color object to `new THREE.*Light(color)`, which \
 three ignores, so every gzweb light is white. gzweb-rs uses the diffuse colour."""
+
+[[allow]]
+id = "gzweb-spot-penumbra-clamp"
+field = "light.penumbra"
+reason = """gzweb clamps the spot penumbra to >= 1 (and gets NaN when both angles are 0); \
+three.js expects [0, 1]. gzweb-rs clamps to [0, 1]. PORT_PLAN.md section 2.5."""

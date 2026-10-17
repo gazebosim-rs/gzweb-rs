@@ -1,0 +1,71 @@
+# Pre-commit hooks (https://pre-commit.com). Install once per clone:
+#
+#   pip install pre-commit        # or: pipx install pre-commit
+#   pre-commit install            # installs both pre-commit and pre-push hooks
+#
+# The Rust hooks call scripts/check.sh, the same gate CI runs. The coverage
+# hook runs at pre-push only: it runs the whole test suite under
+# cargo-llvm-cov and fails below 95% line coverage, which takes a minute or
+# two on a warm build.
+# Run everything by hand with: pre-commit run --all-files --hook-stage pre-push
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+# Vendored upstream sources and recorded binary fixtures are left as they are.
+exclude: ^(crates/gz-proto/proto/|tests/corpus/.*\.bin$|spikes/collada/synthetic/)
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: rustfmt
+        entry: scripts/check.sh fmt
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: clippy (native + wasm32, -D warnings)
+        entry: scripts/check.sh clippy
+        language: system
+        files: (\.rs|Cargo\.(toml|lock)|clippy\.toml)$
+        pass_filenames: false
+
+      - id: cargo-doc
+        name: rustdoc (-D warnings)
+        entry: scripts/check.sh doc
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-deny
+        name: cargo-deny (licences, bans, sources)
+        entry: scripts/check.sh deny
+        language: system
+        files: (Cargo\.(toml|lock)|deny\.toml)$
+        pass_filenames: false
+
+      - id: coverage
+        name: tests + coverage >= 95%
+        entry: scripts/check.sh coverage
+        language: system
+        stages: [pre-push]
+        files: (\.rs|Cargo\.(toml|lock)|\.proto|tests/corpus/.*|tests/parity/.*)$
+        pass_filenames: false

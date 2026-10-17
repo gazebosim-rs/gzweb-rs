@@ -83,3 +83,126 @@ impl Plugin for GzWebPlugin {
         }
     }
 }
+
+/// A minimal app with the resources the scene systems need, for tests.
+#[cfg(test)]
+pub(crate) mod test_util {
+    use bevy::prelude::*;
+
+    use crate::{camera, connection, spawn, GzAssetSourcesPlugin, GzConfig};
+
+    /// No renderer, window or connection; the scene, pose and camera
+    /// systems run against resources the test fills in.
+    pub(crate) fn scene_app(config: GzConfig) -> App {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            GzAssetSourcesPlugin::default(),
+            AssetPlugin::default(),
+            TransformPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<Image>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Scene>()
+        .insert_resource(config)
+        .insert_resource(ClearColor(camera::CLEAR_COLOR))
+        .init_resource::<GlobalAmbientLight>()
+        .init_resource::<connection::GzInbox>()
+        .init_resource::<spawn::GzIndex>()
+        .init_resource::<spawn::GzLoads>()
+        .init_resource::<camera::GzCameraTarget>()
+        .insert_resource(connection::GzStatus {
+            status: gz_core::transport::Status::Ready,
+            url: "ws://test".into(),
+            world: Some("w".into()),
+            malformed: 0,
+        })
+        .add_systems(Startup, (spawn::spawn_root, camera::spawn_camera))
+        .add_systems(Update, (spawn::apply_scene, spawn::apply_poses).chain());
+        app
+    }
+}
+
+#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windowed_plugin_adds_controls_hud_and_diagnostics() {
+        // Nothing listens on the port; the connection just fails.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            GzAssetSourcesPlugin::default(),
+            AssetPlugin::default(),
+            bevy::input::InputPlugin,
+            TransformPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<Image>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Scene>()
+        .add_plugins(GzWebPlugin {
+            config: GzConfig {
+                url: format!("ws://127.0.0.1:{port}"),
+                headless: false,
+                ..Default::default()
+            },
+        });
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(
+            world
+                .query::<&camera::GzOrbitControls>()
+                .iter(world)
+                .count(),
+            1
+        );
+        assert_eq!(world.query::<&hud::StatusText>().iter(world).count(), 1);
+        assert!(world.contains_resource::<bevy::diagnostic::DiagnosticsStore>());
+        assert_eq!(
+            world.resource::<GzConfig>().url,
+            format!("ws://127.0.0.1:{port}")
+        );
+    }
+
+    #[test]
+    fn headless_plugin_has_no_controls_or_hud() {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            GzAssetSourcesPlugin::default(),
+            AssetPlugin::default(),
+            TransformPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<Image>()
+        .init_asset::<StandardMaterial>()
+        .init_asset::<Scene>()
+        .add_plugins(GzWebPlugin {
+            config: GzConfig {
+                url: "ws://127.0.0.1:1".into(),
+                headless: true,
+                ..Default::default()
+            },
+        });
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(
+            world
+                .query::<&camera::GzOrbitControls>()
+                .iter(world)
+                .count(),
+            0
+        );
+        assert_eq!(world.query::<&hud::StatusText>().iter(world).count(), 0);
+        assert_eq!(world.query::<&camera::MainCamera>().iter(world).count(), 1);
+    }
+}

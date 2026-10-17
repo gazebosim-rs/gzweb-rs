@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,lights,,
+sub,/world/lights/dynamic_pose/info,,
+sub,/world/lights/scene/info,,

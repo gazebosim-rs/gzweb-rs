@@ -167,6 +167,20 @@ simulation.
 
 ## Conventions
 
+- **Quality gate:** `scripts/check.sh`, run by the git hooks and CI (coverage
+  runs at pre-push, the rest at pre-commit). It covers:
+  - rustfmt;
+  - clippy `-D warnings` on native (all targets) and wasm32;
+  - rustdoc `-D warnings`;
+  - cargo-deny;
+  - tests under cargo-llvm-cov, at **≥ 95% line coverage**.
+- **Lints:** `[workspace.lints]`; every crate sets `[lints] workspace = true`.
+  `unsafe` is forbidden, and `unwrap()` is only allowed in tests.
+  Integration-test crates need `#![allow(clippy::unwrap_used)]`.
+- **Testing Bevy code:** in a minimal `App` (see `gz_bevy::test_util`), not
+  with a GPU. Anything end to end goes in `crates/gzweb/tests/headless.rs`,
+  which runs the real binary against `gz_parity::replay::serve_on`.
+
 - Platform code uses `#[cfg(target_arch = "wasm32")]` / `not(...)`, never runtime
   flags. Platform-specific dependencies go under `[target.'cfg(...)'.dependencies]`.
 - `GzConnection` is a **non-send** resource: the wasm socket is a JS object.

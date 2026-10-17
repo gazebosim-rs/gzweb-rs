@@ -1,0 +1,410 @@
+{
+  "format": "gz-parity-snapshot/1",
+  "source": "gzweb",
+  "world": "heightmap",
+  "scene": {
+    "ambient": [0.4, 0.4, 0.4],
+    "clear_color": [0.698039, 0.698039, 0.698039],
+    "camera": {
+      "position": [-6, 0, 6],
+      "target": [0, 0, 0],
+      "fov_deg": 60,
+      "near": 0.01,
+      "far": 1000
+    },
+    "grid_visible": false,
+    "sky": null
+  },
+  "nodes": [
+    {
+      "path": "sphere_red",
+      "kind": "model",
+      "local": {
+        "pos": [16.1383, 29.410987, 6.73277],
+        "quat": [-0.04133, 0.97549, 0.029624, -0.214089],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [16.1383, 29.410987, 6.73277],
+        "quat": [-0.04133, 0.97549, 0.029624, -0.214089],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_red/sphere_link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [16.1383, 29.410987, 6.73277],
+        "quat": [-0.04133, 0.97549, 0.029624, -0.214089],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_red/sphere_link/sphere_visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [16.1383, 29.410987, 6.73277],
+        "quat": [-0.04133, 0.97549, 0.029624, -0.214089],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "sphere",
+        "aabb_world": {
+          "min": [15.638965, 28.910991, 6.233234],
+          "max": [16.637636, 29.910984, 7.232306]
+        },
+        "mesh_count": 1,
+        "vertex_count": 1089
+      },
+      "material": {
+        "color": [1, 0, 0],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "sphere_green",
+      "kind": "model",
+      "local": {
+        "pos": [23.109421, -22.673781, 7.303262],
+        "quat": [-0.412111, -0.472716, -0.03419, 0.778161],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [23.109421, -22.673781, 7.303262],
+        "quat": [-0.412111, -0.472716, -0.03419, 0.778161],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_green/sphere_link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [23.109421, -22.673781, 7.303262],
+        "quat": [-0.412111, -0.472716, -0.03419, 0.778161],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_green/sphere_link/sphere_visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [23.109421, -22.673781, 7.303262],
+        "quat": [-0.412111, -0.472716, -0.03419, 0.778161],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "sphere",
+        "aabb_world": {
+          "min": [22.610714, -23.17282, 6.804411],
+          "max": [23.608127, -22.174741, 7.802114]
+        },
+        "mesh_count": 1,
+        "vertex_count": 1089
+      },
+      "material": {
+        "color": [0, 1, 0],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "sphere_blue",
+      "kind": "model",
+      "local": {
+        "pos": [-30.313415, 30.009826, 3.138569],
+        "quat": [-0.009576, -0.308803, 0.003528, 0.951071],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-30.313415, 30.009826, 3.138569],
+        "quat": [-0.009576, -0.308803, 0.003528, 0.951071],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_blue/sphere_link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-30.313415, 30.009826, 3.138569],
+        "quat": [-0.009576, -0.308803, 0.003528, 0.951071],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_blue/sphere_link/sphere_visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-30.313415, 30.009826, 3.138569],
+        "quat": [-0.009576, -0.308803, 0.003528, 0.951071],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "sphere",
+        "aabb_world": {
+          "min": [-30.813038, 29.509931, 2.63905],
+          "max": [-29.813793, 30.509722, 3.638088]
+        },
+        "mesh_count": 1,
+        "vertex_count": 1089
+      },
+      "material": {
+        "color": [0, 0, 1],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "sphere_yellow",
+      "kind": "model",
+      "local": {
+        "pos": [-29.892403, -20.521743, 7.078062],
+        "quat": [-0.088478, 0.022339, 0.008267, 0.995793],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-29.892403, -20.521743, 7.078062],
+        "quat": [-0.088478, 0.022339, 0.008267, 0.995793],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_yellow/sphere_link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-29.892403, -20.521743, 7.078062],
+        "quat": [-0.088478, 0.022339, 0.008267, 0.995793],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sphere_yellow/sphere_link/sphere_visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-29.892403, -20.521743, 7.078062],
+        "quat": [-0.088478, 0.022339, 0.008267, 0.995793],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "sphere",
+        "aabb_world": {
+          "min": [-30.391836, -21.021615, 6.578685],
+          "max": [-29.39297, -20.021871, 7.57744]
+        },
+        "mesh_count": 1,
+        "vertex_count": 1089
+      },
+      "material": {
+        "color": [1, 1, 0],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "Heightmap Bowl",
+      "kind": "model",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Heightmap Bowl/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Heightmap Bowl/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "heightmap",
+        "aabb_world": null,
+        "mesh_count": 1,
+        "vertex_count": 0
+      },
+      "material": {
+        "color": [1, 1, 1],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": 0,
+        "roughness": 1,
+        "maps": {
+          "albedo": "https://fuel.gazebosim.org/1.0/chapulina/models/heightmap bowl/1/files/materials/textures/dirt_diffusespecular.png",
+          "normal": "https://fuel.gazebosim.org/1.0/chapulina/models/heightmap bowl/1/files/materials/textures/flat_normal.png"
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "sun",
+      "kind": "light",
+      "local": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": {
+        "type": "directional",
+        "color": [1, 1, 1],
+        "intensity": 0.98911,
+        "range": null,
+        "angle": null,
+        "penumbra": null,
+        "decay": null,
+        "cast_shadow": true,
+        "direction_world": [-0.483368, 0.096674, -0.870063]
+      }
+    }
+  ]
+}

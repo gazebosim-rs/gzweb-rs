@@ -20,6 +20,37 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 
 ## 1. Corpus format: `tests/corpus/<name>/`
 
+Record one with `parity/record.sh <world.sdf> [name]` (needs the `gz-websocket`
+image from `Dockerfile.gazebo`). Status of the recorded worlds:
+
+| Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
+|---|---|---|---|
+| empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
+| heightmap | committed | PASS with gaps (no heightmap geometry yet) | `--ignored` |
+| import_mesh | committed | PASS with gaps (no Collada yet) | `--ignored` |
+| sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
+| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
+
+Optional files next to `manifest.json`:
+
+- `gaps.toml`: features the world needs that gzweb-rs doesn't have yet, in
+  the allow-list format. Delete an entry when the feature lands.
+- `http.lock.json`: URL → SHA-256 of every web asset (Fuel meshes and
+  textures) the world loads. The files themselves are **not** committed.
+
+**Web assets.** Both clients fetch Fuel files over HTTP, not the websocket.
+`gz-parity mirror` serves them as `http://127.0.0.1:<port>/<host>/<path>`
+from a local cache (`target/http-cache`, or `GZ_HTTP_CACHE`), fetching from
+the real host on a miss. Each body is checked against the lock; a URL not in
+the lock is added to it. `GZ_HTTP_OFFLINE=true` makes a miss a 404.
+`parity/run.sh` always runs the mirror: gzweb's HTTPS requests are rerouted
+by Playwright, gzweb-rs gets `--http-mirror`.
+
+Fuel-world tests are `#[ignore]`d, so `cargo test` and the coverage gate stay
+offline. CI runs them in the `fuel` job (`cargo test -p gzweb --test headless
+-- --ignored`) with the cache restored from a key on the lock files, so Fuel
+is contacted only on a cache miss, and only that job fails if Fuel is down.
+
 - `manifest.json`:
   ```json
   {
@@ -38,10 +69,20 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 - `frames.bin`: a concatenation of records. Each record is `u32 LE length`
   followed by that many bytes of a server→client websocket frame, sent as binary,
   verbatim.
+- `gzweb.snapshot.json` and `gzweb.client.log`: gzweb's output for this corpus,
+  copied from `target/parity/<name>/gzweb.json` and `gzweb.client.log` after a
+  `parity/run.sh` run. `crates/gzweb/tests/headless.rs` diffs gzweb-rs against
+  them in `cargo test`, so parity regressions fail without a browser. Refresh
+  them whenever the corpus or the pinned gzweb changes.
+
+Tests that need worlds no recording has use `gz_parity::corpus::Builder`. It
+builds a corpus from `gz.msgs` values: a scene, assets and stream messages.
 
 ## 2. Replay server
 
-`gz-parity replay --corpus <dir> --port <p> [--client-log <file>] [--stream-limit N]`
+`gz-parity replay --corpus <dir> --port <p> [--client-log <file>] [--stream-limit N] [--connections N] [--key KEY]`
+
+In tests, `gz_parity::replay::serve_on` serves on a listener bound to port 0.
 
 - Serves one connection at a time, with state reset per connection.
 - How it handles client text frames:
@@ -52,7 +93,7 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
   | `topics-types`, `worlds`, `scene,<world>,,` | Send the recorded reply for that op. |
   | `asset,,,<uri>` (also `asset,<uri>,,`) | Send the recorded reply. If `<uri>` was not recorded, send `asset,<uri>,gz.msgs.StringMsg,<StringMsg{data:"asset_not_found"}>`. |
   | `sub,<topic>,,` | Stream that topic's recorded frames in order, at most `N` of them (default: all), 1 ms apart. |
-  | `auth,,,<key>` | Reply `authorized`. |
+  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs. |
   | anything else | Ignore. |
 
 - `--client-log` writes one line per client frame, in arrival order: the exact
@@ -182,3 +223,6 @@ graph. That keeps both sides' node sets identical by construction.
 3. Restarts the replay server and runs the gzweb-rs snapshot.
 4. Compares both snapshots and both client logs.
 5. Writes everything to `target/parity/<corpus>/`.
+
+CI's `parity` job runs it for every corpus against gzweb pinned at
+`519d4cf` (`.github/workflows/ci.yml`).

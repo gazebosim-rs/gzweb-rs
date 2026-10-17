@@ -27,6 +27,14 @@ pub struct AllowList {
     pub allow: Vec<Allow>,
 }
 
+/// Reads a `tests/parity/allowlist.toml`-style file.
+pub fn load_allowlist(path: &std::path::Path) -> Result<Vec<Allow>, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    toml::from_str::<AllowList>(&text)
+        .map(|a| a.allow)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Diff {
     pub path: String,
@@ -54,23 +62,21 @@ impl Report {
 }
 
 pub fn glob(pattern: &str, s: &str) -> bool {
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() == 1 {
+    let Some((head, tail)) = pattern.split_once('*') else {
         return pattern == s;
+    };
+    let Some(mut rest) = s.strip_prefix(head) else {
+        return false;
+    };
+    let mut middle: Vec<&str> = tail.split('*').collect();
+    let last = middle.pop().unwrap_or_default();
+    for part in middle {
+        let Some(pos) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[pos + part.len()..];
     }
-    let mut rest = s;
-    for (i, part) in parts.iter().enumerate() {
-        if i == 0 {
-            let Some(r) = rest.strip_prefix(part) else { return false };
-            rest = r;
-        } else if i == parts.len() - 1 {
-            return rest.ends_with(part);
-        } else {
-            let Some(pos) = rest.find(part) else { return false };
-            rest = &rest[pos + part.len()..];
-        }
-    }
-    true
+    rest.ends_with(last)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,13 +165,32 @@ impl Ctx<'_> {
 
     fn xform(&mut self, path: &str, prefix: &str, e: &Xform, a: &Xform) {
         let t = self.tol;
-        self.vec(path, &format!("{prefix}.pos"), &e.pos, &a.pos, t.pos_abs, t.pos_rel);
+        self.vec(
+            path,
+            &format!("{prefix}.pos"),
+            &e.pos,
+            &a.pos,
+            t.pos_abs,
+            t.pos_rel,
+        );
         self.quat(path, &format!("{prefix}.quat"), &e.quat, &a.quat);
-        self.vec(path, &format!("{prefix}.scale"), &e.scale, &a.scale, t.pos_abs, t.pos_rel);
+        self.vec(
+            path,
+            &format!("{prefix}.scale"),
+            &e.scale,
+            &a.scale,
+            t.pos_abs,
+            t.pos_rel,
+        );
     }
 }
 
-pub fn compare_snapshots(expected: &Snapshot, actual: &Snapshot, allow: &[Allow], tol: Tolerances) -> Report {
+pub fn compare_snapshots(
+    expected: &Snapshot,
+    actual: &Snapshot,
+    allow: &[Allow],
+    tol: Tolerances,
+) -> Report {
     let mut cx = Ctx {
         tol,
         allow,
@@ -180,8 +205,13 @@ pub fn compare_snapshots(expected: &Snapshot, actual: &Snapshot, allow: &[Allow]
 
     scene(&mut cx, &expected.scene, &actual.scene);
 
-    let actual_by_path: HashMap<&str, &SnapNode> = actual.nodes.iter().map(|n| (n.path.as_str(), n)).collect();
-    let expected_paths: HashMap<&str, ()> = expected.nodes.iter().map(|n| (n.path.as_str(), ())).collect();
+    let actual_by_path: HashMap<&str, &SnapNode> =
+        actual.nodes.iter().map(|n| (n.path.as_str(), n)).collect();
+    let expected_paths: HashMap<&str, ()> = expected
+        .nodes
+        .iter()
+        .map(|n| (n.path.as_str(), ()))
+        .collect();
     for e in &expected.nodes {
         match actual_by_path.get(e.path.as_str()) {
             Some(a) => node(&mut cx, e, a),
@@ -206,13 +236,37 @@ fn scene(cx: &mut Ctx, e: &SceneInfo, a: &SceneInfo) {
         cx.vec("<scene>", "scene.clear_color", x, y, c, 0.0);
     }
     if let (Some(x), Some(y)) = (&e.camera, &a.camera) {
-        cx.vec("<scene>", "scene.camera.position", &x.position, &y.position, t.pos_abs, t.pos_rel);
-        cx.vec("<scene>", "scene.camera.target", &x.target, &y.target, t.pos_abs, t.pos_rel);
-        cx.scalar("<scene>", "scene.camera.fov_deg", Some(x.fov_deg), Some(y.fov_deg));
+        cx.vec(
+            "<scene>",
+            "scene.camera.position",
+            &x.position,
+            &y.position,
+            t.pos_abs,
+            t.pos_rel,
+        );
+        cx.vec(
+            "<scene>",
+            "scene.camera.target",
+            &x.target,
+            &y.target,
+            t.pos_abs,
+            t.pos_rel,
+        );
+        cx.scalar(
+            "<scene>",
+            "scene.camera.fov_deg",
+            Some(x.fov_deg),
+            Some(y.fov_deg),
+        );
         cx.scalar("<scene>", "scene.camera.near", Some(x.near), Some(y.near));
         cx.scalar("<scene>", "scene.camera.far", Some(x.far), Some(y.far));
     }
-    cx.eq("<scene>", "scene.grid_visible", &e.grid_visible, &a.grid_visible);
+    cx.eq(
+        "<scene>",
+        "scene.grid_visible",
+        &e.grid_visible,
+        &a.grid_visible,
+    );
     cx.eq("<scene>", "scene.sky", &e.sky, &a.sky);
 }
 
@@ -222,7 +276,12 @@ fn node(cx: &mut Ctx, e: &SnapNode, a: &SnapNode) {
     match (&e.local, &a.local) {
         (Some(x), Some(y)) => cx.xform(p, "local", x, y),
         (None, None) => {}
-        (x, y) => cx.diff(p, "node.renderer_object", json!(x.is_some()), json!(y.is_some())),
+        (x, y) => cx.diff(
+            p,
+            "node.renderer_object",
+            json!(x.is_some()),
+            json!(y.is_some()),
+        ),
     }
     if let (Some(x), Some(y)) = (&e.world, &a.world) {
         cx.xform(p, "world", x, y);
@@ -287,8 +346,18 @@ fn material(cx: &mut Ctx, p: &str, e: &MaterialInfo, a: &MaterialInfo) {
     if e.roughness.is_some() {
         cx.scalar(p, "material.roughness", e.roughness, a.roughness);
     }
-    cx.eq(p, "material.maps.albedo", &e.maps.albedo.is_some(), &a.maps.albedo.is_some());
-    cx.eq(p, "material.maps.normal", &e.maps.normal.is_some(), &a.maps.normal.is_some());
+    cx.eq(
+        p,
+        "material.maps.albedo",
+        &e.maps.albedo.is_some(),
+        &a.maps.albedo.is_some(),
+    );
+    cx.eq(
+        p,
+        "material.maps.normal",
+        &e.maps.normal.is_some(),
+        &a.maps.normal.is_some(),
+    );
 }
 
 fn light(cx: &mut Ctx, p: &str, e: &LightInfo, a: &LightInfo) {
@@ -324,7 +393,9 @@ pub struct ProtocolReport {
 
 impl ProtocolReport {
     pub fn passed(&self) -> bool {
-        self.sequence_matches && self.assets_only_expected.is_empty() && self.assets_only_actual.is_empty()
+        self.sequence_matches
+            && self.assets_only_expected.is_empty()
+            && self.assets_only_actual.is_empty()
     }
 }
 
@@ -412,7 +483,11 @@ mod tests {
         let e = snap(vec![node("a", [1.0, 2.0, 3.0]), node("b", [0.0; 3])]);
         let a = snap(vec![node("a", [1.0, 2.0, 3.000001]), node("c", [0.0; 3])]);
         let r = compare_snapshots(&e, &a, &[], Tolerances::default());
-        let fields: Vec<_> = r.diffs.iter().map(|d| (d.path.as_str(), d.field.as_str())).collect();
+        let fields: Vec<_> = r
+            .diffs
+            .iter()
+            .map(|d| (d.path.as_str(), d.field.as_str()))
+            .collect();
         assert_eq!(fields, [("b", "node.missing"), ("c", "node.extra")]);
 
         let allow = vec![Allow {
@@ -430,8 +505,9 @@ mod tests {
     fn quaternion_sign_is_ignored() {
         let mut e = node("a", [0.0; 3]);
         let mut a = node("a", [0.0; 3]);
-        e.local.as_mut().unwrap().quat = [0.0, 0.0, 0.7071068, 0.7071068];
-        a.local.as_mut().unwrap().quat = [0.0, 0.0, -0.7071068, -0.7071068];
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        e.local.as_mut().unwrap().quat = [0.0, 0.0, h, h];
+        a.local.as_mut().unwrap().quat = [0.0, 0.0, -h, -h];
         let r = compare_snapshots(&snap(vec![e]), &snap(vec![a]), &[], Tolerances::default());
         assert!(r.passed(), "{:?}", r.diffs);
     }
@@ -444,5 +520,312 @@ mod tests {
         let r = compare_protocol(e, "protos,,,\nworlds,,,\nsub,/x,,\nasset,,,/a\n");
         assert!(!r.sequence_matches);
         assert_eq!(r.assets_only_expected, ["asset,,,/b"]);
+    }
+
+    type Mutation<T> = Box<dyn Fn(&mut T)>;
+
+    fn full(path: &str) -> SnapNode {
+        SnapNode {
+            geometry: Some(GeometryInfo {
+                ty: "box".into(),
+                aabb_world: Some(Aabb {
+                    min: [-1.0; 3],
+                    max: [1.0; 3],
+                }),
+                mesh_count: 1,
+                vertex_count: 24,
+            }),
+            material: Some(MaterialInfo {
+                color: [0.5; 3],
+                opacity: 1.0,
+                transparent: false,
+                emissive: [0.0; 3],
+                metalness: Some(0.1),
+                roughness: Some(0.9),
+                maps: Maps::default(),
+            }),
+            light: Some(LightInfo {
+                ty: "spot".into(),
+                color: [1.0; 3],
+                intensity: 1.0,
+                range: Some(10.0),
+                angle: Some(0.5),
+                penumbra: Some(0.1),
+                decay: Some(1.0),
+                cast_shadow: true,
+                direction_world: Some([0.0, 0.0, -1.0]),
+            }),
+            ..node(path, [0.0; 3])
+        }
+    }
+
+    fn full_scene() -> SceneInfo {
+        SceneInfo {
+            ambient: Some([0.1; 3]),
+            clear_color: Some([0.7; 3]),
+            camera: Some(CameraInfo {
+                position: [-6.0, 0.0, 6.0],
+                target: [0.0; 3],
+                fov_deg: 60.0,
+                near: 0.01,
+                far: 1000.0,
+            }),
+            grid_visible: Some(false),
+            sky: None,
+        }
+    }
+
+    /// Fields that differ when `actual` is `mutate(full)`.
+    fn diff_fields(mutate: impl Fn(&mut SnapNode)) -> Vec<String> {
+        let e = full("n");
+        let mut a = full("n");
+        mutate(&mut a);
+        let r = compare_snapshots(&snap(vec![e]), &snap(vec![a]), &[], Tolerances::default());
+        r.diffs.into_iter().map(|d| d.field).collect()
+    }
+
+    #[test]
+    fn identical_full_nodes_pass() {
+        assert!(diff_fields(|_| {}).is_empty());
+    }
+
+    #[test]
+    fn every_node_field_is_compared() {
+        let cases: Vec<(&str, Mutation<SnapNode>)> = vec![
+            ("kind", Box::new(|n| n.kind = "link".into())),
+            (
+                "local.pos",
+                Box::new(|n| n.local.as_mut().unwrap().pos[0] = 1.0),
+            ),
+            (
+                "local.scale",
+                Box::new(|n| n.local.as_mut().unwrap().scale = [2.0; 3]),
+            ),
+            (
+                "local.quat",
+                Box::new(|n| n.local.as_mut().unwrap().quat = [1.0, 0.0, 0.0, 0.0]),
+            ),
+            (
+                "world.pos",
+                Box::new(|n| n.world.as_mut().unwrap().pos[2] = 5.0),
+            ),
+            ("visible", Box::new(|n| n.visible = false)),
+            (
+                "geometry.type",
+                Box::new(|n| n.geometry.as_mut().unwrap().ty = "sphere".into()),
+            ),
+            (
+                "geometry.mesh_count",
+                Box::new(|n| n.geometry.as_mut().unwrap().mesh_count = 2),
+            ),
+            (
+                "geometry.aabb_world",
+                Box::new(|n| {
+                    n.geometry
+                        .as_mut()
+                        .unwrap()
+                        .aabb_world
+                        .as_mut()
+                        .unwrap()
+                        .max[0] = 3.0;
+                }),
+            ),
+            (
+                "geometry.aabb_world",
+                Box::new(|n| n.geometry.as_mut().unwrap().aabb_world = None),
+            ),
+            ("geometry", Box::new(|n| n.geometry = None)),
+            (
+                "material.color",
+                Box::new(|n| n.material.as_mut().unwrap().color = [0.0; 3]),
+            ),
+            (
+                "material.opacity",
+                Box::new(|n| n.material.as_mut().unwrap().opacity = 0.5),
+            ),
+            (
+                "material.transparent",
+                Box::new(|n| n.material.as_mut().unwrap().transparent = true),
+            ),
+            (
+                "material.emissive",
+                Box::new(|n| n.material.as_mut().unwrap().emissive = [1.0; 3]),
+            ),
+            (
+                "material.metalness",
+                Box::new(|n| n.material.as_mut().unwrap().metalness = None),
+            ),
+            (
+                "material.roughness",
+                Box::new(|n| n.material.as_mut().unwrap().roughness = Some(0.2)),
+            ),
+            (
+                "material.maps.albedo",
+                Box::new(|n| n.material.as_mut().unwrap().maps.albedo = Some("a.png".into())),
+            ),
+            (
+                "material.maps.normal",
+                Box::new(|n| n.material.as_mut().unwrap().maps.normal = Some("n.png".into())),
+            ),
+            ("material", Box::new(|n| n.material = None)),
+            (
+                "light.type",
+                Box::new(|n| n.light.as_mut().unwrap().ty = "point".into()),
+            ),
+            (
+                "light.color",
+                Box::new(|n| n.light.as_mut().unwrap().color = [0.0; 3]),
+            ),
+            (
+                "light.intensity",
+                Box::new(|n| n.light.as_mut().unwrap().intensity = 2.0),
+            ),
+            (
+                "light.range",
+                Box::new(|n| n.light.as_mut().unwrap().range = None),
+            ),
+            (
+                "light.angle",
+                Box::new(|n| n.light.as_mut().unwrap().angle = Some(1.0)),
+            ),
+            (
+                "light.penumbra",
+                Box::new(|n| n.light.as_mut().unwrap().penumbra = Some(0.5)),
+            ),
+            (
+                "light.decay",
+                Box::new(|n| n.light.as_mut().unwrap().decay = Some(2.0)),
+            ),
+            (
+                "light.cast_shadow",
+                Box::new(|n| n.light.as_mut().unwrap().cast_shadow = false),
+            ),
+            (
+                "light.direction_world",
+                Box::new(|n| n.light.as_mut().unwrap().direction_world = Some([1.0, 0.0, 0.0])),
+            ),
+            (
+                "light.direction_world",
+                Box::new(|n| n.light.as_mut().unwrap().direction_world = None),
+            ),
+            ("light", Box::new(|n| n.light = None)),
+            ("node.renderer_object", Box::new(|n| n.local = None)),
+        ];
+        for (field, mutate) in cases {
+            assert_eq!(diff_fields(mutate), [field], "mutating {field}");
+        }
+    }
+
+    #[test]
+    fn unrendered_nodes_compare_only_their_kind() {
+        let mut e = full("n");
+        let mut a = full("n");
+        e.local = None;
+        a.local = None;
+        a.visible = false;
+        a.geometry = None;
+        let r = compare_snapshots(&snap(vec![e]), &snap(vec![a]), &[], Tolerances::default());
+        assert!(r.passed(), "{:?}", r.diffs);
+    }
+
+    #[test]
+    fn every_scene_field_is_compared() {
+        let cases: Vec<(&str, Mutation<SceneInfo>)> = vec![
+            ("scene.ambient", Box::new(|s| s.ambient = Some([1.0; 3]))),
+            (
+                "scene.clear_color",
+                Box::new(|s| s.clear_color = Some([0.0; 3])),
+            ),
+            (
+                "scene.camera.position",
+                Box::new(|s| s.camera.as_mut().unwrap().position[0] = 1.0),
+            ),
+            (
+                "scene.camera.target",
+                Box::new(|s| s.camera.as_mut().unwrap().target[0] = 1.0),
+            ),
+            (
+                "scene.camera.fov_deg",
+                Box::new(|s| s.camera.as_mut().unwrap().fov_deg = 45.0),
+            ),
+            (
+                "scene.camera.near",
+                Box::new(|s| s.camera.as_mut().unwrap().near = 0.1),
+            ),
+            (
+                "scene.camera.far",
+                Box::new(|s| s.camera.as_mut().unwrap().far = 100.0),
+            ),
+            (
+                "scene.grid_visible",
+                Box::new(|s| s.grid_visible = Some(true)),
+            ),
+            (
+                "scene.sky",
+                Box::new(|s| {
+                    s.sky = Some(SkyInfo {
+                        cubemap: Some("c.dds".into()),
+                    });
+                }),
+            ),
+        ];
+        for (field, mutate) in cases {
+            let e = Snapshot {
+                scene: full_scene(),
+                ..snap(vec![])
+            };
+            let mut a = e.clone();
+            mutate(&mut a.scene);
+            let r = compare_snapshots(&e, &a, &[], Tolerances::default());
+            let fields: Vec<_> = r.diffs.iter().map(|d| d.field.as_str()).collect();
+            assert_eq!(fields, [field]);
+        }
+        // Fields one side doesn't report aren't compared.
+        let e = Snapshot {
+            scene: full_scene(),
+            ..snap(vec![])
+        };
+        let r = compare_snapshots(&e, &snap(vec![]), &[], Tolerances::default());
+        assert!(r.passed(), "{:?}", r.diffs);
+    }
+
+    #[test]
+    fn more_globs() {
+        assert!(!glob("a*b*c", "axxc"));
+        assert!(!glob("x*", "abc"));
+        assert!(!glob("exact", "other"));
+        assert!(glob("*.color", "light.color"));
+    }
+
+    #[test]
+    fn allowlist_files() {
+        let dir = std::env::temp_dir().join(format!("gz-parity-allow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.toml");
+        std::fs::write(
+            &good,
+            "[[allow]]\nid = \"a\"\nfield = \"light.color\"\nreason = \"r\"\n",
+        )
+        .unwrap();
+        let allow = load_allowlist(&good).unwrap();
+        assert_eq!(allow.len(), 1);
+        // `path` defaults to every path.
+        assert_eq!(allow[0].path, "*");
+
+        let bad = dir.join("bad.toml");
+        std::fs::write(&bad, "[[allow]]\nid = 3\n").unwrap();
+        assert!(load_allowlist(&bad).unwrap_err().contains("bad.toml"));
+        assert!(load_allowlist(&dir.join("missing.toml"))
+            .unwrap_err()
+            .contains("missing.toml"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn protocol_reports_extra_actual_assets() {
+        let r = compare_protocol("asset,,,/a\n", "asset,,,/a\nasset,,,/a\n");
+        assert!(!r.passed());
+        assert!(r.sequence_matches);
+        assert_eq!(r.assets_only_actual, ["asset,,,/a"]);
     }
 }

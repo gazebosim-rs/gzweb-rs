@@ -14,3 +14,12 @@ console_error_panic_hook = "0.1"
 # Needed by Bevy's dependencies to pick the browser RNG.
 getrandom = { version = "0.3", features = ["wasm_js"] }
 web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+
+[dev-dependencies]
+gz-core.workspace = true
+gz-parity = { path = "../gz-parity", version = "0.1.0" }
+prost.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+# Features this world needs that gzweb-rs doesn't have yet. Same format as
+# tests/parity/allowlist.toml; delete an entry once the feature lands.
+
+[[allow]]
+id = "gap-heightmap-geometry"
+path = "Heightmap Bowl/link/visual"
+field = "geometry.*"
+reason = "Heightmap geometry is not implemented yet."
+
+[[allow]]
+id = "gap-heightmap-material"
+path = "Heightmap Bowl/link/visual"
+field = "material"
+reason = "Heightmap blend textures come with heightmap geometry."

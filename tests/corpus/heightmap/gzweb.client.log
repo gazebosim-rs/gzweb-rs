@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,heightmap,,
+sub,/world/heightmap/dynamic_pose/info,,
+sub,/world/heightmap/scene/info,,

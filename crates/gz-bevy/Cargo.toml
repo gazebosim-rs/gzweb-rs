@@ -42,3 +42,6 @@ features = [
     "RequestInit",
     "Response",
 ]
+
+[lints]
+workspace = true

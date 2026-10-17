@@ -2,6 +2,45 @@
 
 Dated entries: what changed, and what was verified. Newest first.
 
+## 2026-10-16: CI, quality gate, coverage
+
+- **Gate:** `scripts/check.sh` (fmt, clippy native + wasm32, rustdoc,
+  cargo-deny, coverage ≥ 95% lines), used by `.pre-commit-config.yaml` and
+  `.github/workflows/ci.yml`.
+- **CI jobs:** lint, coverage, cargo-deny with advisories, wasm build, and
+  browser parity against gzweb pinned at `519d4cf`.
+- **Lint policy:** `[workspace.lints]` plus `clippy.toml`. Production
+  `unwrap`s were replaced; a poisoned asset-store lock is now recovered.
+- **cargo-deny:** path dependencies now carry versions. Three advisories are
+  ignored with reasons in `deny.toml`:
+  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy 0.18 requires 0.8;
+  - paste, unmaintained;
+  - ttf-parser, unmaintained.
+- **Testability refactors:**
+  - gz-parity is now a lib with a thin bin, and has `corpus::Builder`,
+    `replay::serve_on`, replay `--key`, and record `--timeout-ms`;
+  - gzweb `parse_args` and `default_plugins` are pure;
+  - `hud::adapter_style` is a pure function.
+  - The orbit controls are unchanged.
+- **Tests:** 130, up from 26.
+  - Line coverage is **99.7%** (5314 lines, 17 missed), up from 37.7%.
+  - `crates/gzweb/tests/headless.rs` runs the real binary headless against
+    in-process replay. The shapes/empty corpora are diffed against the
+    committed gzweb references in `tests/corpus/*/gzweb.*`.
+  - A synthetic world covers all primitives, OBJ/STL/glTF over the websocket
+    (glTF with an external buffer) and OBJ over HTTP. This is the first
+    verification of mesh loading. It also covers lights, `#n` paths, poses by
+    id and by name, `scene/info` additions, and failures: auth, refusal,
+    mid-session close.
+- **Uncovered, by design:**
+  - the TLS branch in record;
+  - `accept()` failure in replay;
+  - a reset during a read in the native driver;
+  - the HUD branch that needs a real `RenderAdapter`;
+  - wasm-only code (not compiled natively).
+- **New divergences found:** unknown light type, zero quaternion, spot with
+  zero angles (PORT_PLAN §2.5).
+
 ## 2026-10-16: Camera controls match gzweb
 
 - **Bug:** a left click re-centred the view on the clicked point.
@@ -62,8 +101,8 @@ Branch `feature/port-foundation`.
     transport, uri and scene, the gz-bevy asset store and paths, and the
     gz-parity comparator and corpus.
   - Native and `wasm32` builds succeed.
-- **Leftover:** the old `src/` is still on disk, because removing it was not
-  permitted in this session. It is no longer built.
+- **Leftover:** the old `src/` stayed on disk until 2026-10-16, when it was
+  removed.
 
 ### 3. Parity harness
 
@@ -127,7 +166,7 @@ These are findings for the plan, not changes:
 - **Background:** gzweb ignores `<scene><background>`. gzweb-rs honours it.
   Allow-listed.
 - **Spot penumbra:** gzweb uses `max(1, …)`, so it is always ≥ 1. gzweb-rs
-  keeps three's [0, 1] range. There is no spot light in the corpus yet.
+  keeps three's [0, 1] range. Allow-listed (`lights` corpus).
 - **Ignored fields:** gzweb ignores `Visual.scale`, `Visual.transparency` and
   model-level visuals. gzweb-rs matches the first; the other two are not
   exercised yet.
@@ -137,9 +176,37 @@ These are findings for the plan, not changes:
 
 ### Next
 
-- **Corpus:** grow it with `lights.sdf`, `nested_model.sdf`, a mesh-heavy Fuel
-  world and a PBR world. That gives the comparator something to say about
-  meshes, spot lights and materials.
+- **Corpus:** done 2026-10-16, see the entry below.
 - **Phase 1:** reconnect, `wss://` (the native driver has no TLS yet), and
   sim-control services.
 - **Collada:** implement it per the spike's recommendation.
+
+## 2026-10-16: Corpus growth
+
+- `parity/record.sh` records a world from the Gazebo image in one step.
+- Recorded 10 more worlds; status table in PARITY.md §1. Six now pass and run
+  in `cargo test`.
+- **Sphere tessellation:** gzweb-rs now builds spheres and ellipsoids
+  vertex-for-vertex like three.js `SphereGeometry(r, 32, 32)`. Bevy's UV
+  sphere put rotated sphere bounds 1.5 mm off gzweb's.
+- **Spot penumbra** is allow-listed (`gzweb-spot-penumbra-clamp`).
+- **gzweb fails on four worlds:** the `PixelFormatType` decode error (camera
+  sensors) and a null `albedo_map` in `particle_emitter`. No reference is
+  possible until gzweb is fixed.
+- **Gaps found:** heightmaps, Collada (`import_mesh`), and HTTP asset capture
+  (Fuel meshes and textures are fetched live, so those worlds aren't
+  hermetic).
+
+## 2026-10-17: Fuel assets without committing them
+
+- `gz-parity mirror`: a caching HTTP mirror with SHA-256 lock files; spec in
+  PARITY.md §1. Measured cost of committing the files instead: 25 MB for
+  three worlds, so they stay out of the repo.
+- gzweb-rs `--http-mirror URL` (wasm: `?http_mirror=`); HTTP asset URLs now
+  encode spaces.
+- `gaps.toml` per corpus for not-yet-ported features; `heightmap` and
+  `import_mesh` now pass with gaps.
+- CI: a separate `fuel` job; the browser parity job covers all six offline
+  worlds and never contacts Fuel.
+- Fixed `parity/run.sh`'s exit trap, which `set -e` cut short and left the
+  second server running.

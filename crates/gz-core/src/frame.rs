@@ -61,7 +61,10 @@ mod tests {
     #[test]
     fn empty_fields() {
         let f = Frame::parse(b"protos,,,").unwrap();
-        assert_eq!((f.op, f.topic, f.msg_type, f.payload), ("protos", "", "", &b""[..]));
+        assert_eq!(
+            (f.op, f.topic, f.msg_type, f.payload),
+            ("protos", "", "", &b""[..])
+        );
     }
 
     #[test]
@@ -72,8 +75,14 @@ mod tests {
 
     #[test]
     fn build_matches_gzweb_join() {
-        assert_eq!(build("asset", "", "", "file:///a.dae"), "asset,,,file:///a.dae");
+        assert_eq!(
+            build("asset", "", "", "file:///a.dae"),
+            "asset,,,file:///a.dae"
+        );
         assert_eq!(build("sub", "/t", "", ""), "sub,/t,,");
-        assert_eq!(build_binary("pub", "worlds", "gz.msgs.StringMsg_V", b"\x01"), b"pub,worlds,gz.msgs.StringMsg_V,\x01");
+        assert_eq!(
+            build_binary("pub", "worlds", "gz.msgs.StringMsg_V", b"\x01"),
+            b"pub,worlds,gz.msgs.StringMsg_V,\x01"
+        );
     }
 }

@@ -50,11 +50,17 @@ fn ws_request_uri(path: &Path) -> Option<String> {
     }
 }
 
-fn http_url(path: &Path) -> String {
-    let p = path.to_string_lossy().replace('\\', "/");
-    match p.strip_prefix("http:/") {
-        Some(rest) => format!("http://{rest}"),
-        None => format!("https://{p}"),
+/// Inverse of [`asset_path`] for the HTTP source. With a `mirror`, HTTPS
+/// URLs become `<mirror>/<host>/<path>` (see `gz-parity mirror`).
+fn http_url(path: &Path, mirror: Option<&str>) -> String {
+    let p = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace(' ', "%20");
+    match (p.strip_prefix("http:/"), mirror) {
+        (Some(rest), _) => format!("http://{rest}"),
+        (None, Some(m)) => format!("{}/{p}", m.trim_end_matches('/')),
+        (None, None) => format!("https://{p}"),
     }
 }
 
@@ -72,15 +78,23 @@ struct StoreInner {
     to_request: Vec<String>,
 }
 
-/// Shared between [`WsAssetReader`] (on IO task threads) and the connection
+/// Shared between the websocket asset reader (on IO task threads) and the connection
 /// system. Readers register a waiter and sleep; the connection system sends
 /// the request and later wakes the waiters with the reply.
 #[derive(Resource, Clone, Default)]
 pub struct WsAssetStore(Arc<Mutex<StoreInner>>);
 
 impl WsAssetStore {
+    /// A panicking reader can't leave the maps inconsistent (every update is
+    /// a single insert/remove), so a poisoned lock is safe to reuse.
+    fn lock(&self) -> std::sync::MutexGuard<'_, StoreInner> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn deliver(&self, uri: &str, result: AssetResult) {
-        let mut inner = self.0.lock().unwrap();
+        let mut inner = self.lock();
         match inner.waiters.remove(uri) {
             Some(waiters) => {
                 for tx in waiters {
@@ -95,12 +109,12 @@ impl WsAssetStore {
 
     /// URIs that readers are waiting for and that have not been requested yet.
     pub fn take_requests(&self) -> Vec<String> {
-        std::mem::take(&mut self.0.lock().unwrap().to_request)
+        std::mem::take(&mut self.lock().to_request)
     }
 
     /// Fail every waiting reader (e.g. the connection closed).
     pub fn fail_all(&self, reason: &str) {
-        let mut inner = self.0.lock().unwrap();
+        let mut inner = self.lock();
         for (_, waiters) in inner.waiters.drain() {
             for tx in waiters {
                 let _ = tx.try_send(Err(reason.to_string()));
@@ -109,9 +123,15 @@ impl WsAssetStore {
         inner.to_request.clear();
     }
 
-    async fn fetch(&self, uri: &str) -> AssetResult {
+    /// Number of readers currently waiting, over all URIs.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> usize {
+        self.lock().waiters.values().map(Vec::len).sum()
+    }
+
+    pub(crate) async fn fetch(&self, uri: &str) -> AssetResult {
         let rx = {
-            let mut inner = self.0.lock().unwrap();
+            let mut inner = self.lock();
             if let Some(result) = inner.ready.remove(uri) {
                 return result;
             }
@@ -165,11 +185,13 @@ impl AssetReader for WsAssetReader {
 
 // ─── HTTP(S) assets (Fuel and other web URLs) ───────────────────────────────
 
-struct HttpAssetReader;
+struct HttpAssetReader {
+    mirror: Option<String>,
+}
 
 impl AssetReader for HttpAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
-        let url = http_url(path);
+        let url = http_url(path, self.mirror.as_deref());
         match fetch_bytes(&url).await {
             Ok(bytes) => Ok(VecReader::new(bytes)),
             Err(e) => {
@@ -227,7 +249,11 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
 
 /// Registers the `wsasset://` and `gzhttps://` sources. **Must be added
 /// before `DefaultPlugins`**, because `AssetPlugin` builds the sources.
-pub struct GzAssetSourcesPlugin;
+#[derive(Default)]
+pub struct GzAssetSourcesPlugin {
+    /// Fetch HTTPS assets through this `gz-parity mirror` base URL.
+    pub http_mirror: Option<String>,
+}
 
 impl Plugin for GzAssetSourcesPlugin {
     fn build(&self, app: &mut App) {
@@ -243,7 +269,14 @@ impl Plugin for GzAssetSourcesPlugin {
         )
         .register_asset_source(
             HTTP_SOURCE,
-            AssetSourceBuilder::new(|| Box::new(HttpAssetReader)),
+            AssetSourceBuilder::new({
+                let mirror = self.http_mirror.clone();
+                move || {
+                    Box::new(HttpAssetReader {
+                        mirror: mirror.clone(),
+                    })
+                }
+            }),
         )
         .insert_resource(store);
     }
@@ -252,6 +285,7 @@ impl Plugin for GzAssetSourcesPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::tasks::block_on;
 
     #[test]
     fn paths_round_trip() {
@@ -276,31 +310,190 @@ mod tests {
             "gzhttps://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"
         );
         assert_eq!(
-            http_url(Path::new("fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb")),
-            "https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"
+            http_url(
+                Path::new("fuel.gazebosim.org/1.0/o/models/m m/1/files/a.glb"),
+                None
+            ),
+            "https://fuel.gazebosim.org/1.0/o/models/m%20m/1/files/a.glb"
         );
+        assert_eq!(
+            http_url(
+                Path::new("fuel.gazebosim.org/1.0/a.glb"),
+                Some("http://127.0.0.1:9101/")
+            ),
+            "http://127.0.0.1:9101/fuel.gazebosim.org/1.0/a.glb"
+        );
+    }
+
+    #[test]
+    fn plain_http_keeps_its_scheme() {
+        assert_eq!(
+            asset_path("http://127.0.0.1:8/a.obj"),
+            "gzhttps://http:/127.0.0.1:8/a.obj"
+        );
+        assert_eq!(
+            http_url(Path::new("http:/127.0.0.1:8/a.obj"), Some("http://m")),
+            "http://127.0.0.1:8/a.obj"
+        );
+        assert_eq!(ws_request_uri(Path::new("elsewhere/a.obj")), None);
+    }
+
+    fn spawn_fetch(
+        store: &WsAssetStore,
+        uri: &'static str,
+    ) -> std::thread::JoinHandle<AssetResult> {
+        let store = store.clone();
+        std::thread::spawn(move || block_on(store.fetch(uri)))
+    }
+
+    fn wait_for_waiters(store: &WsAssetStore, n: usize) {
+        while store.waiting() < n {
+            std::thread::yield_now();
+        }
     }
 
     #[test]
     fn store_requests_once_and_wakes_all_waiters() {
         let store = WsAssetStore::default();
-        let a = store.clone();
-        let b = store.clone();
-        let fa = bevy::tasks::futures_lite::future::block_on(async {
-            let f1 = a.fetch("/x");
-            let f2 = b.fetch("/x");
-            let (r1, r2) = bevy::tasks::futures_lite::future::zip(
-                f1,
-                bevy::tasks::futures_lite::future::or(f2, async {
-                    // Deliver once both waiters are registered.
-                    assert_eq!(store.take_requests(), ["/x"]);
-                    store.deliver("/x", Ok(vec![1, 2]));
-                    std::future::pending::<AssetResult>().await
-                }),
-            )
-            .await;
-            (r1, r2)
+        let a = spawn_fetch(&store, "/x");
+        let b = spawn_fetch(&store, "/x");
+        wait_for_waiters(&store, 2);
+        assert_eq!(store.take_requests(), ["/x"]);
+        assert!(store.take_requests().is_empty());
+        store.deliver("/x", Ok(vec![1, 2]));
+        assert_eq!(a.join().unwrap(), Ok(vec![1, 2]));
+        assert_eq!(b.join().unwrap(), Ok(vec![1, 2]));
+    }
+
+    #[test]
+    fn a_reply_before_the_request_is_kept_for_the_reader() {
+        let store = WsAssetStore::default();
+        store.deliver("/early", Ok(vec![9]));
+        assert_eq!(block_on(store.fetch("/early")), Ok(vec![9]));
+        // Consumed: nothing left over, and nothing to request.
+        assert_eq!(store.lock().ready.len(), 0);
+        assert!(store.take_requests().is_empty());
+    }
+
+    #[test]
+    fn fail_all_wakes_waiters_and_drops_pending_requests() {
+        let store = WsAssetStore::default();
+        let a = spawn_fetch(&store, "/a");
+        wait_for_waiters(&store, 1);
+        store.fail_all("gone");
+        assert_eq!(a.join().unwrap(), Err("gone".into()));
+        assert!(store.take_requests().is_empty());
+    }
+
+    #[test]
+    fn a_dropped_waiter_channel_is_an_error() {
+        let store = WsAssetStore::default();
+        let a = spawn_fetch(&store, "/a");
+        wait_for_waiters(&store, 1);
+        // Dropping the senders without replying closes the channel.
+        store.lock().waiters.clear();
+        assert_eq!(a.join().unwrap(), Err("asset store closed".into()));
+    }
+
+    #[test]
+    fn a_poisoned_lock_is_recovered() {
+        let store = WsAssetStore::default();
+        let s = store.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = s.lock();
+            panic!("poison the store");
+        })
+        .join();
+        assert!(store.0.is_poisoned());
+        store.deliver("/p", Ok(vec![1]));
+        assert_eq!(block_on(store.fetch("/p")), Ok(vec![1]));
+    }
+
+    async fn read_all(r: &impl AssetReader, path: &str) -> Result<Vec<u8>, AssetReaderError> {
+        let mut reader = r.read(Path::new(path)).await?;
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf).await.unwrap();
+        Ok(buf)
+    }
+
+    #[test]
+    fn ws_reader_serves_replies_and_maps_failures_to_not_found() {
+        let store = WsAssetStore::default();
+        let reader = WsAssetReader {
+            store: store.clone(),
+        };
+        store.deliver("/m/a.stl", Ok(vec![4, 5]));
+        store.deliver("pkg/b.stl", Err("asset_not_found".into()));
+        block_on(async {
+            assert_eq!(read_all(&reader, "abs/m/a.stl").await.unwrap(), [4, 5]);
+            assert!(matches!(
+                read_all(&reader, "rel/pkg/b.stl").await,
+                Err(AssetReaderError::NotFound(_))
+            ));
+            assert!(matches!(
+                read_all(&reader, "neither/c.stl").await,
+                Err(AssetReaderError::NotFound(_))
+            ));
+            assert!(reader.read_meta(Path::new("abs/m/a.stl")).await.is_err());
+            assert!(reader.read_directory(Path::new("abs/m")).await.is_err());
+            assert!(!reader.is_directory(Path::new("abs/m")).await.unwrap());
         });
-        assert_eq!(fa, (Ok(vec![1, 2]), Ok(vec![1, 2])));
+    }
+
+    /// Answers one request per connection: 200 with `body` for `/ok`, else 404.
+    fn http_server(body: &'static [u8]) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                let mut buf = [0u8; 2048];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let ok = String::from_utf8_lossy(&buf[..n]).starts_with("GET /ok ");
+                let head = if ok { "200 OK" } else { "404 Not Found" };
+                let body = if ok { body } else { b"" };
+                let _ = write!(
+                    s,
+                    "HTTP/1.1 {head}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(body);
+            }
+        });
+        format!("http:/{addr}")
+    }
+
+    #[test]
+    fn http_reader_fetches_and_maps_failures_to_not_found() {
+        let base = http_server(b"mesh");
+        let reader = HttpAssetReader { mirror: None };
+        block_on(async {
+            assert_eq!(
+                read_all(&reader, &format!("{base}/ok")).await.unwrap(),
+                b"mesh"
+            );
+            assert!(matches!(
+                read_all(&reader, &format!("{base}/missing")).await,
+                Err(AssetReaderError::NotFound(_))
+            ));
+            assert!(reader.read_meta(Path::new("x")).await.is_err());
+            assert!(reader.read_directory(Path::new("x")).await.is_err());
+            assert!(!reader.is_directory(Path::new("x")).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn plugin_registers_both_sources_and_the_store() {
+        let mut app = App::new();
+        app.add_plugins((
+            GzAssetSourcesPlugin::default(),
+            AssetPlugin::default(),
+            bevy::time::TimePlugin,
+            TaskPoolPlugin::default(),
+        ));
+        assert!(app.world().contains_resource::<WsAssetStore>());
+        let server = app.world().resource::<AssetServer>();
+        assert!(server.get_source(WS_SOURCE).is_ok());
+        assert!(server.get_source(HTTP_SOURCE).is_ok());
     }
 }

@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,nested_model_world,,
+sub,/world/nested_model_world/dynamic_pose/info,,
+sub,/world/nested_model_world/scene/info,,

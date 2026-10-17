@@ -1,0 +1,4 @@
+# Tests may unwrap; production code must handle or `expect` with a reason.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true

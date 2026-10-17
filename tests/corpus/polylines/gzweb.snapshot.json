@@ -1,0 +1,357 @@
+{
+  "format": "gz-parity-snapshot/1",
+  "source": "gzweb",
+  "world": "polylines",
+  "scene": {
+    "ambient": [0.4, 0.4, 0.4],
+    "clear_color": [0.698039, 0.698039, 0.698039],
+    "camera": {
+      "position": [-6, 0, 6],
+      "target": [0, 0, 0],
+      "fov_deg": 60,
+      "near": 0.01,
+      "far": 1000
+    },
+    "grid_visible": false,
+    "sky": null
+  },
+  "nodes": [
+    {
+      "path": "ground_plane",
+      "kind": "model",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "ground_plane/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "ground_plane/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "plane",
+        "aabb_world": {
+          "min": [-50, -50, 0],
+          "max": [50, 50, 0]
+        },
+        "mesh_count": 1,
+        "vertex_count": 4
+      },
+      "material": {
+        "color": [0.8, 0.8, 0.8],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "triangle",
+      "kind": "model",
+      "local": {
+        "pos": [-4.999543, -0.006646, 0.499999],
+        "quat": [0.000069, 0.707107, -0.000069, 0.707107],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.999543, -0.006646, 0.499999],
+        "quat": [0.000069, 0.707107, -0.000069, 0.707107],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "triangle/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.999543, -0.006646, 0.499999],
+        "quat": [0.000069, 0.707107, -0.000069, 0.707107],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "triangle/link/triangle",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.999543, -0.006646, 0.499999],
+        "quat": [0.000069, 0.707107, -0.000069, 0.707107],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "polyline",
+        "aabb_world": null,
+        "mesh_count": 0,
+        "vertex_count": 0
+      },
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "pentagon",
+      "kind": "model",
+      "local": {
+        "pos": [-4.908278, -3, 0.3],
+        "quat": [0, 0.707107, 0, 0.707106],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.908278, -3, 0.3],
+        "quat": [0, 0.707107, 0, 0.707106],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "pentagon/polyLine2",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.908278, -3, 0.3],
+        "quat": [0, 0.707107, 0, 0.707106],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "pentagon/polyLine2/polyLineGeom2",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.908278, -3, 0.3],
+        "quat": [0, 0.707107, 0, 0.707106],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "polyline",
+        "aabb_world": null,
+        "mesh_count": 0,
+        "vertex_count": 0
+      },
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "cube",
+      "kind": "model",
+      "local": {
+        "pos": [-4.951517, 1.382373, -0.000001],
+        "quat": [0.683306, 0.181914, 0.673916, 0.214097],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.951517, 1.382373, -0.000001],
+        "quat": [0.683306, 0.181914, 0.673916, 0.214097],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "cube/polyLine2",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.951517, 1.382373, -0.000001],
+        "quat": [0.683306, 0.181914, 0.673916, 0.214097],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "cube/polyLine2/polyLineGeom2",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.951517, 1.382373, -0.000001],
+        "quat": [0.683306, 0.181914, 0.673916, 0.214097],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "polyline",
+        "aabb_world": null,
+        "mesh_count": 0,
+        "vertex_count": 0
+      },
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "letter",
+      "kind": "model",
+      "local": {
+        "pos": [-4.998149, 1.071623, 2.036789],
+        "quat": [0.128097, 0.695407, 0.127953, 0.695434],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.998149, 1.071623, 2.036789],
+        "quat": [0.128097, 0.695407, 0.127953, 0.695434],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "letter/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.998149, 1.071623, 2.036789],
+        "quat": [0.128097, 0.695407, 0.127953, 0.695434],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "letter/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [-4.998149, 1.071623, 2.036789],
+        "quat": [0.128097, 0.695407, 0.127953, 0.695434],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "polyline",
+        "aabb_world": null,
+        "mesh_count": 0,
+        "vertex_count": 0
+      },
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "sun",
+      "kind": "light",
+      "local": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": {
+        "type": "directional",
+        "color": [1, 1, 1],
+        "intensity": 0.98911,
+        "range": null,
+        "angle": null,
+        "penumbra": null,
+        "decay": null,
+        "cast_shadow": true,
+        "direction_world": [-0.483368, 0.096674, -0.870063]
+      }
+    }
+  ]
+}

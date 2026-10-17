@@ -19,13 +19,29 @@ pub struct ReplayOptions {
     pub stream_limit: Option<usize>,
     /// Exit after this many connections (0 = serve forever).
     pub connections: usize,
+    /// When set, `auth` must carry this key (gz-launch `authorization_key`);
+    /// otherwise every key is accepted.
+    pub key: Option<String>,
 }
 
 pub fn serve(corpus: &Corpus, opts: &ReplayOptions) -> Result<(), String> {
-    let listener = TcpListener::bind(("127.0.0.1", opts.port)).map_err(|e| e.to_string())?;
-    eprintln!("replay: serving '{}' on ws://127.0.0.1:{}", corpus.manifest.world, opts.port);
+    let listener = TcpListener::bind(("127.0.0.1", opts.port)).map_err(crate::message)?;
+    serve_on(listener, corpus, opts)
+}
+
+/// Like [`serve`], on an already bound listener (`opts.port` is ignored).
+pub fn serve_on(
+    listener: TcpListener,
+    corpus: &Corpus,
+    opts: &ReplayOptions,
+) -> Result<(), String> {
+    let port = listener.local_addr().map_err(crate::message)?.port();
+    eprintln!(
+        "replay: serving '{}' on ws://127.0.0.1:{port}",
+        corpus.manifest.world
+    );
     if let Some(path) = &opts.client_log {
-        std::fs::write(path, "").map_err(|e| e.to_string())?;
+        std::fs::write(path, "").map_err(crate::message)?;
     }
 
     let mut served = 0;
@@ -66,20 +82,26 @@ fn handle(
             std::fs::OpenOptions::new()
                 .append(true)
                 .open(p)
-                .map_err(|e| e.to_string())?,
+                .map_err(crate::message)?,
         ),
         None => None,
     };
     let m = &corpus.manifest;
-    let send_idx = |ws: &mut tungstenite::WebSocket<std::net::TcpStream>, idx: usize| -> Result<(), String> {
-        let data = corpus.frame(idx).ok_or(format!("corpus has no frame {idx}"))?;
-        ws.send(Message::Binary(data.to_vec().into())).map_err(|e| e.to_string())
-    };
+    let send_idx =
+        |ws: &mut tungstenite::WebSocket<std::net::TcpStream>, idx: usize| -> Result<(), String> {
+            let data = corpus
+                .frame(idx)
+                .ok_or(format!("corpus has no frame {idx}"))?;
+            ws.send(Message::Binary(data.to_vec().into()))
+                .map_err(crate::message)
+        };
 
     loop {
         let msg = match ws.read() {
             Ok(m) => m,
-            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::Protocol(_)) => return Ok(()),
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::Protocol(_)) => {
+                return Ok(())
+            }
             Err(e) => return Err(e.to_string()),
         };
         let text = match msg {
@@ -98,9 +120,19 @@ fn handle(
             let _ = writeln!(f, "{text}");
         }
 
-        let Some(fr) = Frame::parse(text.as_bytes()) else { continue };
+        let Some(fr) = Frame::parse(text.as_bytes()) else {
+            continue;
+        };
         match fr.op {
-            "auth" => ws.send(Message::Text("authorized".into())).map_err(|e| e.to_string())?,
+            "auth" => {
+                let ok = opts
+                    .key
+                    .as_deref()
+                    .is_none_or(|k| k.as_bytes() == fr.payload);
+                let reply = if ok { "authorized" } else { "invalid" };
+                ws.send(Message::Text(reply.into()))
+                    .map_err(crate::message)?;
+            }
             "protos" => {
                 if let Some(i) = m.protos {
                     send_idx(ws, i)?;
@@ -125,8 +157,14 @@ fn handle(
                             data: "asset_not_found".into(),
                             ..Default::default()
                         };
-                        let data = frame::build_binary("asset", &uri, "gz.msgs.StringMsg", &err.encode_to_vec());
-                        ws.send(Message::Binary(data.into())).map_err(|e| e.to_string())?;
+                        let data = frame::build_binary(
+                            "asset",
+                            &uri,
+                            "gz.msgs.StringMsg",
+                            &err.encode_to_vec(),
+                        );
+                        ws.send(Message::Binary(data.into()))
+                            .map_err(crate::message)?;
                     }
                 }
             }

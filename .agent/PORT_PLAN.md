@@ -42,7 +42,7 @@ worklog yet — start `.agent/WORKLOG.md` (dated entries: what changed, what was
 >
 > See WORKLOG.md.
 
-1. **`src/websocket.rs:431`** — on a binary `authorized`/`invalid` frame it calls
+1. **`src/websocket.rs:431`** (old prototype, since removed) — on a binary `authorized`/`invalid` frame it calls
    `ws.receiver.try_recv()` again, silently **dropping the next real message**. Also the
    auth reply is never acted on in that path (gzweb re-sends `protos` on `authorized`).
 2. **No entity hierarchy.** Everything is spawned flat with pre-composed world transforms
@@ -163,6 +163,9 @@ Parity tests allow-list these with a reason string:
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
 - AudioTopic uses the *new* playback flag.
+- Unknown light types fall back to a point light (gzweb logs and adds nothing).
+- A zero quaternion becomes identity; a spot with both angles 0 gets penumbra 0
+  (gzweb: NaN).
 - Light units: Bevy is physically based (lux / lumens); a single documented mapping
   from gzweb's three.js intensities is used and compared post-mapping.
 
