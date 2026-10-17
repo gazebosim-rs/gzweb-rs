@@ -174,18 +174,50 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 | STL | `bevy_stl` |
 | Collada (`.dae`) | Not yet: pink placeholder, excluded from snapshots. See [`spikes/collada/REPORT.md`](../spikes/collada/REPORT.md). |
 
-## Rendering defaults (from gzweb)
+## Rendering
 
-| Setting | Value |
-|---|---|
-| Camera position | (-6, 0, 6), looking at the origin |
-| Field of view | 60° vertical |
-| Near / far planes | 0.01 / 1000 |
-| Clear colour | `0xb2b2b2`, unless the scene sets a background |
-| Ambient light | `0x191919` until the scene sets it |
+gzweb-rs does **not** copy gzweb's look (three.js r141, legacy lights, no tone
+mapping, flat ambient). It uses Bevy's physically based pipeline at its best
+(`gz-bevy/src/render.rs`). Scene structure and light *parameters* still follow
+Gazebo, and the parity snapshot compares those, not pixels.
 
-Light intensities use gzweb's three.js semantics in `LightDesc`. The Bevy unit
-mapping in `spawn::spawn_light` is provisional and gets calibrated in Phase 2.
+| | High (default) | Low (`--quality low`, `?quality=low`) |
+|---|---|---|
+| Camera | HDR, TonyMcMapface tone mapping, fixed exposure, natural bloom | HDR, tone mapping, exposure |
+| Anti-aliasing | TAA | 4x MSAA |
+| Ambient occlusion | SSAO (high) | none |
+| Shadows | 4096 px, 4 cascades to 150 m, temporal filtering | 2048 px, Gaussian |
+
+**Units.** A Gazebo directional light of intensity 1 is 10 000 lux
+(`render::units::SUN_LUX`). The exposure renders a white surface facing it at
+1.0 before tone mapping, opened half a stop. Point and spot lights of
+intensity 1 light a surface 1 m away as brightly as the sun (4π sr × 10 000
+lux). Intensities are the message's `intensity`, not gzweb's
+attenuation-derived value; `range` is Bevy's cutoff.
+
+**Environment.** Set from each new scene (`render::GzEnvironment`):
+
+- no `<sky>`: the background colour, plus image-based fill light from a
+  procedural studio cubemap (horizon = background, brighter above, darker
+  below, tinted by the scene's ambient colour) at 35% of the sun's strength;
+- `<sky>` without a cubemap: Bevy's physically based atmosphere, lit by the
+  scene's directional lights, which also lights the scene;
+- `<sky>` with a cubemap (header `cubemap_uri` as gzweb reads it, or the
+  field): a skybox that also provides the image-based light (DDS supported);
+- `<fog>`: Bevy distance fog (linear, exponential, exponential squared).
+
+`GlobalAmbientLight` keeps the scene's ambient colour (the snapshot reports
+it) but has zero brightness; the environment map is the fill light. Bevy
+0.18's environment-map generator breaks if a camera switches sources within
+a few frames, so nothing is installed until the first scene, and the studio
+cubemap is 512 px like the atmosphere's.
+
+**Grid.** Gazebo's 20 × 20 × 1 m grid, drawn with gizmos when the scene's
+`grid` flag is set (G toggles). Dark lines, because gizmos aren't exposed.
+
+**Defaults kept from gzweb:** camera at (-6, 0, 6) looking at the origin,
+60° vertical FOV, near/far 0.01/1000, clear colour `0xb2b2b2` unless the
+scene sets a background.
 
 ## Camera controls
 
@@ -218,6 +250,10 @@ writes the snapshot and exits:
 
 Pose streams don't count as activity, because they never stop on a live
 simulation.
+
+`--screenshot out.png` instead opens a fixed 1280×720 window at scale 1 (the
+parity harness's viewport), with the same settling rules and no HUD, saves a
+screenshot and exits. It needs a GPU. Use it to review rendering changes.
 
 ## Conventions
 

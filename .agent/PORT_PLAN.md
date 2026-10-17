@@ -174,8 +174,10 @@ Parity tests allow-list these with a reason string:
   old `ignition.`/`gazebo.` names, so it always sends `sub`).
 - Reconnect with backoff (gzweb stays disconnected). Interactive mode also
   subscribes to `/world/<w>/stats`; snapshot mode keeps gzweb's exact frames.
-- Light units: Bevy is physically based (lux / lumens); a single documented mapping
-  from gzweb's three.js intensities is used and compared post-mapping.
+- Rendering does not match gzweb's look (decided 2026-10-17): HDR, tone mapping,
+  TAA, SSAO, image-based light, atmosphere, fog and Gazebo's grid. Light
+  brightness uses the message `intensity`; the snapshot still compares gzweb's
+  derived intensity. See DESIGN.md "Rendering".
 
 ---
 
@@ -196,7 +198,8 @@ gzweb doesn't handle it either)
 - `scene/info` incremental spawn; optionally `scene/deletion`.
 - Sim control services.
 
-**Phase 2: Scene graph and lighting parity**
+**Phase 2: Scene graph and lighting** (done 2026-10-17). Decided: render with
+Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - Light rules (intensity formula, ranges, spot angles/falloff, direction targets,
   `cast_shadows`, `is_light_off`, `enableLights`).
 - Ambient, clear colour, default camera, shadows, grid.

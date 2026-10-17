@@ -247,3 +247,21 @@ These are findings for the plan, not changes:
 - The replay server drops its first connection at the first `sub`, not on a
   timer, so the reconnect test no longer depends on timing.
 - `frame::build` takes bytes (the old `String` version is gone).
+
+## 2026-10-17: Phase 2, rendering
+
+- **Decision:** don't match gzweb's rendering; use Bevy's best. Calibrating
+  to three.js legacy units first showed how far gzweb's look is from good
+  (ambient 1.0 with no tone mapping clips most worlds to white).
+- `render.rs`: HDR + TonyMcMapface (AgX looked flat on Gazebo's saturated
+  primaries) + bloom, TAA, SSAO, 4096 px cascaded shadows, image-based light
+  (procedural studio cubemap, or the sky's), Bevy's atmosphere for skies
+  without a cubemap, distance fog, Gazebo's grid. `--quality low`.
+- `--screenshot` for visual review (`target/visual/*.png` locally).
+- `gz-core`: fog parsed; the sky cubemap falls back to Harmonic's
+  `cubemap_uri` field.
+- **Bevy issue:** switching a camera's environment-map source within a few
+  frames fails wgpu validation (mip count of cached intermediate textures).
+  Worked around; worth reporting upstream.
+- Not verified: a DDS cubemap sky (no corpus world has one), and the browser
+  build of these effects (WebGPU should support all of them).

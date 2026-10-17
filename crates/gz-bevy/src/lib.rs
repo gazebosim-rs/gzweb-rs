@@ -9,6 +9,7 @@ pub mod camera;
 pub mod connection;
 pub mod driver;
 pub mod hud;
+pub mod render;
 pub mod snapshot;
 pub mod spawn;
 
@@ -31,6 +32,7 @@ pub struct GzConfig {
     pub reconnect: bool,
     /// Extra PEM CA certificates to trust for `wss://` (native only).
     pub ca_cert: Option<std::path::PathBuf>,
+    pub quality: render::Quality,
 }
 
 impl Default for GzConfig {
@@ -42,6 +44,7 @@ impl Default for GzConfig {
             headless: false,
             reconnect: true,
             ca_cert: None,
+            quality: render::Quality::default(),
         }
     }
 }
@@ -54,10 +57,11 @@ impl Plugin for GzWebPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.config.clone())
             .insert_resource(ClearColor(camera::CLEAR_COLOR))
-            // gzweb's ambient light colour is 0x191919 until the scene sets it.
+            // The colour gzweb uses until the scene sets one; the image-based
+            // fill light does the lighting (see `render`).
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb(25.0 / 255.0, 25.0 / 255.0, 25.0 / 255.0),
-                brightness: 300.0,
+                brightness: 0.0,
                 affects_lightmapped_meshes: true,
             })
             .add_message::<connection::GzCommand>()
@@ -74,8 +78,17 @@ impl Plugin for GzWebPlugin {
             )
             .add_systems(
                 Update,
-                (connection::pump, spawn::apply_scene, spawn::apply_poses).chain(),
+                (
+                    connection::pump,
+                    spawn::apply_scene,
+                    render::apply_environment,
+                    spawn::apply_poses,
+                )
+                    .chain(),
             );
+        render::configure(app, self.config.quality);
+        app.add_systems(Startup, render::setup_gizmos)
+            .add_systems(Update, render::draw_grid);
 
         if !self.config.headless {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
@@ -89,6 +102,7 @@ impl Plugin for GzWebPlugin {
                         hud::update_status,
                         hud::update_sim,
                         hud::sim_keys,
+                        render::grid_key,
                     ),
                 );
         }
@@ -100,7 +114,7 @@ impl Plugin for GzWebPlugin {
 pub(crate) mod test_util {
     use bevy::prelude::*;
 
-    use crate::{camera, connection, spawn, GzAssetSourcesPlugin, GzConfig};
+    use crate::{camera, connection, render, spawn, GzAssetSourcesPlugin, GzConfig};
 
     /// No renderer, window or connection; the scene, pose and camera
     /// systems run against resources the test fills in.
@@ -116,6 +130,7 @@ pub(crate) mod test_util {
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .insert_resource(config)
         .insert_resource(ClearColor(camera::CLEAR_COLOR))
         .init_resource::<GlobalAmbientLight>()
@@ -124,13 +139,24 @@ pub(crate) mod test_util {
         .init_resource::<spawn::GzIndex>()
         .init_resource::<spawn::GzLoads>()
         .init_resource::<camera::GzCameraTarget>()
+        .init_resource::<render::GzEnvironment>()
+        .init_resource::<render::GzGrid>()
+        .insert_resource(render::RenderQuality::default())
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
             world: Some("w".into()),
             ..connection::GzStatus::new("ws://test")
         })
         .add_systems(Startup, (spawn::spawn_root, camera::spawn_camera))
-        .add_systems(Update, (spawn::apply_scene, spawn::apply_poses).chain());
+        .add_systems(
+            Update,
+            (
+                spawn::apply_scene,
+                render::apply_environment,
+                spawn::apply_poses,
+            )
+                .chain(),
+        );
         app
     }
 }
@@ -155,11 +181,13 @@ mod tests {
             AssetPlugin::default(),
             bevy::input::InputPlugin,
             TransformPlugin,
+            bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: format!("ws://127.0.0.1:{port}"),
@@ -192,11 +220,13 @@ mod tests {
             GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             TransformPlugin,
+            bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: "ws://127.0.0.1:1".into(),

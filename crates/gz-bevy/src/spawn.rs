@@ -9,6 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 
+use bevy::light::CascadeShadowConfigBuilder;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 use gz_core::scene::{
@@ -19,6 +20,7 @@ use gz_core::uri;
 
 use crate::assets;
 use crate::connection::GzInbox;
+use crate::render::{self, GzEnvironment, GzGrid};
 use crate::GzConfig;
 
 /// Rotates Gazebo Z-up into Bevy Y-up: gz `(x, y, z)` → bevy `(x, z, -y)`.
@@ -92,8 +94,8 @@ pub fn apply_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
     config: Res<GzConfig>,
-    mut ambient: ResMut<GlobalAmbientLight>,
-    mut cameras: Query<&mut Camera>,
+    mut environment: ResMut<GzEnvironment>,
+    mut grid: ResMut<GzGrid>,
 ) {
     let Some(root) = index.root else { return };
 
@@ -112,18 +114,8 @@ pub fn apply_scene(
             loads.0.clear();
         }
         let desc = SceneDesc::from_msg_with(&msg, opts, &mut index.paths);
-        if let Some([r, g, b]) = desc.ambient {
-            ambient.color = Color::srgb(r, g, b);
-        }
-        // gzweb keeps its fixed clear colour; we honour an explicit
-        // background (alpha > 0 means it was set).
-        if let Some([r, g, b, a]) = desc.background {
-            if a > 0.0 {
-                for mut cam in &mut cameras {
-                    cam.clear_color = ClearColorConfig::Custom(Color::srgb(r, g, b));
-                }
-            }
-        }
+        *environment = GzEnvironment::from_scene(&desc);
+        grid.visible = desc.grid;
         new_nodes.extend(desc.roots.iter().cloned());
         index.scene = Some(desc);
     }
@@ -454,8 +446,8 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
             local = local.looking_to(dir, up);
         }
     }
-    // Rendering units are provisional (Phase 2 calibrates them against gzweb).
-    let intensity = light.intensity as f32;
+    // Gazebo's own intensity, not gzweb's attenuation-derived one.
+    let intensity = light.msg_intensity as f32;
     let range = if light.range > 0.0 {
         light.range as f32
     } else {
@@ -466,7 +458,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
         LightType::Point => {
             e.insert(PointLight {
                 color,
-                intensity: intensity * 800_000.0,
+                intensity: render::units::point_lumens(intensity),
                 range,
                 shadows_enabled: light.cast_shadows,
                 ..default()
@@ -477,7 +469,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
             let inner = outer * (1.0 - light.penumbra.unwrap_or(0.0) as f32);
             e.insert(SpotLight {
                 color,
-                intensity: intensity * 800_000.0,
+                intensity: render::units::point_lumens(intensity),
                 range,
                 outer_angle: outer,
                 inner_angle: inner,
@@ -486,12 +478,23 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
             });
         }
         LightType::Directional => {
-            e.insert(DirectionalLight {
-                color,
-                illuminance: intensity * 10_000.0,
-                shadows_enabled: light.cast_shadows,
-                ..default()
-            });
+            e.insert((
+                DirectionalLight {
+                    color,
+                    illuminance: render::units::directional_lux(intensity),
+                    shadows_enabled: light.cast_shadows,
+                    ..default()
+                },
+                // Sharp near the camera, out to a typical Gazebo world's size.
+                CascadeShadowConfigBuilder {
+                    num_cascades: 4,
+                    minimum_distance: 0.1,
+                    first_cascade_far_bound: 5.0,
+                    maximum_distance: 150.0,
+                    overlap_proportion: 0.2,
+                }
+                .build(),
+            ));
         }
     }
 }

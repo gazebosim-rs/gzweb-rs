@@ -5,6 +5,7 @@ use bevy::input::mouse::MouseWheel;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
 
+use crate::render::{self, RenderQuality};
 use crate::spawn::gz_to_bevy;
 use crate::GzConfig;
 
@@ -24,7 +25,12 @@ impl Default for GzCameraTarget {
 /// gzweb's renderer clear colour, `0xb2b2b2`.
 pub const CLEAR_COLOR: Color = Color::srgb(178.0 / 255.0, 178.0 / 255.0, 178.0 / 255.0);
 
-pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<GzCameraTarget>) {
+pub fn spawn_camera(
+    mut commands: Commands,
+    config: Res<GzConfig>,
+    quality: Res<RenderQuality>,
+    target: Res<GzCameraTarget>,
+) {
     let to_bevy = gz_to_bevy();
     let pos = to_bevy * Vec3::new(-6.0, 0.0, 6.0);
     let focus = to_bevy * Vec3::from_array(target.0);
@@ -43,6 +49,7 @@ pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<G
         Transform::from_translation(pos).looking_at(focus, Vec3::Y),
         MainCamera,
     ));
+    render::camera_components(&mut camera, *quality);
     if !config.headless {
         camera.insert(GzOrbitControls {
             target: focus,
@@ -195,6 +202,7 @@ pub fn orbit_controls(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::Quality;
     use bevy::camera::primitives::Aabb;
     use bevy::camera::visibility::SetViewVisibility;
     use bevy::camera::{CameraProjection, RenderTargetInfo};
@@ -561,13 +569,17 @@ mod tests {
 
     #[test]
     fn spawned_camera_uses_gzweb_defaults_and_controls_only_with_a_window() {
-        for headless in [false, true] {
+        for (headless, quality) in [(false, Quality::High), (true, Quality::Low)] {
             let mut world = World::new();
             world.insert_resource(GzConfig {
                 headless,
                 ..default()
             });
             world.init_resource::<GzCameraTarget>();
+            world.insert_resource(RenderQuality {
+                quality,
+                ..default()
+            });
             world.run_system_once(spawn_camera).unwrap();
             let (t, proj, cam) = world
                 .query_filtered::<(&Transform, &Projection, &Camera), With<MainCamera>>()

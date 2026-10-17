@@ -1,11 +1,13 @@
 //! Exports the live ECS scene as a `gz-parity-snapshot/1` (see
-//! `.agent/PARITY.md` §3) once it has settled, then exits the app.
+//! `.agent/PARITY.md` §3) and/or a screenshot once it has settled, then exits
+//! the app.
 
 use std::path::PathBuf;
 
 use bevy::asset::RecursiveDependencyLoadState;
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{save_to_disk, Screenshot, ScreenshotCaptured};
 use gz_core::scene::NodeKind;
 use gz_core::snapshot::{
     Aabb, CameraInfo, GeometryInfo, LightInfo, Maps, MaterialInfo, SceneInfo, SkyInfo, SnapNode,
@@ -15,13 +17,17 @@ use gz_core::transport::Status;
 
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
+use crate::render::{GzEnvironment, GzGrid};
 use crate::spawn::{
     GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
 };
 
 #[derive(Resource, Clone, Debug)]
 pub struct SnapshotRequest {
-    pub out: PathBuf,
+    /// Where to write the snapshot JSON.
+    pub out: Option<PathBuf>,
+    /// Where to save a screenshot of the window (needs a window and GPU).
+    pub screenshot: Option<PathBuf>,
     /// Quiet time required after the last scene-changing message.
     pub settle_secs: f64,
     /// Give up (and write what there is, exiting non-zero) after this long.
@@ -40,6 +46,7 @@ pub fn snapshot_when_settled(
     scene_roots: Query<(&SceneRoot, Option<&Children>)>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
+    mut commands: Commands,
     mut done: Local<bool>,
 ) {
     if *done {
@@ -81,20 +88,37 @@ pub fn snapshot_when_settled(
         );
     }
 
-    let snapshot = build(&status, &index, &world_q);
-    let json = serde_json::to_string_pretty(&snapshot).expect("snapshot serializes");
-    if let Some(dir) = req.out.parent() {
-        let _ = std::fs::create_dir_all(dir);
+    if let Some(out) = &req.out {
+        let snapshot = build(&status, &index, &world_q);
+        let json = serde_json::to_string_pretty(&snapshot).expect("snapshot serializes");
+        if let Some(dir) = out.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        match std::fs::write(out, json) {
+            Ok(()) => info!("snapshot written to {}", out.display()),
+            Err(e) => error!("failed to write {}: {e}", out.display()),
+        }
     }
-    match std::fs::write(&req.out, json) {
-        Ok(()) => info!("snapshot written to {}", req.out.display()),
-        Err(e) => error!("failed to write {}: {e}", req.out.display()),
+    match (&req.screenshot, timed_out) {
+        // Exits once the frame has been captured and saved.
+        (Some(path), false) => {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(path.clone()))
+                .observe(exit_after_capture);
+        }
+        _ => {
+            exit.write(if timed_out {
+                AppExit::from_code(2)
+            } else {
+                AppExit::Success
+            });
+        }
     }
-    exit.write(if timed_out {
-        AppExit::from_code(2)
-    } else {
-        AppExit::Success
-    });
+}
+
+fn exit_after_capture(_: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>) {
+    exit.write(AppExit::Success);
 }
 
 type NodeData = (
@@ -133,6 +157,8 @@ pub struct SnapshotQueries<'w, 's> {
     clear: Res<'w, ClearColor>,
     meshes: Res<'w, Assets<Mesh>>,
     materials: Res<'w, Assets<StandardMaterial>>,
+    grid: Res<'w, GzGrid>,
+    environment: Res<'w, GzEnvironment>,
 }
 
 fn v3(v: Vec3) -> [f64; 3] {
@@ -236,9 +262,10 @@ fn build(status: &GzStatus, index: &GzIndex, q: &SnapshotQueries) -> Snapshot {
             ambient: Some(rgb(q.ambient.color)),
             clear_color: Some(clear_color),
             camera,
-            grid_visible: Some(false),
-            // The sky is not rendered yet.
-            sky: None::<SkyInfo>,
+            grid_visible: Some(q.grid.visible),
+            sky: q.environment.sky.as_ref().map(|cubemap| SkyInfo {
+                cubemap: cubemap.clone(),
+            }),
         },
         nodes,
     }
@@ -387,7 +414,8 @@ mod tests {
     fn writes_once_settled_and_skips_what_it_cannot_measure() {
         let out = out_path("settled");
         let mut app = app_with(SnapshotRequest {
-            out: out.clone(),
+            out: Some(out.clone()),
+            screenshot: None,
             settle_secs: 0.0,
             timeout_secs: 1e9,
         });
@@ -480,10 +508,39 @@ mod tests {
     }
 
     #[test]
+    fn a_screenshot_waits_for_the_capture() {
+        let mut app = app_with(SnapshotRequest {
+            out: None,
+            screenshot: Some(out_path("shot.png")),
+            settle_secs: 0.0,
+            timeout_secs: 1e9,
+        });
+        app.update();
+        app.world_mut().resource_mut::<GzIndex>().scene = Some(
+            gz_core::scene::SceneDesc::from_msg(&Default::default(), Default::default()),
+        );
+        app.update();
+        // No renderer here: the request is queued and the app keeps running.
+        assert_eq!(exit_code(&mut app), None);
+        let world = app.world_mut();
+        let shot = world
+            .query_filtered::<Entity, With<Screenshot>>()
+            .single(world)
+            .unwrap();
+        world.trigger(ScreenshotCaptured {
+            entity: shot,
+            image: Image::default(),
+        });
+        app.update();
+        assert_eq!(exit_code(&mut app), Some(AppExit::Success));
+    }
+
+    #[test]
     fn a_timeout_still_writes_and_exits_with_an_error() {
         let out = out_path("timeout");
         let mut app = app_with(SnapshotRequest {
-            out: out.clone(),
+            out: Some(out.clone()),
+            screenshot: Some(out_path("timeout.png")),
             settle_secs: 1e9,
             timeout_secs: 0.0,
         });
@@ -499,7 +556,8 @@ mod tests {
         // The output path is an existing directory.
         let out = std::env::temp_dir();
         let mut app = app_with(SnapshotRequest {
-            out,
+            out: Some(out),
+            screenshot: None,
             settle_secs: 1e9,
             timeout_secs: 0.0,
         });

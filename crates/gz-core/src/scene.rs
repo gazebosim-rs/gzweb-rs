@@ -207,12 +207,46 @@ pub struct SceneDesc {
     pub name: String,
     pub ambient: Option<[f32; 3]>,
     pub background: Option<[f32; 4]>,
-    /// `Some(uri)` when the scene has a sky; the URI is the `cubemap_uri`
-    /// header value, if any.
+    /// `Some(uri)` when the scene has a sky; the URI is the cubemap, if any
+    /// (the `cubemap_uri` header value gzweb reads, else the field).
     pub sky: Option<Option<String>>,
+    pub fog: Option<FogDesc>,
     pub grid: bool,
     pub shadows: bool,
     pub roots: Vec<Node>,
+}
+
+/// `gz.msgs.Fog`; `None` in [`SceneDesc::fog`] for type `NONE`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FogDesc {
+    pub color: [f32; 3],
+    pub falloff: FogFalloff,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FogFalloff {
+    Linear { start: f32, end: f32 },
+    Exponential { density: f32 },
+    ExponentialSquared { density: f32 },
+}
+
+fn fog_desc(fog: &msgs::Fog) -> Option<FogDesc> {
+    use msgs::fog::FogType;
+    let falloff = match FogType::try_from(fog.r#type).ok()? {
+        FogType::None => return None,
+        FogType::Linear => FogFalloff::Linear {
+            start: fog.start,
+            end: fog.end,
+        },
+        FogType::Exponential => FogFalloff::Exponential {
+            density: fog.density,
+        },
+        FogType::Exponential2 => FogFalloff::ExponentialSquared {
+            density: fog.density,
+        },
+    };
+    let color = fog.color.as_ref().map_or([1.0; 3], |c| [c.r, c.g, c.b]);
+    Some(FogDesc { color, falloff })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -252,12 +286,15 @@ impl SceneDesc {
         }
 
         let sky = scene.sky.as_ref().map(|sky| {
-            sky.header.as_ref().and_then(|h| {
-                h.data
-                    .iter()
-                    .find(|d| d.key == "cubemap_uri")
-                    .and_then(|d| d.value.first().cloned())
-            })
+            sky.header
+                .as_ref()
+                .and_then(|h| {
+                    h.data
+                        .iter()
+                        .find(|d| d.key == "cubemap_uri")
+                        .and_then(|d| d.value.first().cloned())
+                })
+                .or_else(|| Some(sky.cubemap_uri.clone()).filter(|u| !u.is_empty()))
         });
 
         SceneDesc {
@@ -265,6 +302,7 @@ impl SceneDesc {
             ambient: scene.ambient.as_ref().map(|c| [c.r, c.g, c.b]),
             background: scene.background.as_ref().map(|c| [c.r, c.g, c.b, c.a]),
             sky,
+            fog: scene.fog.as_ref().and_then(fog_desc),
             grid: scene.grid,
             shadows: scene.shadows,
             roots,
@@ -902,6 +940,17 @@ mod tests {
         assert_eq!(d.sky, Some(Some("file:///sky.dds".into())));
         assert!(d.roots.is_empty());
 
+        // Harmonic's own field, when there is no header.
+        let field = msgs::Scene {
+            sky: Some(msgs::Sky {
+                cubemap_uri: "model://sky/sky.dds".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let d = SceneDesc::from_msg(&field, BuildOptions::default());
+        assert_eq!(d.sky, Some(Some("model://sky/sky.dds".into())));
+
         // A sky without a cubemap header, or with other keys, has no URI.
         for sky in [
             msgs::Sky::default(),
@@ -919,6 +968,54 @@ mod tests {
             assert_eq!(d.ambient, None);
             assert_eq!(d.background, None);
         }
+    }
+
+    #[test]
+    fn fog_types() {
+        use msgs::fog::FogType;
+        let fog = |ty: FogType| {
+            let scene = msgs::Scene {
+                fog: Some(msgs::Fog {
+                    r#type: ty as i32,
+                    color: color(0.5, 0.6, 0.7),
+                    density: 0.1,
+                    start: 2.0,
+                    end: 20.0,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            SceneDesc::from_msg(&scene, BuildOptions::default()).fog
+        };
+        assert_eq!(fog(FogType::None), None);
+        let linear = fog(FogType::Linear).unwrap();
+        assert_eq!(linear.color, [0.5, 0.6, 0.7]);
+        assert_eq!(
+            linear.falloff,
+            FogFalloff::Linear {
+                start: 2.0,
+                end: 20.0
+            }
+        );
+        assert_eq!(
+            fog(FogType::Exponential).unwrap().falloff,
+            FogFalloff::Exponential { density: 0.1 }
+        );
+        assert_eq!(
+            fog(FogType::Exponential2).unwrap().falloff,
+            FogFalloff::ExponentialSquared { density: 0.1 }
+        );
+        // No colour: white; an unknown type: no fog.
+        let bare = msgs::Fog {
+            r#type: FogType::Linear as i32,
+            ..Default::default()
+        };
+        assert_eq!(fog_desc(&bare).unwrap().color, [1.0; 3]);
+        let unknown = msgs::Fog {
+            r#type: 42,
+            ..Default::default()
+        };
+        assert_eq!(fog_desc(&unknown), None);
     }
 
     #[test]
