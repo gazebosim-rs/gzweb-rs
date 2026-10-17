@@ -20,6 +20,20 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 
 ## 1. Corpus format: `tests/corpus/<name>/`
 
+Record one with `parity/record.sh <world.sdf> [name]` (needs the `gz-websocket`
+image from `Dockerfile.gazebo`). Status of the recorded worlds:
+
+| Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
+|---|---|---|---|
+| empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
+| heightmap | committed | FAIL: no heightmap geometry yet | no |
+| import_mesh | committed | FAIL: no Collada yet; mesh fetched live from Fuel | no |
+| sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
+| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
+
+Fuel meshes and textures are fetched over HTTP by both clients, so they are
+not in the corpus yet; worlds that use them depend on fuel.gazebosim.org.
+
 - `manifest.json`:
   ```json
   {

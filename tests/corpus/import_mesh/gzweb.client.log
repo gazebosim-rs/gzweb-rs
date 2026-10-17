@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,fuel,,
+sub,/world/fuel/dynamic_pose/info,,
+sub,/world/fuel/scene/info,,

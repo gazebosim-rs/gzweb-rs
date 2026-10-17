@@ -122,6 +122,26 @@ fn empty_matches_gzweb() {
     recorded_corpus_matches_gzweb("empty");
 }
 
+#[test]
+fn lights_matches_gzweb() {
+    recorded_corpus_matches_gzweb("lights");
+}
+
+#[test]
+fn nested_model_matches_gzweb() {
+    recorded_corpus_matches_gzweb("nested_model");
+}
+
+#[test]
+fn diff_drive_matches_gzweb() {
+    recorded_corpus_matches_gzweb("diff_drive");
+}
+
+#[test]
+fn polylines_matches_gzweb() {
+    recorded_corpus_matches_gzweb("polylines");
+}
+
 // ─── Synthetic world ────────────────────────────────────────────────────────
 
 fn v3(x: f64, y: f64, z: f64) -> Option<msgs::Vector3d> {

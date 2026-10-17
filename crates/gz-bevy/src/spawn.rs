@@ -238,12 +238,11 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
                 .into(),
             axis_to_z,
         ),
-        GeometryDesc::Sphere { radius } => (
-            Sphere::new(*radius as f32).mesh().uv(32, 32),
-            Transform::IDENTITY,
-        ),
+        GeometryDesc::Sphere { radius } => {
+            (three_sphere(*radius as f32, 32, 32), Transform::IDENTITY)
+        }
         GeometryDesc::Ellipsoid { radii } => (
-            Sphere::new(1.0).mesh().uv(32, 32),
+            three_sphere(1.0, 32, 32),
             Transform::from_scale(Vec3::new(radii[0] as f32, radii[1] as f32, radii[2] as f32)),
         ),
         GeometryDesc::Plane { normal, size } => {
@@ -279,6 +278,63 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
         local,
         ChildOf(parent),
     ));
+}
+
+/// three.js `SphereGeometry(radius, width, height)`, vertex for vertex, so
+/// bounds of rotated spheres match gzweb's. Poles are on local +/-Y.
+pub fn three_sphere(radius: f32, width: u32, height: u32) -> Mesh {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    use std::f32::consts::{PI, TAU};
+
+    let (w, h) = (width.max(3), height.max(2));
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    for iy in 0..=h {
+        let v = iy as f32 / h as f32;
+        let u_offset = match iy {
+            0 => 0.5 / w as f32,
+            _ if iy == h => -0.5 / w as f32,
+            _ => 0.0,
+        };
+        for ix in 0..=w {
+            let u = ix as f32 / w as f32;
+            let (sin_t, cos_t) = (v * PI).sin_cos();
+            let (sin_p, cos_p) = (u * TAU).sin_cos();
+            let n = Vec3::new(-cos_p * sin_t, cos_t, sin_p * sin_t);
+            positions.push((n * radius).to_array());
+            normals.push(n.normalize_or_zero().to_array());
+            // three's v runs bottom-up; Bevy's runs top-down.
+            uvs.push([u + u_offset, v]);
+        }
+    }
+    let at = |iy: u32, ix: u32| iy * (w + 1) + ix;
+    let mut indices = Vec::new();
+    for iy in 0..h {
+        for ix in 0..w {
+            let (a, b, c, d) = (
+                at(iy, ix + 1),
+                at(iy, ix),
+                at(iy + 1, ix),
+                at(iy + 1, ix + 1),
+            );
+            if iy != 0 {
+                indices.extend([a, b, d]);
+            }
+            if iy != h - 1 {
+                indices.extend([b, c, d]);
+            }
+        }
+    }
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 fn spawn_mesh_file(

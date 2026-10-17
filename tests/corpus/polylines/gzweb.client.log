@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,polylines,,
+sub,/world/polylines/dynamic_pose/info,,
+sub,/world/polylines/scene/info,,

@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,diff_drive,,
+sub,/world/diff_drive/dynamic_pose/info,,
+sub,/world/diff_drive/scene/info,,

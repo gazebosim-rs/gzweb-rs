@@ -166,7 +166,7 @@ These are findings for the plan, not changes:
 - **Background:** gzweb ignores `<scene><background>`. gzweb-rs honours it.
   Allow-listed.
 - **Spot penumbra:** gzweb uses `max(1, …)`, so it is always ≥ 1. gzweb-rs
-  keeps three's [0, 1] range. There is no spot light in the corpus yet.
+  keeps three's [0, 1] range. Allow-listed (`lights` corpus).
 - **Ignored fields:** gzweb ignores `Visual.scale`, `Visual.transparency` and
   model-level visuals. gzweb-rs matches the first; the other two are not
   exercised yet.
@@ -176,9 +176,23 @@ These are findings for the plan, not changes:
 
 ### Next
 
-- **Corpus:** grow it with `lights.sdf`, `nested_model.sdf`, a mesh-heavy Fuel
-  world and a PBR world. That gives the comparator something to say about
-  meshes, spot lights and materials.
+- **Corpus:** done 2026-10-16, see the entry below.
 - **Phase 1:** reconnect, `wss://` (the native driver has no TLS yet), and
   sim-control services.
 - **Collada:** implement it per the spike's recommendation.
+
+## 2026-10-16: Corpus growth
+
+- `parity/record.sh` records a world from the Gazebo image in one step.
+- Recorded 10 more worlds; status table in PARITY.md §1. Six now pass and run
+  in `cargo test`.
+- **Sphere tessellation:** gzweb-rs now builds spheres and ellipsoids
+  vertex-for-vertex like three.js `SphereGeometry(r, 32, 32)`. Bevy's UV
+  sphere put rotated sphere bounds 1.5 mm off gzweb's.
+- **Spot penumbra** is allow-listed (`gzweb-spot-penumbra-clamp`).
+- **gzweb fails on four worlds:** the `PixelFormatType` decode error (camera
+  sensors) and a null `albedo_map` in `particle_emitter`. No reference is
+  possible until gzweb is fixed.
+- **Gaps found:** heightmaps, Collada (`import_mesh`), and HTTP asset capture
+  (Fuel meshes and textures are fetched live, so those worlds aren't
+  hermetic).
