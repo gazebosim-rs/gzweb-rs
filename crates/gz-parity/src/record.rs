@@ -28,7 +28,8 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
         Some(path) => Some(net::tls_config(Some(path))?),
         None => None,
     };
-    let mut ws = net::connect(&opts.url, tls, Some(Duration::from_millis(50)))?;
+    let mut ws =
+        net::connect(&opts.url, tls, Some(Duration::from_millis(50))).map_err(crate::message)?;
     let mut corpus = Corpus {
         manifest: Manifest {
             format: FORMAT.into(),

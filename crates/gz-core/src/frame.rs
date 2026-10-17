@@ -32,13 +32,8 @@ impl<'a> Frame<'a> {
     }
 }
 
-/// Builds an outgoing frame, matching gzweb's `parts.join(",")`.
-pub fn build(op: &str, topic: &str, msg_type: &str, payload: &str) -> String {
-    format!("{op},{topic},{msg_type},{payload}")
-}
-
-/// Builds a frame with a binary payload (used by the replay server and tests).
-pub fn build_binary(op: &str, topic: &str, msg_type: &str, payload: &[u8]) -> Vec<u8> {
+/// Builds a frame, matching gzweb's `parts.join(",")`.
+pub fn build(op: &str, topic: &str, msg_type: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = format!("{op},{topic},{msg_type},").into_bytes();
     out.extend_from_slice(payload);
     out
@@ -76,12 +71,12 @@ mod tests {
     #[test]
     fn build_matches_gzweb_join() {
         assert_eq!(
-            build("asset", "", "", "file:///a.dae"),
-            "asset,,,file:///a.dae"
+            build("asset", "", "", b"file:///a.dae"),
+            b"asset,,,file:///a.dae"
         );
-        assert_eq!(build("sub", "/t", "", ""), "sub,/t,,");
+        assert_eq!(build("sub", "/t", "", b""), b"sub,/t,,");
         assert_eq!(
-            build_binary("pub", "worlds", "gz.msgs.StringMsg_V", b"\x01"),
+            build("pub", "worlds", "gz.msgs.StringMsg_V", b"\x01"),
             b"pub,worlds,gz.msgs.StringMsg_V,\x01"
         );
     }

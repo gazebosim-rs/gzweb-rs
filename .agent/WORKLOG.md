@@ -230,3 +230,20 @@ These are findings for the plan, not changes:
   CAs; the recorder uses it too. Tested with a generated CA.
 - Replay answers `req` and `topics` and reads binary client frames.
 - Not done: `scene/deletion` (gzweb doesn't handle it either).
+
+### PR #19 review fixes (2026-10-17)
+
+- `control::step` splits counts that encode with `0x00`/`,`; every count to
+  20 000 is tested sendable.
+- `Transport` validates every frame: no `,`/`0x00` in any field, no empty
+  field the server indexes, no `throttle` rate 0. Publishes on topics we
+  aren't subscribed to are dropped (as gzweb does).
+- Connect/handshake timeouts (`net::CONNECT_TIMEOUT`,
+  `connection::HANDSHAKE_TIMEOUT`); invalid URLs and rejected keys are
+  final and keep their reason.
+- Drivers close their socket and stop when dropped; on wasm one `Closed` per
+  failure, and the callbacks are freed with the socket.
+- `GzPublish` and `GzServiceReply` messages; world topics matched exactly.
+- The replay server drops its first connection at the first `sub`, not on a
+  timer, so the reconnect test no longer depends on timing.
+- `frame::build` takes bytes (the old `String` version is gone).

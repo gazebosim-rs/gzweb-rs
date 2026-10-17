@@ -4,8 +4,10 @@
 //! Every request carries a header stamped with 1 s. gz-sim ignores it, but it
 //! keeps the payload non-empty and free of `0x00` bytes, which gz-launch's
 //! server can't carry (see [`crate::transport`]): `WorldControl { pause:
-//! false }` alone encodes to nothing. gzweb sends `ignition.msgs.*` type
-//! names, which Harmonic rejects; these use `gz.msgs.*`.
+//! false }` alone encodes to nothing. Step counts whose varint contains a
+//! `0x00` or `,` byte are split into several requests. gzweb sends
+//! `ignition.msgs.*` type names, which Harmonic rejects; these use
+//! `gz.msgs.*`.
 
 use prost::Message;
 
@@ -54,16 +56,37 @@ pub fn pause(world: &str) -> Request {
     )
 }
 
-/// Advance a paused simulation by `steps` iterations (at least 1).
-pub fn step(world: &str, steps: u32) -> Request {
-    world_control(
-        world,
-        msgs::WorldControl {
-            pause: true,
-            multi_step: steps.max(1),
-            ..Default::default()
-        },
-    )
+/// Advance a paused simulation by `steps` iterations (at least 1). Usually
+/// one request; more when a count would encode with a byte gz-launch can't
+/// carry (44, for instance, is `0x2c`), so the counts add up to `steps`.
+pub fn step(world: &str, steps: u32) -> Vec<Request> {
+    let one = |n: u32| {
+        world_control(
+            world,
+            msgs::WorldControl {
+                pause: true,
+                multi_step: n,
+                ..Default::default()
+            },
+        )
+    };
+    let mut left = steps.max(1);
+    let mut out = Vec::new();
+    while left > 0 {
+        // The largest sendable count; 1 always is.
+        let req = (1..=left)
+            .rev()
+            .map(one)
+            .find(|r| sendable(&r.payload))
+            .unwrap_or_else(|| one(1));
+        left -= msgs::WorldControl::decode(req.payload.as_slice()).map_or(1, |c| c.multi_step);
+        out.push(req);
+    }
+    out
+}
+
+fn sendable(payload: &[u8]) -> bool {
+    !payload.iter().any(|&b| b == 0 || b == b',')
 }
 
 /// Reset the world (time and models) and leave it paused.
@@ -97,9 +120,10 @@ pub fn stop() -> Request {
 
 /// The `data` of a `gz.msgs.Boolean` service reply, if it is one.
 pub fn reply_ok(msg_type: &str, payload: &[u8]) -> Option<bool> {
-    (msg_type == "gz.msgs.Boolean")
-        .then(|| msgs::Boolean::decode(payload).ok().map(|b| b.data))
-        .flatten()
+    if msg_type != "gz.msgs.Boolean" {
+        return None;
+    }
+    msgs::Boolean::decode(payload).ok().map(|b| b.data)
 }
 
 #[cfg(test)]
@@ -120,9 +144,13 @@ mod tests {
         assert_eq!(p.payload, [0x0a, 0x04, 0x0a, 0x02, 0x08, 0x01]);
         assert!(!decode(&p).pause);
         assert!(decode(&pause("w")).pause);
-        let s = decode(&step("w", 0));
-        assert!(s.pause && s.multi_step == 1);
-        assert_eq!(decode(&step("w", 200)).multi_step, 200);
+        let s = step("w", 0);
+        assert_eq!(s.len(), 1);
+        assert!(decode(&s[0]).pause && decode(&s[0]).multi_step == 1);
+        assert_eq!(decode(&step("w", 200)[0]).multi_step, 200);
+        // 44 is a ',' byte: split.
+        let counts: Vec<u32> = step("w", 44).iter().map(|r| decode(r).multi_step).collect();
+        assert_eq!(counts, [43, 1]);
         let r = decode(&reset("w"));
         assert!(r.pause && r.reset.unwrap().all);
         let stop = stop();
@@ -140,8 +168,18 @@ mod tests {
         t.on_open();
         t.on_message(b"protos");
         assert_eq!(t.status(), &Status::Connected);
-        for r in [play("w"), pause("w"), step("w", 5), reset("w"), stop()] {
+        for r in [play("w"), pause("w"), reset("w"), stop()] {
             t.request(&r.service, r.msg_type, &r.payload).unwrap();
+        }
+        // Every step count, including multi-byte varints with a 0x2c or 0x00.
+        for n in (0..=20_000).chain([5632, 1 << 20, u32::MAX]) {
+            let reqs = step("w", n);
+            let total: u64 = reqs.iter().map(|r| u64::from(decode(r).multi_step)).sum();
+            assert_eq!(total, u64::from(n.max(1)), "{n}");
+            for r in &reqs {
+                t.request(&r.service, r.msg_type, &r.payload).unwrap();
+            }
+            while t.poll_outgoing().is_some() {}
         }
     }
 

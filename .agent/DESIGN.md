@@ -81,8 +81,8 @@ Primitive conventions follow gzweb `Scene.ts`:
 
 ## Websocket protocol
 
-Text frames from the client, binary frames from the server, both in the form
-`op,topic,type,payload` (gz-launch / gz-sim `WebsocketServer.cc`):
+Frames in both directions have the form `op,topic,type,payload` (gz-launch /
+gz-sim `WebsocketServer.cc`):
 
 ```
 open → auth,,,<key> (if key) → "authorized" → protos,,,
@@ -101,33 +101,48 @@ Frames go out as text when they are UTF-8 (every gzweb frame is), and as
 binary otherwise; the server accepts both.
 
 **Server limits (gz-launch 7 to `main`, probed against Harmonic).** The
-server reads each frame as a C string and splits it on `,`:
+server reads each frame as a C string and splits it with `strtok` on `,`,
+which merges empty fields:
 
-- a payload is cut at its first `0x00` byte;
-- a `,` (`0x2c`) in a payload makes the frame invalid (dropped);
-- a `req` with an empty payload crashes the server (`std::length_error`
-  in `OnRequest`);
+- every field is cut at its first `0x00` byte;
+- a `,` (`0x2c`) in any field makes the frame invalid (dropped, no reply);
+- an empty field the server indexes (topic of `sub`/`image`/`unsub`/
+  `throttle`; service, type or payload of `req`) is an out-of-bounds read,
+  which can crash it (`std::length_error` in `OnRequest` for an empty `req`);
+- `throttle` with rate 0 divides by zero;
 - there is no `adv` or `pub_in` handler, so publishing from the client does
   nothing;
 - `image` is only honoured for `gz.msgs.Image` topics;
-- `ignition.msgs.*` request types are rejected.
+- `ignition.msgs.*` request types are rejected;
+- with no key configured, `auth` is never answered.
 
-`Transport::request` refuses payloads that would hit the first three.
-`gz_core::control` (play, pause, step, reset, stop) stamps a header (1 s)
-on every request so `WorldControl { pause: false }` isn't empty and has no
-zero bytes.
+`Transport` refuses frames that would hit the first four
+(`SendError::Unsendable`). `gz_core::control` (play, pause, step, reset,
+stop) stamps a header (1 s) on every request so `WorldControl { pause:
+false }` isn't empty and has no zero bytes, and splits step counts whose
+varint contains `0x00` or `,` (44 is `0x2c`) into several requests.
 
 **Sending.** As in gzweb's `sendMessage`, only handshake ops go out before
-`Connected`, and nothing after an error (`SendError`).
+`Connected`, and nothing after an error (`SendError`). As in gzweb, messages
+on topics the client isn't subscribed to are dropped.
 
 **Reconnect.** On a close or failed connect, `connection::pump` reconnects
 after 0.5, 1, 2, 4, 8, then 10 s (reset on `Ready`). It doesn't retry a
-rejected key. The next `scene` reply replaces the whole scene. It is on by
+rejected key or an invalid URL, and keeps that reason in the status. TCP
+connect and the websocket/TLS handshake time out after 10 s
+(`net::CONNECT_TIMEOUT`); the gz handshake (until the proto definitions
+arrive) times out after 10 s too (`connection::HANDSHAKE_TIMEOUT`), which
+covers a key sent to a server without one. The next `scene` reply replaces
+the whole scene. It is on by
 default, off in `--snapshot` mode (`--reconnect` / `--no-reconnect`). gzweb
 doesn't reconnect.
 
-**Sim control.** Send a `GzCommand` message (`Play`, `Pause`, `Step(n)`,
-`Reset`, `Stop`, `Subscribe`, `Unsubscribe`, `Throttle`, `Request`). In
+**Messages.** Send a `GzCommand` (`Play`, `Pause`, `Step(n)`, `Reset`,
+`Stop`, `Subscribe`, `Unsubscribe`, `Throttle`, `Request`); one the
+connection can't send right now is dropped and logged, not queued.
+Messages on subscribed topics other than the world's own pose, scene and
+stats topics arrive as `GzPublish`; every service reply as
+`GzServiceReply`. In
 interactive mode the client also subscribes to `/world/<w>/stats`
 (throttled to 5 Hz) for the HUD's sim line; Space toggles play/pause and N
 steps.

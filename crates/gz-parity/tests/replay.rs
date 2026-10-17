@@ -248,25 +248,25 @@ fn drops_the_first_connection_when_asked() {
         corpus(),
         ReplayOptions {
             connections: 2,
-            drop_first_after: Some(std::time::Duration::from_millis(100)),
+            drop_first_at_sub: true,
             ..opts(None, None)
         },
     );
-    // The first connection is closed by the server.
+    // The first connection is answered until it subscribes, then closed.
     let mut first = connect(&url);
+    send(&mut first, "worlds,,,");
+    assert_eq!(op(&recv(&mut first)), ("pub".into(), "worlds".into()));
+    send(&mut first, "sub,/t,,");
     loop {
         match first.read() {
             Ok(Message::Close(_)) | Err(_) => break,
             Ok(_) => {}
         }
     }
-    // The second one is not.
+    // The second one streams as usual.
     let mut second = connect(&url);
-    send(&mut second, "protos,,,");
-    assert!(!recv(&mut second).is_empty());
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    send(&mut second, "worlds,,,");
-    assert_eq!(op(&recv(&mut second)), ("pub".into(), "worlds".into()));
+    send(&mut second, "sub,/t,,");
+    assert_eq!(op(&recv(&mut second)), ("pub".into(), "/t".into()));
     second.close(None).unwrap();
     while second.read().is_ok() {}
     server.join().unwrap().unwrap();

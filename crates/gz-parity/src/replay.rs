@@ -23,9 +23,9 @@ pub struct ReplayOptions {
     /// When set, `auth` must carry this key (gz-launch `authorization_key`);
     /// otherwise every key is accepted.
     pub key: Option<String>,
-    /// Close the first connection this long after it opens, to exercise a
-    /// client's reconnect.
-    pub drop_first_after: Option<Duration>,
+    /// Close the first connection as soon as the client subscribes (that is,
+    /// once it has the scene), to exercise its reconnect.
+    pub drop_first_at_sub: bool,
 }
 
 pub fn serve(corpus: &Corpus, opts: &ReplayOptions) -> Result<(), String> {
@@ -65,11 +65,8 @@ pub fn serve_on(
                 continue;
             }
         };
-        let drop_at = opts
-            .drop_first_after
-            .filter(|_| served == 0)
-            .map(|d| std::time::Instant::now() + d);
-        if let Err(e) = handle(&mut ws, corpus, opts, drop_at) {
+        let drop_at_sub = opts.drop_first_at_sub && served == 0;
+        if let Err(e) = handle(&mut ws, corpus, opts, drop_at_sub) {
             eprintln!("replay: connection ended: {e}");
         }
         served += 1;
@@ -84,13 +81,8 @@ fn handle(
     ws: &mut tungstenite::WebSocket<std::net::TcpStream>,
     corpus: &Corpus,
     opts: &ReplayOptions,
-    drop_at: Option<std::time::Instant>,
+    drop_at_sub: bool,
 ) -> Result<(), String> {
-    if drop_at.is_some() {
-        ws.get_ref()
-            .set_read_timeout(Some(Duration::from_millis(10)))
-            .map_err(crate::message)?;
-    }
     let mut log = match &opts.client_log {
         Some(p) => Some(
             std::fs::OpenOptions::new()
@@ -113,19 +105,6 @@ fn handle(
     loop {
         let msg = match ws.read() {
             Ok(m) => m,
-            Err(tungstenite::Error::Io(e))
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if drop_at.is_some_and(|at| std::time::Instant::now() >= at) {
-                    eprintln!("replay: dropping the connection");
-                    let _ = ws.close(None);
-                    return Ok(());
-                }
-                continue;
-            }
             Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::Protocol(_)) => {
                 return Ok(())
             }
@@ -187,12 +166,8 @@ fn handle(
                             data: "asset_not_found".into(),
                             ..Default::default()
                         };
-                        let data = frame::build_binary(
-                            "asset",
-                            &uri,
-                            "gz.msgs.StringMsg",
-                            &err.encode_to_vec(),
-                        );
+                        let data =
+                            frame::build("asset", &uri, "gz.msgs.StringMsg", &err.encode_to_vec());
                         ws.send(Message::Binary(data.into()))
                             .map_err(crate::message)?;
                     }
@@ -203,7 +178,7 @@ fn handle(
                     data: m.streams.keys().cloned().collect(),
                     ..Default::default()
                 };
-                let data = frame::build_binary(
+                let data = frame::build(
                     "pub",
                     "topics",
                     "gz.msgs.StringMsg_V",
@@ -221,16 +196,21 @@ fn handle(
                         data: true,
                         ..Default::default()
                     };
-                    frame::build_binary("req", fr.topic, "gz.msgs.Boolean", &ok.encode_to_vec())
+                    frame::build("req", fr.topic, "gz.msgs.Boolean", &ok.encode_to_vec())
                 } else {
                     let err = msgs::StringMsg {
                         data: "service_not_found".into(),
                         ..Default::default()
                     };
-                    frame::build_binary("req", fr.topic, "gz.msgs.StringMsg", &err.encode_to_vec())
+                    frame::build("req", fr.topic, "gz.msgs.StringMsg", &err.encode_to_vec())
                 };
                 ws.send(Message::Binary(data.into()))
                     .map_err(crate::message)?;
+            }
+            "sub" if drop_at_sub => {
+                eprintln!("replay: dropping the connection");
+                let _ = ws.close(None);
+                return Ok(());
             }
             "sub" => {
                 if let Some(frames) = m.streams.get(fr.topic) {

@@ -121,7 +121,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                     .map_err(|_| "bad --stream-limit")?,
                 connections: num(&flags, "connections", 0)?,
                 key: flags.get("key").cloned(),
-                drop_first_after: None,
+                drop_first_at_sub: false,
             };
             replay::serve(&corpus, &opts)?;
             Ok(ExitCode::SUCCESS)

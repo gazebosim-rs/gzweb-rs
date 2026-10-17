@@ -568,11 +568,11 @@ fn synthetic_world(http: &str) -> Corpus {
         // Not a Pose_V / Scene, and a frame without a header: all tolerated.
         .publish_raw(
             pose_topic,
-            &gz_core::frame::build_binary("pub", pose_topic, "gz.msgs.Pose_V", &[0xff, 0xff]),
+            &gz_core::frame::build("pub", pose_topic, "gz.msgs.Pose_V", &[0xff, 0xff]),
         )
         .publish_raw(
             scene_topic,
-            &gz_core::frame::build_binary("pub", scene_topic, "gz.msgs.Scene", &[0xff, 0xff]),
+            &gz_core::frame::build("pub", scene_topic, "gz.msgs.Scene", &[0xff, 0xff]),
         )
         .publish_raw(pose_topic, b"no header here")
         .publish(scene_topic, "gz.msgs.Scene", &update)
@@ -753,8 +753,8 @@ fn reconnects_after_the_server_drops_the_connection() {
         ReplayOptions {
             client_log: Some(log.clone()),
             connections: 2,
-            // Always before the 300 ms settle after the first scene.
-            drop_first_after: Some(std::time::Duration::from_millis(150)),
+            // Right after the first scene, long before it settles.
+            drop_first_at_sub: true,
             ..Default::default()
         },
     );

@@ -61,6 +61,8 @@ impl Plugin for GzWebPlugin {
                 affects_lightmapped_meshes: true,
             })
             .add_message::<connection::GzCommand>()
+            .add_message::<connection::GzPublish>()
+            .add_message::<connection::GzServiceReply>()
             .init_resource::<connection::GzInbox>()
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()

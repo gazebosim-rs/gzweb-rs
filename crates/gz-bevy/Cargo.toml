@@ -36,6 +36,7 @@ features = [
     "WebSocket",
     "MessageEvent",
     "ErrorEvent",
+    "Event",
     "CloseEvent",
     "BinaryType",
     "Blob",

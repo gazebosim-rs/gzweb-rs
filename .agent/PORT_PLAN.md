@@ -166,9 +166,10 @@ Parity tests allow-list these with a reason string:
 - Unknown light types fall back to a point light (gzweb logs and adds nothing).
 - A zero quaternion becomes identity; a spot with both angles 0 gets penumbra 0
   (gzweb: NaN).
-- Sim control uses `gz.msgs.*` types and header-stamped payloads; gzweb's
-  `ignition.msgs.*` requests are rejected by Harmonic, and its `play()` sends an
-  empty payload that can crash gz-launch. See DESIGN.md "Server limits".
+- Sim control uses `gz.msgs.*` types and header-stamped payloads. gzweb's
+  `ignition.msgs.*` requests are rejected by Harmonic, and its `play()` does
+  nothing at all (`WorldControl { pause: false }` serializes to zero bytes, which
+  its `requestService` refuses). See DESIGN.md "Server limits".
 - `image` op for topics `topics-types` lists as `gz.msgs.Image` (gzweb checks the
   old `ignition.`/`gazebo.` names, so it always sends `sub`).
 - Reconnect with backoff (gzweb stays disconnected). Interactive mode also

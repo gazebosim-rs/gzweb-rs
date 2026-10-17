@@ -20,8 +20,7 @@ pub struct StatusText;
 #[derive(Component)]
 pub struct SimText;
 
-pub const HINT: &str =
-    "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point \
+const HINT: &str = "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point \
                         | Space: play/pause | N: step";
 
 pub fn spawn_hud(mut commands: Commands) {

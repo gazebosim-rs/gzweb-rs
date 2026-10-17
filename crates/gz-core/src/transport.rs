@@ -22,11 +22,19 @@
 //! ## What gz-launch's server can carry
 //!
 //! gz-launch's `WebsocketServer` (7 to `main`) reads every frame as a C string
-//! and splits it on `,`. So a payload is cut at its first `0x00` byte, a `,`
-//! (`0x2c`) in it makes the frame invalid, and an empty `req` payload crashes
-//! the server. [`Transport::request`] refuses such payloads. It also has no
-//! `adv` or `pub_in` handler, so [`Transport::advertise`] and
-//! [`Transport::publish`] (gzweb's API) are ignored by every released server.
+//! and splits it with `strtok` on `,`, which merges empty fields. So:
+//!
+//! - any field is cut at its first `0x00` byte, and a `,` (`0x2c`) in any
+//!   field makes the frame invalid (dropped without a reply);
+//! - an empty field the server indexes (the topic of `sub`/`image`/`unsub`/
+//!   `throttle`, the service, type or payload of `req`) is an out-of-bounds
+//!   read, which crashes it;
+//! - `throttle` with rate 0 divides by zero.
+//!
+//! [`Transport`] refuses all of these with [`SendError::Unsendable`]. The
+//! server also has no `adv` or `pub_in` handler, so [`Transport::advertise`]
+//! and [`Transport::publish`] (gzweb's API) are ignored by every released
+//! server.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -58,6 +66,8 @@ pub enum AssetError {
     Decode(String),
 }
 
+impl std::error::Error for AssetError {}
+
 impl std::fmt::Display for AssetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -74,16 +84,18 @@ pub enum SendError {
     NotConnected,
     /// The connection failed; nothing is sent until it reopens.
     Failed,
-    /// The server would mangle this payload (see the module docs).
+    /// The server would drop this frame or crash on it (see the module docs).
     Unsendable(&'static str),
 }
+
+impl std::error::Error for SendError {}
 
 impl std::fmt::Display for SendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SendError::NotConnected => write!(f, "not connected"),
             SendError::Failed => write!(f, "connection failed"),
-            SendError::Unsendable(why) => write!(f, "payload can't be sent: {why}"),
+            SendError::Unsendable(why) => write!(f, "frame can't be sent: {why}"),
         }
     }
 }
@@ -188,11 +200,15 @@ impl Transport {
     pub fn on_open(&mut self) {
         self.reset();
         self.set_status(Status::Connecting);
-        // Handshake ops are always allowed while connecting.
-        let _ = match self.key.clone() {
+        // Handshake ops are always allowed while connecting; only a key
+        // the server can't carry fails.
+        let sent = match self.key.clone() {
             Some(key) => self.send("auth", "", "", key.as_bytes()),
             None => self.send("protos", "", "", b""),
         };
+        if let Err(e) = sent {
+            self.set_status(Status::Error(format!("auth key: {e}")));
+        }
     }
 
     /// The socket closed (cleanly or not). Like gzweb's `onClose`, this
@@ -265,8 +281,14 @@ impl Transport {
         Ok(())
     }
 
-    /// Limit the publication rate of a subscribed topic (messages per second).
+    /// Limit the publication rate of a subscribed topic (messages per second,
+    /// at least 1).
     pub fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError> {
+        if rate == 0 {
+            return Err(SendError::Unsendable(
+                "rate 0 (divides by zero in gz-launch)",
+            ));
+        }
         self.send("throttle", topic, "na", rate.to_string().as_bytes())
     }
 
@@ -303,15 +325,6 @@ impl Transport {
         msg_type: &str,
         payload: &[u8],
     ) -> Result<(), SendError> {
-        if payload.is_empty() {
-            return Err(SendError::Unsendable("empty (crashes gz-launch)"));
-        }
-        if payload.contains(&0) {
-            return Err(SendError::Unsendable("contains a 0x00 byte"));
-        }
-        if payload.contains(&b',') {
-            return Err(SendError::Unsendable("contains a ',' byte"));
-        }
         self.send("req", service, msg_type, payload)
     }
 
@@ -332,8 +345,9 @@ impl Transport {
             }
             _ => {}
         }
+        check_frame(op, topic, msg_type, payload)?;
         self.outgoing
-            .push_back(frame::build_binary(op, topic, msg_type, payload));
+            .push_back(frame::build(op, topic, msg_type, payload));
         Ok(())
     }
 
@@ -400,11 +414,13 @@ impl Transport {
                 }
                 Err(e) => self.malformed("scene", e),
             },
-            topic => self.events.push_back(Event::Publish {
+            // Like gzweb, only topics we are subscribed to.
+            topic if self.subscriptions.contains(topic) => self.events.push_back(Event::Publish {
                 topic: topic.to_string(),
                 msg_type: frame.msg_type.to_string(),
                 payload: frame.payload.to_vec(),
             }),
+            _ => {}
         }
     }
 
@@ -431,10 +447,26 @@ impl Transport {
     }
 }
 
+/// Refuses frames gz-launch would drop or crash on (see the module docs).
+fn check_frame(op: &str, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
+    let bad = |b: &[u8]| b.iter().any(|&c| c == 0 || c == b',');
+    if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || bad(payload) {
+        return Err(SendError::Unsendable("a field contains ',' or 0x00"));
+    }
+    let needs_topic = matches!(op, "sub" | "image" | "unsub" | "throttle" | "req" | "scene");
+    if needs_topic && topic.is_empty() {
+        return Err(SendError::Unsendable("empty topic or service"));
+    }
+    if op == "req" && (msg_type.is_empty() || payload.is_empty()) {
+        return Err(SendError::Unsendable("empty request type or payload"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::build_binary;
+    use crate::frame::build;
 
     fn drain_out(t: &mut Transport) -> Vec<String> {
         std::iter::from_fn(|| t.poll_outgoing())
@@ -451,7 +483,7 @@ mod tests {
             data: names.iter().map(|s| s.to_string()).collect(),
             ..Default::default()
         };
-        build_binary("pub", "worlds", "gz.msgs.StringMsg_V", &msg.encode_to_vec())
+        build("pub", "worlds", "gz.msgs.StringMsg_V", &msg.encode_to_vec())
     }
 
     #[test]
@@ -472,7 +504,7 @@ mod tests {
             name: "shapes".into(),
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "pub",
             "scene",
             "gz.msgs.Scene",
@@ -516,7 +548,7 @@ mod tests {
             data: b"solid x".to_vec(),
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "asset",
             "file:///m.stl",
             "gz.msgs.Bytes",
@@ -526,7 +558,7 @@ mod tests {
             data: "asset_not_found".into(),
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "asset",
             "file:///x.dae",
             "gz.msgs.StringMsg",
@@ -551,7 +583,10 @@ mod tests {
     #[test]
     fn topic_messages_and_malformed_frames() {
         let mut t = connected();
+        t.subscribe("/world/w/dynamic_pose/info").unwrap();
         t.on_message(b"pub,/world/w/dynamic_pose/info,gz.msgs.Pose_V,\x0a\x00");
+        // Not subscribed: dropped, as in gzweb.
+        t.on_message(b"pub,/other,gz.msgs.Clock,");
         t.on_message(b"garbage");
         let events = drain_events(&mut t);
         assert_eq!(
@@ -597,20 +632,43 @@ mod tests {
     }
 
     #[test]
-    fn requests_the_server_would_mangle_are_refused() {
+    fn frames_the_server_would_mangle_are_refused() {
         let mut t = connected();
         let svc = "/world/w/control";
-        for (payload, why) in [
-            (&b""[..], "empty (crashes gz-launch)"),
-            (b"\x10\x00", "contains a 0x00 byte"),
-            (b"\x20\x2c", "contains a ',' byte"),
-        ] {
-            assert_eq!(
-                t.request(svc, "gz.msgs.WorldControl", payload),
-                Err(SendError::Unsendable(why))
-            );
-        }
+        let ty = "gz.msgs.WorldControl";
+        let field = Err(SendError::Unsendable("a field contains ',' or 0x00"));
+        let empty_topic = Err(SendError::Unsendable("empty topic or service"));
+        let empty_req = Err(SendError::Unsendable("empty request type or payload"));
+        assert_eq!(t.request(svc, ty, b"\x10\x00"), field);
+        assert_eq!(t.request(svc, ty, b"\x20\x2c"), field);
+        assert_eq!(t.request(svc, ty, b""), empty_req);
+        assert_eq!(t.request(svc, "", b"\x10\x01"), empty_req);
+        assert_eq!(t.request("", ty, b"\x10\x01"), empty_topic);
+        assert_eq!(t.request("/a,b", ty, b"\x10\x01"), field);
+        assert_eq!(t.subscribe(""), empty_topic);
+        assert_eq!(t.subscribe("/a\0"), field);
+        assert!(!t.is_subscribed(""));
+        assert_eq!(t.throttle("", 5), empty_topic);
+        assert_eq!(
+            t.throttle("/a", 0),
+            Err(SendError::Unsendable(
+                "rate 0 (divides by zero in gz-launch)"
+            ))
+        );
+        assert_eq!(t.request_asset("/m,1.stl"), field);
+        assert_eq!(t.advertise("/cmd", "gz.msgs.A,B"), field);
         assert!(drain_out(&mut t).is_empty());
+        // An empty world name would make `scene,,,`: no scene request.
+        t.on_message(&worlds_frame(&[""]));
+        assert!(drain_out(&mut t).is_empty());
+    }
+
+    #[test]
+    fn an_unsendable_key_is_an_error() {
+        let mut t = Transport::new(Some("a,b".into()));
+        t.on_open();
+        assert!(drain_out(&mut t).is_empty());
+        assert!(matches!(t.status(), Status::Error(e) if e.starts_with("auth key:")));
     }
 
     #[test]
@@ -642,7 +700,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "pub",
             "topics-types",
             "gz.msgs.Publishers",
@@ -675,7 +733,7 @@ mod tests {
         let mut t = connected();
         let topics = ["topics-types", "topics", "worlds", "scene"];
         for topic in topics {
-            t.on_message(&build_binary("pub", topic, "gz.msgs.X", GARBAGE));
+            t.on_message(&build("pub", topic, "gz.msgs.X", GARBAGE));
         }
         let events = drain_events(&mut t);
         assert_eq!(events.len(), topics.len(), "{events:?}");
@@ -703,7 +761,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "pub",
             "topics-types",
             "gz.msgs.Publishers",
@@ -713,7 +771,7 @@ mod tests {
             data: vec!["/clock".into(), "/stats".into()],
             ..Default::default()
         };
-        t.on_message(&build_binary(
+        t.on_message(&build(
             "pub",
             "topics",
             "gz.msgs.StringMsg_V",
@@ -754,13 +812,8 @@ mod tests {
     #[test]
     fn undecodable_asset_replies() {
         let mut t = connected();
-        t.on_message(&build_binary("asset", "/a.stl", "gz.msgs.Bytes", GARBAGE));
-        t.on_message(&build_binary(
-            "asset",
-            "/b.stl",
-            "gz.msgs.StringMsg",
-            GARBAGE,
-        ));
+        t.on_message(&build("asset", "/a.stl", "gz.msgs.Bytes", GARBAGE));
+        t.on_message(&build("asset", "/b.stl", "gz.msgs.StringMsg", GARBAGE));
         let events = drain_events(&mut t);
         for (e, uri) in events.iter().zip(["/a.stl", "/b.stl"]) {
             assert!(
@@ -785,7 +838,7 @@ mod tests {
         assert_eq!(SendError::Failed.to_string(), "connection failed");
         assert_eq!(
             SendError::Unsendable("empty").to_string(),
-            "payload can't be sent: empty"
+            "frame can't be sent: empty"
         );
     }
 

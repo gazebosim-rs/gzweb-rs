@@ -2,7 +2,7 @@
 //! `wss://` over rustls.
 
 use std::fmt::Display;
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,6 +20,29 @@ pub type TlsConfig = Arc<rustls::ClientConfig>;
 
 fn msg(e: impl Display) -> String {
     e.to_string()
+}
+
+/// How long connecting and the websocket/TLS handshake may take.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Why [`connect`] failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectError {
+    /// The URL can't work; retrying won't help.
+    InvalidUrl(String),
+    /// Anything else (refused, timed out, TLS, handshake).
+    Failed(String),
+}
+
+impl std::error::Error for ConnectError {}
+
+impl Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectError::InvalidUrl(e) => write!(f, "invalid URL: {e}"),
+            ConnectError::Failed(e) => f.write_str(e),
+        }
+    }
 }
 
 /// TLS settings trusting Mozilla's roots plus, optionally, the PEM
@@ -54,16 +77,33 @@ pub fn tls_config(extra_ca: Option<&Path>) -> Result<TlsConfig, String> {
 }
 
 /// Connects to a `ws://` or `wss://` URL. `tls` defaults to
-/// [`tls_config`]`(None)`. `read_timeout` applies after the handshake, so a
-/// single thread can poll the socket in both directions.
+/// [`tls_config`]`(None)`. Connecting and the handshakes time out after
+/// [`CONNECT_TIMEOUT`]; `read_timeout` applies afterwards, so a single
+/// thread can poll the socket in both directions.
 pub fn connect(
     url: &str,
     tls: Option<TlsConfig>,
     read_timeout: Option<Duration>,
-) -> Result<Socket, String> {
-    let request = url.into_client_request().map_err(msg)?;
+) -> Result<Socket, ConnectError> {
+    connect_within(url, tls, read_timeout, CONNECT_TIMEOUT)
+}
+
+/// [`connect`] with a custom connect/handshake timeout.
+pub fn connect_within(
+    url: &str,
+    tls: Option<TlsConfig>,
+    read_timeout: Option<Duration>,
+    timeout: Duration,
+) -> Result<Socket, ConnectError> {
+    let invalid = |e: String| ConnectError::InvalidUrl(e);
+    let failed = |e: String| ConnectError::Failed(e);
+    let request = url.into_client_request().map_err(msg).map_err(invalid)?;
     let uri = request.uri();
-    let secure = uri.scheme_str() == Some("wss");
+    let secure = match uri.scheme_str() {
+        Some("ws") => false,
+        Some("wss") => true,
+        other => return Err(invalid(format!("unsupported scheme {other:?}"))),
+    };
     // `into_client_request` already refused a URL without a host.
     let host = uri
         .host()
@@ -73,18 +113,43 @@ pub fn connect(
         .to_string();
     let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
 
-    let stream = TcpStream::connect((host.as_str(), port)).map_err(msg)?;
-    stream.set_nodelay(true).map_err(msg)?;
-    // Same socket, kept to set the timeout once the handshake is done.
-    let raw = stream.try_clone().map_err(msg)?;
+    let addrs: Vec<_> = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(msg)
+        .map_err(failed)?
+        .collect();
+    let mut last = format!("{host} has no addresses");
+    let stream = addrs
+        .iter()
+        .find_map(|a| match TcpStream::connect_timeout(a, timeout) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                last = format!("{a}: {e}");
+                None
+            }
+        })
+        .ok_or_else(|| failed(last.clone()))?;
+    stream.set_nodelay(true).map_err(msg).map_err(failed)?;
+    // A silent peer must not block the handshake forever.
+    stream
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .map_err(msg)
+        .map_err(failed)?;
+    // Same socket, kept to set the timeouts once the handshake is done.
+    let raw = stream.try_clone().map_err(msg).map_err(failed)?;
     let connector = match (secure, tls) {
         (false, _) => Connector::Plain,
         (true, Some(tls)) => Connector::Rustls(tls),
-        (true, None) => Connector::Rustls(tls_config(None)?),
+        (true, None) => Connector::Rustls(tls_config(None).map_err(failed)?),
     };
-    let (socket, _) =
-        tungstenite::client_tls_with_config(request, stream, None, Some(connector)).map_err(msg)?;
-    raw.set_read_timeout(read_timeout).map_err(msg)?;
+    let (socket, _) = tungstenite::client_tls_with_config(request, stream, None, Some(connector))
+        .map_err(msg)
+        .map_err(failed)?;
+    raw.set_read_timeout(read_timeout)
+        .and_then(|()| raw.set_write_timeout(None))
+        .map_err(msg)
+        .map_err(failed)?;
     Ok(socket)
 }
 
@@ -171,13 +236,22 @@ mod tests {
         }
     }
 
-    fn temp(name: &str, text: &str) -> std::path::PathBuf {
+    /// A file removed when dropped.
+    struct Temp(std::path::PathBuf);
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn temp(name: &str, text: &str) -> Temp {
         let path = std::env::temp_dir().join(format!("gz-core-net-{}-{name}", std::process::id()));
         std::fs::File::create(&path)
             .unwrap()
             .write_all(text.as_bytes())
             .unwrap();
-        path
+        Temp(path)
     }
 
     #[test]
@@ -196,14 +270,14 @@ mod tests {
     fn wss_with_a_private_ca() {
         let pki = pki();
         let ca = temp("ca.pem", &pki.ca_pem);
-        let tls = tls_config(Some(&ca)).unwrap();
+        let tls = tls_config(Some(&ca.0)).unwrap();
         let port = echo_server(Some(pki.server.clone()));
         round_trip(connect(&format!("wss://localhost:{port}"), Some(tls), None).unwrap());
 
         // Without the CA the certificate is rejected.
         let port = echo_server(Some(pki.server));
         let err = connect(&format!("wss://localhost:{port}"), None, None).unwrap_err();
-        assert!(err.contains("UnknownIssuer"), "{err}");
+        assert!(err.to_string().contains("UnknownIssuer"), "{err}");
     }
 
     #[test]
@@ -213,39 +287,70 @@ mod tests {
             .unwrap_err()
             .contains("missing.pem"));
         let empty = temp("empty.pem", "no certificates here\n");
-        assert!(tls_config(Some(&empty))
+        assert!(tls_config(Some(&empty.0))
             .unwrap_err()
             .ends_with("no certificates"));
         let broken = temp(
             "broken.pem",
             "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n",
         );
-        assert!(tls_config(Some(&broken))
+        assert!(tls_config(Some(&broken.0))
             .unwrap_err()
             .contains("broken.pem"));
         let not_a_cert = temp(
             "garbage.pem",
             "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
         );
-        assert!(tls_config(Some(&not_a_cert))
+        assert!(tls_config(Some(&not_a_cert.0))
             .unwrap_err()
             .contains("garbage.pem"));
     }
 
     #[test]
     fn connect_errors() {
-        assert!(connect("not a url", None, None).is_err());
-        assert!(connect("ws:///path", None, None).is_err());
+        let invalid =
+            |url: &str| matches!(connect(url, None, None), Err(ConnectError::InvalidUrl(_)));
+        assert!(invalid("not a url"));
+        assert!(invalid("ws:///path"));
+        assert!(invalid("http://127.0.0.1:1"));
+        let failed = |url: &str| matches!(connect(url, None, None), Err(ConnectError::Failed(_)));
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
             .unwrap()
             .port();
-        assert!(connect(&format!("ws://127.0.0.1:{port}"), None, None).is_err());
+        assert!(failed(&format!("ws://127.0.0.1:{port}")));
+        assert!(failed("ws://no-such-host.invalid:1"));
         // A server that isn't speaking websocket.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || drop(listener.accept()));
-        assert!(connect(&format!("ws://127.0.0.1:{port}"), None, None).is_err());
+        assert!(failed(&format!("ws://127.0.0.1:{port}")));
+        assert_eq!(
+            ConnectError::InvalidUrl("x".into()).to_string(),
+            "invalid URL: x"
+        );
+    }
+
+    #[test]
+    fn a_silent_server_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // Accepts and never answers the handshake.
+        std::thread::spawn(move || {
+            let held = listener.accept();
+            std::thread::sleep(Duration::from_secs(5));
+            drop(held);
+        });
+        let started = std::time::Instant::now();
+        let err = connect_within(
+            &format!("ws://127.0.0.1:{port}"),
+            None,
+            None,
+            Duration::from_millis(200),
+        )
+        .unwrap_err();
+        assert!(matches!(err, ConnectError::Failed(_)), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 }
