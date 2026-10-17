@@ -26,12 +26,17 @@ pub struct GzConfig {
     pub key: Option<String>,
     /// gzweb `enableLights`: whether lights attached to links start visible.
     pub enable_lights: bool,
-    /// No window, no camera controls or HUD (snapshot / CI mode).
-    pub headless: bool,
+    /// Camera controls, HUD and sim stats (false for `--snapshot` and
+    /// `--screenshot`, which don't take input).
+    pub interactive: bool,
+    /// A GPU renders the scene (false for `--snapshot`); without one, GPU-only
+    /// work such as environment maps is skipped.
+    pub gpu: bool,
     /// Reconnect with backoff when the connection drops or fails.
     pub reconnect: bool,
     /// Extra PEM CA certificates to trust for `wss://` (native only).
     pub ca_cert: Option<std::path::PathBuf>,
+    /// How much rendering work to spend (`render::Quality`).
     pub quality: render::Quality,
 }
 
@@ -41,7 +46,8 @@ impl Default for GzConfig {
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,
-            headless: false,
+            interactive: true,
+            gpu: true,
             reconnect: true,
             ca_cert: None,
             quality: render::Quality::default(),
@@ -57,11 +63,11 @@ impl Plugin for GzWebPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.config.clone())
             .insert_resource(ClearColor(camera::CLEAR_COLOR))
-            // The colour gzweb uses until the scene sets one; the image-based
-            // fill light does the lighting (see `render`).
+            // gzweb's colour until the scene sets one, at full fill strength
+            // until `render::apply_environment` picks the environment.
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb(25.0 / 255.0, 25.0 / 255.0, 25.0 / 255.0),
-                brightness: 0.0,
+                brightness: render::units::ambient_brightness(render::units::FILL),
                 affects_lightmapped_meshes: true,
             })
             .add_message::<connection::GzCommand>()
@@ -82,6 +88,7 @@ impl Plugin for GzWebPlugin {
                     connection::pump,
                     spawn::apply_scene,
                     render::apply_environment,
+                    render::install_sky,
                     spawn::apply_poses,
                 )
                     .chain(),
@@ -90,7 +97,7 @@ impl Plugin for GzWebPlugin {
         app.add_systems(Startup, render::setup_gizmos)
             .add_systems(Update, render::draw_grid);
 
-        if !self.config.headless {
+        if self.config.interactive {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
                 .add_systems(Startup, hud::spawn_hud)
                 .add_systems(
@@ -141,7 +148,7 @@ pub(crate) mod test_util {
         .init_resource::<camera::GzCameraTarget>()
         .init_resource::<render::GzEnvironment>()
         .init_resource::<render::GzGrid>()
-        .insert_resource(render::RenderQuality::default())
+        .init_resource::<render::PendingSky>()
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
             world: Some("w".into()),
@@ -153,6 +160,7 @@ pub(crate) mod test_util {
             (
                 spawn::apply_scene,
                 render::apply_environment,
+                render::install_sky,
                 spawn::apply_poses,
             )
                 .chain(),
@@ -191,7 +199,7 @@ mod tests {
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: format!("ws://127.0.0.1:{port}"),
-                headless: false,
+                interactive: true,
                 ..Default::default()
             },
         });
@@ -230,7 +238,7 @@ mod tests {
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: "ws://127.0.0.1:1".into(),
-                headless: true,
+                interactive: false,
                 ..Default::default()
             },
         });

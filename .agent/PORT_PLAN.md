@@ -174,6 +174,8 @@ Parity tests allow-list these with a reason string:
   old `ignition.`/`gazebo.` names, so it always sends `sub`).
 - Reconnect with backoff (gzweb stays disconnected). Interactive mode also
   subscribes to `/world/<w>/stats`; snapshot mode keeps gzweb's exact frames.
+- A sky cubemap also comes from Harmonic's `Sky.cubemap_uri` field (gzweb reads only
+  the header's `cubemap_uri`).
 - Rendering does not match gzweb's look (decided 2026-10-17): HDR, tone mapping,
   TAA, SSAO, image-based light, atmosphere, fog and Gazebo's grid. Light
   brightness uses the message `intensity`; the snapshot still compares gzweb's

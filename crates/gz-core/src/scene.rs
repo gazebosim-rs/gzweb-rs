@@ -193,6 +193,8 @@ pub struct LightDesc {
     pub range: f64,
     /// Spot cone half-angle (`spot_outer_angle`).
     pub angle: Option<f64>,
+    /// Spot full-intensity half-angle (`spot_inner_angle`).
+    pub inner_angle: Option<f64>,
     pub penumbra: Option<f64>,
     pub decay: Option<f64>,
     pub cast_shadows: bool,
@@ -216,7 +218,24 @@ pub struct SceneDesc {
     pub roots: Vec<Node>,
 }
 
-/// `gz.msgs.Fog`; `None` in [`SceneDesc::fog`] for type `NONE`.
+impl SceneDesc {
+    /// Whether any light in the scene (at scene level or on a link) is
+    /// directional: something to light a sky.
+    pub fn has_directional_light(&self) -> bool {
+        fn any(nodes: &[Node]) -> bool {
+            nodes.iter().any(|n| {
+                n.light
+                    .as_ref()
+                    .is_some_and(|l| l.ty == LightType::Directional)
+                    || any(&n.children)
+            })
+        }
+        any(&self.roots)
+    }
+}
+
+/// `gz.msgs.Fog`; `None` in [`SceneDesc::fog`] for type `NONE` or an empty
+/// linear range.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FogDesc {
     pub color: [f32; 3],
@@ -234,6 +253,8 @@ fn fog_desc(fog: &msgs::Fog) -> Option<FogDesc> {
     use msgs::fog::FogType;
     let falloff = match FogType::try_from(fog.r#type).ok()? {
         FogType::None => return None,
+        // An empty range would divide by zero in the renderer.
+        FogType::Linear if fog.end <= fog.start => return None,
         FogType::Linear => FogFalloff::Linear {
             start: fog.start,
             end: fog.end,
@@ -294,7 +315,7 @@ impl SceneDesc {
                         .find(|d| d.key == "cubemap_uri")
                         .and_then(|d| d.value.first().cloned())
                 })
-                .or_else(|| Some(sky.cubemap_uri.clone()).filter(|u| !u.is_empty()))
+                .or_else(|| (!sky.cubemap_uri.is_empty()).then(|| sky.cubemap_uri.clone()))
         });
 
         SceneDesc {
@@ -613,7 +634,7 @@ pub fn light_desc(light: &msgs::Light) -> LightDesc {
         ),
     };
 
-    let (angle, penumbra, decay) = match ty {
+    let (angle, penumbra, decay, inner_angle) = match ty {
         LightType::Spot => {
             let inner = light.spot_inner_angle as f64;
             let outer = light.spot_outer_angle as f64;
@@ -625,11 +646,16 @@ pub fn light_desc(light: &msgs::Light) -> LightDesc {
             } else {
                 0.0
             };
-            (Some(outer), Some(penumbra), Some(light.spot_falloff as f64))
+            (
+                Some(outer),
+                Some(penumbra),
+                Some(light.spot_falloff as f64),
+                Some(inner.min(outer)),
+            )
         }
         // three.js PointLight's default decay.
-        LightType::Point => (None, None, Some(1.0)),
-        LightType::Directional => (None, None, None),
+        LightType::Point => (None, None, Some(1.0), None),
+        LightType::Directional => (None, None, None, None),
     };
 
     LightDesc {
@@ -641,6 +667,7 @@ pub fn light_desc(light: &msgs::Light) -> LightDesc {
             _ => light.range as f64,
         },
         angle,
+        inner_angle,
         penumbra,
         decay,
         cast_shadows: light.cast_shadows,
@@ -772,6 +799,7 @@ mod tests {
         assert_eq!(d.ty, LightType::Spot);
         assert!((d.intensity - 0.125).abs() < 1e-12);
         assert_eq!(d.angle, Some(0.6000000238418579));
+        assert_eq!(d.inner_angle, Some(0.20000000298023224));
         assert_eq!(d.direction, Some([0.0, 0.0, -1.0]));
         assert_eq!(d.range, 15.0);
         // (0.6-0.2)/0.4 = 1.0
@@ -1005,9 +1033,18 @@ mod tests {
             fog(FogType::Exponential2).unwrap().falloff,
             FogFalloff::ExponentialSquared { density: 0.1 }
         );
+        // An empty linear range is no fog.
+        let empty = msgs::Fog {
+            r#type: FogType::Linear as i32,
+            start: 5.0,
+            end: 5.0,
+            ..Default::default()
+        };
+        assert_eq!(fog_desc(&empty), None);
         // No colour: white; an unknown type: no fog.
         let bare = msgs::Fog {
             r#type: FogType::Linear as i32,
+            end: 1.0,
             ..Default::default()
         };
         assert_eq!(fog_desc(&bare).unwrap().color, [1.0; 3]);
@@ -1365,6 +1402,33 @@ mod tests {
         assert_eq!(directional.range, 0.0);
         assert_eq!(directional.decay, None);
         assert_eq!(directional.direction, Some([0.0, 0.0, -1.0]));
+    }
+
+    #[test]
+    fn finds_directional_lights_anywhere() {
+        let light = |ty: msgs::light::LightType| msgs::Light {
+            r#type: ty as i32,
+            ..Default::default()
+        };
+        let none = msgs::Scene {
+            light: vec![light(msgs::light::LightType::Point)],
+            ..Default::default()
+        };
+        assert!(!SceneDesc::from_msg(&none, BuildOptions::default()).has_directional_light());
+        // A sun on a link counts too.
+        let on_link = msgs::Scene {
+            model: vec![msgs::Model {
+                name: "m".into(),
+                link: vec![msgs::Link {
+                    name: "l".into(),
+                    light: vec![light(msgs::light::LightType::Directional)],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(SceneDesc::from_msg(&on_link, BuildOptions::default()).has_directional_light());
     }
 
     #[test]

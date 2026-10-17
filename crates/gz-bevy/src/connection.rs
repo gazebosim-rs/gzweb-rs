@@ -256,7 +256,7 @@ pub fn pump(
                 info!("gz status: {s:?}");
                 if s == Status::Ready {
                     status.attempts = 0;
-                    subscribe(&mut conn.transport, &world, config.headless);
+                    subscribe(&mut conn.transport, &world, config.interactive);
                 }
                 status.status = s;
             }
@@ -380,13 +380,13 @@ fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
 
 /// Same subscriptions, in the same order, as gzweb
 /// `SceneManager.subscribeToTopics()`; interactive mode adds the stats.
-fn subscribe(t: &mut Transport, world: &str, headless: bool) {
+fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     let mut topics = vec![
         format!("/world/{world}/dynamic_pose/info"),
         format!("/world/{world}/scene/info"),
     ];
     let stats = format!("/world/{world}/stats");
-    if !headless {
+    if interactive {
         topics.push(stats.clone());
     }
     for topic in &topics {
@@ -394,7 +394,7 @@ fn subscribe(t: &mut Transport, world: &str, headless: bool) {
             warn!("subscribe {topic}: {e}");
         }
     }
-    if !headless {
+    if interactive {
         let _ = t.throttle(&stats, STATS_RATE);
     }
 }
@@ -456,7 +456,7 @@ mod tests {
     impl Harness {
         fn new() -> Harness {
             Self::with(GzConfig {
-                headless: true,
+                interactive: false,
                 reconnect: false,
                 ..Default::default()
             })
@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn interactive_mode_follows_the_sim_stats() {
         let mut h = Harness::with(GzConfig {
-            headless: false,
+            interactive: true,
             reconnect: false,
             ..Default::default()
         });
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     fn reconnects_with_backoff_and_replaces_the_scene() {
         let mut h = Harness::with(GzConfig {
-            headless: true,
+            interactive: false,
             reconnect: true,
             ..Default::default()
         });
@@ -947,7 +947,7 @@ mod tests {
     fn a_rejected_key_is_not_retried() {
         let mut h = Harness::with(GzConfig {
             key: Some("k".into()),
-            headless: true,
+            interactive: false,
             reconnect: true,
             ..Default::default()
         });
@@ -963,7 +963,7 @@ mod tests {
     #[test]
     fn a_rejected_url_is_not_retried() {
         let mut h = Harness::with(GzConfig {
-            headless: true,
+            interactive: false,
             reconnect: true,
             ..Default::default()
         });
@@ -976,7 +976,7 @@ mod tests {
     fn a_silent_handshake_times_out_and_retries() {
         let mut h = Harness::with(GzConfig {
             key: Some("k".into()),
-            headless: true,
+            interactive: false,
             reconnect: true,
             ..Default::default()
         });

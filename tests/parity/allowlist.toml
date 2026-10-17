@@ -26,3 +26,10 @@ path = "<scene>"
 field = "scene.grid_visible"
 reason = """gzweb always hides its grid. gzweb-rs shows Gazebo's grid when the scene's \
 `grid` flag is set (every Harmonic world sets it), as the Gazebo GUI does."""
+
+[[allow]]
+id = "gzweb-sky-header-only"
+path = "<scene>"
+field = "scene.sky"
+reason = """gzweb reads a sky cubemap only from the Sky header's `cubemap_uri`; gzweb-rs \
+falls back to the Sky.cubemap_uri field Harmonic sets. PORT_PLAN.md section 2.5."""
