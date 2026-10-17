@@ -4,12 +4,41 @@ members = ["crates/*"]
 exclude = ["spikes"]
 
 [workspace.dependencies]
-gz-proto = { path = "crates/gz-proto" }
-gz-core = { path = "crates/gz-core" }
-gz-bevy = { path = "crates/gz-bevy" }
+gz-proto = { path = "crates/gz-proto", version = "0.1.0" }
+gz-core = { path = "crates/gz-core", version = "0.1.0" }
+gz-bevy = { path = "crates/gz-bevy", version = "0.1.0" }
 prost = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Shared lint policy; every crate opts in with `[lints] workspace = true`.
+# Enforced as errors by scripts/check.sh (pre-commit and CI).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+# Bevy system params (`Commands`, `Query`, `Res`) would all need `<'_>`.
+elided_lifetimes_in_paths = "allow"
+unreachable_pub = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stderr = "allow"
+unwrap_used = "warn"
+undocumented_unsafe_blocks = "warn"
+semicolon_if_nothing_returned = "warn"
+redundant_clone = "warn"
+needless_collect = "warn"
+inefficient_to_string = "warn"
+manual_let_else = "warn"
+match_same_arms = "warn"
+cloned_instead_of_copied = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+uninlined_format_args = "warn"
 
 [profile.release]
 opt-level = "s"

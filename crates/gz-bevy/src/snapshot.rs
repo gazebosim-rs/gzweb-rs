@@ -19,7 +19,7 @@ use crate::spawn::{
     GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
 };
 
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Debug)]
 pub struct SnapshotRequest {
     pub out: PathBuf,
     /// Quiet time required after the last scene-changing message.
@@ -271,10 +271,7 @@ fn geometry_info(
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut vertex_count = 0u64;
     let mut mesh_count = 0u32;
-    for e in mesh_entities {
-        let Ok((mesh3d, global, _)) = q.meshes_q.get(e) else {
-            continue;
-        };
+    for (mesh3d, global, _) in mesh_entities.iter().filter_map(|e| q.meshes_q.get(*e).ok()) {
         let Some(mesh) = q.meshes.get(&mesh3d.0) else {
             continue;
         };
@@ -328,4 +325,186 @@ fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
             normal: path(&m.normal_map_texture),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::scene_app;
+    use crate::GzConfig;
+    use bevy::asset::RenderAssetUsages;
+    use bevy::mesh::PrimitiveTopology;
+    use gz_core::scene::{GeometryDesc, LightDesc, LightType, MaterialDesc, VisualDesc};
+
+    fn out_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gz-bevy-snapshot-{}-{name}.json",
+            std::process::id()
+        ))
+    }
+
+    fn app_with(req: SnapshotRequest) -> App {
+        let mut app = scene_app(GzConfig::default());
+        app.insert_resource(req)
+            .add_systems(Last, snapshot_when_settled);
+        app
+    }
+
+    fn exit_code(app: &mut App) -> Option<AppExit> {
+        app.world_mut()
+            .resource_mut::<Messages<AppExit>>()
+            .drain()
+            .last()
+    }
+
+    fn gz(name: &str, kind: NodeKind) -> GzEntity {
+        GzEntity {
+            name: name.into(),
+            id: 0,
+            kind,
+            path: name.into(),
+        }
+    }
+
+    fn visual() -> GzVisual {
+        GzVisual(VisualDesc {
+            proto_type: "box".into(),
+            geometry: GeometryDesc::Box { size: [1.0; 3] },
+            material: MaterialDesc {
+                color: [1.0; 3],
+                diffuse_alpha: 1.0,
+                emissive: [0.0; 3],
+                pbr: None,
+                double_sided: false,
+                present: true,
+            },
+            cast_shadows: false,
+            transparency: 0.0,
+        })
+    }
+
+    #[test]
+    fn writes_once_settled_and_skips_what_it_cannot_measure() {
+        let out = out_path("settled");
+        let mut app = app_with(SnapshotRequest {
+            out: out.clone(),
+            settle_secs: 0.0,
+            timeout_secs: 1e9,
+        });
+        app.update();
+        let world = app.world_mut();
+
+        // A hidden visual whose meshes are: not loaded, without positions,
+        // and real; plus a nested Gazebo node that is not part of it.
+        let missing = Mesh3d(Handle::default());
+        let empty = world.resource_mut::<Assets<Mesh>>().add(Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        ));
+        let cube = world.resource_mut::<Assets<Mesh>>().add(Cuboid::default());
+        let vis = world
+            .spawn((
+                gz("v", NodeKind::Visual),
+                Transform::default(),
+                Visibility::Hidden,
+                visual(),
+                children![
+                    missing,
+                    Mesh3d(empty),
+                    Mesh3d(cube),
+                    (
+                        gz("nested", NodeKind::Link),
+                        Transform::default(),
+                        Visibility::default()
+                    ),
+                ],
+            ))
+            .id();
+        // A light whose direction has no emitter to measure.
+        let lamp = world
+            .spawn((
+                gz("lamp", NodeKind::Light),
+                Transform::default(),
+                Visibility::default(),
+                GzLight(LightDesc {
+                    ty: LightType::Directional,
+                    color: [1.0; 3],
+                    intensity: 1.0,
+                    range: 0.0,
+                    angle: None,
+                    penumbra: None,
+                    decay: None,
+                    cast_shadows: false,
+                    direction: Some([0.0, 0.0, -1.0]),
+                    msg_intensity: 1.0,
+                }),
+            ))
+            .id();
+        let gone = world.spawn_empty().id();
+        world.despawn(gone);
+        // Default clear colour and a non-perspective camera.
+        let mut cams = world.query_filtered::<(&mut Camera, &mut Projection), With<MainCamera>>();
+        let (mut cam, mut proj) = cams.single_mut(world).unwrap();
+        cam.clear_color = ClearColorConfig::Default;
+        *proj = Projection::Orthographic(OrthographicProjection::default_3d());
+
+        let mut index = world.resource_mut::<GzIndex>();
+        index.order = vec![vis, gone, lamp];
+        index.scene = Some(gz_core::scene::SceneDesc::from_msg(
+            &Default::default(),
+            Default::default(),
+        ));
+        app.update();
+        assert_eq!(exit_code(&mut app), Some(AppExit::Success));
+
+        let snap: Snapshot = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(snap.nodes.len(), 2);
+        let v = &snap.nodes[0];
+        assert!(!v.visible);
+        let g = v.geometry.as_ref().unwrap();
+        assert_eq!((g.mesh_count, g.vertex_count), (1, 24));
+        assert_eq!(snap.nodes[1].light.as_ref().unwrap().direction_world, None);
+        assert_eq!(snap.nodes[1].light.as_ref().unwrap().range, None);
+        let camera = snap.scene.camera.unwrap();
+        assert_eq!((camera.fov_deg, camera.near, camera.far), (0.0, 0.0, 0.0));
+        assert_eq!(
+            snap.scene.clear_color,
+            Some(rgb(crate::camera::CLEAR_COLOR))
+        );
+
+        // Done: later frames write nothing more.
+        std::fs::remove_file(&out).unwrap();
+        app.update();
+        assert!(!out.exists());
+        assert_eq!(exit_code(&mut app), None);
+    }
+
+    #[test]
+    fn a_timeout_still_writes_and_exits_with_an_error() {
+        let out = out_path("timeout");
+        let mut app = app_with(SnapshotRequest {
+            out: out.clone(),
+            settle_secs: 1e9,
+            timeout_secs: 0.0,
+        });
+        app.update();
+        app.update();
+        assert_eq!(exit_code(&mut app), Some(AppExit::from_code(2)));
+        assert!(out.exists());
+        std::fs::remove_file(out).unwrap();
+    }
+
+    #[test]
+    fn an_unwritable_path_is_reported_not_fatal() {
+        // The output path is an existing directory.
+        let out = std::env::temp_dir();
+        let mut app = app_with(SnapshotRequest {
+            out,
+            settle_secs: 1e9,
+            timeout_secs: 0.0,
+        });
+        app.update();
+        app.update();
+        assert_eq!(exit_code(&mut app), Some(AppExit::from_code(2)));
+    }
 }

@@ -2918,6 +2918,10 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.3.4",
  "gz-bevy",
+ "gz-core",
+ "gz-parity",
+ "prost",
+ "serde_json",
  "web-sys",
 ]
 

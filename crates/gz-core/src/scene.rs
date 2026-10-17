@@ -98,18 +98,36 @@ pub struct VisualDesc {
 /// Geometry in the visual's local Gazebo frame.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GeometryDesc {
-    Box { size: [f64; 3] },
+    Box {
+        size: [f64; 3],
+    },
     /// Axis along +Z.
-    Cylinder { radius: f64, length: f64 },
+    Cylinder {
+        radius: f64,
+        length: f64,
+    },
     /// Axis along +Z.
-    Capsule { radius: f64, length: f64 },
+    Capsule {
+        radius: f64,
+        length: f64,
+    },
     /// Axis along +Z, apex at +Z.
-    Cone { radius: f64, length: f64 },
-    Ellipsoid { radii: [f64; 3] },
-    Sphere { radius: f64 },
+    Cone {
+        radius: f64,
+        length: f64,
+    },
+    Ellipsoid {
+        radii: [f64; 3],
+    },
+    Sphere {
+        radius: f64,
+    },
     /// Plane through the origin; `size` is along local X/Y before rotating
     /// +Z onto `normal` with the shortest-arc rotation (gzweb `createPlane`).
-    Plane { normal: [f64; 3], size: [f64; 2] },
+    Plane {
+        normal: [f64; 3],
+        size: [f64; 2],
+    },
     Mesh {
         /// The URI from the message.
         uri: String,
@@ -205,7 +223,9 @@ pub struct BuildOptions {
 
 impl Default for BuildOptions {
     fn default() -> Self {
-        Self { enable_lights: true }
+        Self {
+            enable_lights: true,
+        }
     }
 }
 
@@ -216,7 +236,11 @@ impl SceneDesc {
 
     /// Like [`SceneDesc::from_msg`], allocating paths from `paths` so later
     /// additions (`scene/info`) stay unique.
-    pub fn from_msg_with(scene: &msgs::Scene, opts: BuildOptions, paths: &mut PathAllocator) -> SceneDesc {
+    pub fn from_msg_with(
+        scene: &msgs::Scene,
+        opts: BuildOptions,
+        paths: &mut PathAllocator,
+    ) -> SceneDesc {
         let mut roots = Vec::new();
         for model in &scene.model {
             if let Some(node) = model_node(model, "", paths, opts) {
@@ -341,7 +365,12 @@ fn model_node(
     })
 }
 
-fn link_node(link: &msgs::Link, parent: &str, paths: &mut PathAllocator, opts: BuildOptions) -> Node {
+fn link_node(
+    link: &msgs::Link,
+    parent: &str,
+    paths: &mut PathAllocator,
+    opts: BuildOptions,
+) -> Node {
     let path = paths.alloc(parent, &link.name);
     let mut children = Vec::new();
     for visual in &link.visual {
@@ -372,7 +401,9 @@ fn visual_node(visual: &msgs::Visual, parent: &str, paths: &mut PathAllocator) -
     }
     let path = paths.alloc(parent, &visual.name);
     let geometry = visual.geometry.as_ref();
-    let geom = geometry.map(geometry_desc).unwrap_or(GeometryDesc::Unsupported("none".into()));
+    let geom = geometry
+        .map(geometry_desc)
+        .unwrap_or(GeometryDesc::Unsupported("none".into()));
 
     // gzweb applies `<mesh><scale>` to the visual node and ignores
     // `Visual.scale`.
@@ -410,17 +441,31 @@ fn visual_node(visual: &msgs::Visual, parent: &str, paths: &mut PathAllocator) -
 /// Dispatches on which geometry sub-message is present, in gzweb's order
 /// (`SDFParser.createGeom`), not on `Geometry.type`.
 fn geometry_desc(g: &msgs::Geometry) -> GeometryDesc {
-    let v3 = |v: &Option<msgs::Vector3d>, d: [f64; 3]| v.as_ref().map(|v| [v.x, v.y, v.z]).unwrap_or(d);
+    let v3 =
+        |v: &Option<msgs::Vector3d>, d: [f64; 3]| v.as_ref().map(|v| [v.x, v.y, v.z]).unwrap_or(d);
     if let Some(b) = &g.r#box {
-        GeometryDesc::Box { size: v3(&b.size, [1.0; 3]) }
+        GeometryDesc::Box {
+            size: v3(&b.size, [1.0; 3]),
+        }
     } else if let Some(c) = &g.cylinder {
-        GeometryDesc::Cylinder { radius: c.radius, length: c.length }
+        GeometryDesc::Cylinder {
+            radius: c.radius,
+            length: c.length,
+        }
     } else if let Some(c) = &g.capsule {
-        GeometryDesc::Capsule { radius: c.radius, length: c.length }
+        GeometryDesc::Capsule {
+            radius: c.radius,
+            length: c.length,
+        }
     } else if let Some(c) = &g.cone {
-        GeometryDesc::Cone { radius: c.radius, length: c.length }
+        GeometryDesc::Cone {
+            radius: c.radius,
+            length: c.length,
+        }
     } else if let Some(e) = &g.ellipsoid {
-        GeometryDesc::Ellipsoid { radii: v3(&e.radii, [1.0; 3]) }
+        GeometryDesc::Ellipsoid {
+            radii: v3(&e.radii, [1.0; 3]),
+        }
     } else if let Some(s) = &g.sphere {
         GeometryDesc::Sphere { radius: s.radius }
     } else if let Some(p) = &g.plane {
@@ -571,11 +616,22 @@ mod tests {
     use super::*;
 
     fn v3(x: f64, y: f64, z: f64) -> Option<msgs::Vector3d> {
-        Some(msgs::Vector3d { x, y, z, ..Default::default() })
+        Some(msgs::Vector3d {
+            x,
+            y,
+            z,
+            ..Default::default()
+        })
     }
 
     fn color(r: f32, g: f32, b: f32) -> Option<msgs::Color> {
-        Some(msgs::Color { r, g, b, a: 1.0, ..Default::default() })
+        Some(msgs::Color {
+            r,
+            g,
+            b,
+            a: 1.0,
+            ..Default::default()
+        })
     }
 
     fn box_visual(name: &str) -> msgs::Visual {
@@ -583,7 +639,10 @@ mod tests {
             name: name.into(),
             geometry: Some(msgs::Geometry {
                 r#type: msgs::geometry::Type::Box as i32,
-                r#box: Some(msgs::BoxGeom { size: v3(1.0, 2.0, 3.0), ..Default::default() }),
+                r#box: Some(msgs::BoxGeom {
+                    size: v3(1.0, 2.0, 3.0),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             ..Default::default()
@@ -595,16 +654,25 @@ mod tests {
         let scene = msgs::Scene {
             model: vec![msgs::Model {
                 name: "m".into(),
-                pose: Some(msgs::Pose { position: v3(1.0, 2.0, 3.0), ..Default::default() }),
+                pose: Some(msgs::Pose {
+                    position: v3(1.0, 2.0, 3.0),
+                    ..Default::default()
+                }),
                 link: vec![msgs::Link {
                     name: "link".into(),
                     visual: vec![box_visual("v"), box_visual("v")],
                     ..Default::default()
                 }],
-                model: vec![msgs::Model { name: "inner".into(), ..Default::default() }],
+                model: vec![msgs::Model {
+                    name: "inner".into(),
+                    ..Default::default()
+                }],
                 ..Default::default()
             }],
-            light: vec![msgs::Light { name: "sun".into(), ..Default::default() }],
+            light: vec![msgs::Light {
+                name: "sun".into(),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         let desc = SceneDesc::from_msg(&scene, BuildOptions::default());
@@ -622,8 +690,14 @@ mod tests {
         );
         assert_eq!(desc.roots[0].pose.pos, [1.0, 2.0, 3.0]);
         assert_eq!(
-            desc.roots[0].children[0].children[0].visual.as_ref().unwrap().geometry,
-            GeometryDesc::Box { size: [1.0, 2.0, 3.0] }
+            desc.roots[0].children[0].children[0]
+                .visual
+                .as_ref()
+                .unwrap()
+                .geometry,
+            GeometryDesc::Box {
+                size: [1.0, 2.0, 3.0]
+            }
         );
     }
 
@@ -637,7 +711,10 @@ mod tests {
         let d = material_desc(Some(&m));
         assert!((d.color[0] - 0.4).abs() < 1e-6 && (d.color[1] - 0.6).abs() < 1e-6);
         assert_eq!(material_desc(None).color, [1.0; 3]);
-        let only_diffuse = msgs::Material { diffuse: color(0.2, 0.3, 0.4), ..Default::default() };
+        let only_diffuse = msgs::Material {
+            diffuse: color(0.2, 0.3, 0.4),
+            ..Default::default()
+        };
         assert_eq!(material_desc(Some(&only_diffuse)).color, [0.2, 0.3, 0.4]);
     }
 
@@ -677,15 +754,24 @@ mod tests {
         let g = msgs::Geometry {
             r#type: msgs::geometry::Type::Sphere as i32,
             r#box: Some(Default::default()),
-            sphere: Some(msgs::SphereGeom { radius: 2.0, ..Default::default() }),
+            sphere: Some(msgs::SphereGeom {
+                radius: 2.0,
+                ..Default::default()
+            }),
             ..Default::default()
         };
         assert_eq!(geometry_desc(&g), GeometryDesc::Box { size: [1.0; 3] });
 
-        let plane = msgs::Geometry { plane: Some(Default::default()), ..Default::default() };
+        let plane = msgs::Geometry {
+            plane: Some(Default::default()),
+            ..Default::default()
+        };
         assert_eq!(
             geometry_desc(&plane),
-            GeometryDesc::Plane { normal: [0.0, 0.0, 1.0], size: [1.0, 1.0] }
+            GeometryDesc::Plane {
+                normal: [0.0, 0.0, 1.0],
+                size: [1.0, 1.0]
+            }
         );
     }
 
@@ -706,9 +792,599 @@ mod tests {
         };
         let n = visual_node(&v, "", &mut PathAllocator::default()).unwrap();
         assert_eq!(n.scale, [2.0, 3.0, 4.0]);
-        match &n.visual.unwrap().geometry {
-            GeometryDesc::Mesh { load_uri, .. } => assert_eq!(load_uri, "m/meshes/a.dae"),
-            g => panic!("{g:?}"),
+        let geometry = n.visual.unwrap().geometry;
+        assert!(
+            matches!(&geometry, GeometryDesc::Mesh { load_uri, .. } if load_uri == "m/meshes/a.dae"),
+            "{geometry:?}"
+        );
+    }
+
+    fn quat(x: f64, y: f64, z: f64, w: f64) -> Option<msgs::Quaternion> {
+        Some(msgs::Quaternion {
+            x,
+            y,
+            z,
+            w,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn pose_from_msg() {
+        assert_eq!(Pose::from_msg(None), Pose::IDENTITY);
+        // Missing position / orientation default like gzweb's setPose.
+        assert_eq!(Pose::from_msg(Some(&msgs::Pose::default())), Pose::IDENTITY);
+        let p = Pose::from_msg(Some(&msgs::Pose {
+            position: v3(1.0, 2.0, 3.0),
+            orientation: quat(0.0, 0.0, 2.0, 2.0),
+            ..Default::default()
+        }));
+        assert_eq!(p.pos, [1.0, 2.0, 3.0]);
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        for (got, want) in p.quat.iter().zip([0.0, 0.0, h, h]) {
+            assert!((got - want).abs() < 1e-12, "{:?}", p.quat);
         }
+        // A zero quaternion (proto default when only some fields are set)
+        // becomes the identity rather than NaN.
+        let z = Pose::from_msg(Some(&msgs::Pose {
+            orientation: quat(0.0, 0.0, 0.0, 0.0),
+            ..Default::default()
+        }));
+        assert_eq!(z.quat, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn kind_and_light_type_names() {
+        let kinds = [
+            NodeKind::Model,
+            NodeKind::Link,
+            NodeKind::Visual,
+            NodeKind::Light,
+        ];
+        assert_eq!(
+            kinds.map(NodeKind::as_str),
+            ["model", "link", "visual", "light"]
+        );
+        let types = [LightType::Point, LightType::Spot, LightType::Directional];
+        assert_eq!(
+            types.map(LightType::as_str),
+            ["point", "spot", "directional"]
+        );
+    }
+
+    #[test]
+    fn path_allocator_suffixes_per_parent() {
+        let mut p = PathAllocator::default();
+        assert_eq!(p.alloc("", "a"), "a");
+        assert_eq!(p.alloc("", "a"), "a#1");
+        assert_eq!(p.alloc("", "a"), "a#2");
+        // Same name under different parents is not a repeat.
+        assert_eq!(p.alloc("a", "x"), "a/x");
+        assert_eq!(p.alloc("a#1", "x"), "a#1/x");
+        assert_eq!(p.alloc("a", "x"), "a/x#1");
+    }
+
+    fn header(key: &str, value: &str) -> Option<msgs::Header> {
+        Some(msgs::Header {
+            data: vec![msgs::header::Map {
+                key: key.into(),
+                value: vec![value.into()],
+            }],
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn scene_level_fields() {
+        let scene = msgs::Scene {
+            name: "w".into(),
+            ambient: color(0.1, 0.2, 0.3),
+            background: Some(msgs::Color {
+                r: 0.4,
+                g: 0.5,
+                b: 0.6,
+                a: 0.0,
+                ..Default::default()
+            }),
+            grid: true,
+            shadows: true,
+            sky: Some(msgs::Sky {
+                header: header("cubemap_uri", "file:///sky.dds"),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let d = SceneDesc::from_msg(&scene, BuildOptions::default());
+        assert_eq!(d.name, "w");
+        assert_eq!(d.ambient, Some([0.1, 0.2, 0.3]));
+        assert_eq!(d.background, Some([0.4, 0.5, 0.6, 0.0]));
+        assert!(d.grid && d.shadows);
+        assert_eq!(d.sky, Some(Some("file:///sky.dds".into())));
+        assert!(d.roots.is_empty());
+
+        // A sky without a cubemap header, or with other keys, has no URI.
+        for sky in [
+            msgs::Sky::default(),
+            msgs::Sky {
+                header: header("other", "x"),
+                ..Default::default()
+            },
+        ] {
+            let scene = msgs::Scene {
+                sky: Some(sky),
+                ..Default::default()
+            };
+            let d = SceneDesc::from_msg(&scene, BuildOptions::default());
+            assert_eq!(d.sky, Some(None));
+            assert_eq!(d.ambient, None);
+            assert_eq!(d.background, None);
+        }
+    }
+
+    #[test]
+    fn deleted_entities_and_model_level_visuals() {
+        let scene = msgs::Scene {
+            model: vec![
+                msgs::Model {
+                    name: "gone".into(),
+                    deleted: true,
+                    ..Default::default()
+                },
+                msgs::Model {
+                    name: "m".into(),
+                    id: 7,
+                    visual: vec![box_visual("mv")],
+                    link: vec![msgs::Link {
+                        name: "l".into(),
+                        id: 8,
+                        visual: vec![
+                            box_visual("kept"),
+                            msgs::Visual {
+                                delete_me: true,
+                                ..box_visual("dropped")
+                            },
+                        ],
+                        ..Default::default()
+                    }],
+                    model: vec![msgs::Model {
+                        name: "nested_gone".into(),
+                        deleted: true,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let d = SceneDesc::from_msg(&scene, BuildOptions::default());
+        let paths: Vec<_> = d.iter().map(|n| n.path.as_str()).collect();
+        // Links first, then the model's own visuals (PARITY.md node order).
+        assert_eq!(paths, ["m", "m/l", "m/l/kept", "m/mv"]);
+        assert_eq!(d.roots[0].id, 7);
+        assert_eq!(d.roots[0].children[0].id, 8);
+    }
+
+    fn typed(ty: msgs::geometry::Type, g: msgs::Geometry) -> msgs::Visual {
+        msgs::Visual {
+            name: "v".into(),
+            geometry: Some(msgs::Geometry {
+                r#type: ty as i32,
+                ..g
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_geometry_kind() {
+        use msgs::geometry::Type;
+        let cases: Vec<(msgs::Visual, &str, GeometryDesc)> = vec![
+            (
+                typed(
+                    Type::Cylinder,
+                    msgs::Geometry {
+                        cylinder: Some(msgs::CylinderGeom {
+                            radius: 0.5,
+                            length: 2.0,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "cylinder",
+                GeometryDesc::Cylinder {
+                    radius: 0.5,
+                    length: 2.0,
+                },
+            ),
+            (
+                typed(
+                    Type::Capsule,
+                    msgs::Geometry {
+                        capsule: Some(msgs::CapsuleGeom {
+                            radius: 0.25,
+                            length: 1.0,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "capsule",
+                GeometryDesc::Capsule {
+                    radius: 0.25,
+                    length: 1.0,
+                },
+            ),
+            (
+                typed(
+                    Type::Cone,
+                    msgs::Geometry {
+                        cone: Some(msgs::ConeGeom {
+                            radius: 1.0,
+                            length: 3.0,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "cone",
+                GeometryDesc::Cone {
+                    radius: 1.0,
+                    length: 3.0,
+                },
+            ),
+            (
+                typed(
+                    Type::Ellipsoid,
+                    msgs::Geometry {
+                        ellipsoid: Some(msgs::EllipsoidGeom {
+                            radii: v3(1.0, 2.0, 3.0),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "ellipsoid",
+                GeometryDesc::Ellipsoid {
+                    radii: [1.0, 2.0, 3.0],
+                },
+            ),
+            (
+                typed(
+                    Type::Ellipsoid,
+                    msgs::Geometry {
+                        ellipsoid: Some(msgs::EllipsoidGeom::default()),
+                        ..Default::default()
+                    },
+                ),
+                "ellipsoid",
+                GeometryDesc::Ellipsoid { radii: [1.0; 3] },
+            ),
+            (
+                typed(
+                    Type::Sphere,
+                    msgs::Geometry {
+                        sphere: Some(msgs::SphereGeom {
+                            radius: 0.75,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "sphere",
+                GeometryDesc::Sphere { radius: 0.75 },
+            ),
+            (
+                typed(
+                    Type::Plane,
+                    msgs::Geometry {
+                        plane: Some(msgs::PlaneGeom {
+                            normal: v3(0.0, 1.0, 0.0),
+                            size: Some(msgs::Vector2d {
+                                x: 4.0,
+                                y: 2.0,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "plane",
+                GeometryDesc::Plane {
+                    normal: [0.0, 1.0, 0.0],
+                    size: [4.0, 2.0],
+                },
+            ),
+            (
+                typed(
+                    Type::Mesh,
+                    msgs::Geometry {
+                        mesh: Some(msgs::MeshGeom {
+                            filename: "https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb"
+                                .into(),
+                            submesh: "body".into(),
+                            center_submesh: true,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ),
+                "mesh",
+                GeometryDesc::Mesh {
+                    uri: "https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb".into(),
+                    load_uri: "https://fuel.gazebosim.org/1.0/o/models/m/1/files/a.glb".into(),
+                    submesh: Some("body".into()),
+                    center_submesh: true,
+                },
+            ),
+            (
+                typed(
+                    Type::Heightmap,
+                    msgs::Geometry {
+                        heightmap: Some(msgs::HeightmapGeom::default()),
+                        ..Default::default()
+                    },
+                ),
+                "heightmap",
+                GeometryDesc::Unsupported("heightmap".into()),
+            ),
+            // No sub-message: named after `type`, as gzweb creates nothing.
+            (
+                typed(Type::Polyline, msgs::Geometry::default()),
+                "polyline",
+                GeometryDesc::Unsupported("polyline".into()),
+            ),
+            (
+                msgs::Visual {
+                    geometry: Some(msgs::Geometry {
+                        r#type: 999,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                "none",
+                GeometryDesc::Unsupported("unknown".into()),
+            ),
+            (
+                msgs::Visual::default(),
+                "none",
+                GeometryDesc::Unsupported("none".into()),
+            ),
+        ];
+        for (visual, proto_type, want) in cases {
+            let n = visual_node(&visual, "p", &mut PathAllocator::default()).unwrap();
+            let v = n.visual.unwrap();
+            assert_eq!(v.geometry, want);
+            assert_eq!(v.proto_type, proto_type, "{want:?}");
+            // Only <mesh><scale> scales the node.
+            assert_eq!(n.scale, [1.0; 3]);
+        }
+    }
+
+    #[test]
+    fn material_variants() {
+        // Ambient without diffuse keeps three's white.
+        let ambient_only = msgs::Material {
+            ambient: color(1.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        let d = material_desc(Some(&ambient_only));
+        assert_eq!(d.color, [1.0; 3]);
+        assert_eq!(d.diffuse_alpha, 1.0);
+        assert!(d.present);
+        assert!(!material_desc(None).present);
+
+        let full = msgs::Material {
+            diffuse: Some(msgs::Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.25,
+                ..Default::default()
+            }),
+            emissive: color(0.0, 0.5, 0.0),
+            double_sided: true,
+            pbr: Some(msgs::material::Pbr {
+                metalness: 0.8,
+                roughness: 0.3,
+                albedo_map: "file:///t/albedo.png".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let d = material_desc(Some(&full));
+        assert_eq!(d.diffuse_alpha, 0.25);
+        assert_eq!(d.emissive, [0.0, 0.5, 0.0]);
+        assert!(d.double_sided);
+        assert_eq!(
+            d.pbr,
+            Some(PbrDesc {
+                metalness: 0.8,
+                roughness: 0.3,
+                albedo_map: Some("file:///t/albedo.png".into()),
+                normal_map: None,
+            })
+        );
+    }
+
+    #[test]
+    fn visual_flags_carry_through() {
+        let v = msgs::Visual {
+            cast_shadows: true,
+            transparency: 0.4,
+            id: 12,
+            pose: Some(msgs::Pose {
+                position: v3(0.0, 0.0, 1.0),
+                ..Default::default()
+            }),
+            ..box_visual("v")
+        };
+        let n = visual_node(&v, "m/l", &mut PathAllocator::default()).unwrap();
+        assert_eq!(n.path, "m/l/v");
+        assert_eq!(n.id, 12);
+        assert_eq!(n.pose.pos, [0.0, 0.0, 1.0]);
+        let vd = n.visual.unwrap();
+        assert!(vd.cast_shadows);
+        assert_eq!(vd.transparency, 0.4);
+    }
+
+    #[test]
+    fn point_and_unknown_lights() {
+        let point = light_desc(&msgs::Light {
+            r#type: msgs::light::LightType::Point as i32,
+            diffuse: color(0.5, 0.6, 0.7),
+            range: 10.0,
+            cast_shadows: true,
+            intensity: 3.0,
+            ..Default::default()
+        });
+        assert_eq!(point.ty, LightType::Point);
+        assert_eq!(point.color, [0.5, 0.6, 0.7]);
+        assert_eq!(point.direction, None);
+        assert_eq!((point.angle, point.penumbra), (None, None));
+        // three.js PointLight's default decay.
+        assert_eq!(point.decay, Some(1.0));
+        assert_eq!(point.range, 10.0);
+        assert!(point.cast_shadows);
+        assert_eq!(point.msg_intensity, 3.0);
+        // No attenuation: full intensity (E = D = r = 1).
+        assert_eq!(point.intensity, 1.0);
+
+        // gzweb logs "Unknown light type" and adds no light; we fall back to
+        // a point light (PORT_PLAN.md §2.5 candidate).
+        let unknown = light_desc(&msgs::Light {
+            r#type: 7,
+            ..Default::default()
+        });
+        assert_eq!(unknown.ty, LightType::Point);
+        assert_eq!(unknown.color, [1.0; 3]);
+
+        let directional = light_desc(&msgs::Light {
+            r#type: msgs::light::LightType::Directional as i32,
+            range: 99.0,
+            ..Default::default()
+        });
+        assert_eq!(directional.range, 0.0);
+        assert_eq!(directional.decay, None);
+        assert_eq!(directional.direction, Some([0.0, 0.0, -1.0]));
+    }
+
+    #[test]
+    fn spot_penumbra_edge_cases() {
+        let spot = |inner: f32, outer: f32| {
+            light_desc(&msgs::Light {
+                r#type: msgs::light::LightType::Spot as i32,
+                spot_inner_angle: inner,
+                spot_outer_angle: outer,
+                ..Default::default()
+            })
+            .penumbra
+        };
+        // gzweb divides by zero here (NaN); we use 0.
+        assert_eq!(spot(0.0, 0.0), Some(0.0));
+        // Equal angles: a hard edge.
+        assert_eq!(spot(0.5, 0.5), Some(0.0));
+        // Inner > outer would be negative; clamp to 0.
+        assert_eq!(spot(0.8, 0.4), Some(0.0));
+        // Very wide penumbra clamps to three's maximum of 1.
+        assert_eq!(spot(0.0, 1.0), Some(1.0));
+    }
+
+    #[test]
+    fn light_visibility_follows_enable_lights_and_is_light_off() {
+        let link_light = |off: bool| msgs::Light {
+            name: if off { "off".into() } else { "on".into() },
+            is_light_off: off,
+            ..Default::default()
+        };
+        let scene = msgs::Scene {
+            model: vec![msgs::Model {
+                name: "m".into(),
+                link: vec![msgs::Link {
+                    name: "l".into(),
+                    light: vec![link_light(false), link_light(true)],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            light: vec![link_light(false), link_light(true)],
+            ..Default::default()
+        };
+        let vis = |enable_lights: bool| -> Vec<(String, bool)> {
+            SceneDesc::from_msg(&scene, BuildOptions { enable_lights })
+                .iter()
+                .filter(|n| n.kind == NodeKind::Light)
+                .map(|n| (n.path.clone(), n.visible))
+                .collect()
+        };
+        let s = |p: &str, v: bool| (p.to_string(), v);
+        assert_eq!(
+            vis(true),
+            [
+                s("m/l/on", true),
+                s("m/l/off", false),
+                s("on", true),
+                s("off", false)
+            ]
+        );
+        // enableLights only affects lights attached to links.
+        assert_eq!(
+            vis(false),
+            [
+                s("m/l/on", false),
+                s("m/l/off", false),
+                s("on", true),
+                s("off", false)
+            ]
+        );
+        assert!(BuildOptions::default().enable_lights);
+    }
+
+    #[test]
+    fn new_models_skip_known_names_and_keep_paths_unique() {
+        let mut paths = PathAllocator::default();
+        let initial = msgs::Scene {
+            model: vec![msgs::Model {
+                name: "a".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let desc = SceneDesc::from_msg_with(&initial, BuildOptions::default(), &mut paths);
+        assert_eq!(desc.roots[0].path, "a");
+
+        let update = msgs::Scene {
+            model: vec![
+                msgs::Model {
+                    name: "a".into(),
+                    ..Default::default()
+                },
+                msgs::Model {
+                    name: "b".into(),
+                    ..Default::default()
+                },
+                msgs::Model {
+                    name: "c".into(),
+                    deleted: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let known = |n: &str| n == "a";
+        let nodes = SceneDesc::new_models(&update, &known, &mut paths, BuildOptions::default());
+        assert_eq!(
+            nodes.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
+        // Not known by name, but the path is taken: the allocator still
+        // disambiguates.
+        let again =
+            SceneDesc::new_models(&update, &|n| n == "b", &mut paths, BuildOptions::default());
+        assert_eq!(
+            again.iter().map(|n| n.path.as_str()).collect::<Vec<_>>(),
+            ["a#1"]
+        );
     }
 }

@@ -10,3 +10,6 @@ gz-proto.workspace = true
 prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

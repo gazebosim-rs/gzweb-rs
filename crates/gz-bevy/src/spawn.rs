@@ -457,3 +457,213 @@ pub fn apply_poses(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::scene_app;
+    use gz_core::msgs;
+
+    fn v3(x: f64, y: f64, z: f64) -> Option<msgs::Vector3d> {
+        Some(msgs::Vector3d {
+            x,
+            y,
+            z,
+            ..Default::default()
+        })
+    }
+
+    fn light(name: &str, ty: msgs::light::LightType, dir: [f64; 3]) -> msgs::Light {
+        msgs::Light {
+            name: name.into(),
+            r#type: ty as i32,
+            direction: v3(dir[0], dir[1], dir[2]),
+            spot_outer_angle: 0.8,
+            spot_falloff: 0.5,
+            ..Default::default()
+        }
+    }
+
+    fn box_visual(name: &str, material: msgs::Material) -> msgs::Visual {
+        msgs::Visual {
+            name: name.into(),
+            geometry: Some(msgs::Geometry {
+                r#box: Some(msgs::BoxGeom::default()),
+                ..Default::default()
+            }),
+            material: Some(material),
+            ..Default::default()
+        }
+    }
+
+    fn entity(app: &mut App, name: &str) -> Entity {
+        app.world().resource::<GzIndex>().by_name[name][0]
+    }
+
+    fn emitter(app: &mut App, light: Entity) -> Transform {
+        let world = app.world_mut();
+        let children = world.get::<Children>(light).unwrap().to_vec();
+        children
+            .into_iter()
+            .find(|c| world.get::<GzLightEmitter>(*c).is_some())
+            .map(|c| *world.get::<Transform>(c).unwrap())
+            .unwrap()
+    }
+
+    fn scene() -> msgs::Scene {
+        use msgs::light::LightType;
+        let link = msgs::Link {
+            name: "l".into(),
+            visual: vec![
+                box_visual(
+                    "two_sided",
+                    msgs::Material {
+                        double_sided: true,
+                        ..Default::default()
+                    },
+                ),
+                msgs::Visual {
+                    name: "terrain".into(),
+                    geometry: Some(msgs::Geometry {
+                        heightmap: Some(Default::default()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            light: vec![light("lamp", LightType::Point, [0.0, 0.0, -1.0])],
+            ..Default::default()
+        };
+        msgs::Scene {
+            name: "w".into(),
+            ambient: Some(msgs::Color {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+                a: 1.0,
+                ..Default::default()
+            }),
+            // Alpha 0: no background was set, so the clear colour stays.
+            background: Some(msgs::Color::default()),
+            model: vec![msgs::Model {
+                name: "m".into(),
+                id: 7,
+                link: vec![link],
+                ..Default::default()
+            }],
+            light: vec![
+                light("down", LightType::Directional, [0.0, 0.0, -1.0]),
+                light("aside", LightType::Spot, [1.0, 0.0, 0.0]),
+                light("nowhere", LightType::Spot, [0.0, 0.0, 0.0]),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn spawns_lights_materials_and_hidden_link_lights() {
+        let mut app = scene_app(GzConfig {
+            enable_lights: false,
+            ..default()
+        });
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(scene()));
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<GlobalAmbientLight>().color,
+            Color::srgb(0.5, 0.5, 0.5)
+        );
+        let world = app.world_mut();
+        let cam = world.query::<&Camera>().single(world).unwrap().clear_color;
+        assert!(matches!(cam, ClearColorConfig::Custom(c) if c == crate::camera::CLEAR_COLOR));
+
+        // enableLights = false hides lights attached to links.
+        let lamp = entity(&mut app, "lamp");
+        assert_eq!(
+            app.world().get::<Visibility>(lamp),
+            Some(&Visibility::Hidden)
+        );
+
+        // Emitters look along the Gazebo direction (Bevy lights shine along -Z).
+        let down = entity(&mut app, "down");
+        let fwd = emitter(&mut app, down).forward();
+        assert!((fwd.as_vec3() - Vec3::NEG_Z).length() < 1e-5, "{fwd:?}");
+        let aside = entity(&mut app, "aside");
+        assert!((emitter(&mut app, aside).forward().as_vec3() - Vec3::X).length() < 1e-5);
+        let nowhere = entity(&mut app, "nowhere");
+        assert_eq!(emitter(&mut app, nowhere).rotation, Quat::IDENTITY);
+
+        // Double-sided materials disable culling.
+        let two_sided = entity(&mut app, "two_sided");
+        let world = app.world_mut();
+        let child = world.get::<Children>(two_sided).unwrap()[0];
+        let handle = world
+            .get::<MeshMaterial3d<StandardMaterial>>(child)
+            .unwrap()
+            .0
+            .clone();
+        let mat = world
+            .resource::<Assets<StandardMaterial>>()
+            .get(&handle)
+            .unwrap();
+        assert!(mat.double_sided);
+        assert_eq!(mat.cull_mode, None);
+
+        // Unsupported geometry spawns the node but no mesh.
+        let terrain = entity(&mut app, "terrain");
+        assert!(app.world().get::<Children>(terrain).is_none());
+    }
+
+    #[test]
+    fn scene_updates_add_only_new_models_and_poses_skip_unknown_entities() {
+        let mut app = scene_app(GzConfig::default());
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(scene()));
+        app.update();
+        let before = app.world().resource::<GzIndex>().order.len();
+
+        let mut inbox = app.world_mut().resource_mut::<GzInbox>();
+        inbox.scene_updates.push(msgs::Scene {
+            model: vec![
+                msgs::Model {
+                    name: "m".into(),
+                    ..Default::default()
+                },
+                msgs::Model {
+                    name: "late".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        inbox.poses = vec![
+            msgs::Pose {
+                name: "nobody".into(),
+                ..Default::default()
+            },
+            msgs::Pose {
+                id: 7,
+                position: v3(1.0, 2.0, 3.0),
+                ..Default::default()
+            },
+        ];
+        app.update();
+        let index = app.world().resource::<GzIndex>();
+        assert_eq!(index.order.len(), before + 1);
+        assert_eq!(index.by_name["m"].len(), 1);
+        let m = entity(&mut app, "m");
+        assert_eq!(
+            app.world().get::<Transform>(m).unwrap().translation,
+            Vec3::new(1.0, 2.0, 3.0)
+        );
+    }
+
+    #[test]
+    fn nothing_spawns_before_the_root_exists() {
+        use bevy::ecs::system::RunSystemOnce;
+        // No update yet, so Startup has not created the root.
+        let mut app = scene_app(GzConfig::default());
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(scene()));
+        app.world_mut().run_system_once(apply_scene).unwrap();
+        assert!(app.world().resource::<GzInbox>().scene.is_some());
+    }
+}

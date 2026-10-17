@@ -17,12 +17,15 @@ pub struct RecordOptions {
     pub duration: Duration,
     pub max_stream_frames: usize,
     pub world_file: Option<String>,
+    /// How long to wait for each handshake reply and for asset replies.
+    pub reply_timeout: Duration,
 }
 
 pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
-    let (mut ws, _) = tungstenite::connect(opts.url.as_str()).map_err(|e| e.to_string())?;
+    let (mut ws, _) = tungstenite::connect(opts.url.as_str()).map_err(crate::message)?;
     if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
-        tcp.set_read_timeout(Some(Duration::from_millis(50))).map_err(|e| e.to_string())?;
+        tcp.set_read_timeout(Some(Duration::from_millis(50)))
+            .map_err(crate::message)?;
     }
     let mut corpus = Corpus {
         manifest: Manifest {
@@ -32,14 +35,18 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
         frames: Vec::new(),
     };
     if let Some(w) = &opts.world_file {
-        corpus.manifest.source.insert("world_file".into(), w.clone());
+        corpus
+            .manifest
+            .source
+            .insert("world_file".into(), w.clone());
     }
 
     let send = |ws: &mut tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>, s: &str| {
-        ws.send(Message::Text(s.to_string().into())).map_err(|e| e.to_string())
+        ws.send(Message::Text(s.to_string().into()))
+            .map_err(crate::message)
     };
     let read = |ws: &mut tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
-                    deadline: Instant|
+                deadline: Instant|
      -> Result<Option<Vec<u8>>, String> {
         loop {
             if Instant::now() > deadline {
@@ -51,12 +58,15 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
                 Ok(Message::Close(_)) => return Err("server closed the connection".into()),
                 Ok(_) => {}
                 Err(tungstenite::Error::Io(e))
-                    if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
                 Err(e) => return Err(e.to_string()),
             }
         }
     };
-    let timeout = || Instant::now() + Duration::from_secs(20);
+    let timeout = || Instant::now() + opts.reply_timeout;
 
     // 1. protos: the first frame after the request.
     send(&mut ws, "protos,,,")?;
@@ -70,7 +80,9 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
     let deadline = timeout();
     while scene_msg.is_none() {
         let data = read(&mut ws, deadline)?.ok_or("timed out waiting for worlds/scene")?;
-        let Some(f) = Frame::parse(&data) else { continue };
+        let Some(f) = Frame::parse(&data) else {
+            continue;
+        };
         if f.op != "pub" {
             continue;
         }
@@ -80,22 +92,26 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
                 corpus.manifest.responses.insert("topics-types".into(), idx);
             }
             "worlds" => {
-                let worlds = msgs::StringMsgV::decode(f.payload).map_err(|e| e.to_string())?;
-                let world = worlds.data.first().cloned().ok_or("server reported no worlds")?;
+                let worlds = msgs::StringMsgV::decode(f.payload).map_err(crate::message)?;
+                let world = worlds
+                    .data
+                    .first()
+                    .cloned()
+                    .ok_or("server reported no worlds")?;
                 corpus.manifest.world = world.clone();
                 let idx = corpus.push(data.clone());
                 corpus.manifest.responses.insert("worlds".into(), idx);
                 send(&mut ws, &format!("scene,{world},,"))?;
             }
             "scene" => {
-                scene_msg = Some(msgs::Scene::decode(f.payload).map_err(|e| e.to_string())?);
+                scene_msg = Some(msgs::Scene::decode(f.payload).map_err(crate::message)?);
                 let idx = corpus.push(data.clone());
                 corpus.manifest.responses.insert("scene".into(), idx);
             }
             _ => {}
         }
     }
-    let scene = scene_msg.unwrap();
+    let scene = scene_msg.ok_or("server sent no scene")?;
 
     // 3. Every non-HTTP resource the scene references, under the URI both
     //    clients will request (gzweb strips file:// and model://).
@@ -118,14 +134,18 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
     let end = Instant::now() + opts.duration;
     let asset_deadline = timeout();
     loop {
-        let assets_done = wanted.iter().all(|u| corpus.manifest.assets.contains_key(u));
+        let assets_done = wanted
+            .iter()
+            .all(|u| corpus.manifest.assets.contains_key(u));
         if Instant::now() > end && (assets_done || Instant::now() > asset_deadline) {
             break;
         }
         let Some(data) = read(&mut ws, Instant::now() + Duration::from_millis(100))? else {
             continue;
         };
-        let Some(f) = Frame::parse(&data) else { continue };
+        let Some(f) = Frame::parse(&data) else {
+            continue;
+        };
         match f.op {
             "asset" => {
                 let key = f.topic.to_string();
@@ -143,7 +163,10 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
             _ => {}
         }
     }
-    let missing: Vec<_> = wanted.iter().filter(|u| !corpus.manifest.assets.contains_key(*u)).collect();
+    let missing: Vec<_> = wanted
+        .iter()
+        .filter(|u| !corpus.manifest.assets.contains_key(*u))
+        .collect();
     if !missing.is_empty() {
         eprintln!("warning: no reply for assets {missing:?}");
     }
@@ -157,7 +180,13 @@ fn collect_uris(scene: &msgs::Scene, out: &mut BTreeSet<String>) {
             out.insert(uri::mesh_load_uri(&m.filename));
         }
         if let Some(pbr) = v.material.as_ref().and_then(|m| m.pbr.as_ref()) {
-            for map in [&pbr.albedo_map, &pbr.normal_map, &pbr.roughness_map, &pbr.metalness_map, &pbr.emissive_map] {
+            for map in [
+                &pbr.albedo_map,
+                &pbr.normal_map,
+                &pbr.roughness_map,
+                &pbr.metalness_map,
+                &pbr.emissive_map,
+            ] {
                 if !map.is_empty() {
                     out.insert(uri::mesh_load_uri(map));
                 }

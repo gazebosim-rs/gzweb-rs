@@ -186,7 +186,8 @@ impl Transport {
     }
 
     fn send(&mut self, op: &str, topic: &str, msg_type: &str, payload: &str) {
-        self.outgoing.push_back(frame::build(op, topic, msg_type, payload));
+        self.outgoing
+            .push_back(frame::build(op, topic, msg_type, payload));
     }
 
     fn set_status(&mut self, status: Status) {
@@ -315,7 +316,12 @@ mod tests {
             name: "shapes".into(),
             ..Default::default()
         };
-        t.on_message(&build_binary("pub", "scene", "gz.msgs.Scene", &scene.encode_to_vec()));
+        t.on_message(&build_binary(
+            "pub",
+            "scene",
+            "gz.msgs.Scene",
+            &scene.encode_to_vec(),
+        ));
         assert_eq!(t.status(), &Status::Ready);
         let events = drain_events(&mut t);
         assert!(events.contains(&Event::Scene(Box::new(scene))));
@@ -352,17 +358,30 @@ mod tests {
             data: b"solid x".to_vec(),
             ..Default::default()
         };
-        t.on_message(&build_binary("asset", "file:///m.stl", "gz.msgs.Bytes", &bytes.encode_to_vec()));
+        t.on_message(&build_binary(
+            "asset",
+            "file:///m.stl",
+            "gz.msgs.Bytes",
+            &bytes.encode_to_vec(),
+        ));
         let err = msgs::StringMsg {
             data: "asset_not_found".into(),
             ..Default::default()
         };
-        t.on_message(&build_binary("asset", "file:///x.dae", "gz.msgs.StringMsg", &err.encode_to_vec()));
+        t.on_message(&build_binary(
+            "asset",
+            "file:///x.dae",
+            "gz.msgs.StringMsg",
+            &err.encode_to_vec(),
+        ));
 
         assert_eq!(
             drain_events(&mut t),
             [
-                Event::Asset { uri: "file:///m.stl".into(), result: Ok(b"solid x".to_vec()) },
+                Event::Asset {
+                    uri: "file:///m.stl".into(),
+                    result: Ok(b"solid x".to_vec())
+                },
                 Event::Asset {
                     uri: "file:///x.dae".into(),
                     result: Err(AssetError::Server("asset_not_found".into()))
@@ -401,7 +420,161 @@ mod tests {
         t.request_asset("model://m/meshes/a.dae");
         assert_eq!(
             drain_out(&mut t),
-            ["sub,/a,,", "unsub,/a,,", "throttle,/a,na,30", "asset,,,model://m/meshes/a.dae"]
+            [
+                "sub,/a,,",
+                "unsub,/a,,",
+                "throttle,/a,na,30",
+                "asset,,,model://m/meshes/a.dae"
+            ]
         );
+    }
+
+    /// A transport that has finished the handshake up to `Connected`.
+    fn connected() -> Transport {
+        let mut t = Transport::new(None);
+        t.on_open();
+        t.on_message(b"protos");
+        drain_out(&mut t);
+        drain_events(&mut t);
+        t
+    }
+
+    const GARBAGE: &[u8] = &[0xff, 0xff];
+
+    #[test]
+    fn undecodable_replies_are_malformed() {
+        let mut t = connected();
+        for topic in ["topics-types", "worlds", "scene"] {
+            t.on_message(&build_binary("pub", topic, "gz.msgs.X", GARBAGE));
+        }
+        let events = drain_events(&mut t);
+        assert_eq!(events.len(), 3, "{events:?}");
+        for (e, what) in events.iter().zip(["topics-types", "worlds", "scene"]) {
+            let prefix = format!("failed to decode {what}:");
+            assert!(
+                matches!(e, Event::Malformed(why) if why.starts_with(&prefix)),
+                "{e:?}"
+            );
+        }
+        // Nothing was requested and the status did not move.
+        assert!(drain_out(&mut t).is_empty());
+        assert_eq!(t.status(), &Status::Connected);
+        assert_eq!(t.world(), None);
+    }
+
+    #[test]
+    fn topics_types_are_decoded() {
+        let mut t = connected();
+        let msg = msgs::Publishers {
+            publisher: vec![msgs::Publish {
+                topic: "/clock".into(),
+                msg_type: "gz.msgs.Clock".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        t.on_message(&build_binary(
+            "pub",
+            "topics-types",
+            "gz.msgs.Publishers",
+            &msg.encode_to_vec(),
+        ));
+        assert_eq!(
+            drain_events(&mut t),
+            [Event::TopicsTypes(vec![(
+                "/clock".into(),
+                "gz.msgs.Clock".into()
+            )])]
+        );
+    }
+
+    #[test]
+    fn no_worlds_requests_no_scene() {
+        let mut t = connected();
+        t.on_message(&worlds_frame(&[]));
+        assert!(drain_out(&mut t).is_empty());
+        assert_eq!(drain_events(&mut t), [Event::Worlds(vec![])]);
+        assert_eq!(t.world(), None);
+    }
+
+    #[test]
+    fn undecodable_asset_replies() {
+        let mut t = connected();
+        t.on_message(&build_binary("asset", "/a.stl", "gz.msgs.Bytes", GARBAGE));
+        t.on_message(&build_binary(
+            "asset",
+            "/b.stl",
+            "gz.msgs.StringMsg",
+            GARBAGE,
+        ));
+        let events = drain_events(&mut t);
+        for (e, uri) in events.iter().zip(["/a.stl", "/b.stl"]) {
+            assert!(
+                matches!(e, Event::Asset { uri: u, result: Err(AssetError::Decode(_)) } if u == uri),
+                "{e:?}"
+            );
+        }
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn asset_error_display() {
+        assert_eq!(
+            AssetError::Server("asset_not_found".into()).to_string(),
+            "server error: asset_not_found"
+        );
+        assert_eq!(
+            AssetError::Decode("bad".into()).to_string(),
+            "decode error: bad"
+        );
+    }
+
+    #[test]
+    fn other_ops_are_ignored() {
+        // Service replies and unknown ops are dropped, as in gzweb.
+        let mut t = connected();
+        t.on_message(b"srv,/world/w/control,gz.msgs.Boolean,\x08\x01");
+        t.on_message(b"image,/camera,gz.msgs.Image,");
+        assert!(drain_events(&mut t).is_empty());
+        assert!(drain_out(&mut t).is_empty());
+    }
+
+    #[test]
+    fn close_and_status_dedup() {
+        let mut t = Transport::new(Some(String::new()));
+        // An empty key means no auth.
+        t.on_open();
+        assert_eq!(drain_out(&mut t), ["protos,,,"]);
+        t.on_close(None);
+        assert_eq!(t.status(), &Status::Disconnected);
+        t.on_close(Some("reset".into()));
+        assert_eq!(t.status(), &Status::Error("reset".into()));
+        // The same error again emits no second status event.
+        t.on_close(Some("reset".into()));
+        assert_eq!(
+            drain_events(&mut t),
+            [
+                Event::Status(Status::Connecting),
+                Event::Status(Status::Disconnected),
+                Event::Status(Status::Error("reset".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn reopening_restarts_the_handshake() {
+        let mut t = connected();
+        t.on_message(&worlds_frame(&["w"]));
+        assert_eq!(t.protos(), Some("protos"));
+        assert_eq!(t.world(), Some("w"));
+        t.on_close(None);
+        t.on_open();
+        assert_eq!(t.protos(), None);
+        assert_eq!(t.world(), None);
+        assert_eq!(t.status(), &Status::Connecting);
+        drain_out(&mut t);
+        // The next message is treated as the proto definitions again.
+        t.on_message(b"protos again");
+        assert_eq!(drain_out(&mut t), ["topics-types,,,", "worlds,,,"]);
     }
 }
