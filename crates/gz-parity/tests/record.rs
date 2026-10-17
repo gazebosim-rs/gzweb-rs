@@ -23,6 +23,7 @@ fn options(url: &str) -> RecordOptions {
         max_stream_frames: 2,
         world_file: Some("w.sdf".into()),
         reply_timeout: Duration::from_secs(5),
+        ca_cert: None,
     }
 }
 
@@ -197,6 +198,16 @@ fn record_err(url: &str) -> String {
         ..options(url)
     })
     .unwrap_err()
+}
+
+#[test]
+fn a_bad_ca_file_is_an_error() {
+    let err = record(&RecordOptions {
+        ca_cert: Some("/nonexistent/ca.pem".into()),
+        ..options("wss://localhost:1")
+    })
+    .unwrap_err();
+    assert!(err.contains("ca.pem"), "{err}");
 }
 
 #[test]

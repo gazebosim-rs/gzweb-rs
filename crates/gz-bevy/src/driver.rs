@@ -17,19 +17,35 @@ pub enum DriverEvent {
 pub struct Driver {
     pub events: Receiver<DriverEvent>,
     #[cfg(not(target_arch = "wasm32"))]
-    outgoing: Sender<String>,
+    outgoing: Sender<Vec<u8>>,
     #[cfg(target_arch = "wasm32")]
     socket: web_sys::WebSocket,
 }
 
 impl Driver {
-    pub fn send(&self, frame: String) {
+    /// Sends a frame: as text when it is UTF-8 (like gzweb), else binary.
+    pub fn send(&self, frame: Vec<u8>) {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = self.outgoing.send(frame);
         #[cfg(target_arch = "wasm32")]
-        if let Err(e) = self.socket.send_with_str(&frame) {
-            bevy::log::error!("websocket send failed: {e:?}");
+        {
+            let sent = match std::str::from_utf8(&frame) {
+                Ok(text) => self.socket.send_with_str(text),
+                Err(_) => self.socket.send_with_u8_array(&frame),
+            };
+            if let Err(e) = sent {
+                bevy::log::error!("websocket send failed: {e:?}");
+            }
         }
+    }
+}
+
+/// A frame as a websocket message: text when it is UTF-8, else binary.
+#[cfg(not(target_arch = "wasm32"))]
+fn message(frame: Vec<u8>) -> tungstenite::Message {
+    match String::from_utf8(frame) {
+        Ok(text) => tungstenite::Message::Text(text.into()),
+        Err(e) => tungstenite::Message::Binary(e.into_bytes().into()),
     }
 }
 
@@ -37,7 +53,7 @@ impl Driver {
 /// frames the connection sent.
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn fake() -> (Driver, Sender<DriverEvent>, Receiver<String>) {
+pub(crate) fn fake() -> (Driver, Sender<DriverEvent>, Receiver<Vec<u8>>) {
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
     let (out_tx, out_rx) = crossbeam_channel::unbounded();
     (
@@ -50,35 +66,33 @@ pub(crate) fn fake() -> (Driver, Sender<DriverEvent>, Receiver<String>) {
     )
 }
 
+/// Connects on a background thread. `tls` is used for `wss://` URLs.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn connect(url: &str) -> Driver {
+pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
     use std::time::Duration;
-    use tungstenite::{stream::MaybeTlsStream, Message};
+    use tungstenite::Message;
 
     let (event_tx, event_rx) = crossbeam_channel::unbounded();
-    let (out_tx, out_rx) = crossbeam_channel::unbounded::<String>();
+    let (out_tx, out_rx) = crossbeam_channel::unbounded::<Vec<u8>>();
     let url = url.to_string();
 
     std::thread::Builder::new()
         .name("gz-websocket".into())
         .spawn(move || {
-            let mut socket = match tungstenite::connect(url.as_str()) {
-                Ok((socket, _)) => socket,
+            // A short read timeout lets one thread service both directions.
+            let mut socket = match gz_core::net::connect(&url, tls, Some(Duration::from_millis(5)))
+            {
+                Ok(socket) => socket,
                 Err(e) => {
-                    let _ = event_tx.send(DriverEvent::Closed(Some(e.to_string())));
+                    let _ = event_tx.send(DriverEvent::Closed(Some(e)));
                     return;
                 }
             };
-            // A short read timeout lets one thread service both directions.
-            if let MaybeTlsStream::Plain(tcp) = socket.get_ref() {
-                let _ = tcp.set_read_timeout(Some(Duration::from_millis(5)));
-                let _ = tcp.set_nodelay(true);
-            }
             let _ = event_tx.send(DriverEvent::Open);
 
             loop {
                 while let Ok(frame) = out_rx.try_recv() {
-                    if let Err(e) = socket.send(Message::Text(frame.into())) {
+                    if let Err(e) = socket.send(message(frame)) {
                         let _ = event_tx.send(DriverEvent::Closed(Some(e.to_string())));
                         return;
                     }
@@ -205,6 +219,10 @@ mod tests {
     fn relays_frames_both_ways_and_reports_a_clean_close() {
         let url = serve(|mut ws| {
             assert_eq!(ws.read().unwrap(), Message::Text("protos,,,".into()));
+            assert_eq!(
+                ws.read().unwrap(),
+                Message::Binary(b"req,/s,T,\xff".to_vec().into())
+            );
             ws.send(Message::Ping(vec![1].into())).unwrap();
             ws.send(Message::Text("hello".into())).unwrap();
             ws.send(Message::Binary(vec![1, 2, 3].into())).unwrap();
@@ -212,9 +230,10 @@ mod tests {
             // Drain until the client acknowledges the close.
             while ws.read().is_ok() {}
         });
-        let d = connect(&url);
+        let d = connect(&url, None);
         assert!(matches!(next(&d), DriverEvent::Open));
-        d.send("protos,,,".into());
+        d.send(b"protos,,,".to_vec());
+        d.send(b"req,/s,T,\xff".to_vec());
         assert!(matches!(next(&d), DriverEvent::Message(m) if m == b"hello"));
         assert!(matches!(next(&d), DriverEvent::Message(m) if m == [1, 2, 3]));
         assert!(matches!(next(&d), DriverEvent::Closed(None)));
@@ -223,7 +242,7 @@ mod tests {
     #[test]
     fn reports_a_dropped_connection_as_an_error() {
         let url = serve(drop);
-        let d = connect(&url);
+        let d = connect(&url, None);
         assert!(matches!(next(&d), DriverEvent::Open));
         assert!(matches!(next(&d), DriverEvent::Closed(Some(_))));
     }
@@ -235,7 +254,7 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let d = connect(&format!("ws://127.0.0.1:{port}"));
+        let d = connect(&format!("ws://127.0.0.1:{port}"), None);
         assert!(matches!(next(&d), DriverEvent::Closed(Some(_))));
     }
 
@@ -247,10 +266,10 @@ mod tests {
         let url = serve(|mut ws| {
             let _ = ws.read();
         });
-        let d = connect(&url);
+        let d = connect(&url, None);
         assert!(matches!(next(&d), DriverEvent::Open));
         for _ in 0..200 {
-            d.send("x".repeat(1 << 16));
+            d.send(vec![b'x'; 1 << 16]);
         }
         assert!(matches!(next(&d), DriverEvent::Closed(Some(_))));
     }

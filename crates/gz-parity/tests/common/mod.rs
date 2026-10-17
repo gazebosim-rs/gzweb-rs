@@ -27,6 +27,7 @@ pub fn opts(client_log: Option<PathBuf>, key: Option<&str>) -> ReplayOptions {
         stream_limit: None,
         connections: 1,
         key: key.map(str::to_string),
+        ..Default::default()
     }
 }
 

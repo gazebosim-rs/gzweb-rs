@@ -97,6 +97,45 @@ asset,,,<uri> → asset,<uri>,gz.msgs.Bytes,<Bytes>   (or gz.msgs.StringMsg erro
 The proto definitions arrive as a *binary* frame. Asset payloads are
 serialized `gz.msgs.Bytes`, not raw file bytes.
 
+Frames go out as text when they are UTF-8 (every gzweb frame is), and as
+binary otherwise; the server accepts both.
+
+**Server limits (gz-launch 7 to `main`, probed against Harmonic).** The
+server reads each frame as a C string and splits it on `,`:
+
+- a payload is cut at its first `0x00` byte;
+- a `,` (`0x2c`) in a payload makes the frame invalid (dropped);
+- a `req` with an empty payload crashes the server (`std::length_error`
+  in `OnRequest`);
+- there is no `adv` or `pub_in` handler, so publishing from the client does
+  nothing;
+- `image` is only honoured for `gz.msgs.Image` topics;
+- `ignition.msgs.*` request types are rejected.
+
+`Transport::request` refuses payloads that would hit the first three.
+`gz_core::control` (play, pause, step, reset, stop) stamps a header (1 s)
+on every request so `WorldControl { pause: false }` isn't empty and has no
+zero bytes.
+
+**Sending.** As in gzweb's `sendMessage`, only handshake ops go out before
+`Connected`, and nothing after an error (`SendError`).
+
+**Reconnect.** On a close or failed connect, `connection::pump` reconnects
+after 0.5, 1, 2, 4, 8, then 10 s (reset on `Ready`). It doesn't retry a
+rejected key. The next `scene` reply replaces the whole scene. It is on by
+default, off in `--snapshot` mode (`--reconnect` / `--no-reconnect`). gzweb
+doesn't reconnect.
+
+**Sim control.** Send a `GzCommand` message (`Play`, `Pause`, `Step(n)`,
+`Reset`, `Stop`, `Subscribe`, `Unsubscribe`, `Throttle`, `Request`). In
+interactive mode the client also subscribes to `/world/<w>/stats`
+(throttled to 5 Hz) for the HUD's sim line; Space toggles play/pause and N
+steps.
+
+**TLS.** Native `wss://` uses rustls with Mozilla's roots
+(`gz_core::net`, feature `native`); `--ca-cert PEM` adds a private CA. The
+browser handles `wss://` itself.
+
 ## Assets
 
 `gz_core::uri::mesh_load_uri` strips `file://` and `model://`, then applies

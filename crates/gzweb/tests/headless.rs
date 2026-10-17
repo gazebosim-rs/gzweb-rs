@@ -33,15 +33,20 @@ fn scratch(name: &str) -> PathBuf {
 
 /// Serves `corpus` for one connection; returns the websocket URL.
 fn start_replay(corpus: Corpus, client_log: Option<PathBuf>, key: Option<&str>) -> String {
+    start_replay_with(
+        corpus,
+        ReplayOptions {
+            client_log,
+            connections: 1,
+            key: key.map(str::to_string),
+            ..Default::default()
+        },
+    )
+}
+
+fn start_replay_with(corpus: Corpus, opts: ReplayOptions) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("ws://{}", listener.local_addr().unwrap());
-    let opts = ReplayOptions {
-        port: 0,
-        client_log,
-        stream_limit: None,
-        connections: 1,
-        key: key.map(str::to_string),
-    };
     std::thread::spawn(move || replay::serve_on(listener, &corpus, &opts));
     url
 }
@@ -736,6 +741,32 @@ fn unreachable_server_times_out_with_an_error() {
     // A snapshot of the (empty) scene is still written.
     let snap: Snapshot = serde_json::from_str(&std::fs::read_to_string(out).unwrap()).unwrap();
     assert!(snap.nodes.is_empty());
+}
+
+#[test]
+fn reconnects_after_the_server_drops_the_connection() {
+    let dir = repo().join("tests/corpus/shapes");
+    let tmp = scratch("reconnect");
+    let log = tmp.join("client.log");
+    let url = start_replay_with(
+        Corpus::load(&dir).unwrap(),
+        ReplayOptions {
+            client_log: Some(log.clone()),
+            connections: 2,
+            // Always before the 300 ms settle after the first scene.
+            drop_first_after: Some(std::time::Duration::from_millis(150)),
+            ..Default::default()
+        },
+    );
+    let (output, snap) = snapshot(&url, &tmp.join("rs.json"), &["--reconnect"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    // Two sessions, and the scene spawned once (not twice) at the end.
+    let log = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(log.matches("protos,,,").count(), 2, "{log}");
+    let expected: Snapshot =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("gzweb.snapshot.json")).unwrap())
+            .unwrap();
+    assert_eq!(snap.unwrap().nodes.len(), expected.nodes.len());
 }
 
 #[test]

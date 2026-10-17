@@ -6,9 +6,9 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use gz_core::frame::Frame;
-use gz_core::{msgs, uri};
+use gz_core::{msgs, net, uri};
 use prost::Message as _;
-use tungstenite::{stream::MaybeTlsStream, Message};
+use tungstenite::Message;
 
 use crate::corpus::{Corpus, Manifest, FORMAT};
 
@@ -19,14 +19,16 @@ pub struct RecordOptions {
     pub world_file: Option<String>,
     /// How long to wait for each handshake reply and for asset replies.
     pub reply_timeout: Duration,
+    /// Extra PEM CA certificates to trust for `wss://`.
+    pub ca_cert: Option<std::path::PathBuf>,
 }
 
 pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
-    let (mut ws, _) = tungstenite::connect(opts.url.as_str()).map_err(crate::message)?;
-    if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
-        tcp.set_read_timeout(Some(Duration::from_millis(50)))
-            .map_err(crate::message)?;
-    }
+    let tls = match &opts.ca_cert {
+        Some(path) => Some(net::tls_config(Some(path))?),
+        None => None,
+    };
+    let mut ws = net::connect(&opts.url, tls, Some(Duration::from_millis(50)))?;
     let mut corpus = Corpus {
         manifest: Manifest {
             format: FORMAT.into(),
@@ -41,13 +43,11 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
             .insert("world_file".into(), w.clone());
     }
 
-    let send = |ws: &mut tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>, s: &str| {
+    let send = |ws: &mut net::Socket, s: &str| {
         ws.send(Message::Text(s.to_string().into()))
             .map_err(crate::message)
     };
-    let read = |ws: &mut tungstenite::WebSocket<MaybeTlsStream<std::net::TcpStream>>,
-                deadline: Instant|
-     -> Result<Option<Vec<u8>>, String> {
+    let read = |ws: &mut net::Socket, deadline: Instant| -> Result<Option<Vec<u8>>, String> {
         loop {
             if Instant::now() > deadline {
                 return Ok(None);

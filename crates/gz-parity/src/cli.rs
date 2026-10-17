@@ -90,6 +90,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                 max_stream_frames: num(&flags, "max-stream-frames", 200)?,
                 world_file: flags.get("world-file").cloned(),
                 reply_timeout: Duration::from_millis(num(&flags, "timeout-ms", 20000)?),
+                ca_cert: flags.get("ca-cert").map(PathBuf::from),
             };
             let corpus = record::record(&opts)?;
             corpus.save(&out).map_err(crate::message)?;
@@ -120,6 +121,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                     .map_err(|_| "bad --stream-limit")?,
                 connections: num(&flags, "connections", 0)?,
                 key: flags.get("key").cloned(),
+                drop_first_after: None,
             };
             replay::serve(&corpus, &opts)?;
             Ok(ExitCode::SUCCESS)

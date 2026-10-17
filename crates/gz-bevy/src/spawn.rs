@@ -102,6 +102,15 @@ pub fn apply_scene(
     };
     let mut new_nodes = Vec::new();
     if let Some(msg) = inbox.scene.take() {
+        // A new scene after a reconnect replaces everything.
+        if index.scene.is_some() {
+            commands.entity(root).despawn_related::<Children>();
+            *index = GzIndex {
+                root: Some(root),
+                ..Default::default()
+            };
+            loads.0.clear();
+        }
         let desc = SceneDesc::from_msg_with(&msg, opts, &mut index.paths);
         if let Some([r, g, b]) = desc.ambient {
             ambient.color = Color::srgb(r, g, b);
@@ -711,6 +720,28 @@ mod tests {
             app.world().get::<Transform>(m).unwrap().translation,
             Vec3::new(1.0, 2.0, 3.0)
         );
+    }
+
+    #[test]
+    fn a_second_scene_replaces_the_first() {
+        let mut app = scene_app(GzConfig::default());
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(scene()));
+        app.update();
+        let first = app.world().resource::<GzIndex>().order.len();
+        let old_m = entity(&mut app, "m");
+
+        let mut fresh = scene();
+        fresh.light.clear();
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(fresh));
+        app.update();
+        let index = app.world().resource::<GzIndex>();
+        assert_eq!(index.order.len(), first - 3);
+        assert_eq!(index.by_name["m"].len(), 1);
+        assert!(app.world().get_entity(old_m).is_err());
+        // The paths restart too: no `m#1`.
+        let new_m = entity(&mut app, "m");
+        let path = &app.world().get::<GzEntity>(new_m).unwrap().path;
+        assert_eq!(path, "m");
     }
 
     #[test]

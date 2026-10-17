@@ -210,3 +210,23 @@ These are findings for the plan, not changes:
   worlds and never contacts Fuel.
 - Fixed `parity/run.sh`'s exit trap, which `set -e` cut short and left the
   second server running.
+
+## 2026-10-17: Phase 1, protocol parity
+
+- **Op set:** `topics`, `image`, `adv`, `pub_in`, `req` and service replies;
+  gzweb's send gating (`SendError`); frames are bytes, sent as text when
+  UTF-8 and binary otherwise.
+- **Probed gz-launch on Harmonic** (and read its source, 7 to `main`): payloads
+  are cut at `0x00` and split on `,`, an empty `req` crashes the server, and
+  there's no `adv`/`pub_in`. gzweb's play/pause/stop don't work on Harmonic
+  (`ignition.msgs.*` types are rejected). Written up in DESIGN.md "Server limits".
+- **Sim control:** `gz_core::control` plus the `GzCommand` message; HUD sim
+  line from `/world/<w>/stats`; Space and N keys. Pause and unpause verified
+  live.
+- **Reconnect** with backoff; a new scene replaces the old one. End-to-end
+  test against a replay server that drops the first connection
+  (`ReplayOptions::drop_first_after`).
+- **`wss://`** on native via rustls (`gz_core::net`), `--ca-cert` for private
+  CAs; the recorder uses it too. Tested with a generated CA.
+- Replay answers `req` and `topics` and reads binary client frames.
+- Not done: `scene/deletion` (gzweb doesn't handle it either).

@@ -3,6 +3,7 @@
 //! ```text
 //! gz-parity record  --url ws://localhost:9002 --out tests/corpus/shapes [--duration-ms 3000]
 //!                   [--max-stream-frames 200] [--world-file shapes.sdf] [--timeout-ms 20000]
+//!                   [--ca-cert ca.pem]
 //! gz-parity replay  --corpus tests/corpus/shapes --port 9100 [--client-log FILE]
 //!                   [--stream-limit N] [--connections N] [--key KEY]
 //! gz-parity compare --expected gzweb.json --actual rs.json [--allow allowlist.toml]
