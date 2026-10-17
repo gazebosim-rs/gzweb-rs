@@ -101,8 +101,8 @@ Branch `feature/port-foundation`.
     transport, uri and scene, the gz-bevy asset store and paths, and the
     gz-parity comparator and corpus.
   - Native and `wasm32` builds succeed.
-- **Leftover:** the old `src/` is still on disk, because removing it was not
-  permitted in this session. It is no longer built.
+- **Leftover:** the old `src/` stayed on disk until 2026-10-16, when it was
+  removed.
 
 ### 3. Parity harness
 
