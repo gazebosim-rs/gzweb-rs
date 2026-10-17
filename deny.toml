@@ -1,0 +1,59 @@
+# cargo-deny policy (https://embarkstudios.github.io/cargo-deny/).
+# Run by scripts/check.sh deny (pre-commit: licenses, bans, sources) and in CI
+# (also advisories, which needs the network).
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+yanked = "deny"
+# Each ignore needs a reason and should be revisited on every Bevy upgrade.
+ignore = [
+  # ruzstd decompression bomb (OOM). Fixed in 0.9.1, but bevy_image 0.18
+  # requires ^0.8. Reachable only through zstd-compressed KTX2 textures from
+  # the connected Gazebo server or Fuel. Drop when Bevy moves to >= 0.9.1.
+  { id = "RUSTSEC-2026-0344", reason = "transitive via bevy_image 0.18; no compatible fix" },
+  # Unmaintained, no known vulnerability; transitive via Bevy.
+  { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, transitive via Bevy" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, transitive via bevy_text" },
+]
+
+[licenses]
+version = 2
+# Permissive licences only; this project is Apache-2.0.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "MIT-0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "0BSD",
+  "CC0-1.0",
+  "Unlicense",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[[licenses.clarify]]
+crate = "gz-parity"
+expression = "Apache-2.0"
+license-files = []
+
+[licenses.private]
+ignore = true
+
+[bans]
+# Bevy's tree has many duplicate versions (windows-sys, etc.); report, don't fail.
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

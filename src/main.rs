@@ -31,8 +31,8 @@ fn main() {
     std::panic::set_hook(Box::new(|_info| {
         // Print to console trace
         #[cfg(target_arch = "wasm32")]
-        console_error_panic_hook::hook(_info); 
-        
+        console_error_panic_hook::hook(_info);
+
         // Report to DOM
         #[cfg(target_arch = "wasm32")]
         {
@@ -182,7 +182,7 @@ fn setup(
         },
         WebsocketStatusText,
     ));
-    
+
     commands.spawn((
         Text::new("Controls: Left Drag to Orbit, Right Drag to Pan, Scroll to Zoom\nLeft Click to Orbit Around Cursor"),
         TextFont {
@@ -214,7 +214,7 @@ fn update_orbit_focus(
             let Ok((mut pan_orbit, camera, camera_transform)) = camera_query.single_mut() else {
                 return;
             };
-            
+
             // Calculate a ray from the cursor
             let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_position) else {
                 return;
@@ -225,18 +225,18 @@ fn update_orbit_focus(
             // Ray: Origin + t * Dir
             // (Origin + t*Dir) . n = 0
             // Origin.y + t * Dir.y = 0 => t = -Origin.y / Dir.y
-            
+
             let t = -ray.origin.y / ray.direction.y;
-            
+
             if t > 0.0 {
                 let intersection = ray.origin + ray.direction * t;
-                
+
                 // Update focus
                 pan_orbit.target_focus = intersection;
-                
+
                 // Optional: Update radius to keep camera in place
                 pan_orbit.radius = Some((camera_transform.translation() - intersection).length());
-                
+
                 // Visualize the click
                 gizmos.sphere(intersection, 0.2, Color::srgb(1.0, 0.0, 0.0));
             }
@@ -279,15 +279,15 @@ fn update_adapter_info(
         if let Some(adapter) = &render_adapter {
             let info = adapter.get_info();
             let backend_str = format!("{:?}", info.backend);
-            
+
             text.0 = format!("Backend: {} ({})", backend_str, info.name);
-            
+
             // Color code based on backend
             // Note: Bevy re-exports wgpu, but we need to check the specific Backend enum
             match info.backend {
-                wgpu::Backend::Vulkan | 
-                wgpu::Backend::Metal | 
-                wgpu::Backend::Dx12 | 
+                wgpu::Backend::Vulkan |
+                wgpu::Backend::Metal |
+                wgpu::Backend::Dx12 |
                 wgpu::Backend::BrowserWebGpu => {
                      color.0 = Color::srgb(0.0, 1.0, 0.0); // Green for Modern APIs
                 }

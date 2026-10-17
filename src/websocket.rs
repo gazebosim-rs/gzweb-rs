@@ -574,7 +574,7 @@ mod tests {
         let asset_store_resource = crate::asset_proxy::WsAssetResponseStore::default();
 
         let short_data = b"short,data";
-        
+
         // This should return early without panicking
         parse_binary_message(short_data, &mut ws, &mut scene_state, &asset_store_resource);
         assert_eq!(ws.status, "test");
@@ -598,7 +598,7 @@ mod tests {
         let asset_store_resource = crate::asset_proxy::WsAssetResponseStore::default();
 
         let payload = b"pub,scene,msgType,dummy_payload_bytes_here";
-        
+
         parse_binary_message(payload, &mut ws, &mut scene_state, &asset_store_resource);
         assert_eq!(ws.status, "Scene Received, Processing...");
         assert_eq!(ws.scene_data.as_ref().unwrap(), b"dummy_payload_bytes_here");

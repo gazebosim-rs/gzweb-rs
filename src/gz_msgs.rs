@@ -796,7 +796,7 @@ mod tests {
             joint: vec![],
             origin_visual: false,
         };
-        
+
         let mut model = Model {
             header: None,
             name: "test_model".to_string(),
@@ -812,7 +812,7 @@ mod tests {
             model: vec![],
             bounding_box: None,
         };
-        
+
         let mut visual = Visual {
             header: None,
             name: "test_visual".to_string(),
@@ -833,7 +833,7 @@ mod tests {
             meta: None,
             r#type: visual::Type::Visual as i32,
         };
-        
+
         let geom = Geometry {
             header: None,
             r#type: geometry::Type::Box as i32,
@@ -853,7 +853,7 @@ mod tests {
             capsule: None,
             ellipsoid: None,
         };
-        
+
         visual.geometry = Some(geom);
         model.visual.push(visual);
         original_scene.model.push(model);

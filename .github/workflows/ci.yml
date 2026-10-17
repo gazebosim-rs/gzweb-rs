@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # scripts/check.sh: require an up-to-date Cargo.lock.
+  CHECK_LOCKED: 1
+  # Bevy's native build needs ALSA, udev, Wayland and xkbcommon headers.
+  BEVY_DEPS: >-
+    pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+
+jobs:
+  lint:
+    name: fmt, clippy, docs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+      - run: scripts/check.sh fmt
+      - run: scripts/check.sh clippy
+      - run: scripts/check.sh doc
+
+  coverage:
+    name: tests + coverage (>= 95%)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # Also runs the headless end-to-end parity tests against the committed
+      # gzweb reference snapshots (no GPU or browser needed).
+      - run: scripts/check.sh coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lcov
+          path: target/coverage/lcov.info
+          if-no-files-found: ignore
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - run: scripts/check.sh deny
+        env:
+          CHECK_ADVISORIES: 1
+
+  wasm:
+    name: wasm build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: wasm
+      - run: cargo build --locked -p gzweb --target wasm32-unknown-unknown
+
+  parity:
+    name: parity vs gzweb (headless Chromium)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gzweb-rs
+      # parity/run.sh expects gzweb next to this repo. Pinned so a gzweb change
+      # can't silently move the reference; bump deliberately.
+      - uses: actions/checkout@v4
+        with:
+          repository: gazebo-web/gzweb
+          ref: 519d4cf852237217908175c13154434503e2e658
+          path: gzweb
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_DEPS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gzweb-rs
+          shared-key: parity
+      - name: Build gzweb
+        working-directory: gzweb
+        run: npm ci && npm run build
+      - name: Install the parity harness and Chromium
+        working-directory: gzweb-rs/parity/js
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: Parity (shapes)
+        working-directory: gzweb-rs
+        run: parity/run.sh shapes
+      - name: Parity (empty)
+        working-directory: gzweb-rs
+        run: parity/run.sh empty
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-reports
+          path: gzweb-rs/target/parity/
+          if-no-files-found: ignore

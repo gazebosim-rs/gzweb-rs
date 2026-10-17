@@ -54,13 +54,55 @@ Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
 connects to port 9002 on its own host.
 
-## Tests
+## Development
+
+One script is the quality gate, for both pre-commit and CI:
+
+```bash
+scripts/check.sh            # everything below
+scripts/check.sh fmt        # rustfmt --check
+scripts/check.sh clippy     # clippy -D warnings, native (all targets) + wasm32
+scripts/check.sh doc        # rustdoc -D warnings
+scripts/check.sh deny       # cargo-deny: licences, bans, sources (CHECK_ADVISORIES=1 adds RustSec)
+scripts/check.sh coverage   # all tests under cargo-llvm-cov; fails below 95% line coverage
+```
+
+Lint policy lives in `[workspace.lints]` (`Cargo.toml`) and `clippy.toml`. In
+production code, `unsafe` is forbidden and `unwrap()` is denied. Dependency
+policy lives in `deny.toml`; every advisory ignore needs a reason.
+
+One-time setup:
+
+```bash
+rustup component add rustfmt clippy llvm-tools-preview
+rustup target add wasm32-unknown-unknown
+cargo install cargo-llvm-cov cargo-deny --locked
+pipx install pre-commit && pre-commit install
+```
+
+The pre-commit hooks run the same checks. The coverage hook runs the full test
+suite, which takes a minute or two on a warm build. CI
+(`.github/workflows/ci.yml`) also runs RustSec advisories, a wasm build, and the
+browser parity check against a pinned gzweb.
+
+### Tests
 
 ```bash
 cargo test --workspace
 ```
 
-To compare against gzweb, check out gzweb next to this repo, then:
+`crates/gzweb/tests/headless.rs` runs the real `gzweb` binary headless against
+an in-process replay server. The cases:
+
+- **Recorded corpora:** checked against the committed gzweb reference output
+  in `tests/corpus/<name>/gzweb.snapshot.json` and `gzweb.client.log`, so
+  parity regressions fail `cargo test` without a browser.
+- **Synthetic world:** covers every primitive, mesh loading over the websocket
+  and HTTP, lights, nested models, pose updates and `scene/info` additions.
+- **Failures:** bad auth and connection loss.
+
+To run the full comparison against a live gzweb, check out gzweb next to this
+repo, then:
 
 ```bash
 (cd ../gzweb && npm ci && npm run build)
@@ -70,4 +112,6 @@ parity/run.sh shapes      # or: empty
 This replays a recorded Gazebo session (`tests/corpus/<name>`) to both gzweb
 (in headless Chromium) and gzweb-rs (headless). It then diffs their scene
 snapshots and the messages each one sent. See
-[`.agent/PARITY.md`](.agent/PARITY.md).
+[`.agent/PARITY.md`](.agent/PARITY.md). After changing a corpus or bumping
+gzweb, refresh the committed references from `target/parity/<name>/gzweb.json`
+and `gzweb.client.log`.

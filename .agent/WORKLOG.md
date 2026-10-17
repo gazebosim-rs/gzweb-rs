@@ -2,6 +2,45 @@
 
 Dated entries: what changed, and what was verified. Newest first.
 
+## 2026-10-16: CI, quality gate, coverage
+
+- **Gate:** `scripts/check.sh` (fmt, clippy native + wasm32, rustdoc,
+  cargo-deny, coverage ≥ 95% lines), used by `.pre-commit-config.yaml` and
+  `.github/workflows/ci.yml`.
+- **CI jobs:** lint, coverage, cargo-deny with advisories, wasm build, and
+  browser parity against gzweb pinned at `519d4cf`.
+- **Lint policy:** `[workspace.lints]` plus `clippy.toml`. Production
+  `unwrap`s were replaced; a poisoned asset-store lock is now recovered.
+- **cargo-deny:** path dependencies now carry versions. Three advisories are
+  ignored with reasons in `deny.toml`:
+  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy 0.18 requires 0.8;
+  - paste, unmaintained;
+  - ttf-parser, unmaintained.
+- **Testability refactors:**
+  - gz-parity is now a lib with a thin bin, and has `corpus::Builder`,
+    `replay::serve_on`, replay `--key`, and record `--timeout-ms`;
+  - gzweb `parse_args` and `default_plugins` are pure;
+  - `hud::adapter_style` is a pure function.
+  - The orbit controls are unchanged.
+- **Tests:** 130, up from 26.
+  - Line coverage is **99.7%** (5314 lines, 17 missed), up from 37.7%.
+  - `crates/gzweb/tests/headless.rs` runs the real binary headless against
+    in-process replay. The shapes/empty corpora are diffed against the
+    committed gzweb references in `tests/corpus/*/gzweb.*`.
+  - A synthetic world covers all primitives, OBJ/STL/glTF over the websocket
+    (glTF with an external buffer) and OBJ over HTTP. This is the first
+    verification of mesh loading. It also covers lights, `#n` paths, poses by
+    id and by name, `scene/info` additions, and failures: auth, refusal,
+    mid-session close.
+- **Uncovered, by design:**
+  - the TLS branch in record;
+  - `accept()` failure in replay;
+  - a reset during a read in the native driver;
+  - the HUD branch that needs a real `RenderAdapter`;
+  - wasm-only code (not compiled natively).
+- **New divergences found:** unknown light type, zero quaternion, spot with
+  zero angles (PORT_PLAN §2.5).
+
 ## 2026-10-16: Camera controls match gzweb
 
 - **Bug:** a left click re-centred the view on the clicked point.

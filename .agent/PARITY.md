@@ -38,10 +38,20 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 - `frames.bin`: a concatenation of records. Each record is `u32 LE length`
   followed by that many bytes of a server→client websocket frame, sent as binary,
   verbatim.
+- `gzweb.snapshot.json` and `gzweb.client.log`: gzweb's output for this corpus,
+  copied from `target/parity/<name>/gzweb.json` and `gzweb.client.log` after a
+  `parity/run.sh` run. `crates/gzweb/tests/headless.rs` diffs gzweb-rs against
+  them in `cargo test`, so parity regressions fail without a browser. Refresh
+  them whenever the corpus or the pinned gzweb changes.
+
+Tests that need worlds no recording has use `gz_parity::corpus::Builder`. It
+builds a corpus from `gz.msgs` values: a scene, assets and stream messages.
 
 ## 2. Replay server
 
-`gz-parity replay --corpus <dir> --port <p> [--client-log <file>] [--stream-limit N]`
+`gz-parity replay --corpus <dir> --port <p> [--client-log <file>] [--stream-limit N] [--connections N] [--key KEY]`
+
+In tests, `gz_parity::replay::serve_on` serves on a listener bound to port 0.
 
 - Serves one connection at a time, with state reset per connection.
 - How it handles client text frames:
@@ -52,7 +62,7 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
   | `topics-types`, `worlds`, `scene,<world>,,` | Send the recorded reply for that op. |
   | `asset,,,<uri>` (also `asset,<uri>,,`) | Send the recorded reply. If `<uri>` was not recorded, send `asset,<uri>,gz.msgs.StringMsg,<StringMsg{data:"asset_not_found"}>`. |
   | `sub,<topic>,,` | Stream that topic's recorded frames in order, at most `N` of them (default: all), 1 ms apart. |
-  | `auth,,,<key>` | Reply `authorized`. |
+  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs. |
   | anything else | Ignore. |
 
 - `--client-log` writes one line per client frame, in arrival order: the exact
@@ -182,3 +192,6 @@ graph. That keeps both sides' node sets identical by construction.
 3. Restarts the replay server and runs the gzweb-rs snapshot.
 4. Compares both snapshots and both client logs.
 5. Writes everything to `target/parity/<corpus>/`.
+
+CI's `parity` job runs it for every corpus against gzweb pinned at
+`519d4cf` (`.github/workflows/ci.yml`).

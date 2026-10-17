@@ -163,6 +163,9 @@ Parity tests allow-list these with a reason string:
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
 - AudioTopic uses the *new* playback flag.
+- Unknown light types fall back to a point light (gzweb logs and adds nothing).
+- A zero quaternion becomes identity; a spot with both angles 0 gets penumbra 0
+  (gzweb: NaN).
 - Light units: Bevy is physically based (lux / lumens); a single documented mapping
   from gzweb's three.js intensities is used and compared post-mapping.
 
