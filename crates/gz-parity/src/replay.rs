@@ -13,6 +13,7 @@ use tungstenite::Message;
 
 use crate::corpus::Corpus;
 
+#[derive(Default)]
 pub struct ReplayOptions {
     pub port: u16,
     pub client_log: Option<PathBuf>,
@@ -22,6 +23,9 @@ pub struct ReplayOptions {
     /// When set, `auth` must carry this key (gz-launch `authorization_key`);
     /// otherwise every key is accepted.
     pub key: Option<String>,
+    /// Close the first connection as soon as the client subscribes (that is,
+    /// once it has the scene), to exercise its reconnect.
+    pub drop_first_at_sub: bool,
 }
 
 pub fn serve(corpus: &Corpus, opts: &ReplayOptions) -> Result<(), String> {
@@ -61,7 +65,8 @@ pub fn serve_on(
                 continue;
             }
         };
-        if let Err(e) = handle(&mut ws, corpus, opts) {
+        let drop_at_sub = opts.drop_first_at_sub && served == 0;
+        if let Err(e) = handle(&mut ws, corpus, opts, drop_at_sub) {
             eprintln!("replay: connection ended: {e}");
         }
         served += 1;
@@ -76,6 +81,7 @@ fn handle(
     ws: &mut tungstenite::WebSocket<std::net::TcpStream>,
     corpus: &Corpus,
     opts: &ReplayOptions,
+    drop_at_sub: bool,
 ) -> Result<(), String> {
     let mut log = match &opts.client_log {
         Some(p) => Some(
@@ -104,23 +110,26 @@ fn handle(
             }
             Err(e) => return Err(e.to_string()),
         };
-        let text = match msg {
-            Message::Text(t) => t.to_string(),
+        // Clients send text frames, or binary ones for non-UTF-8 payloads.
+        let data: Vec<u8> = match msg {
+            Message::Text(t) => {
+                if let Some(f) = log.as_mut() {
+                    let _ = writeln!(f, "{t}");
+                }
+                t.as_bytes().to_vec()
+            }
             Message::Binary(b) => {
                 if let Some(f) = log.as_mut() {
                     let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
                     let _ = writeln!(f, "binary:{hex}");
                 }
-                continue;
+                b.to_vec()
             }
             Message::Close(_) => return Ok(()),
             _ => continue,
         };
-        if let Some(f) = log.as_mut() {
-            let _ = writeln!(f, "{text}");
-        }
 
-        let Some(fr) = Frame::parse(text.as_bytes()) else {
+        let Some(fr) = Frame::parse(&data) else {
             continue;
         };
         match fr.op {
@@ -157,16 +166,51 @@ fn handle(
                             data: "asset_not_found".into(),
                             ..Default::default()
                         };
-                        let data = frame::build_binary(
-                            "asset",
-                            &uri,
-                            "gz.msgs.StringMsg",
-                            &err.encode_to_vec(),
-                        );
+                        let data =
+                            frame::build("asset", &uri, "gz.msgs.StringMsg", &err.encode_to_vec());
                         ws.send(Message::Binary(data.into()))
                             .map_err(crate::message)?;
                     }
                 }
+            }
+            "topics" => {
+                let names = msgs::StringMsgV {
+                    data: m.streams.keys().cloned().collect(),
+                    ..Default::default()
+                };
+                let data = frame::build(
+                    "pub",
+                    "topics",
+                    "gz.msgs.StringMsg_V",
+                    &names.encode_to_vec(),
+                );
+                ws.send(Message::Binary(data.into()))
+                    .map_err(crate::message)?;
+            }
+            // Like gz-sim: world control and server control answer
+            // `Boolean { data: true }`; nothing else exists.
+            "req" => {
+                let world_control = format!("/world/{}/control", m.world);
+                let data = if fr.topic == world_control || fr.topic == "/server_control" {
+                    let ok = msgs::Boolean {
+                        data: true,
+                        ..Default::default()
+                    };
+                    frame::build("req", fr.topic, "gz.msgs.Boolean", &ok.encode_to_vec())
+                } else {
+                    let err = msgs::StringMsg {
+                        data: "service_not_found".into(),
+                        ..Default::default()
+                    };
+                    frame::build("req", fr.topic, "gz.msgs.StringMsg", &err.encode_to_vec())
+                };
+                ws.send(Message::Binary(data.into()))
+                    .map_err(crate::message)?;
+            }
+            "sub" if drop_at_sub => {
+                eprintln!("replay: dropping the connection");
+                let _ = ws.close(None);
+                return Ok(());
             }
             "sub" => {
                 if let Some(frames) = m.streams.get(fr.topic) {

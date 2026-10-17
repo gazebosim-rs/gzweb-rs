@@ -10,6 +10,17 @@ gz-proto.workspace = true
 prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# `native`: blocking websocket connect with wss:// (rustls + ring).
+tungstenite = { version = "0.26", optional = true, features = ["rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pki-types = { version = "1", optional = true, features = ["std"] }
+webpki-roots = { version = "1", optional = true }
+
+[features]
+native = ["dep:tungstenite", "dep:rustls", "dep:rustls-pki-types", "dep:webpki-roots"]
+
+[dev-dependencies]
+rcgen = "0.13"
 
 [lints]
 workspace = true

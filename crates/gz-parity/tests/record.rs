@@ -23,6 +23,7 @@ fn options(url: &str) -> RecordOptions {
         max_stream_frames: 2,
         world_file: Some("w.sdf".into()),
         reply_timeout: Duration::from_secs(5),
+        ca_cert: None,
     }
 }
 
@@ -133,7 +134,7 @@ fn bin(ws: &mut WebSocket<TcpStream>, data: Vec<u8>) {
 }
 
 fn pub_frame(topic: &str, msg: &impl prost::Message) -> Vec<u8> {
-    frame::build_binary("pub", topic, "", &msg.encode_to_vec())
+    frame::build("pub", topic, "", &msg.encode_to_vec())
 }
 
 fn worlds(names: &[&str]) -> msgs::StringMsgV {
@@ -159,7 +160,7 @@ fn tolerates_noise_and_warns_about_unanswered_assets() {
         assert_eq!(read_text(ws), "worlds,,,");
         ws.send(Message::Ping(vec![].into())).unwrap();
         bin(ws, b"no header".to_vec());
-        bin(ws, frame::build_binary("asset", "/x", "", b""));
+        bin(ws, frame::build("asset", "/x", "", b""));
         bin(ws, pub_frame("unrelated", &msgs::Empty::default()));
         bin(ws, pub_frame("worlds", &worlds(&["w"])));
         assert_eq!(read_text(ws), "scene,w,,");
@@ -177,7 +178,7 @@ fn tolerates_noise_and_warns_about_unanswered_assets() {
         assert_eq!(read_text(ws), "asset,,,/never.obj");
         // Noise during the stream phase; the asset is never answered.
         bin(ws, b"no header".to_vec());
-        bin(ws, frame::build_binary("frobnicate", "", "", b""));
+        bin(ws, frame::build("frobnicate", "", "", b""));
         drain(ws);
     });
     let c = record(&RecordOptions {
@@ -197,6 +198,16 @@ fn record_err(url: &str) -> String {
         ..options(url)
     })
     .unwrap_err()
+}
+
+#[test]
+fn a_bad_ca_file_is_an_error() {
+    let err = record(&RecordOptions {
+        ca_cert: Some("/nonexistent/ca.pem".into()),
+        ..options("wss://localhost:1")
+    })
+    .unwrap_err();
+    assert!(err.contains("ca.pem"), "{err}");
 }
 
 #[test]
@@ -231,7 +242,7 @@ fn reports_handshake_failures() {
         let url = scripted(move |ws| {
             read_text(ws);
             bin(ws, b"protos".to_vec());
-            bin(ws, frame::build_binary("pub", topic, "", &[0xff, 0xff]));
+            bin(ws, frame::build("pub", topic, "", &[0xff, 0xff]));
             drain(ws);
         });
         assert!(!record_err(&url).is_empty(), "{topic}");

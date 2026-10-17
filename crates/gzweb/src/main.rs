@@ -24,8 +24,10 @@ struct Args {
     http_mirror: Option<String>,
 }
 
-const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--http-mirror URL] \
-                     [--snapshot OUT.json [--settle-ms MS] [--timeout-ms MS]]";
+const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
+                     [--reconnect | --no-reconnect] [--http-mirror URL] \
+                     [--snapshot OUT.json [--settle-ms MS] [--timeout-ms MS]]\n\
+                     Reconnecting is on by default, except in --snapshot mode.";
 
 /// What the command line asked for.
 #[derive(Debug)]
@@ -48,6 +50,8 @@ fn parse_args(
     let mut key = None;
     let mut snapshot = None;
     let mut http_mirror = None;
+    let mut ca_cert = None;
+    let mut reconnect = None;
     let mut settle_ms = 1000.0;
     let mut timeout_ms = 60000.0;
 
@@ -64,6 +68,9 @@ fn parse_args(
             "--port" => port = value()?,
             "--key" => key = Some(value()?),
             "--http-mirror" => http_mirror = Some(value()?),
+            "--ca-cert" => ca_cert = Some(std::path::PathBuf::from(value()?)),
+            "--reconnect" => reconnect = Some(true),
+            "--no-reconnect" => reconnect = Some(false),
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
             "--settle-ms" => settle_ms = millis()?,
             "--timeout-ms" => timeout_ms = millis()?,
@@ -77,6 +84,8 @@ fn parse_args(
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
             headless: snapshot.is_some(),
+            reconnect: reconnect.unwrap_or(snapshot.is_none()),
+            ca_cert,
             ..Default::default()
         },
         snapshot: snapshot.map(|out| gz_bevy::snapshot::SnapshotRequest {
@@ -263,6 +272,14 @@ mod tests {
         assert_eq!(a.config.url, "ws://gz:9002");
         assert_eq!(a.config.key.as_deref(), Some("k"));
         assert_eq!(a.http_mirror, None);
+        assert!(a.config.reconnect);
+        assert_eq!(a.config.ca_cert, None);
+        let tls = run_args(&["--ca-cert", "ca.pem", "--no-reconnect"], None);
+        assert_eq!(
+            tls.config.ca_cert.as_deref(),
+            Some(std::path::Path::new("ca.pem"))
+        );
+        assert!(!tls.config.reconnect);
         let m = run_args(&["--http-mirror", "http://127.0.0.1:9101"], None);
         assert_eq!(m.http_mirror.as_deref(), Some("http://127.0.0.1:9101"));
     }
@@ -281,6 +298,9 @@ mod tests {
             None,
         );
         assert!(a.config.headless);
+        assert!(!a.config.reconnect);
+        let forced = run_args(&["--snapshot", "o.json", "--reconnect"], None);
+        assert!(forced.config.reconnect);
         let s = a.snapshot.expect("snapshot request");
         assert_eq!(s.out, std::path::PathBuf::from("out.json"));
         assert_eq!(s.settle_secs, 0.25);

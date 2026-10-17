@@ -166,6 +166,14 @@ Parity tests allow-list these with a reason string:
 - Unknown light types fall back to a point light (gzweb logs and adds nothing).
 - A zero quaternion becomes identity; a spot with both angles 0 gets penumbra 0
   (gzweb: NaN).
+- Sim control uses `gz.msgs.*` types and header-stamped payloads. gzweb's
+  `ignition.msgs.*` requests are rejected by Harmonic, and its `play()` does
+  nothing at all (`WorldControl { pause: false }` serializes to zero bytes, which
+  its `requestService` refuses). See DESIGN.md "Server limits".
+- `image` op for topics `topics-types` lists as `gz.msgs.Image` (gzweb checks the
+  old `ignition.`/`gazebo.` names, so it always sends `sub`).
+- Reconnect with backoff (gzweb stays disconnected). Interactive mode also
+  subscribes to `/world/<w>/stats`; snapshot mode keeps gzweb's exact frames.
 - Light units: Bevy is physically based (lux / lumens); a single documented mapping
   from gzweb's three.js intensities is used and compared post-mapping.
 
@@ -179,7 +187,8 @@ Parity tests allow-list these with a reason string:
 - Start `WORKLOG.md`; update `DESIGN.md`.
 - Build the parity harness skeleton (§4.2–4.4) *before* adding features.
 
-**Phase 1: Protocol parity**
+**Phase 1: Protocol parity** (done 2026-10-17; `scene/deletion` not done:
+gzweb doesn't handle it either)
 - Full op set: auth, protos, topics-types, worlds, scene, sub/unsub, throttle, adv, pub,
   req, asset (+ `StringMsg` error replies), image.
 - Status state machine, reconnect, URL + key config (`?url=`/`?key=` on wasm, CLI on native),

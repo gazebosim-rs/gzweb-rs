@@ -104,9 +104,7 @@ impl Builder {
     }
 
     fn reply(&mut self, op: &str, msg_type: &str, payload: &[u8]) {
-        let idx = self
-            .corpus
-            .push(frame::build_binary("pub", op, msg_type, payload));
+        let idx = self.corpus.push(frame::build("pub", op, msg_type, payload));
         self.corpus.manifest.responses.insert(op.into(), idx);
     }
 
@@ -122,7 +120,7 @@ impl Builder {
             data: bytes.to_vec(),
             ..Default::default()
         };
-        let idx = self.corpus.push(frame::build_binary(
+        let idx = self.corpus.push(frame::build(
             "asset",
             uri,
             "gz.msgs.Bytes",
@@ -134,12 +132,9 @@ impl Builder {
 
     /// Appends a message to `topic`'s stream, sent after a `sub` for it.
     pub fn publish(mut self, topic: &str, msg_type: &str, msg: &impl prost::Message) -> Builder {
-        let idx = self.corpus.push(frame::build_binary(
-            "pub",
-            topic,
-            msg_type,
-            &msg.encode_to_vec(),
-        ));
+        let idx = self
+            .corpus
+            .push(frame::build("pub", topic, msg_type, &msg.encode_to_vec()));
         self.corpus
             .manifest
             .streams

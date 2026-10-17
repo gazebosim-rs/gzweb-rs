@@ -27,6 +27,10 @@ pub struct GzConfig {
     pub enable_lights: bool,
     /// No window, no camera controls or HUD (snapshot / CI mode).
     pub headless: bool,
+    /// Reconnect with backoff when the connection drops or fails.
+    pub reconnect: bool,
+    /// Extra PEM CA certificates to trust for `wss://` (native only).
+    pub ca_cert: Option<std::path::PathBuf>,
 }
 
 impl Default for GzConfig {
@@ -36,6 +40,8 @@ impl Default for GzConfig {
             key: None,
             enable_lights: true,
             headless: false,
+            reconnect: true,
+            ca_cert: None,
         }
     }
 }
@@ -54,6 +60,9 @@ impl Plugin for GzWebPlugin {
                 brightness: 300.0,
                 affects_lightmapped_meshes: true,
             })
+            .add_message::<connection::GzCommand>()
+            .add_message::<connection::GzPublish>()
+            .add_message::<connection::GzServiceReply>()
             .init_resource::<connection::GzInbox>()
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()
@@ -78,6 +87,8 @@ impl Plugin for GzWebPlugin {
                         hud::update_fps,
                         hud::update_adapter,
                         hud::update_status,
+                        hud::update_sim,
+                        hud::sim_keys,
                     ),
                 );
         }
@@ -108,15 +119,15 @@ pub(crate) mod test_util {
         .insert_resource(config)
         .insert_resource(ClearColor(camera::CLEAR_COLOR))
         .init_resource::<GlobalAmbientLight>()
+        .add_message::<connection::GzCommand>()
         .init_resource::<connection::GzInbox>()
         .init_resource::<spawn::GzIndex>()
         .init_resource::<spawn::GzLoads>()
         .init_resource::<camera::GzCameraTarget>()
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
-            url: "ws://test".into(),
             world: Some("w".into()),
-            malformed: 0,
+            ..connection::GzStatus::new("ws://test")
         })
         .add_systems(Startup, (spawn::spawn_root, camera::spawn_camera))
         .add_systems(Update, (spawn::apply_scene, spawn::apply_poses).chain());

@@ -197,3 +197,77 @@ fn serves_successive_connections_and_survives_bad_clients() {
     let _ = ws.flush();
     server.join().unwrap().unwrap();
 }
+
+#[test]
+fn answers_services_and_topics_like_gz_sim() {
+    let tmp = scratch("services");
+    let log = tmp.join("client.log");
+    let (url, server) = serve(corpus(), opts(Some(log.clone()), None));
+    let mut ws = connect(&url);
+
+    send(
+        &mut ws,
+        "req,/world/w/control,gz.msgs.WorldControl,\x10\x01",
+    );
+    let reply = recv(&mut ws);
+    let f = Frame::parse(&reply).unwrap();
+    assert_eq!(
+        (f.op, f.topic, f.msg_type),
+        ("req", "/world/w/control", "gz.msgs.Boolean")
+    );
+    assert!(msgs::Boolean::decode(f.payload).unwrap().data);
+
+    // Binary frames (non-UTF-8 payloads) are handled and logged as hex.
+    let mut frame = b"req,/server_control,gz.msgs.ServerControl,".to_vec();
+    frame.extend([0x30, 0x81, 0x01]);
+    ws.send(Message::Binary(frame.into())).unwrap();
+    assert_eq!(op(&recv(&mut ws)), ("req".into(), "/server_control".into()));
+
+    send(&mut ws, "req,/nope,gz.msgs.Empty,\x0a\x02");
+    let reply = recv(&mut ws);
+    let f = Frame::parse(&reply).unwrap();
+    assert_eq!(
+        msgs::StringMsg::decode(f.payload).unwrap().data,
+        "service_not_found"
+    );
+
+    send(&mut ws, "topics,,,");
+    let reply = recv(&mut ws);
+    let f = Frame::parse(&reply).unwrap();
+    assert_eq!(msgs::StringMsgV::decode(f.payload).unwrap().data, ["/t"]);
+    ws.close(None).unwrap();
+    while ws.read().is_ok() {}
+    server.join().unwrap().unwrap();
+    let log = std::fs::read_to_string(log).unwrap();
+    assert!(log.contains("binary:7265712c"), "{log}");
+}
+
+#[test]
+fn drops_the_first_connection_when_asked() {
+    let (url, server) = serve(
+        corpus(),
+        ReplayOptions {
+            connections: 2,
+            drop_first_at_sub: true,
+            ..opts(None, None)
+        },
+    );
+    // The first connection is answered until it subscribes, then closed.
+    let mut first = connect(&url);
+    send(&mut first, "worlds,,,");
+    assert_eq!(op(&recv(&mut first)), ("pub".into(), "worlds".into()));
+    send(&mut first, "sub,/t,,");
+    loop {
+        match first.read() {
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+    // The second one streams as usual.
+    let mut second = connect(&url);
+    send(&mut second, "sub,/t,,");
+    assert_eq!(op(&recv(&mut second)), ("pub".into(), "/t".into()));
+    second.close(None).unwrap();
+    while second.read().is_ok() {}
+    server.join().unwrap().unwrap();
+}

@@ -38,6 +38,10 @@ cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 ```
 
 `--port N` and `GZ_WEBSOCKET_PORT` are shorthands for `ws://localhost:N`.
+`wss://` works; `--ca-cert ca.pem` trusts a private CA. The client reconnects
+when the server goes away (`--no-reconnect` to turn that off).
+
+Space toggles play/pause and N steps a paused simulation.
 
 `--snapshot out.json` runs headless, with no window or GPU. It writes a scene
 snapshot once everything has loaded, then exits.

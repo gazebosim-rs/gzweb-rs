@@ -1,11 +1,12 @@
-//! On-screen status overlay (bevy_ui), plus the DOM status line on wasm.
+//! On-screen status overlay (bevy_ui), the DOM status line on wasm, and the
+//! simulation-control keys.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapter;
 use gz_core::transport::Status;
 
-use crate::connection::GzStatus;
+use crate::connection::{GzCommand, GzStatus};
 
 #[derive(Component)]
 pub struct FpsText;
@@ -15,6 +16,12 @@ pub struct AdapterText;
 
 #[derive(Component)]
 pub struct StatusText;
+
+#[derive(Component)]
+pub struct SimText;
+
+const HINT: &str = "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point \
+                        | Space: play/pause | N: step";
 
 pub fn spawn_hud(mut commands: Commands) {
     let line = |top: f32| Node {
@@ -43,13 +50,20 @@ pub fn spawn_hud(mut commands: Commands) {
     ));
     commands.spawn((
         Text::new("WS: ..."),
-        font,
+        font.clone(),
         TextColor(Color::WHITE),
         line(70.0),
         StatusText,
     ));
     commands.spawn((
-        Text::new("Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point"),
+        Text::new("Sim: -"),
+        font,
+        TextColor(Color::WHITE),
+        line(100.0),
+        SimText,
+    ));
+    commands.spawn((
+        Text::new(HINT),
         TextFont {
             font_size: 16.0,
             ..default()
@@ -130,9 +144,52 @@ pub fn update_status(
         ),
         Status::Error(e) => (format!("Error: {e}"), Color::srgb(1.0, 0.0, 0.0)),
     };
+    let retry = match status.reconnect_at {
+        Some(_) => format!(" - retrying (attempt {})", status.attempts + 1),
+        None => String::new(),
+    };
     for (mut text, mut c) in &mut query {
-        text.0 = format!("WS: {label}");
+        text.0 = format!("WS: {label}{retry}");
         c.0 = color;
+    }
+}
+
+pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimText>>) {
+    if !status.is_changed() {
+        return;
+    }
+    let label = match &status.sim {
+        Some(s) => format!(
+            "Sim: {} | t = {:.2} s | RTF {:.2} | iterations {}",
+            if s.paused { "paused" } else { "running" },
+            s.sim_time,
+            s.real_time_factor,
+            s.iterations
+        ),
+        None => "Sim: -".into(),
+    };
+    for mut text in &mut query {
+        text.0.clone_from(&label);
+    }
+}
+
+/// Space toggles play/pause; N steps a paused simulation. Needs the stats
+/// to know which way to toggle.
+pub fn sim_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    status: Res<GzStatus>,
+    mut out: MessageWriter<GzCommand>,
+) {
+    let Some(sim) = status.sim else { return };
+    if keys.just_pressed(KeyCode::Space) {
+        out.write(if sim.paused {
+            GzCommand::Play
+        } else {
+            GzCommand::Pause
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyN) && sim.paused {
+        out.write(GzCommand::Step(1));
     }
 }
 
@@ -150,6 +207,7 @@ pub fn set_dom_status(msg: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::SimStats;
     use bevy::diagnostic::{Diagnostic, DiagnosticMeasurement};
     use bevy::ecs::system::RunSystemOnce;
 
@@ -166,9 +224,9 @@ mod tests {
     }
 
     #[test]
-    fn spawns_three_status_lines_and_the_controls_hint() {
+    fn spawns_four_status_lines_and_the_controls_hint() {
         let mut world = hud_world();
-        assert_eq!(world.query::<&Text>().iter(&world).count(), 4);
+        assert_eq!(world.query::<&Text>().iter(&world).count(), 5);
         assert_eq!(text_of::<FpsText>(&mut world).0, "FPS: N/A");
     }
 
@@ -240,9 +298,8 @@ mod tests {
         for (status, want) in cases {
             world.insert_resource(GzStatus {
                 status,
-                url: "ws://h".into(),
                 world: Some("w".into()),
-                malformed: 0,
+                ..GzStatus::new("ws://h")
             });
             world.run_system_once(update_status).unwrap();
             assert_eq!(text_of::<StatusText>(&mut world).0, want);
@@ -251,6 +308,71 @@ mod tests {
         world.resource_mut::<GzStatus>().status = Status::Ready;
         world.run_system_once(update_status).unwrap();
         assert_eq!(text_of::<StatusText>(&mut world).0, "WS: Ready: ?");
+
+        let mut status = world.resource_mut::<GzStatus>();
+        status.status = Status::Error("refused".into());
+        status.reconnect_at = Some(1.0);
+        status.attempts = 2;
+        world.run_system_once(update_status).unwrap();
+        assert_eq!(
+            text_of::<StatusText>(&mut world).0,
+            "WS: Error: refused - retrying (attempt 3)"
+        );
+    }
+
+    fn sim(paused: bool) -> SimStats {
+        SimStats {
+            paused,
+            sim_time: 1.234,
+            real_time_factor: 0.987,
+            iterations: 1234,
+        }
+    }
+
+    #[test]
+    fn sim_line_follows_the_stats() {
+        let mut world = hud_world();
+        world.insert_resource(GzStatus::new(""));
+        world.run_system_once(update_sim).unwrap();
+        assert_eq!(text_of::<SimText>(&mut world).0, "Sim: -");
+        world.resource_mut::<GzStatus>().sim = Some(sim(true));
+        world.run_system_once(update_sim).unwrap();
+        assert_eq!(
+            text_of::<SimText>(&mut world).0,
+            "Sim: paused | t = 1.23 s | RTF 0.99 | iterations 1234"
+        );
+        world.resource_mut::<GzStatus>().sim = Some(sim(false));
+        world.run_system_once(update_sim).unwrap();
+        assert!(text_of::<SimText>(&mut world).0.starts_with("Sim: running"));
+    }
+
+    #[test]
+    fn keys_send_sim_commands() {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(GzStatus::new(""))
+            .add_message::<GzCommand>()
+            .add_systems(Update, (sim_keys, update_sim));
+        let press = |app: &mut App, keys: &[KeyCode], sim: Option<SimStats>| {
+            app.world_mut().resource_mut::<GzStatus>().sim = sim;
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.reset_all();
+            for k in keys {
+                input.press(*k);
+            }
+            app.update();
+            let msgs = app.world().resource::<Messages<GzCommand>>();
+            msgs.iter_current_update_messages()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let both = [KeyCode::Space, KeyCode::KeyN];
+        assert!(press(&mut app, &both, None).is_empty());
+        assert_eq!(press(&mut app, &both, Some(sim(false))), [GzCommand::Pause]);
+        assert_eq!(
+            press(&mut app, &both, Some(sim(true))),
+            [GzCommand::Play, GzCommand::Step(1)]
+        );
     }
 
     #[test]
@@ -258,17 +380,18 @@ mod tests {
         let mut app = App::new();
         app.insert_resource(GzStatus {
             status: Status::Connected,
-            url: String::new(),
-            world: None,
-            malformed: 0,
+            ..GzStatus::new("")
         })
         .add_systems(Startup, spawn_hud)
-        .add_systems(Update, update_status);
+        .add_systems(Update, (update_status, update_sim));
         app.update();
         let world = app.world_mut();
         let mut q = world.query_filtered::<&mut Text, With<StatusText>>();
         q.single_mut(world).unwrap().0 = "sentinel".into();
+        let mut q = world.query_filtered::<&mut Text, With<SimText>>();
+        q.single_mut(world).unwrap().0 = "sentinel".into();
         app.update();
         assert_eq!(text_of::<StatusText>(app.world_mut()).0, "sentinel");
+        assert_eq!(text_of::<SimText>(app.world_mut()).0, "sentinel");
     }
 }
