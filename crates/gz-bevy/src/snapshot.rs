@@ -21,6 +21,7 @@ use crate::render::{GzEnvironment, GzGrid};
 use crate::spawn::{
     GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
 };
+use crate::submesh::GzSubmesh;
 
 #[derive(Resource, Clone, Debug)]
 pub struct SnapshotRequest {
@@ -43,7 +44,7 @@ pub fn snapshot_when_settled(
     index: Res<GzIndex>,
     loads: Res<GzLoads>,
     asset_server: Res<AssetServer>,
-    scene_roots: Query<(&SceneRoot, Option<&Children>)>,
+    scene_roots: Query<(&SceneRoot, Option<&Children>, Option<&GzSubmesh>)>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -77,9 +78,10 @@ pub fn snapshot_when_settled(
                 | None
         )
     });
-    // A loaded glTF/OBJ scene is instanced a frame later.
-    let scenes_instanced = scene_roots.iter().all(|(root, children)| {
-        children.is_some_and(|c| !c.is_empty())
+    // A loaded glTF/OBJ scene is instanced a frame later, and cut down to
+    // its submesh (possibly to nothing) when it is.
+    let scenes_instanced = scene_roots.iter().all(|(root, children, submesh)| {
+        submesh.map_or_else(|| children.is_some_and(|c| !c.is_empty()), |s| s.applied)
             || matches!(
                 asset_server.get_recursive_dependency_load_state(root.0.id()),
                 Some(RecursiveDependencyLoadState::Failed(_))

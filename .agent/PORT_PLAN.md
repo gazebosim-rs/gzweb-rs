@@ -159,6 +159,8 @@ Parity tests allow-list these with a reason string:
 - Pose updates matched by **entity id** first, name second (gzweb: first DFS name match).
 - Spot penumbra not clamped to ≥ 1; directional shadow map 4096 (not 4094).
 - Shadows/materials applied to **all** submeshes, not just the first descendant mesh.
+- `<submesh><center>` centres the submesh's bounds under its full transform (Gazebo);
+  gzweb zeroes ancestor translations but keeps their rotations.
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
@@ -213,12 +215,12 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
   and de-dup.
-- **Collada** (done 2026-10-17, see DESIGN.md "Assets"; `<submesh>`/`center` still
-  to do): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
+- **Collada** (done 2026-10-17, see DESIGN.md "Assets"): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
   `AssetLoader`. Fall back to a purpose-built loader if its material/texture coverage is
   insufficient. Honour `<up_axis>` and `<unit>`.
 - OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`).
-- Submesh selection + centering (`useSubMesh` semantics), mesh scale.
+- Submesh selection + centering (done 2026-10-17, Gazebo's rules, see DESIGN.md
+  "Submeshes"), mesh scale (done in Phase 2).
 
 **Phase 4: Materials**
 - gzweb colour rule, opacity/blend, alpha-mask for RGBA textures, double-sided.

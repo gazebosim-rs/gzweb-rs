@@ -13,6 +13,7 @@ pub mod hud;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
+pub mod submesh;
 
 use bevy::prelude::*;
 

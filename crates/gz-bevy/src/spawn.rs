@@ -21,6 +21,7 @@ use gz_core::uri;
 use crate::assets;
 use crate::connection::GzInbox;
 use crate::render::{self, GzEnvironment, GzGrid};
+use crate::submesh;
 use crate::GzConfig;
 
 /// Rotates Gazebo Z-up into Bevy Y-up: gz `(x, y, z)` → bevy `(x, z, -y)`.
@@ -354,9 +355,7 @@ fn spawn_mesh_file(
             let scene: Handle<Scene> = ctx
                 .asset_server
                 .load(GltfAssetLabel::Scene(0).from_asset(path));
-            ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            spawn_scene(ctx, visual, parent, scene);
         }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
@@ -373,11 +372,31 @@ fn spawn_mesh_file(
         }
         "obj" | "dae" => {
             let scene: Handle<Scene> = ctx.asset_server.load(path);
-            ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            spawn_scene(ctx, visual, parent, scene);
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
+    }
+}
+
+/// A mesh file's scene, cut down to its `<submesh>` if it names one.
+fn spawn_scene(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, scene: Handle<Scene>) {
+    ctx.loads.0.push(scene.clone().untyped());
+    let mut entity = ctx
+        .commands
+        .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+    if let GeometryDesc::Mesh {
+        submesh: Some(name),
+        center_submesh,
+        ..
+    } = &visual.geometry
+    {
+        entity
+            .insert(submesh::GzSubmesh {
+                name: name.clone(),
+                center: *center_submesh,
+                applied: false,
+            })
+            .observe(submesh::select);
     }
 }
 

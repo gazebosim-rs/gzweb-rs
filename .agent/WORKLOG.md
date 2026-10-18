@@ -301,3 +301,14 @@ These are findings for the plan, not changes:
 - Coverage: the vendored code is excluded (`COVERAGE_IGNORE` in
   `scripts/check.sh`); `assemble.rs` and the loader are gated.
 - Not done: `<submesh>`/`center`.
+
+## 2026-10-17: Phase 3 — submeshes
+
+- Fuel CI job on PR #21 hung: the HTTP cache (keyed on lock files only) was
+  saved before `.dae` loads existed, so the mesh and texture came from
+  fuel.gazebosim.org, which stalled (502 since). Fetches now time out
+  (mirror and client) and the CI cache is saved every run.
+- `gz_bevy::submesh`: `<submesh>` + `center` for scene meshes (COLLADA,
+  glTF), Gazebo's rules. Unit tests on a hand-built scene; headless test
+  cuts the probe `.dae` to `ChildNode`, centred, and checks an unknown name
+  leaves nothing.

@@ -187,8 +187,17 @@ Textures load through the `.dae`'s own source, relative to it (or through
 texture) × opacity, roughness `sqrt(2/(n+2))` from the Phong exponent,
 emission in scene-referred units, `constant` = unlit. On the 14 Fuel meshes
 in `spikes/collada/corpus`, triangle counts and world bounds match gzweb's
-three.js loader (`cargo test -p gz-collada -- --ignored`). Not done:
-`<submesh>`/`center` selection.
+three.js loader (`cargo test -p gz-collada -- --ignored`).
+
+**Submeshes.** A mesh file that loads as a scene (COLLADA, glTF) with a
+`<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `SceneRoot`; an
+observer on `SceneInstanceReady` keeps the first node (depth first) with
+that name and geometry of its own, drops everything else (its child nodes
+too), and with `center` shifts the root so the bounds' centre is the
+visual's origin. These are Gazebo's rules; gzweb zeroes the ancestors'
+translations but keeps their rotations, which only differs when an ancestor
+rotates. An unknown name leaves nothing, as in both. Snapshots wait for
+`GzSubmesh::applied`.
 
 ## Rendering
 

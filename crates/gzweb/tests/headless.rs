@@ -287,6 +287,15 @@ fn mesh(name: &str, filename: &str) -> msgs::Visual {
     )
 }
 
+/// The probe `.dae` cut down to one node, centred.
+fn submesh(name: &str, node: &str) -> msgs::Visual {
+    let mut v = mesh(name, "/data/robot.dae");
+    let m = v.geometry.as_mut().unwrap().mesh.as_mut().unwrap();
+    m.submesh = node.into();
+    m.center_submesh = true;
+    v
+}
+
 fn model(name: &str, id: u32, links: Vec<msgs::Link>) -> msgs::Model {
     msgs::Model {
         name: name.into(),
@@ -475,6 +484,8 @@ fn synthetic_world(http: &str) -> Corpus {
         mesh("stl", "file:///data/tri.stl"),
         mesh("gltf", "/data/tri.gltf"),
         mesh("dae", "/data/robot.dae"),
+        submesh("dae_child", "ChildNode"),
+        submesh("dae_nosuch", "NoSuchNode"),
         mesh("missing", "/data/missing.stl"),
         mesh("fbx", "/data/thing.fbx"),
         mesh("http", &format!("{http}/web/tri.obj")),
@@ -641,8 +652,21 @@ fn synthetic_world_spawns_every_feature() {
     // one through <instance_node>), its textures missing.
     let dae = node(&snap, "meshes/l/dae").geometry.as_ref().unwrap();
     assert_eq!((dae.mesh_count, dae.vertex_count), (5, 18), "{dae:?}");
+    // <submesh> keeps one node's triangle (1 cm, scaled by 2) and centres it.
+    let sub = node(&snap, "meshes/l/dae_child").geometry.as_ref().unwrap();
+    assert_eq!((sub.mesh_count, sub.vertex_count), (1, 3), "{sub:?}");
+    let aabb = sub.aabb_world.as_ref().unwrap();
+    for i in 0..3 {
+        assert!((aabb.max[i] + aabb.min[i]).abs() < 1e-6, "{aabb:?}");
+        assert!(aabb.max[i] - aabb.min[i] < 0.02 + 1e-6, "{aabb:?}");
+    }
     // Failed or unsupported loads have no geometry.
-    for path in ["meshes/l/missing", "meshes/l/fbx", "meshes/l/http404"] {
+    for path in [
+        "meshes/l/missing",
+        "meshes/l/fbx",
+        "meshes/l/http404",
+        "meshes/l/dae_nosuch",
+    ] {
         let g = node(&snap, path).geometry.as_ref();
         assert!(g.is_none_or(|g| g.vertex_count == 0), "{path}: {g:?}");
     }
