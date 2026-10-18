@@ -92,14 +92,15 @@ fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
         .enumerate()
         .map(|(i, m)| {
             let mut mat = material(m);
-            let texture = |cx: &mut LoadContext<'_>, tex: &Option<String>, srgb: bool| {
-                let path = texture_path(&dae_path, tex.as_deref()?)?;
-                Some(
-                    cx.loader()
-                        .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
-                        .load(path),
-                )
-            };
+            let texture =
+                |cx: &mut LoadContext<'_>, tex: &Option<gz_collada::Texture>, srgb: bool| {
+                    let path = texture_path(&dae_path, &tex.as_ref()?.path)?;
+                    Some(
+                        cx.loader()
+                            .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
+                            .load(path),
+                    )
+                };
             mat.base_color_texture = texture(cx, &m.diffuse_texture, true);
             mat.normal_map_texture = texture(cx, &m.normal_texture, false);
             mat.emissive_texture = texture(cx, &m.emission_texture, true);

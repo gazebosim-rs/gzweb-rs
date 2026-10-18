@@ -9,11 +9,16 @@
 //! [mesh-loader](https://github.com/openrr/mesh-loader) (Apache-2.0, see
 //! `src/vendor`); its scene assembly flattened the tree with four bugs that
 //! broke real Fuel models (`.agent/WORKLOG.md`, Collada spike), so
-//! `assemble.rs` replaces it.
+//! `assemble.rs` replaces it, and `validate.rs` checks what it reads.
 //!
 //! Like gz-common and gzweb, `<up_axis>` is reported but not applied.
+//!
+//! A malformed document is an [`Error`], never a panic.
 
-// Vendored as-is: none of the workspace's lints apply.
+mod assemble;
+mod validate;
+
+// Vendored: none of the workspace's lints apply.
 #[allow(
     clippy::all,
     clippy::pedantic,
@@ -40,6 +45,8 @@ pub struct Scene {
     pub meshes: Vec<Mesh>,
     /// Indexed by [`Primitive::material`].
     pub materials: Vec<Material>,
+    /// What was skipped (unsupported or cyclic content), once per kind.
+    pub warnings: Vec<String>,
 }
 
 impl Scene {
@@ -168,6 +175,7 @@ impl Default for Material {
             normal_texture: None,
             emission_texture: None,
             specular_texture: None,
+            transparent_texture: None,
         }
     }
 }
@@ -180,18 +188,34 @@ pub struct Material {
     pub emission: [f32; 4],
     pub ambient: [f32; 4],
     /// The colour; COLLADA's default grey when the slot holds a texture.
+    /// Its alpha is as written; three.js ignores it (opacity comes from
+    /// `<transparent>`/`<transparency>` only).
     pub diffuse: [f32; 4],
     pub specular: [f32; 4],
     pub shininess: f32,
     /// 1 is opaque (assimp's rules for `<transparent>`/`<transparency>`).
     pub opacity: f32,
+    /// `<double_sided>` in the technique or in any `<extra>` of the effect.
     pub double_sided: bool,
-    /// Texture paths as written (`init_from`), `file://` and backslashes
-    /// removed; relative to the `.dae`.
-    pub diffuse_texture: Option<String>,
-    pub normal_texture: Option<String>,
-    pub emission_texture: Option<String>,
-    pub specular_texture: Option<String>,
+    pub diffuse_texture: Option<Texture>,
+    /// `<bump>`, in the technique or an `<extra>`.
+    pub normal_texture: Option<Texture>,
+    pub emission_texture: Option<Texture>,
+    pub specular_texture: Option<Texture>,
+    /// `<transparent>`'s texture: the material is a cut-out, its alpha taken
+    /// from the diffuse texture (three.js sets no alpha map either).
+    pub transparent_texture: Option<Texture>,
+}
+
+/// A texture slot's image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Texture {
+    /// As written (`init_from`), `file://` and backslashes removed;
+    /// relative to the `.dae`.
+    pub path: String,
+    /// Whether U and V repeat (else clamp): repeat unless the texture's
+    /// `<extra>` says otherwise, as in three.js.
+    pub repeat: [bool; 2],
 }
 
 /// Why a document couldn't be parsed.

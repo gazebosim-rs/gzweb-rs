@@ -1,17 +1,18 @@
 //! [COLLADA] (.dae) parser.
 //!
 //! [COLLADA]: https://en.wikipedia.org/wiki/COLLADA
+//!
+//! Modified for gzweb-rs; see `gz-collada:` markers. (gz-collada: the
+//! document types are `pub(crate)` so `crate::assemble` can read them.)
 
 #![allow(clippy::wildcard_imports)] // TODO
 #![allow(clippy::many_single_char_names)]
 
-#[path = "../../assemble.rs"]
-pub(crate) mod assemble;
 mod effect;
 mod error;
 mod geometry;
 mod image;
-mod iter;
+pub(crate) mod iter;
 mod material;
 mod scene;
 
@@ -25,7 +26,7 @@ use std::{
     str::{self, FromStr},
 };
 
-use self::{effect::*, geometry::*, image::*, material::*, scene::*};
+pub(crate) use self::{effect::*, geometry::*, image::*, material::*, scene::*};
 use crate::vendor::{
     common,
     utils::{
@@ -37,17 +38,20 @@ use crate::vendor::{
 };
 
 /// Parses COLLADA text into a node-tree scene. (gz-collada: replaces
-/// mesh-loader's `from_slice`; the assembly is rewritten in `assemble`.)
+/// mesh-loader's `from_slice`; the assembly is rewritten in
+/// `crate::assemble`.)
 pub(crate) fn parse(bytes: &[u8]) -> io::Result<crate::Scene> {
     let text = decode_string(bytes)?;
+    // gz-collada: roxmltree recurses per element level.
+    crate::validate::nesting(&text).map_err(crate::vendor::error::invalid_data)?;
     let xml = xml::Document::parse(&text).map_err(crate::vendor::error::invalid_data)?;
     let collada = Document::parse(&xml)?;
-    Ok(assemble::assemble(&collada))
+    crate::assemble::assemble(&collada).map_err(crate::vendor::error::invalid_data)
 }
 
 // Inspired by gltf-json's `Get` trait.
 /// Helper trait for retrieving top-level objects by a universal identifier.
-trait Get<T> {
+pub(crate) trait Get<T> {
     type Target;
 
     fn get(&self, uri: &T) -> Option<&Self::Target>;
@@ -72,7 +76,7 @@ impl_get_by_uri!(Geometry<'a>, library_geometries.geometries);
 impl_get_by_uri!(Image<'a>, library_images.images);
 impl_get_by_uri!(Material<'a>, library_materials.materials);
 
-struct Uri<'a, T>(&'a str, PhantomData<fn() -> T>);
+pub(crate) struct Uri<'a, T>(&'a str, PhantomData<fn() -> T>);
 
 impl<'a, T> Uri<'a, T> {
     fn parse(url: &'a str) -> io::Result<Self> {
@@ -92,7 +96,7 @@ impl<'a, T> Uri<'a, T> {
         Uri(self.0, PhantomData)
     }
 
-    fn as_str(&self) -> &'a str {
+    pub(crate) fn as_str(&self) -> &'a str {
         self.0
     }
 }
@@ -165,7 +169,7 @@ impl<'a, 'input> ColladaXmlNodeExt<'a, 'input> for xml::Node<'a, 'input> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Version {
+pub(crate) struct Version {
     minor: u32,
     patch: u32,
 }
@@ -205,7 +209,7 @@ impl fmt::Display for Version {
     }
 }
 
-struct Context<'a> {
+pub(crate) struct Context<'a> {
     version: Version,
     asset: Asset,
     library_effects: LibraryEffects<'a>,
@@ -216,14 +220,14 @@ struct Context<'a> {
     scene: Scene<'a>,
 }
 
-struct Document<'a> {
-    asset: Asset,
-    library_effects: LibraryEffects<'a>,
-    library_geometries: LibraryGeometries<'a>,
-    library_images: LibraryImages<'a>,
-    library_materials: LibraryMaterials<'a>,
-    library_visual_scenes: LibraryVisualScenes<'a>,
-    scene: Scene<'a>,
+pub(crate) struct Document<'a> {
+    pub(crate) asset: Asset,
+    pub(crate) library_effects: LibraryEffects<'a>,
+    pub(crate) library_geometries: LibraryGeometries<'a>,
+    pub(crate) library_images: LibraryImages<'a>,
+    pub(crate) library_materials: LibraryMaterials<'a>,
+    pub(crate) library_visual_scenes: LibraryVisualScenes<'a>,
+    pub(crate) scene: Scene<'a>,
 }
 
 impl<'a> Document<'a> {
@@ -332,7 +336,7 @@ impl<'a> Document<'a> {
         })
     }
 
-    fn get<T>(&self, url: &T) -> Option<&<Self as Get<T>>::Target>
+    pub(crate) fn get<T>(&self, url: &T) -> Option<&<Self as Get<T>>::Target>
     where
         Self: Get<T>,
     {
@@ -340,17 +344,8 @@ impl<'a> Document<'a> {
     }
 }
 
-impl<T> ops::Index<&T> for Document<'_>
-where
-    Self: Get<T>,
-{
-    type Output = <Self as Get<T>>::Target;
-
-    #[track_caller]
-    fn index(&self, url: &T) -> &Self::Output {
-        self.get(url).expect("no entry found for key")
-    }
-}
+// gz-collada: no `Index` impl; every lookup goes through `get`, which
+// can fail, instead of panicking on a dangling reference.
 
 const DEFAULT_UNIT_SIZE: f32 = 1.;
 
@@ -371,18 +366,12 @@ impl Asset {
         for child in node.element_children() {
             match child.tag_name().name() {
                 "unit" => {
-                    if let Some(v) = child.attribute("meter") {
-                        let v = xml::comma_to_period(v);
-                        unit = Some(v.parse().map_err(|e| {
-                            format_err!(
-                                "{} in <{}> element at {}: {:?}",
-                                e,
-                                child.tag_name().name(),
-                                child.attr_value_location("meter"),
-                                v
-                            )
-                        })?);
-                    }
+                    // gz-collada: a zero, negative, NaN or unreadable unit
+                    // falls back to 1 instead of collapsing the model.
+                    unit = child
+                        .attribute("meter")
+                        .and_then(|v| xml::comma_to_period(v).parse::<f32>().ok())
+                        .filter(|u| u.is_finite() && *u > 0.0);
                 }
                 // gz-collada
                 "up_axis" => {
@@ -403,7 +392,7 @@ impl Asset {
     }
 }
 
-struct Source<'a> {
+pub(crate) struct Source<'a> {
     // Required
     id: &'a str,
     // // Optional
@@ -479,7 +468,7 @@ impl<'a> Source<'a> {
     }
 }
 
-struct ArrayElement<'a> {
+pub(crate) struct ArrayElement<'a> {
     // Required
     id: &'a str,
     // // Required
@@ -509,9 +498,10 @@ fn parse_array_element<'a>(node: xml::Node<'a, '_>) -> io::Result<ArrayElement<'
         });
     }
 
+    // gz-collada: `count` is untrusted; every value takes at least two bytes.
+    let capacity = (count as usize).min(content.len() / 2 + 1);
     if is_string_array {
-        // TODO: check large count
-        let mut values = Vec::with_capacity(count as usize);
+        let mut values = Vec::with_capacity(capacity);
         for _ in 0..count {
             if content.is_empty() {
                 bail!(
@@ -521,14 +511,8 @@ fn parse_array_element<'a>(node: xml::Node<'a, '_>) -> io::Result<ArrayElement<'
                 );
             }
 
-            let mut n = 0;
-            while content
-                .as_bytes()
-                .first()
-                .map_or(false, |&b| !xml::is_whitespace(b as char))
-            {
-                n += 1;
-            }
+            // gz-collada: upstream never advanced `n` here and hung.
+            let n = content.find(xml::is_whitespace).unwrap_or(content.len());
             values.push(&content[..n]);
 
             content = xml::trim_start(content.get(n..).unwrap_or_default());
@@ -540,8 +524,7 @@ fn parse_array_element<'a>(node: xml::Node<'a, '_>) -> io::Result<ArrayElement<'
             data: ArrayData::String(values),
         })
     } else {
-        // TODO: check large count
-        let mut values = Vec::with_capacity(count as usize);
+        let mut values = Vec::with_capacity(capacity);
         let content = xml::comma_to_period(content);
         // TODO: include in parse_float_array_exact?
         let map_err = |e| {
@@ -565,7 +548,7 @@ fn parse_array_element<'a>(node: xml::Node<'a, '_>) -> io::Result<ArrayElement<'
 }
 
 /// Data source array.
-enum ArrayData<'a> {
+pub(crate) enum ArrayData<'a> {
     /// <float_array>
     Float(Vec<f32>),
     /// <IDREF_array> or <Name_array>
@@ -587,7 +570,7 @@ impl ArrayData<'_> {
     //     matches!(self, Self::String(..))
     // }
 
-    fn as_float(&self) -> Option<&[f32]> {
+    pub(crate) fn as_float(&self) -> Option<&[f32]> {
         match self {
             Self::Float(v) => Some(v),
             Self::String(..) => None,
@@ -618,18 +601,18 @@ impl ArrayData<'_> {
     // }
 }
 
-struct Accessor<'a> {
+pub(crate) struct Accessor<'a> {
     // Required
-    count: u32,
+    pub(crate) count: u32,
     // // Optional
     // offset: u32,
     // Required
-    source: Uri<'a, ArrayData<'a>>,
+    pub(crate) source: Uri<'a, ArrayData<'a>>,
     // Optional
-    stride: u32,
+    pub(crate) stride: u32,
 
     // 0 or more
-    params: Vec<Param<'a>>,
+    pub(crate) params: Vec<Param<'a>>,
 }
 
 impl<'a> Accessor<'a> {
@@ -678,13 +661,13 @@ impl<'a> Accessor<'a> {
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=125
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=144
-struct Param<'a> {
+pub(crate) struct Param<'a> {
     // /// The name of this element.
     // name: Option<&'a str>,
     // /// The scoped identifier of this element.
     // sid: Option<&'a str>,
     // Required
-    ty: &'a str,
+    pub(crate) ty: &'a str,
     // // Optional
     // semantic: Option<&'a str>,
 }
@@ -723,15 +706,15 @@ impl<'a> Param<'a> {
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=73
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=87
-struct SharedInput<'a, T = Accessor<'a>> {
+pub(crate) struct SharedInput<'a, T = Accessor<'a>> {
     // Required
-    offset: u32,
+    pub(crate) offset: u32,
     // Required
-    semantic: InputSemantic,
+    pub(crate) semantic: InputSemantic,
     // Required
-    source: Uri<'a, T>,
+    pub(crate) source: Uri<'a, T>,
     // Optional
-    set: u32,
+    pub(crate) set: u32,
 }
 
 impl<'a, T> SharedInput<'a, T> {
@@ -779,11 +762,11 @@ impl<'a, T> SharedInput<'a, T> {
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=76
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=90
-struct UnsharedInput<'a> {
+pub(crate) struct UnsharedInput<'a> {
     // Required
-    semantic: InputSemantic,
+    pub(crate) semantic: InputSemantic,
     // Required
-    source: Uri<'a, Accessor<'a>>,
+    pub(crate) source: Uri<'a, Accessor<'a>>,
 }
 
 impl<'a> UnsharedInput<'a> {
@@ -815,7 +798,7 @@ impl<'a> UnsharedInput<'a> {
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=88
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum InputSemantic {
+pub(crate) enum InputSemantic {
     /// Geometric binormal (bitangent) vector.
     BINORMAL,
     /// Color coordinate vector. Color inputs are RGB (float3_type).

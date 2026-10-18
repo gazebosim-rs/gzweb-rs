@@ -1,3 +1,6 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+// gz-collada: `pub(crate)` (was `pub(super)`) so `crate::assemble` can read these.
+
 use super::*;
 
 /// The `<library_images>` element.
@@ -7,12 +10,12 @@ use super::*;
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=278
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=327
 #[derive(Default)]
-pub(super) struct LibraryImages<'a> {
+pub(crate) struct LibraryImages<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
+    // pub(crate) id: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) images: HashMap<&'a str, Image<'a>>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) images: HashMap<&'a str, Image<'a>>,
 }
 
 /// The `<image>` element.
@@ -21,25 +24,25 @@ pub(super) struct LibraryImages<'a> {
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=268
 /// [1.5]: https://www.khronos.org/files/collada_spec_1_5.pdf#page=310
-pub(super) struct Image<'a> {
+pub(crate) struct Image<'a> {
     /// The unique identifier of this element.
-    pub(super) id: &'a str,
+    pub(crate) id: &'a str,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     // /// The image format.
-    // pub(super) format: Option<&'a str>,
+    // pub(crate) format: Option<&'a str>,
     // /// The height of the image in pixels.
-    // pub(super) height: Option<u32>,
+    // pub(crate) height: Option<u32>,
     // /// The width of the image in pixels.
-    // pub(super) width: Option<u32>,
+    // pub(crate) width: Option<u32>,
     // /// The depth of the image in pixels. A 2-D image has a depth of 1, which is the default.
-    // pub(super) depth: u32,
+    // pub(crate) depth: u32,
     /// An embedded image data or an external image file.
-    pub(super) source: ImageSource<'a>,
+    pub(crate) source: ImageSource<'a>,
 }
 
 /// An embedded image data or an external image file.
-pub(super) enum ImageSource<'a> {
+pub(crate) enum ImageSource<'a> {
     /// An embedded image data.
     Data(Vec<u8>),
     /// An external image file.
@@ -50,7 +53,7 @@ pub(super) enum ImageSource<'a> {
 // -----------------------------------------------------------------------------
 // Parsing
 
-pub(super) fn parse_library_images<'a>(
+pub(crate) fn parse_library_images<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {

@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 // Rust port of fast_float's integer parser.
 //
 // Source: https://github.com/fastfloat/fast_float/blob/68b9475585be0839fa0bf3d6bfad3e4a6357d90a/include/fast_float/ascii_number.h#L445

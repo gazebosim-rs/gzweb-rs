@@ -10,12 +10,8 @@ publish = false
 [dependencies]
 roxmltree = "0.20"
 
-[features]
-# The vendored code's own cfgs; only COLLADA is used.
-default = ["collada"]
-collada = []
-obj = []
-stl = []
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true

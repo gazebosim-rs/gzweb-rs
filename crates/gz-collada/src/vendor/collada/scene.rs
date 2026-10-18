@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 use super::*;
 
 /// The `<scene>` element.
@@ -6,8 +8,8 @@ use super::*;
 ///
 /// [spec]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=141
 #[derive(Default)]
-pub(super) struct Scene<'a> {
-    pub(super) instance_visual_scene: Option<InstanceVisualScene<'a>>,
+pub(crate) struct Scene<'a> {
+    pub(crate) instance_visual_scene: Option<InstanceVisualScene<'a>>,
 }
 
 /// The `<instance_visual_scene>` element.
@@ -15,13 +17,13 @@ pub(super) struct Scene<'a> {
 /// See [specification][spec] for details.
 ///
 /// [spec]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=91
-pub(super) struct InstanceVisualScene<'a> {
+pub(crate) struct InstanceVisualScene<'a> {
     // /// The scoped identifier of this element.
-    // pub(super) sid: Option<&'a str>,
+    // pub(crate) sid: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     /// The URI of the location of the [`VisualScene`] to instantiate.
-    pub(super) url: Uri<'a, Node<'a>>,
+    pub(crate) url: Uri<'a, Node<'a>>,
 }
 
 /// The `<library_visual_scenes>` element.
@@ -32,9 +34,9 @@ pub(super) struct InstanceVisualScene<'a> {
 #[derive(Default)]
 pub(crate) struct LibraryVisualScenes<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
+    // pub(crate) id: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     /// gz-collada: every node, from `<visual_scene>`s (each a node itself)
     /// and from `<library_nodes>` (top-level ones have no parent).
     pub(crate) nodes: Vec<Node<'a>>,
@@ -52,18 +54,21 @@ pub(crate) struct Node<'a> {
     /// The name of this element. (gz-collada: kept)
     pub(crate) name: Option<&'a str>,
     // /// The scoped identifier of this element.
-    // pub(super) sid: Option<&'a str>,
+    // pub(crate) sid: Option<&'a str>,
     // /// The type of this element.
-    // pub(super) ty: NodeType,
+    // pub(crate) ty: NodeType,
     pub(crate) parent: Option<usize>,
     /// gz-collada: child node indices, in document order.
     pub(crate) children: Vec<usize>,
-    // pub(super) transforms: Vec<Transform>,
+    // pub(crate) transforms: Vec<Transform>,
     pub(crate) transform: Matrix4x4,
-    // pub(super) instance_camera: Vec<InstanceCamera>,
-    // pub(super) instance_controller: Vec<InstanceController>,
+    // pub(crate) instance_camera: Vec<InstanceCamera>,
+    // pub(crate) instance_controller: Vec<InstanceController>,
+    /// gz-collada: how many `<instance_controller>`s (skinned meshes,
+    /// unsupported) the node has.
+    pub(crate) instance_controllers: usize,
     pub(crate) instance_geometry: Vec<InstanceGeometry<'a>>,
-    // pub(super) instance_light: Vec<InstanceLight>,
+    // pub(crate) instance_light: Vec<InstanceLight>,
     /// gz-collada: the ids (without `#`) of instantiated library nodes.
     pub(crate) instance_node: Vec<&'a str>,
     /// gz-collada: this is a `<visual_scene>` (a root), not a `<node>`.
@@ -72,7 +77,7 @@ pub(crate) struct Node<'a> {
 
 /// The type of the [`Node`].
 #[derive(Debug)]
-pub(super) enum NodeType {
+pub(crate) enum NodeType {
     Joint,
     Node,
 }
@@ -83,7 +88,7 @@ impl Default for NodeType {
     }
 }
 
-pub(super) enum Transform {
+pub(crate) enum Transform {
     Lookat([f32; 9]),
     Rotate([f32; 4]),
     Translate([f32; 3]),
@@ -142,7 +147,8 @@ impl Transform {
                 }
                 Self::Rotate(f) => {
                     let angle = f[3].to_radians();
-                    let axis = [f[0], f[1], f[2]];
+                    // gz-collada: normalised, as three.js does.
+                    let axis = normalize([f[0], f[1], f[2]]);
                     let m = Matrix4x4::rotation(angle, axis);
                     match &mut out {
                         Some(out) => *out *= m,
@@ -186,7 +192,7 @@ impl Transform {
 
 // Based on https://github.com/assimp/assimp/blob/v5.3.1/include/assimp/matrix4x4.inl
 #[derive(Clone, Copy)]
-pub(super) struct Matrix4x4 {
+pub(crate) struct Matrix4x4 {
     a1: f32,
     a2: f32,
     a3: f32,
@@ -205,7 +211,7 @@ pub(super) struct Matrix4x4 {
     d4: f32,
 }
 impl Matrix4x4 {
-    pub(super) const fn new(
+    pub(crate) const fn new(
         a1: f32,
         a2: f32,
         a3: f32,
@@ -274,7 +280,7 @@ impl Matrix4x4 {
             ..Default::default()
         }
     }
-    pub(super) fn is_identity(&self) -> bool {
+    pub(crate) fn is_identity(&self) -> bool {
         // TODO: use f32::EPSILON?
         const EPSILON: f32 = 10e-3;
         self.a2 <= EPSILON
@@ -373,15 +379,15 @@ impl ops::MulAssign for Matrix4x4 {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=85
-pub(super) struct InstanceGeometry<'a> {
+pub(crate) struct InstanceGeometry<'a> {
     // /// The scoped identifier of this element.
-    // pub(super) sid: Option<&'a str>,
+    // pub(crate) sid: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     /// The URI of the location of the [`Geometry`] to instantiate.
-    pub(super) url: Uri<'a, Geometry<'a>>,
+    pub(crate) url: Uri<'a, Geometry<'a>>,
 
-    pub(super) materials: BTreeMap<&'a str, SemanticMappingTable<'a>>,
+    pub(crate) materials: BTreeMap<&'a str, SemanticMappingTable<'a>>,
 }
 
 /*
@@ -390,29 +396,29 @@ pub(super) struct InstanceGeometry<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=82
-pub(super) struct InstanceController<'a> {
+pub(crate) struct InstanceController<'a> {
     /// The scoped identifier of this element.
-    pub(super) sid: Option<&'a str>,
+    pub(crate) sid: Option<&'a str>,
     /// The name of this element.
-    pub(super) name: Option<&'a str>,
+    pub(crate) name: Option<&'a str>,
     /// The URI of the location of the [`Controller`] to instantiate.
-    pub(super) url: Uri<Controller>,
+    pub(crate) url: Uri<Controller>,
 
-    pub(super) materials: IndexMap<&'a str, SemanticMappingTable>,
+    pub(crate) materials: IndexMap<&'a str, SemanticMappingTable>,
 }
 */
 
-pub(super) struct SemanticMappingTable<'a> {
+pub(crate) struct SemanticMappingTable<'a> {
     // Required
-    pub(super) target: Uri<'a, Material<'a>>,
+    pub(crate) target: Uri<'a, Material<'a>>,
     // Required
-    pub(super) symbol: &'a str,
-    // pub(super) map: HashMap<&'a str, InputSemanticMapEntry>,
+    pub(crate) symbol: &'a str,
+    // pub(crate) map: HashMap<&'a str, InputSemanticMapEntry>,
 }
 
-// pub(super) struct InputSemanticMapEntry {
-//     pub(super) input_semantic: InputSemantic,
-//     pub(super) input_set: u32,
+// pub(crate) struct InputSemanticMapEntry {
+//     pub(crate) input_semantic: InputSemantic,
+//     pub(crate) input_set: u32,
 // }
 
 /*
@@ -453,20 +459,20 @@ pub struct InstanceLight<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=89
-pub(super) struct InstanceNode<'a> {
+pub(crate) struct InstanceNode<'a> {
     /// The scoped identifier of this element.
-    pub(super) sid: Option<&'a str>,
+    pub(crate) sid: Option<&'a str>,
     /// The name of this element.
-    pub(super) name: Option<&'a str>,
+    pub(crate) name: Option<&'a str>,
     /// The URI of the location of the [`Node`] to instantiate.
-    pub(super) url: Uri<'a, Node<'a>>,
+    pub(crate) url: Uri<'a, Node<'a>>,
 }
 */
 
 // -----------------------------------------------------------------------------
 // Parsing
 
-pub(super) fn parse_scene<'a>(
+pub(crate) fn parse_scene<'a>(
     _cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<Scene<'a>> {
@@ -506,7 +512,7 @@ fn parse_instance_visual_scene<'a>(node: xml::Node<'a, '_>) -> io::Result<Instan
     })
 }
 
-pub(super) fn parse_library_visual_scenes<'a>(
+pub(crate) fn parse_library_visual_scenes<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {
@@ -533,7 +539,7 @@ pub(super) fn parse_library_visual_scenes<'a>(
 
 /// gz-collada: `<library_nodes>`, into the same node arena as the visual
 /// scenes, so `instance_node` can find them by id.
-pub(super) fn parse_library_nodes<'a>(
+pub(crate) fn parse_library_nodes<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {
@@ -541,7 +547,7 @@ pub(super) fn parse_library_nodes<'a>(
     for child in node.element_children() {
         match child.tag_name().name() {
             "node" => {
-                parse_node(child, &mut cx.library_visual_scenes.nodes, None)?;
+                parse_node(child, &mut cx.library_visual_scenes.nodes, None, 0)?;
             }
             "asset" | "extra" => { /* skip */ }
             _ => return Err(error::unexpected_child_elem(child)),
@@ -566,7 +572,7 @@ fn parse_visual_scene<'a>(node: xml::Node<'a, '_>, nodes: &mut Vec<Node<'a>>) ->
     for child in node.element_children() {
         match child.tag_name().name() {
             "node" => {
-                let c = parse_node(child, nodes, Some(this_index))?;
+                let c = parse_node(child, nodes, Some(this_index), 0)?;
                 nodes[this_index].children.push(c);
                 scene_nodes.push(c);
             }
@@ -616,12 +622,23 @@ Child elements must appear in the following order if present:
 - `<node>` (0 or more)
 - `<extra>` (0 or more)
 */
+/// gz-collada: nodes nest at most this deep (the parser recurses).
+pub(crate) const MAX_NODE_DEPTH: usize = 256;
+
 fn parse_node<'a>(
     node: xml::Node<'a, '_>,
     nodes: &mut Vec<Node<'a>>,
     parent: Option<usize>,
+    depth: usize,
 ) -> io::Result<usize> {
     debug_assert_eq!(node.tag_name().name(), "node");
+    if depth >= MAX_NODE_DEPTH {
+        bail!(
+            "<node>s nested more than {} deep ({})",
+            MAX_NODE_DEPTH,
+            node.node_location()
+        );
+    }
     let _ty: NodeType = node.parse_attribute("type")?.unwrap_or_default();
     // gz-collada: keep the id and name; the parent is optional (library nodes).
     let this = Node {
@@ -640,7 +657,7 @@ fn parse_node<'a>(
         match child.tag_name().name() {
             "node" => {
                 // gz-collada: record the child.
-                let c = parse_node(child, nodes, Some(this_index))?;
+                let c = parse_node(child, nodes, Some(this_index), depth + 1)?;
                 nodes[this_index].children.push(c);
             }
 
@@ -780,7 +797,9 @@ fn parse_node<'a>(
 
             // instances
             "instance_camera" => {}
-            "instance_controller" => {}
+            "instance_controller" => {
+                nodes[this_index].instance_controllers += 1;
+            }
             "instance_geometry" => {
                 nodes[this_index]
                     .instance_geometry
