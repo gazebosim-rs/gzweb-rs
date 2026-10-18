@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 // Rust port of fast_float's float parser.
 //
 // Adapted from core::num::dec2flt with partial parsing support added, and very tricky and unsafe x87 FPU-related hack removed.

@@ -40,6 +40,7 @@ gzweb-rs/
 ├── crates/
 │   ├── gz-proto/    generated gz.msgs types (proto/ = vendored .proto files)
 │   ├── gz-core/     protocol, scene rules, URIs, snapshot types (no Bevy)
+│   ├── gz-collada/  COLLADA parsing into a node tree (no Bevy)
 │   ├── gz-bevy/     Bevy plugin
 │   ├── gzweb/       the app (native + wasm)
 │   └── gz-parity/   record / replay / compare tool

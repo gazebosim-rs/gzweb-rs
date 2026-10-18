@@ -9,7 +9,7 @@
 //! - A missing or broken `.mtl` leaves the default material (gzweb shows
 //!   nothing at all).
 //!
-//! Materials map onto PBR like [`crate::collada::material`]: `Kd` × `map_Kd`,
+//! Materials map onto PBR like the COLLADA loader's: `Kd` × `map_Kd`,
 //! alpha from `d` (or `1 - Tr`), roughness from `Ns` unless `Pr` is given,
 //! `Pm` metallic, `Ke`/`map_Ke` emission, `map_Bump`/`bump`/`norm` as a
 //! normal map.
@@ -128,9 +128,13 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
             let texture =
                 |cx: &mut LoadContext<'_>, tex: Option<AssetPath<'static>>, srgb: bool| {
                     let path = tex?;
+                    // three.js's MTLLoader repeats textures.
                     Some(
                         cx.loader()
-                            .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
+                            .with_settings(move |s: &mut ImageLoaderSettings| {
+                                s.is_srgb = srgb;
+                                s.sampler = crate::collada::sampler([true; 2]);
+                            })
                             .load(path),
                     )
                 };
@@ -245,10 +249,11 @@ fn mesh(m: &tobj::Mesh, tangents: bool) -> Option<Mesh> {
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     }
     if m.vertex_color.len() == 3 * n {
+        // sRGB, as three.js's OBJLoader reads them.
         let colors: Vec<[f32; 4]> = m
             .vertex_color
             .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2], 1.0])
+            .map(|c| LinearRgba::from(Color::srgb(c[0], c[1], c[2])).to_f32_array())
             .collect();
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     }
@@ -284,9 +289,10 @@ pub fn material(m: &tobj::Material) -> StandardMaterial {
         .or_else(|| param("Tr").map(|tr| 1.0 - tr))
         .unwrap_or(1.0)
         .clamp(0.0, 1.0);
+    // Phong exponent → roughness as for COLLADA (see `collada::material`).
     let roughness = param("Pr").unwrap_or_else(|| {
         let ns = m.shininess.unwrap_or(30.0).max(0.0);
-        (2.0 / (ns + 2.0)).sqrt()
+        (2.0 / (ns + 2.0)).powf(0.25)
     });
     let [er, eg, eb] = m.emissive.unwrap_or_default();
     StandardMaterial {
@@ -298,7 +304,7 @@ pub fn material(m: &tobj::Material) -> StandardMaterial {
         },
         perceptual_roughness: roughness.clamp(0.089, 1.0),
         metallic: param("Pm").unwrap_or(0.0).clamp(0.0, 1.0),
-        emissive: LinearRgba::from(Color::srgb(er, eg, eb)) * units::UNIT_LUMINANCE,
+        emissive: units::emissive(Color::srgb(er, eg, eb)),
         cull_mode: Some(Face::Back),
         ..default()
     }
@@ -441,7 +447,7 @@ mod tests {
         let m = material(&mats[0]);
         assert_eq!(m.base_color, Color::srgba(1.0, 0.0, 0.0, 0.5));
         assert_eq!(m.alpha_mode, AlphaMode::Blend);
-        assert!((m.perceptual_roughness - (2.0f32 / 22.0).sqrt()).abs() < 1e-6);
+        assert!((m.perceptual_roughness - (2.0f32 / 22.0).powf(0.25)).abs() < 1e-6);
         assert_eq!(m.metallic, 0.25);
         assert!(m.emissive.green > 0.0 && m.emissive.red == 0.0);
         let t = material(&mats[1]);
@@ -458,14 +464,21 @@ mod tests {
         let tri = tobj::Mesh {
             positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
             texcoords: vec![0.0, 0.25, 1.0, 0.0, 0.0, 1.0],
-            vertex_color: vec![1.0; 9],
+            vertex_color: vec![0.5; 9],
             indices: vec![0, 1, 2],
             ..Default::default()
         };
         let m = mesh(&tri, true).unwrap();
         assert!(m.contains_attribute(Mesh::ATTRIBUTE_NORMAL));
         assert!(m.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
-        assert!(m.contains_attribute(Mesh::ATTRIBUTE_COLOR));
+        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
+            m.attribute(Mesh::ATTRIBUTE_COLOR)
+        else {
+            panic!("no colours");
+        };
+        // sRGB 0.5 is linear 0.214, as three.js reads OBJ colours.
+        assert!((colors[0][0] - 0.214).abs() < 1e-3, "{:?}", colors[0]);
+        assert_eq!(colors[0][3], 1.0);
         let Some(bevy::mesh::VertexAttributeValues::Float32x2(uv)) =
             m.attribute(Mesh::ATTRIBUTE_UV_0)
         else {

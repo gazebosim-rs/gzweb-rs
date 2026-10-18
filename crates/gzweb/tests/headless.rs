@@ -105,6 +105,7 @@ fn start_mirror(lock: &Path) -> String {
         lock: Some(lock.to_path_buf()),
         upstream: None,
         offline: std::env::var("GZ_HTTP_OFFLINE").is_ok_and(|v| v == "true"),
+        fetch_timeout: mirror::FETCH_TIMEOUT,
     };
     std::thread::spawn(move || mirror::serve_on(listener, opts));
     base
@@ -612,6 +613,11 @@ fn synthetic_world(http: &str) -> Corpus {
         .asset(&format!("{http}/web/server_only.obj"), OBJ)
         .asset("pkg/meshes/two.obj", OBJ_MTL)
         .asset("pkg/meshes/two.mtl", MTL)
+        // The bare `map_Kd t.png`, where gzweb's rule looks for it.
+        .asset(
+            "pkg/materials/textures/t.png",
+            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
+        )
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
         .asset("/data/tri.bin", &tri_bin())
@@ -699,7 +705,8 @@ fn synthetic_world_spawns_every_feature() {
         assert!(aabb.max[i] - aabb.min[i] < 0.02 + 1e-6, "{aabb:?}");
     }
     // OBJ with an MTL: an object per `o`, each with its material; the
-    // bare texture name is looked for in materials/textures (not served).
+    // bare texture name is found in materials/textures (a texture that
+    // failed would be dropped from the material).
     let two = node(&snap, "meshes/l/obj_mtl");
     let g = two.geometry.as_ref().unwrap();
     assert_eq!((g.mesh_count, g.vertex_count), (2, 3 + 6), "{g:?}");

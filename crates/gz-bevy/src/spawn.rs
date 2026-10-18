@@ -52,10 +52,6 @@ pub struct GzLight(pub LightDesc);
 #[derive(Component)]
 pub struct GzLightEmitter;
 
-/// A stand-in mesh for an unsupported format; excluded from snapshots.
-#[derive(Component)]
-pub struct GzPlaceholder;
-
 /// Lookup tables and spawn bookkeeping.
 #[derive(Resource, Default)]
 pub struct GzIndex {
@@ -422,7 +418,7 @@ pub fn standard_material(mat: &MaterialDesc, transparency: f64) -> StandardMater
         .unwrap_or((0.0, 0.5));
     StandardMaterial {
         base_color: Color::srgba(r, g, b, alpha),
-        emissive: LinearRgba::rgb(er, eg, eb),
+        emissive: render::units::emissive(Color::srgb(er, eg, eb)),
         metallic,
         perceptual_roughness,
         double_sided: mat.double_sided,

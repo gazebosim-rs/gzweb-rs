@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 use super::*;
 
 /// The `<library_effects>` element.
@@ -6,12 +8,12 @@ use super::*;
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=277
 #[derive(Default)]
-pub(super) struct LibraryEffects<'a> {
+pub(crate) struct LibraryEffects<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
+    // pub(crate) id: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) effects: HashMap<&'a str, Effect<'a>>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) effects: HashMap<&'a str, Effect<'a>>,
 }
 
 /// The `<effect>` element.
@@ -19,12 +21,12 @@ pub(super) struct LibraryEffects<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=265
-pub(super) struct Effect<'a> {
+pub(crate) struct Effect<'a> {
     /// The unique identifier of this element.
-    pub(super) id: &'a str,
+    pub(crate) id: &'a str,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) profile: ProfileCommon<'a>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) profile: ProfileCommon<'a>,
 }
 
 /// The `<profile_COMMON>` element.
@@ -32,44 +34,44 @@ pub(super) struct Effect<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=301
-pub(super) struct ProfileCommon<'a> {
+pub(crate) struct ProfileCommon<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
-    pub(super) surfaces: HashMap<&'a str, Surface<'a>>,
-    pub(super) samplers: HashMap<&'a str, Sampler<'a>>,
+    // pub(crate) id: Option<&'a str>,
+    pub(crate) surfaces: HashMap<&'a str, Surface<'a>>,
+    pub(crate) samplers: HashMap<&'a str, Sampler<'a>>,
 
-    pub(super) technique: Technique<'a>,
+    pub(crate) technique: Technique<'a>,
 }
 
-pub(super) struct Technique<'a> {
+pub(crate) struct Technique<'a> {
     #[allow(dead_code)] // TODO
-    pub(super) ty: ShadeType,
+    pub(crate) ty: ShadeType,
 
     // Colors/Textures
-    pub(super) emission: ColorAndTexture<'a>,
-    pub(super) ambient: ColorAndTexture<'a>,
-    pub(super) diffuse: ColorAndTexture<'a>,
-    pub(super) specular: ColorAndTexture<'a>,
-    pub(super) reflective: ColorAndTexture<'a>,
-    pub(super) transparent: ColorAndTexture<'a>,
-    pub(super) has_transparency: bool,
-    pub(super) rgb_transparency: bool,
-    pub(super) invert_transparency: bool,
+    pub(crate) emission: ColorAndTexture<'a>,
+    pub(crate) ambient: ColorAndTexture<'a>,
+    pub(crate) diffuse: ColorAndTexture<'a>,
+    pub(crate) specular: ColorAndTexture<'a>,
+    pub(crate) reflective: ColorAndTexture<'a>,
+    pub(crate) transparent: ColorAndTexture<'a>,
+    pub(crate) has_transparency: bool,
+    pub(crate) rgb_transparency: bool,
+    pub(crate) invert_transparency: bool,
 
-    pub(super) shininess: f32,
-    pub(super) reflectivity: f32,
-    pub(super) transparency: f32,
-    pub(super) index_of_refraction: f32,
+    pub(crate) shininess: f32,
+    pub(crate) reflectivity: f32,
+    pub(crate) transparency: f32,
+    pub(crate) index_of_refraction: f32,
 
     // GOOGLEEARTH/OKINO extensions
-    pub(super) double_sided: bool,
+    pub(crate) double_sided: bool,
 
     // FCOLLADA extensions
-    pub(super) bump: Texture<'a>,
+    pub(crate) bump: Texture<'a>,
 
     // MAX3D extensions
-    pub(super) wireframe: bool,
-    pub(super) faceted: bool,
+    pub(crate) wireframe: bool,
+    pub(crate) faceted: bool,
 }
 
 /// The `<surface>` element.
@@ -77,8 +79,8 @@ pub(super) struct Technique<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=332
-pub(super) struct Surface<'a> {
-    pub(super) init_from: Uri<'a, Image<'a>>,
+pub(crate) struct Surface<'a> {
+    pub(crate) init_from: Uri<'a, Image<'a>>,
 }
 
 /// The `<sampler2D>` element.
@@ -86,48 +88,56 @@ pub(super) struct Surface<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4] https://www.khronos.org/files/collada_spec_1_4.pdf#page=312
-pub(super) struct Sampler<'a> {
+pub(crate) struct Sampler<'a> {
     // An xs:NCName, which is the sid of a <surface>. A
     // <sampler*> is a definition of how a shader will resolve a
     // color out of a <surface>. <source> identifies the
     // <surface> to read.
-    pub(super) source: &'a str,
+    pub(crate) source: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum ShadeType {
+pub(crate) enum ShadeType {
     Constant,
     Lambert,
     Phong,
     Blinn,
 }
 
-pub(super) struct ColorAndTexture<'a> {
-    pub(super) color: Color4,
-    pub(super) texture: Texture<'a>,
+pub(crate) struct ColorAndTexture<'a> {
+    pub(crate) color: Color4,
+    pub(crate) texture: Texture<'a>,
 }
 
 impl ColorAndTexture<'_> {
     fn new(color: Color4) -> Self {
         Self {
             color,
-            texture: Texture {
-                texture: "",
-                // texcoord: "",
-            },
+            texture: Texture::default(),
         }
     }
 }
 
-pub(super) struct Texture<'a> {
-    pub(super) texture: &'a str,
-    // pub(super) texcoord: &'a str,
+#[derive(Default)]
+pub(crate) struct Texture<'a> {
+    pub(crate) texture: &'a str,
+    // pub(crate) texcoord: &'a str,
+    /// gz-collada: whether U and V repeat, from `wrapU`/`wrapV` in the
+    /// texture's `<extra><technique>`; `None` (repeat) without one.
+    pub(crate) wrap: Option<[bool; 2]>,
+}
+
+/// gz-collada: what `<extra>`s add to a technique.
+#[derive(Default)]
+struct Extra<'a> {
+    bump: Texture<'a>,
+    double_sided: bool,
 }
 
 // -----------------------------------------------------------------------------
 // Parsing
 
-pub(super) fn parse_library_effects<'a>(
+pub(crate) fn parse_library_effects<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {
@@ -178,17 +188,22 @@ fn parse_effect<'a>(cx: &mut Context<'a>, node: xml::Node<'a, '_>) -> io::Result
     debug_assert_eq!(node.tag_name().name(), "effect");
     let id = node.required_attribute("id")?;
     let mut profile = None;
+    let mut extra = Extra::default();
 
     for child in node.element_children() {
-        if child.tag_name().name() == "profile_COMMON" {
-            profile = Some(parse_profile_common(cx, child)?);
+        match child.tag_name().name() {
+            "profile_COMMON" => profile = Some(parse_profile_common(cx, child)?),
+            // gz-collada: MAX3D puts `<double_sided>` here.
+            "extra" => parse_extra(child, &mut extra),
+            _ => {}
         }
     }
 
-    let profile = match profile {
+    let mut profile = match profile {
         Some(profile) => profile,
         None => return Err(error::exactly_one_elem(node, "profile_COMMON")),
     };
+    apply_extra(&mut profile.technique, extra);
 
     Ok(Effect {
         id,
@@ -225,7 +240,7 @@ fn parse_profile_common<'a>(
     let mut samplers = HashMap::default();
     let mut technique = None;
 
-    let mut extra_bump = Texture { texture: "" };
+    let mut extra = Extra::default();
     for child in node.element_children() {
         match child.tag_name().name() {
             "newparam" => {
@@ -238,13 +253,13 @@ fn parse_profile_common<'a>(
                         "constant" | "lambert" | "phong" | "blinn" => {
                             technique = Some(parse_technique(t, name.parse().unwrap())?);
                         }
-                        "extra" => parse_extra_bump(t, &mut extra_bump)?,
+                        "extra" => parse_extra(t, &mut extra),
                         "asset" => { /* skip */ }
                         _ => {}
                     }
                 }
             }
-            "extra" => parse_extra_bump(child, &mut extra_bump)?,
+            "extra" => parse_extra(child, &mut extra),
             "asset" => { /* skip */ }
             _ => return Err(error::unexpected_child_elem(child)),
         }
@@ -255,9 +270,7 @@ fn parse_profile_common<'a>(
         // TODO: technique maybe flatten?
         None => return Err(error::exactly_one_elem(node, "technique")),
     };
-    if technique.bump.texture.is_empty() {
-        technique.bump = extra_bump;
-    }
+    apply_extra(&mut technique, extra);
 
     Ok(ProfileCommon {
         // id: node.attribute("id"),
@@ -445,14 +458,69 @@ fn parse_flag(node: xml::Node<'_, '_>) -> bool {
     matches!(node.trimmed_text(), "1" | "true")
 }
 
-/// gz-collada: a `<bump>` anywhere under an `<extra>` (FCOLLADA, OpenCOLLADA
-/// and Blender put normal maps there).
-fn parse_extra_bump<'a>(extra: xml::Node<'a, '_>, bump: &mut Texture<'a>) -> io::Result<()> {
-    if let Some(node) = extra.descendants().find(|n| n.tag_name().name() == "bump") {
-        let mut dummy = [0.; 4];
-        parse_effect_color(node, &mut dummy, bump)?;
+/// gz-collada: a `<bump>` (FCOLLADA, OpenCOLLADA and Blender put normal maps
+/// there) and `<double_sided>` (GOOGLEEARTH/SketchUp, MAX3D) anywhere under
+/// an `<extra>`. Best effort: what can't be read is ignored, because
+/// `<extra>` is optional and other tools skip it.
+fn parse_extra<'a>(extra: xml::Node<'a, '_>, out: &mut Extra<'a>) {
+    for node in extra.descendants() {
+        match node.tag_name().name() {
+            "bump" if out.bump.texture.is_empty() => {
+                let mut dummy = [0.; 4];
+                let mut bump = Texture::default();
+                if parse_effect_color(node, &mut dummy, &mut bump).is_ok() {
+                    out.bump = bump;
+                }
+            }
+            "double_sided" => out.double_sided |= parse_flag(node),
+            _ => {}
+        }
     }
-    Ok(())
+}
+
+/// gz-collada: the technique's own `<bump>` wins over one in an `<extra>`.
+fn apply_extra<'a>(technique: &mut Technique<'a>, extra: Extra<'a>) {
+    if technique.bump.texture.is_empty() {
+        technique.bump = extra.bump;
+    }
+    technique.double_sided |= extra.double_sided;
+}
+
+/// gz-collada: three.js's texture wrapping: repeat, unless the texture's
+/// `<extra><technique>` sets any of `wrapU`/`wrapV`/`repeatU`/`repeatV`/
+/// `offsetU`/`offsetV`; then each axis repeats only if its `wrap` is true.
+fn parse_texture_wrap(texture: xml::Node<'_, '_>) -> Option<[bool; 2]> {
+    let mut wrap = None;
+    let techniques = texture
+        .element_children()
+        .filter(|n| n.tag_name().name() == "extra")
+        .flat_map(|extra| extra.element_children())
+        .filter(|n| n.tag_name().name() == "technique");
+    for child in techniques.flat_map(|t| t.element_children()) {
+        let axis = match child.tag_name().name() {
+            "wrapU" => 0,
+            "wrapV" => 1,
+            "repeatU" | "repeatV" | "offsetU" | "offsetV" => {
+                wrap.get_or_insert([false; 2]);
+                continue;
+            }
+            _ => continue,
+        };
+        wrap.get_or_insert([false; 2])[axis] = parse_wrap(child.trimmed_text());
+    }
+    wrap
+}
+
+/// gz-collada: `TRUE`, or a nonzero integer (three.js's `parseInt`).
+fn parse_wrap(text: &str) -> bool {
+    if text.eq_ignore_ascii_case("true") {
+        return true;
+    }
+    let digits = text.strip_prefix(['-', '+']).unwrap_or(text);
+    digits
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .any(|b| b != b'0')
 }
 
 impl Technique<'_> {
@@ -475,10 +543,7 @@ impl Technique<'_> {
             rgb_transparency: false,
             invert_transparency: false,
             double_sided: false,
-            bump: Texture {
-                texture: "",
-                // texcoord: "",
-            },
+            bump: Texture::default(),
             wireframe: false,
             faceted: false,
         }
@@ -505,27 +570,36 @@ fn parse_effect_color<'a>(
     for child in node.element_children() {
         match child.tag_name().name() {
             "color" => {
+                // gz-collada: RGB or RGBA (alpha 1), like three.js.
                 let content = xml::comma_to_period(child.trimmed_text());
-                let mut iter = xml::parse_float_array_exact(&content, 4);
-                // TODO: include in parse_float_array_exact?
-                let map_err = |e| {
-                    format_err!(
-                        "{e} in <{}> element ({})",
+                let mut rgba = [0.0, 0.0, 0.0, 1.0];
+                let mut n = 0;
+                for word in content.split(xml::is_whitespace).filter(|w| !w.is_empty()) {
+                    let value = rgba.get_mut(n).and_then(|v| {
+                        *v = float::parse(word.as_bytes())?;
+                        Some(())
+                    });
+                    if value.is_none() {
+                        n = 0;
+                        break;
+                    }
+                    n += 1;
+                }
+                if n < 3 {
+                    bail!(
+                        "expected 3 or 4 floats in <{}> element ({})",
                         child.tag_name().name(),
                         child.text_location(),
-                    )
-                };
-                let r = iter.next().unwrap().map_err(map_err)?;
-                let g = iter.next().unwrap().map_err(map_err)?;
-                let b = iter.next().unwrap().map_err(map_err)?;
-                let a = iter.next().unwrap().map_err(map_err)?;
-                *color = [r, g, b, a];
+                    );
+                }
+                *color = rgba;
             }
             "texture" => {
-                let _texcoord = child.required_attribute("texcoord")?;
+                // gz-collada: `texcoord` is optional here, as in three.js.
                 *texture = Texture {
                     texture: child.required_attribute("texture")?,
                     // texcoord,
+                    wrap: parse_texture_wrap(child),
                 };
             }
             "param" => {

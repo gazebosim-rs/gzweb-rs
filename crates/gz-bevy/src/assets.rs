@@ -238,41 +238,79 @@ impl AssetReader for HttpAssetReader {
     }
 }
 
+/// The largest asset body accepted (ureq's default is 10 MB; one Fuel mesh,
+/// the Urban Station, is 48 MB).
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_BODY: u64 = 256 * 1024 * 1024;
+
+/// Longest one asset fetch may take, body included: generous, for large
+/// meshes on a slow link, but a server that stalls still fails the load
+/// instead of leaving it pending forever.
+const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 #[cfg(not(target_arch = "wasm32"))]
 async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    fetch_within(url, FETCH_TIMEOUT)
+}
+
+/// ureq blocks, but asset readers run on the IO task pool. A server that
+/// never answers fails within 40 s; any fetch within `total`.
+#[cfg(not(target_arch = "wasm32"))]
+fn fetch_within(url: &str, total: std::time::Duration) -> Result<Vec<u8>, String> {
     use std::time::Duration;
-    // ureq blocks, but asset readers run on the IO task pool. A server that
-    // never answers fails the load instead of leaving it pending forever;
-    // the body itself may take as long as it needs.
     ureq::get(url)
         .config()
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_global(Some(total))
         .build()
         .call()
         .map_err(|e| e.to_string())?
         .into_body()
+        .with_config()
+        .limit(MAX_BODY)
         .read_to_vec()
         .map_err(|e| e.to_string())
 }
 
+/// `fetch`, aborted after [`FETCH_TIMEOUT`] (the browser has no timeout of
+/// its own for a stalled body).
 #[cfg(target_arch = "wasm32")]
 async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
     let window = web_sys::window().ok_or("no window")?;
-    let resp = JsFuture::from(window.fetch_with_str(url))
-        .await
+    let abort = web_sys::AbortController::new().map_err(|e| format!("{e:?}"))?;
+    let init = web_sys::RequestInit::new();
+    init.set_signal(Some(&abort.signal()));
+    let on_timeout = {
+        let abort = abort.clone();
+        Closure::once_into_js(move || abort.abort())
+    };
+    let timer = window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            on_timeout.unchecked_ref(),
+            FETCH_TIMEOUT.as_millis() as i32,
+        )
         .map_err(|e| format!("{e:?}"))?;
-    let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a Response")?;
-    if !resp.ok() {
-        return Err(format!("HTTP {}", resp.status()));
+    let result = async {
+        let resp = JsFuture::from(window.fetch_with_str_and_init(url, &init))
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a Response")?;
+        if !resp.ok() {
+            return Err(format!("HTTP {}", resp.status()));
+        }
+        let buf = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        Ok(js_sys::Uint8Array::new(&buf).to_vec())
     }
-    let buf = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    Ok(js_sys::Uint8Array::new(&buf).to_vec())
+    .await;
+    window.clear_timeout_with_handle(timer);
+    result
 }
 
 /// Registers the `wsasset://` and `gzhttps://` sources. **Must be added
@@ -525,6 +563,34 @@ mod tests {
             assert!(reader.read_directory(Path::new("x")).await.is_err());
             assert!(!reader.is_directory(Path::new("x")).await.unwrap());
         });
+    }
+
+    #[test]
+    fn large_bodies_are_read_and_stalled_ones_time_out() {
+        // Past ureq's 10 MB default.
+        let big = vec![7u8; 11 << 20].leak();
+        let base = http_server(big);
+        let url = format!("{}/ok", base.replace("http:/", "http://"));
+        assert_eq!(block_on(fetch_bytes(&url)).unwrap().len(), 11 << 20);
+
+        // Headers, then half the body, then nothing.
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                let _ = s.read(&mut [0u8; 2048]);
+                let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf");
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        });
+        let started = std::time::Instant::now();
+        let stalled = fetch_within(
+            &format!("http://{addr}/x"),
+            std::time::Duration::from_millis(300),
+        );
+        assert!(stalled.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
     }
 
     #[test]

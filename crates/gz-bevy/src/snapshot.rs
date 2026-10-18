@@ -19,9 +19,7 @@ use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
 use crate::heightmap::GzHeightmap;
 use crate::render::{GzEnvironment, GzGrid};
-use crate::spawn::{
-    GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
-};
+use crate::spawn::{GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzVisual, GzWorldRoot};
 use crate::submesh::GzSubmesh;
 
 #[derive(Resource, Clone, Debug)]
@@ -195,7 +193,7 @@ pub struct SnapshotQueries<'w, 's> {
     root: Query<'w, 's, &'static GlobalTransform, With<GzWorldRoot>>,
     nodes: Query<'w, 's, NodeData>,
     children: Query<'w, 's, &'static Children>,
-    meshes_q: Query<'w, 's, MeshData, Without<GzPlaceholder>>,
+    meshes_q: Query<'w, 's, MeshData>,
     emitters: Query<'w, 's, &'static GlobalTransform, With<GzLightEmitter>>,
     camera: Query<
         'w,
@@ -390,15 +388,16 @@ fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
         .find_map(|e| q.meshes_q.get(*e).ok().and_then(|(_, _, m)| m))?;
     let m = q.materials.get(&handle.0)?;
     let base = m.base_color.to_srgba();
+    let emissive = crate::render::units::emission_color(m.emissive);
     let path = |h: &Option<Handle<Image>>| h.as_ref().and_then(|h| h.path()).map(|p| p.to_string());
     Some(MaterialInfo {
         color: [base.red as f64, base.green as f64, base.blue as f64],
         opacity: base.alpha as f64,
         transparent: matches!(m.alpha_mode, AlphaMode::Blend),
         emissive: [
-            m.emissive.red as f64,
-            m.emissive.green as f64,
-            m.emissive.blue as f64,
+            emissive.red as f64,
+            emissive.green as f64,
+            emissive.blue as f64,
         ],
         metalness: Some(m.metallic as f64),
         roughness: Some(m.perceptual_roughness as f64),

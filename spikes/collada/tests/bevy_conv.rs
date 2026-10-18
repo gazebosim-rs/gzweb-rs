@@ -6,7 +6,8 @@ use collada_spike::{bevy_conv, summary};
 
 fn dae_files() -> Vec<std::path::PathBuf> {
     let mut out = vec![];
-    for dir in ["corpus", "synthetic"] {
+    // The probes live with gz-collada's tests.
+    for dir in ["corpus", "../../crates/gz-collada/tests/data"] {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
         let mut stack = vec![root];
         while let Some(d) = stack.pop() {

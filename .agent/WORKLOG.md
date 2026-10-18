@@ -283,6 +283,7 @@ These are findings for the plan, not changes:
   timeout covers a capture that never arrives, `.png` only.
 - `GzConfig.headless` split into `interactive` and `gpu`; spot lights use
   `spot_inner_angle`; unset light intensity means 1.
+
 ## 2026-10-17: Collada
 
 - New crate `gz-collada`: mesh-loader 0.1.13's COLLADA parsers vendored
@@ -301,6 +302,30 @@ These are findings for the plan, not changes:
 - Coverage: the vendored code is excluded (`COVERAGE_IGNORE` in
   `scripts/check.sh`); `assemble.rs` and the loader are gated.
 - Not done: `<submesh>`/`center`.
+
+### PR #21 review fixes (2026-10-18)
+
+- **No panics on bad `.dae` files** (they aborted the wasm client): an XML
+  nesting pre-scan (roxmltree recurses; 300 levels), `<node>`s capped at
+  256, untrusted counts no longer size allocations, the iterators yield
+  nothing instead of panicking, and `validate.rs` checks each instantiated
+  primitive's sources, accessors and `<p>`. A `<Name_array>` hung the
+  parser (an upstream loop that never advanced); fixed.
+- `<instance_node>`: ancestor-stack cycle detection, a map lookup, and a 1M
+  node/primitive budget; plain nesting is no longer cut at 65.
+- Dangling scene references fail the load, as in three.js; VERTEX reads the
+  mesh's own `<vertices>`; polylists skip 1–2-vertex polygons correctly;
+  tristrips are strips; `<extra>` is best effort and its `<double_sided>`
+  is read; `<unit>` ≤ 0/NaN → 1; `<rotate>` axes normalised.
+- Loader: failed textures are dropped from materials (any
+  `StandardMaterial`), textures repeat, roughness `(2/(n+2))^¼`, Lambert
+  rough, reflectance from specular, opacity-only alpha, cut-outs masked,
+  emission textures glow, one `units::emissive` for COLLADA and SDF (SDF
+  emission was ~0), vertex colours linearised, no index buffer.
+- HTTP: 256 MB bodies, 5-minute whole-fetch timeouts (native and wasm), a
+  2-minute one in the mirror; CI saves the Fuel cache only when it changed.
+- Verified: the review's reproductions are tests in `gz-collada`; the
+  probes match three.js (triangles and bounds) with `run.sh`'s reference.
 
 ## 2026-10-17: Phase 3 — submeshes
 

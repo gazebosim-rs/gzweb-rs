@@ -1,3 +1,6 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+// gz-collada: `pub(crate)` (was `pub(super)`) so `crate::assemble` can read these.
+
 use super::*;
 
 /// The `<library_materials>` element.
@@ -6,12 +9,12 @@ use super::*;
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=279
 #[derive(Default)]
-pub(super) struct LibraryMaterials<'a> {
+pub(crate) struct LibraryMaterials<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
+    // pub(crate) id: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) materials: HashMap<&'a str, Material<'a>>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) materials: HashMap<&'a str, Material<'a>>,
 }
 
 /// The `<material>` element.
@@ -19,12 +22,12 @@ pub(super) struct LibraryMaterials<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=280
-pub(super) struct Material<'a> {
+pub(crate) struct Material<'a> {
     /// The unique identifier of this element.
-    pub(super) id: &'a str,
+    pub(crate) id: &'a str,
     /// The name of this element.
-    pub(super) name: Option<&'a str>,
-    pub(super) instance_effect: InstanceEffect<'a>,
+    pub(crate) name: Option<&'a str>,
+    pub(crate) instance_effect: InstanceEffect<'a>,
 }
 
 /// The `<instance_effect>` element.
@@ -32,19 +35,19 @@ pub(super) struct Material<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=271
-pub(super) struct InstanceEffect<'a> {
+pub(crate) struct InstanceEffect<'a> {
     // /// The scoped identifier of this element.
-    // pub(super) sid: Option<&'a str>,
+    // pub(crate) sid: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     /// The URI of the location of the [`Effect`] to instantiate.
-    pub(super) url: Uri<'a, Effect<'a>>,
+    pub(crate) url: Uri<'a, Effect<'a>>,
 }
 
 // -----------------------------------------------------------------------------
 // Parsing
 
-pub(super) fn parse_library_materials<'a>(
+pub(crate) fn parse_library_materials<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {

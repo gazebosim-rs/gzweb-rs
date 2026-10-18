@@ -3,7 +3,13 @@
 //! `cargo run -p gz-collada --example dae_dump -- model.dae`
 fn main() {
     for path in std::env::args().skip(1) {
-        let bytes = std::fs::read(&path).unwrap_or_default();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                println!("{path}: can't read it: {e}");
+                continue;
+            }
+        };
         match gz_collada::parse(&bytes) {
             Ok(scene) => {
                 println!("{path}: unit {} up {:?}", scene.unit, scene.up_axis);
@@ -35,10 +41,18 @@ fn main() {
                     );
                 }
                 for (i, m) in scene.materials.iter().enumerate() {
+                    let path = |t: &Option<gz_collada::Texture>| t.as_ref().map(|t| t.path.clone());
                     println!(
                         "  material {i}: {:?} diffuse {:?} opacity {} tex {:?} normal {:?}",
-                        m.name, m.diffuse, m.opacity, m.diffuse_texture, m.normal_texture
+                        m.name,
+                        m.diffuse,
+                        m.opacity,
+                        path(&m.diffuse_texture),
+                        path(&m.normal_texture)
                     );
+                }
+                for w in &scene.warnings {
+                    println!("  warning: {w}");
                 }
             }
             Err(e) => println!("{path}: error: {e}"),
