@@ -158,8 +158,12 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: .http-cache
-          key: http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}
-          restore-keys: http-cache-
+          # Saved every run: a client change can need a locked file that no
+          # earlier run fetched, and an exact-key hit would never save it.
+          key: http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}-${{ github.run_id }}
+          restore-keys: |
+            http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}-
+            http-cache-
       - run: cargo test --locked -p gzweb --test headless -- --ignored
       - name: Every fetched file is in a lock file
         run: git diff --exit-code -- tests/corpus

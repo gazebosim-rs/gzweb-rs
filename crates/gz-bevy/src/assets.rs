@@ -219,8 +219,15 @@ impl AssetReader for HttpAssetReader {
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
-    // ureq blocks, but asset readers run on the IO task pool.
+    use std::time::Duration;
+    // ureq blocks, but asset readers run on the IO task pool. A server that
+    // never answers fails the load instead of leaving it pending forever;
+    // the body itself may take as long as it needs.
     ureq::get(url)
+        .config()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .build()
         .call()
         .map_err(|e| e.to_string())?
         .into_body()

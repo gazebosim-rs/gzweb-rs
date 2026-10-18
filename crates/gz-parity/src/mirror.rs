@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -27,6 +28,10 @@ pub struct MirrorOptions {
 }
 
 type Lock = BTreeMap<String, String>;
+
+/// For connecting to the upstream and for its response headers; less than
+/// a snapshot's 30 s timeout, so a stalled upstream shows up as a 404.
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 struct State {
     opts: MirrorOptions,
@@ -117,7 +122,12 @@ fn fetch(state: &State, rest: &str) -> Result<Vec<u8>, (u16, String)> {
         None => format!("https://{rest}"),
     };
     let not_found = |e: ureq::Error| (404, format!("{url}: {e}"));
+    // A stalled upstream fails the request instead of hanging the client.
     ureq::get(&url)
+        .config()
+        .timeout_connect(Some(TIMEOUT))
+        .timeout_recv_response(Some(TIMEOUT))
+        .build()
         .call()
         .map_err(not_found)?
         .into_body()
