@@ -10,7 +10,7 @@ gz-core.workspace = true
 gz-collada = { path = "../gz-collada", version = "0.1.0" }
 prost.workspace = true
 serde_json.workspace = true
-bevy = { version = "0.18", features = ["webgpu", "webgl2", "dds"] }
+bevy = { version = "0.18", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
 bevy_stl = { version = "0.18.0", default-features = false }
 async-channel = "2"
 wgpu-types = "27"
