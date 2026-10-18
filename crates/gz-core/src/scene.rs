@@ -136,8 +136,40 @@ pub enum GeometryDesc {
         submesh: Option<String>,
         center_submesh: bool,
     },
+    Heightmap(HeightmapDesc),
     /// Recognised but not rendered yet.
     Unsupported(String),
+}
+
+/// A terrain: heights from the message or from a grayscale image, over
+/// `size[0]` × `size[1]` metres centred on `origin`, `size[2]` metres from
+/// black to white. Row 0 of the heights (or the image's top row) is +Y.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeightmapDesc {
+    /// The image to load (see [`uri::mesh_load_uri`]); `None` when the
+    /// message carries the heights.
+    pub image_uri: Option<String>,
+    /// Row-major, `width` × `height`, in metres (from the message).
+    pub heights: Vec<f32>,
+    pub width: u32,
+    pub height: u32,
+    pub size: [f64; 3],
+    pub origin: [f64; 3],
+    /// Vertices per image pixel along each side (SDF `<sampling>`, ≥ 1).
+    pub sampling: u32,
+    /// Bottom layer first.
+    pub layers: Vec<HeightmapLayer>,
+    /// Between consecutive layers: (`min_height`, `fade_dist`).
+    pub blends: Vec<[f64; 2]>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeightmapLayer {
+    /// Load URIs, like a mesh's.
+    pub diffuse: Option<String>,
+    pub normal: Option<String>,
+    /// Metres covered by one repeat of the textures.
+    pub size: f64,
 }
 
 /// Material in three.js terms, as gzweb `createMaterial` + `setMaterial`
@@ -542,14 +574,50 @@ fn geometry_desc(g: &msgs::Geometry) -> GeometryDesc {
             submesh: (!m.submesh.is_empty()).then(|| m.submesh.clone()),
             center_submesh: m.center_submesh,
         }
-    } else if g.heightmap.is_some() {
-        GeometryDesc::Unsupported("heightmap".into())
+    } else if let Some(h) = &g.heightmap {
+        GeometryDesc::Heightmap(heightmap_desc(h))
     } else {
         GeometryDesc::Unsupported(
             msgs::geometry::Type::try_from(g.r#type)
                 .map(|t| t.as_str_name().to_ascii_lowercase())
                 .unwrap_or_else(|_| "unknown".into()),
         )
+    }
+}
+
+fn heightmap_desc(h: &msgs::HeightmapGeom) -> HeightmapDesc {
+    let v3 =
+        |v: &Option<msgs::Vector3d>, d: [f64; 3]| v.as_ref().map(|v| [v.x, v.y, v.z]).unwrap_or(d);
+    let load = |u: &str| (!u.is_empty()).then(|| uri::mesh_load_uri(u));
+    let (width, height) = (h.width.max(0) as u32, h.height.max(0) as u32);
+    let has_heights =
+        width > 0 && height > 0 && h.heights.len() == (width as usize) * (height as usize);
+    HeightmapDesc {
+        image_uri: if has_heights { None } else { load(&h.filename) },
+        heights: if has_heights {
+            h.heights.clone()
+        } else {
+            Vec::new()
+        },
+        width: if has_heights { width } else { 0 },
+        height: if has_heights { height } else { 0 },
+        size: v3(&h.size, [1.0; 3]),
+        origin: v3(&h.origin, [0.0; 3]),
+        sampling: h.sampling.max(1),
+        layers: h
+            .texture
+            .iter()
+            .map(|t| HeightmapLayer {
+                diffuse: load(&t.diffuse),
+                normal: load(&t.normal),
+                size: if t.size > 0.0 { t.size } else { 1.0 },
+            })
+            .collect(),
+        blends: h
+            .blend
+            .iter()
+            .map(|b| [b.min_height, b.fade_dist])
+            .collect(),
     }
 }
 
@@ -839,6 +907,72 @@ mod tests {
                 size: [1.0, 1.0]
             }
         );
+    }
+
+    #[test]
+    fn heightmaps_from_an_image_or_the_message() {
+        let tex = |d: &str, n: &str, size| msgs::heightmap_geom::Texture {
+            diffuse: d.into(),
+            normal: n.into(),
+            size,
+        };
+        let image = msgs::HeightmapGeom {
+            filename: "/////root/.gz/fuel/fuel.gazebosim.org/o/models/h/1/materials/textures/h.png"
+                .into(),
+            size: v3(129.0, 129.0, 10.0),
+            origin: v3(1.0, 2.0, 3.0),
+            texture: vec![
+                tex("model://h/d.png", "", 2.0),
+                tex("", "file:///n.png", 0.0),
+            ],
+            blend: vec![msgs::heightmap_geom::Blend {
+                min_height: 2.0,
+                fade_dist: 5.0,
+            }],
+            sampling: 0,
+            // Inconsistent heights are ignored.
+            heights: vec![1.0],
+            width: 2,
+            height: 2,
+            ..Default::default()
+        };
+        let d = heightmap_desc(&image);
+        assert_eq!(
+            d.image_uri.as_deref(),
+            Some("https://fuel.gazebosim.org/1.0/o/models/h/1/files/materials/textures/h.png")
+        );
+        assert!(d.heights.is_empty() && d.width == 0);
+        assert_eq!(
+            (d.size, d.origin, d.sampling),
+            ([129.0, 129.0, 10.0], [1.0, 2.0, 3.0], 1)
+        );
+        assert_eq!(
+            d.layers,
+            vec![
+                HeightmapLayer {
+                    diffuse: Some("h/d.png".into()),
+                    normal: None,
+                    size: 2.0
+                },
+                HeightmapLayer {
+                    diffuse: None,
+                    normal: Some("/n.png".into()),
+                    size: 1.0
+                },
+            ]
+        );
+        assert_eq!(d.blends, vec![[2.0, 5.0]]);
+
+        let inline = heightmap_desc(&msgs::HeightmapGeom {
+            heights: vec![0.0, 1.0, 2.0, 3.0],
+            width: 2,
+            height: 2,
+            sampling: 2,
+            ..image
+        });
+        assert_eq!(inline.image_uri, None);
+        assert_eq!((inline.width, inline.height, inline.sampling), (2, 2, 2));
+        assert_eq!(inline.heights, vec![0.0, 1.0, 2.0, 3.0]);
     }
 
     #[test]
@@ -1261,7 +1395,17 @@ mod tests {
                     },
                 ),
                 "heightmap",
-                GeometryDesc::Unsupported("heightmap".into()),
+                GeometryDesc::Heightmap(HeightmapDesc {
+                    image_uri: None,
+                    heights: vec![],
+                    width: 0,
+                    height: 0,
+                    size: [1.0; 3],
+                    origin: [0.0; 3],
+                    sampling: 1,
+                    layers: vec![],
+                    blends: vec![],
+                }),
             ),
             // No sub-message: named after `type`, as gzweb creates nothing.
             (

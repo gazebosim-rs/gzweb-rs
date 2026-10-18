@@ -17,8 +17,12 @@ use gz_core::transport::Status;
 
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
+use crate::heightmap::GzHeightmap;
 use crate::render::{GzEnvironment, GzGrid};
-use crate::spawn::{GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzVisual, GzWorldRoot};
+use crate::spawn::{
+    GzEntity, GzGltf, GzIndex, GzLight, GzLightEmitter, GzLoads, GzVisual, GzWorldRoot,
+};
+use crate::submesh::GzSubmesh;
 
 #[derive(Resource, Clone, Debug)]
 pub struct SnapshotRequest {
@@ -41,7 +45,9 @@ pub fn snapshot_when_settled(
     index: Res<GzIndex>,
     loads: Res<GzLoads>,
     asset_server: Res<AssetServer>,
-    scene_roots: Query<(&SceneRoot, Option<&Children>)>,
+    scene_roots: Query<(&SceneRoot, Option<&Children>, Option<&GzSubmesh>)>,
+    gltfs: Query<&GzGltf, Without<SceneRoot>>,
+    terrains: Query<&GzHeightmap>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -75,18 +81,24 @@ pub fn snapshot_when_settled(
                 | None
         )
     });
-    // A loaded glTF/OBJ scene is instanced a frame later.
-    let scenes_instanced = scene_roots.iter().all(|(root, children)| {
-        children.is_some_and(|c| !c.is_empty())
-            || matches!(
-                asset_server.get_recursive_dependency_load_state(root.0.id()),
-                Some(RecursiveDependencyLoadState::Failed(_))
-            )
-    });
+    // A loaded glTF/OBJ/COLLADA scene is instanced a frame later (a glTF
+    // gets its `SceneRoot` once loaded), and cut down to its submesh
+    // (possibly to nothing) when it is.
+    let failed = |id: bevy::asset::UntypedAssetId| {
+        matches!(
+            asset_server.get_recursive_dependency_load_state(id),
+            Some(RecursiveDependencyLoadState::Failed(_))
+        )
+    };
+    let scenes_instanced = scene_roots.iter().all(|(root, children, submesh)| {
+        submesh.map_or_else(|| children.is_some_and(|c| !c.is_empty()), |s| s.applied)
+            || failed(root.0.id().untyped())
+    }) && gltfs.iter().all(|g| failed(g.0.id().untyped()));
     let settled = status.status == Status::Ready
         && index.scene.is_some()
         && loads_done
         && scenes_instanced
+        && terrains.iter().all(|t| t.built)
         && now - inbox.last_activity_secs >= req.settle_secs;
 
     if !settled && !timed_out {
@@ -189,6 +201,7 @@ pub struct SnapshotQueries<'w, 's> {
     nodes: Query<'w, 's, NodeData>,
     children: Query<'w, 's, &'static Children>,
     meshes_q: Query<'w, 's, MeshData>,
+    terrains: Query<'w, 's, &'static GzHeightmap>,
     emitters: Query<'w, 's, &'static GlobalTransform, With<GzLightEmitter>>,
     camera: Query<
         'w,
@@ -346,7 +359,11 @@ fn geometry_info(
     let mut max = Vec3::splat(f32::NEG_INFINITY);
     let mut vertex_count = 0u64;
     let mut mesh_count = 0u32;
-    for (mesh3d, global, _) in mesh_entities.iter().filter_map(|e| q.meshes_q.get(*e).ok()) {
+    let mut corners = Vec::new();
+    for (e, (mesh3d, global, _)) in mesh_entities
+        .iter()
+        .filter_map(|e| q.meshes_q.get(*e).ok().map(|m| (*e, m)))
+    {
         let Some(mesh) = q.meshes.get(&mesh3d.0) else {
             continue;
         };
@@ -363,6 +380,17 @@ fn geometry_info(
             min = min.min(w);
             max = max.max(w);
         }
+        if let Ok(GzHeightmap {
+            grid_size: (w, h), ..
+        }) = q.terrains.get(e)
+        {
+            let (w, h) = (*w, *h);
+            if w * h == positions.len() && w * h > 0 {
+                for i in [0, w - 1, (h - 1) * w, h * w - 1] {
+                    corners.push(v3(m.transform_point3(Vec3::from_array(positions[i]))));
+                }
+            }
+        }
     }
     GeometryInfo {
         ty: proto_type.to_string(),
@@ -372,6 +400,7 @@ fn geometry_info(
         }),
         mesh_count,
         vertex_count,
+        corners,
     }
 }
 

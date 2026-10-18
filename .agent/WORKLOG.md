@@ -330,3 +330,61 @@ These are findings for the plan, not changes:
   fuel.ignitionrobotics.org (same service, verified byte-identical), when
   fuel.gazebosim.org fails. CI's Fuel job passes during Fuel outages; the
   lock still checks every body.
+
+## 2026-10-17: Phase 3 — submeshes
+
+- Fuel CI job on PR #21 hung: the HTTP cache (keyed on lock files only) was
+  saved before `.dae` loads existed, so the mesh and texture came from
+  fuel.gazebosim.org, which stalled (502 since). Fetches now time out
+  (mirror and client) and the CI cache is saved every run.
+- `gz_bevy::submesh`: `<submesh>` + `center` for scene meshes (COLLADA,
+  glTF), Gazebo's rules. Unit tests on a hand-built scene; headless test
+  cuts the probe `.dae` to `ChildNode`, centred, and checks an unknown name
+  leaves nothing.
+- OBJ: `gz_bevy::obj` on `tobj` replaces `bevy_obj` (which kept no
+  object names and resolved textures only relative to the `.mtl`). gzweb's
+  MTL texture rules, MTL → PBR, flat normals when missing; headless test
+  with two objects, two materials and a submesh.
+- Assets: a failed `gzhttps://` fetch retries through the websocket
+  `asset` request with the real URL (not the mirror's), as gzweb does.
+  Headless test serves a mesh only over the websocket.
+- Heightmaps: `GeometryDesc::Heightmap`, terrain from the image (Gazebo's
+  rules) or message heights; first layer textured. `heightmap` corpus:
+  material matches gzweb, geometry allow-listed (`gzweb-heightmap-empty`).
+- Websocket fallback requests the unescaped URL (`source_url`), as gzweb.
+
+## 2026-10-18: Heightmap image in the lock
+
+- `heightmap_bowl.png` added to `tests/corpus/heightmap/http.lock.json`,
+  so `heightmap_matches_gzweb` passes offline. fuel.gazebosim.org still
+  answered 502; the bytes came from fuel.ignitionrobotics.org (same Fuel
+  server, which served all six already-locked files with matching hashes,
+  and the image equals gz-sim's `test/media/heightmap_bowl.png`). Seeded
+  into `target/http-cache`; the mirror wrote the lock entry.
+- CI's HTTP cache doesn't have the image yet; while fuel.gazebosim.org is
+  down the mirror takes it from fuel.ignitionrobotics.org (the lock pins it).
+
+## 2026-10-18: PR #22 review fixes
+
+- Merged #21's review fixes; OBJ now uses its material rules (roughness
+  `(2/(n+2))^¼`, `units::emissive`, sRGB vertex colours, repeating textures).
+- `.DAE` loaded as OBJ (Bevy matches extensions case-sensitively and fell
+  back to the last `Scene` loader); `.GLB` found no loader (a labelled
+  path). One `mesh_file::SceneFileLoader` for COLLADA and OBJ, glTF loaded
+  as a `Gltf`; headless test with `.GLTF`, `.DAE`, `.Obj`, `.STL`.
+- `mesh_file`: the loaders' shared texture paths/loading, Phong roughness
+  and mesh tail. Textures climbing out of their source are refused (Bevy
+  panicked in the loader).
+- `<submesh>`: Gazebo's rules, checked against gz-common (COLLADA, Assimp,
+  OBJ loaders) and gz-rendering's `Ogre2MeshFactory`: every match, unnamed
+  nodes join the named ancestor, COLLADA `name` only, each submesh centred
+  on its own bounds; idempotent on respawn.
+- Heightmaps: the brightest pixel is at `size.z` (gz `MaxElevation`);
+  layer textures tracked for snapshots; image CPU-only; grid tangents only
+  under a normal map (1025²: ~14 ms instead of 3 s); snapshot corners and a
+  headless orientation check.
+- OBJ: absolute/URI texture paths through the sources, MTL keys in any
+  case, `-s`/`-o` → `uv_transform`, `map_Ka` dropped, gzweb's
+  `/materials/textures` rule matched; tobj's unused `async` feature off.
+- Assets: hosts that fail to connect or time out are skipped for 5 min;
+  unanswered websocket `asset` requests fail after 60 s.

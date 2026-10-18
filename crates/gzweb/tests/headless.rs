@@ -288,6 +288,19 @@ fn mesh(name: &str, filename: &str) -> msgs::Visual {
     )
 }
 
+/// The probe `.dae` cut down to one node, centred.
+fn submesh(name: &str, node: &str) -> msgs::Visual {
+    submesh_of(name, "/data/robot.dae", node)
+}
+
+fn submesh_of(name: &str, file: &str, node: &str) -> msgs::Visual {
+    let mut v = mesh(name, file);
+    let m = v.geometry.as_mut().unwrap().mesh.as_mut().unwrap();
+    m.submesh = node.into();
+    m.center_submesh = true;
+    v
+}
+
 fn model(name: &str, id: u32, links: Vec<msgs::Link>) -> msgs::Model {
     msgs::Model {
         name: name.into(),
@@ -327,10 +340,19 @@ fn light(name: &str, ty: msgs::light::LightType) -> msgs::Light {
 }
 
 const OBJ: &[u8] = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+/// Two objects with their own materials; the second's texture is a bare
+/// file name, which gzweb looks for in `materials/textures`.
+const OBJ_MTL: &[u8] = b"mtllib two.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nvt 0 0\n\
+o first\nusemtl red\nf 1 2 3\no second\nusemtl tex\nf 1/1 2/1 4/1\nf 1/1 3/1 4/1\n";
+const MTL: &[u8] = b"newmtl red\nKd 1 0 0\nnewmtl tex\nKd 0 0 1\nmap_Kd t.png\n";
 const STL: &[u8] = b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\n\
 vertex 0 1 0\nendloop\nendfacet\nendsolid t\n";
-const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
-"nodes":[{"mesh":0,"name":"tri"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+/// Three instances of one triangle: `tri` (at x = 5) with an unnamed child
+/// (which belongs to `tri`'s submesh), and `other`.
+const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],
+"nodes":[{"mesh":0,"name":"tri","translation":[5,0,0],"children":[2]},
+{"mesh":0,"name":"other","translation":[-7,3,0]},{"mesh":0,"translation":[0,0,1]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
 "buffers":[{"byteLength":36,"uri":"tri.bin"}],"bufferViews":[{"buffer":0,"byteLength":36}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",
 "min":[0,0,0],"max":[1,1,0]}]}"#;
@@ -473,14 +495,38 @@ fn synthetic_world(http: &str) -> Corpus {
     ];
     let meshes = vec![
         mesh("obj", "model://pkg/meshes/tri.obj"),
+        mesh("obj_mtl", "model://pkg/meshes/two.obj"),
+        submesh_of("obj_sub", "model://pkg/meshes/two.obj", "second"),
         mesh("stl", "file:///data/tri.stl"),
         mesh("gltf", "/data/tri.gltf"),
+        // Upper- and mixed-case extensions load with the right loader.
+        mesh("gltf_upper", "/data/TRI.GLTF"),
+        mesh("dae_upper", "/data/ROBOT.DAE"),
+        mesh("obj_upper", "model://pkg/meshes/TRI.Obj"),
+        mesh("stl_upper", "/data/TRI.STL"),
         mesh("dae", "/data/robot.dae"),
+        submesh("dae_child", "ChildNode"),
+        submesh_of("gltf_sub", "/data/tri.gltf", "tri"),
+        submesh("dae_nosuch", "NoSuchNode"),
         mesh("missing", "/data/missing.stl"),
         mesh("fbx", "/data/thing.fbx"),
         mesh("http", &format!("{http}/web/tri.obj")),
         mesh("http404", &format!("{http}/web/nope.obj")),
+        mesh("http_server", &format!("{http}/web/server_only.obj")),
     ];
+    // A 3×3 image: black, a white centre and one mid-grey corner.
+    let terrain = visual(
+        "ground",
+        msgs::Geometry {
+            heightmap: Some(msgs::HeightmapGeom {
+                filename: "/data/terrain.png".into(),
+                size: v3(4.0, 4.0, 2.0),
+                origin: v3(0.0, 0.0, 0.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
     let mut lit = link("lit", vec![]);
     lit.light.push(light("lamp", LightType::Point));
 
@@ -510,6 +556,7 @@ fn synthetic_world(http: &str) -> Corpus {
         model: vec![
             model("shapes", 10, vec![link("l", shapes)]),
             model("meshes", 20, vec![link("l", meshes)]),
+            model("terrain", 50, vec![link("l", vec![terrain])]),
             model("lamp_post", 40, vec![lit]),
             nested,
         ],
@@ -567,8 +614,25 @@ fn synthetic_world(http: &str) -> Corpus {
     Builder::new("synthetic")
         .scene(&scene)
         .asset("pkg/meshes/tri.obj", OBJ)
+        .asset(
+            "/data/terrain.png",
+            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
+        )
+        // Not on the HTTP server: the websocket fallback finds it.
+        .asset(&format!("{http}/web/server_only.obj"), OBJ)
+        .asset("pkg/meshes/two.obj", OBJ_MTL)
+        .asset("pkg/meshes/two.mtl", MTL)
+        // The bare `map_Kd t.png`, where gzweb's rule looks for it.
+        .asset(
+            "pkg/materials/textures/t.png",
+            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
+        )
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
+        .asset("/data/TRI.GLTF", GLTF.as_bytes())
+        .asset("/data/ROBOT.DAE", &probe_dae())
+        .asset("pkg/meshes/TRI.Obj", OBJ)
+        .asset("/data/TRI.STL", STL)
         .asset("/data/tri.bin", &tri_bin())
         .asset("/data/robot.dae", &probe_dae())
         .publish(pose_topic, "gz.msgs.Pose_V", &poses)
@@ -621,12 +685,15 @@ fn synthetic_world_spawns_every_feature() {
     assert!((glass.opacity - 0.5).abs() < 1e-6);
 
     // Mesh files over the websocket (relative, absolute, glTF with an
-    // external buffer) and over HTTP all load a 3-vertex triangle.
+    // external buffer), over HTTP and from the server after HTTP fails all
+    // load a 3-vertex triangle.
     for path in [
         "meshes/l/obj",
+        "meshes/l/obj_upper",
         "meshes/l/stl",
-        "meshes/l/gltf",
+        "meshes/l/stl_upper",
         "meshes/l/http",
+        "meshes/l/http_server",
     ] {
         let g = node(&snap, path).geometry.as_ref().unwrap();
         assert_eq!(g.ty, "mesh", "{path}");
@@ -638,12 +705,88 @@ fn synthetic_world_spawns_every_feature() {
             .fold(0.0, f64::max);
         assert!((extent - 2.0).abs() < 1e-3, "{path}: {aabb:?}");
     }
+    // glTF: all three triangles; `tri` keeps its own and its unnamed
+    // child's, each centred on the origin (so their bounds coincide).
+    for path in ["meshes/l/gltf", "meshes/l/gltf_upper"] {
+        let g = node(&snap, path).geometry.as_ref().unwrap();
+        assert_eq!((g.mesh_count, g.vertex_count), (3, 9), "{path}: {g:?}");
+    }
+    let sub = node(&snap, "meshes/l/gltf_sub").geometry.as_ref().unwrap();
+    assert_eq!((sub.mesh_count, sub.vertex_count), (2, 6), "{sub:?}");
+    let aabb = sub.aabb_world.as_ref().unwrap();
+    for i in 0..3 {
+        assert!((aabb.max[i] + aabb.min[i]).abs() < 1e-5, "{aabb:?}");
+    }
+    assert!((aabb.max[0] - aabb.min[0] - 2.0).abs() < 1e-5, "{aabb:?}");
     // Collada: the probe's node tree (5 primitive instances, 6 triangles,
     // one through <instance_node>), its textures missing.
-    let dae = node(&snap, "meshes/l/dae").geometry.as_ref().unwrap();
-    assert_eq!((dae.mesh_count, dae.vertex_count), (5, 18), "{dae:?}");
+    for path in ["meshes/l/dae", "meshes/l/dae_upper"] {
+        let dae = node(&snap, path).geometry.as_ref().unwrap();
+        assert_eq!(
+            (dae.mesh_count, dae.vertex_count),
+            (5, 18),
+            "{path}: {dae:?}"
+        );
+    }
+    // <submesh> keeps one node's triangle (1 cm, scaled by 2) and centres it.
+    let sub = node(&snap, "meshes/l/dae_child").geometry.as_ref().unwrap();
+    assert_eq!((sub.mesh_count, sub.vertex_count), (1, 3), "{sub:?}");
+    let aabb = sub.aabb_world.as_ref().unwrap();
+    for i in 0..3 {
+        assert!((aabb.max[i] + aabb.min[i]).abs() < 1e-6, "{aabb:?}");
+        assert!(aabb.max[i] - aabb.min[i] < 0.02 + 1e-6, "{aabb:?}");
+    }
+    // OBJ with an MTL: an object per `o`, each with its material; the
+    // bare texture name is found in materials/textures (a texture that
+    // failed would be dropped from the material).
+    let two = node(&snap, "meshes/l/obj_mtl");
+    let g = two.geometry.as_ref().unwrap();
+    assert_eq!((g.mesh_count, g.vertex_count), (2, 3 + 6), "{g:?}");
+    assert_eq!(two.material.as_ref().unwrap().color, [1.0, 0.0, 0.0]);
+    let sub = node(&snap, "meshes/l/obj_sub");
+    let g = sub.geometry.as_ref().unwrap();
+    assert_eq!((g.mesh_count, g.vertex_count), (1, 6), "{g:?}");
+    let m = sub.material.as_ref().unwrap();
+    assert_eq!(m.color, [0.0, 0.0, 1.0]);
+    assert_eq!(
+        m.maps.albedo.as_deref(),
+        Some("wsasset://rel/pkg/materials/textures/t.png")
+    );
+    // Heightmap from an image: centred, white at size.z, top row at +Y.
+    let g = node(&snap, "terrain/l/ground").geometry.as_ref().unwrap();
+    assert_eq!(
+        (g.ty.as_str(), g.mesh_count, g.vertex_count),
+        ("heightmap", 1, 9),
+        "{g:?}"
+    );
+    let aabb = g.aabb_world.as_ref().unwrap();
+    let want = ([-2.0, -2.0, 0.0], [2.0, 2.0, 2.0]);
+    for i in 0..3 {
+        assert!((aabb.min[i] - want.0[i]).abs() < 1e-5, "{aabb:?}");
+        assert!((aabb.max[i] - want.1[i]).abs() < 1e-5, "{aabb:?}");
+    }
+    // Orientation: the image's corners in order (top-left, top-right,
+    // bottom-left, bottom-right); only the bottom-right pixel is grey.
+    let grey = 2.0 * 128.0 / 255.0;
+    let want = [
+        [-2.0, 2.0, 0.0],
+        [2.0, 2.0, 0.0],
+        [-2.0, -2.0, 0.0],
+        [2.0, -2.0, grey],
+    ];
+    assert_eq!(g.corners.len(), 4, "{g:?}");
+    for (got, want) in g.corners.iter().zip(want) {
+        for i in 0..3 {
+            assert!((got[i] - want[i]).abs() < 1e-4, "{:?}", g.corners);
+        }
+    }
     // Failed or unsupported loads have no geometry.
-    for path in ["meshes/l/missing", "meshes/l/fbx", "meshes/l/http404"] {
+    for path in [
+        "meshes/l/missing",
+        "meshes/l/fbx",
+        "meshes/l/http404",
+        "meshes/l/dae_nosuch",
+    ] {
         let g = node(&snap, path).geometry.as_ref();
         assert!(g.is_none_or(|g| g.vertex_count == 0), "{path}: {g:?}");
     }

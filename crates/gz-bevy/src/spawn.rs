@@ -20,7 +20,9 @@ use gz_core::uri;
 
 use crate::assets;
 use crate::connection::GzInbox;
+use crate::heightmap;
 use crate::render::{self, GzEnvironment, GzGrid};
+use crate::submesh;
 use crate::GzConfig;
 
 /// Rotates Gazebo Z-up into Bevy Y-up: gz `(x, y, z)` → bevy `(x, z, -y)`.
@@ -66,6 +68,41 @@ pub struct GzIndex {
 /// Asset handles whose loading the snapshot waits for.
 #[derive(Resource, Default)]
 pub struct GzLoads(pub Vec<UntypedHandle>);
+
+/// A glTF mesh waiting for its file; [`instance_gltf`] then adds the
+/// `SceneRoot` for its scene. It is loaded by asset type rather than as
+/// `file#Scene0`, which Bevy would match to a loader by extension, case
+/// sensitively (a `.GLB` would find none).
+#[derive(Component, Debug, Clone)]
+pub struct GzGltf(pub Handle<Gltf>);
+
+/// Instances each loaded glTF's default scene (else its first), as three.js's
+/// `GLTFLoader` does.
+pub fn instance_gltf(
+    mut commands: Commands,
+    pending: Query<(Entity, &GzGltf), Without<SceneRoot>>,
+    gltfs: Option<Res<Assets<Gltf>>>,
+) {
+    let Some(gltfs) = gltfs else { return };
+    for (entity, gltf) in &pending {
+        let Some(gltf) = gltfs.get(&gltf.0) else {
+            continue;
+        };
+        match gltf
+            .default_scene
+            .clone()
+            .or_else(|| gltf.scenes.first().cloned())
+        {
+            Some(scene) => {
+                commands.entity(entity).insert(SceneRoot(scene));
+            }
+            None => {
+                warn!("glTF has no scene");
+                commands.entity(entity).remove::<GzGltf>();
+            }
+        }
+    }
+}
 
 pub fn spawn_root(mut commands: Commands, mut index: ResMut<GzIndex>) {
     let root = commands
@@ -262,6 +299,12 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
             spawn_mesh_file(ctx, visual, parent, name, load_uri);
             return;
         }
+        GeometryDesc::Heightmap(desc) => {
+            let loads =
+                heightmap::spawn(ctx.commands, ctx.asset_server, ctx.materials, desc, parent);
+            ctx.loads.0.extend(loads);
+            return;
+        }
         GeometryDesc::Unsupported(kind) => {
             info!("visual '{name}': geometry '{kind}' not supported yet");
             return;
@@ -347,12 +390,13 @@ fn spawn_mesh_file(
     let path = assets::asset_path(load_uri);
     match uri::extension(load_uri).as_str() {
         "glb" | "gltf" => {
-            let scene: Handle<Scene> = ctx
-                .asset_server
-                .load(GltfAssetLabel::Scene(0).from_asset(path));
-            ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            let gltf: Handle<Gltf> = ctx.asset_server.load(path);
+            ctx.loads.0.push(gltf.clone().untyped());
+            let entity = ctx
+                .commands
+                .spawn((GzGltf(gltf), Transform::IDENTITY, ChildOf(parent)))
+                .id();
+            add_submesh(ctx, visual, entity);
         }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
@@ -367,13 +411,37 @@ fn spawn_mesh_file(
                 ChildOf(parent),
             ));
         }
+        // `SceneFileLoader` reads both, in any case.
         "obj" | "dae" => {
             let scene: Handle<Scene> = ctx.asset_server.load(path);
             ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+            let entity = ctx
+                .commands
+                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)))
+                .id();
+            add_submesh(ctx, visual, entity);
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
+    }
+}
+
+/// Cuts a mesh file's scene on `entity` down to its `<submesh>`, if the
+/// visual names one, once it is instanced.
+fn add_submesh(ctx: &mut SpawnCtx, visual: &VisualDesc, entity: Entity) {
+    if let GeometryDesc::Mesh {
+        submesh: Some(name),
+        center_submesh,
+        ..
+    } = &visual.geometry
+    {
+        ctx.commands
+            .entity(entity)
+            .insert(submesh::GzSubmesh {
+                name: name.clone(),
+                center: *center_submesh,
+                applied: false,
+            })
+            .observe(submesh::select);
     }
 }
 
@@ -576,9 +644,9 @@ mod tests {
                     },
                 ),
                 msgs::Visual {
-                    name: "terrain".into(),
+                    name: "polyline".into(),
                     geometry: Some(msgs::Geometry {
-                        heightmap: Some(Default::default()),
+                        r#type: msgs::geometry::Type::Polyline as i32,
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -695,8 +763,8 @@ mod tests {
         assert_eq!(mat.cull_mode, None);
 
         // Unsupported geometry spawns the node but no mesh.
-        let terrain = entity(&mut app, "terrain");
-        assert!(app.world().get::<Children>(terrain).is_none());
+        let polyline = entity(&mut app, "polyline");
+        assert!(app.world().get::<Children>(polyline).is_none());
     }
 
     #[test]

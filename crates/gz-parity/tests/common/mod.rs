@@ -43,13 +43,25 @@ pub fn serve(
     (url, handle)
 }
 
-/// A port nothing is listening on (bound, then released).
+/// A port nothing is listening on (bound, then released), never the same
+/// one twice in a test binary: the OS can hand a released port straight to
+/// a parallel test, whose client then waits on the wrong server forever.
 pub fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    static GIVEN: std::sync::Mutex<Vec<u16>> = std::sync::Mutex::new(Vec::new());
+    let mut given = GIVEN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    loop {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        if !given.contains(&port) {
+            given.push(port);
+            return port;
+        }
+    }
 }
 
 /// Connects, retrying while the server starts.

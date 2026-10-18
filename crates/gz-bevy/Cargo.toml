@@ -10,12 +10,12 @@ gz-core.workspace = true
 gz-collada.workspace = true
 prost.workspace = true
 serde_json.workspace = true
-bevy = { version = "0.18", features = ["webgpu", "webgl2", "dds"] }
-bevy_obj = "0.18.2"
+bevy = { version = "0.18", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
 bevy_stl = { version = "0.18.0", default-features = false }
 async-channel = "2"
 wgpu-types = "27"
 crossbeam-channel = "0.5"
+tobj = { version = "4.0.5", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gz-core = { workspace = true, features = ["native"] }

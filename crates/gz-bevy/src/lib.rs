@@ -9,10 +9,14 @@ pub mod camera;
 pub mod collada;
 pub mod connection;
 pub mod driver;
+pub mod heightmap;
 pub mod hud;
+pub mod mesh_file;
+pub mod obj;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
+pub mod submesh;
 
 use bevy::prelude::*;
 
@@ -78,8 +82,8 @@ impl Plugin for GzWebPlugin {
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()
             .init_resource::<camera::GzCameraTarget>()
-            .add_plugins((bevy_obj::ObjPlugin, bevy_stl::StlPlugin))
-            .init_asset_loader::<collada::ColladaLoader>()
+            .add_plugins(bevy_stl::StlPlugin)
+            .init_asset_loader::<mesh_file::SceneFileLoader>()
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),
@@ -89,6 +93,8 @@ impl Plugin for GzWebPlugin {
                 (
                     connection::pump,
                     spawn::apply_scene,
+                    spawn::instance_gltf,
+                    heightmap::build,
                     render::apply_environment,
                     render::install_sky,
                     spawn::apply_poses,
@@ -124,7 +130,7 @@ impl Plugin for GzWebPlugin {
 pub(crate) mod test_util {
     use bevy::prelude::*;
 
-    use crate::{camera, connection, render, spawn, GzAssetSourcesPlugin, GzConfig};
+    use crate::{camera, connection, heightmap, render, spawn, GzAssetSourcesPlugin, GzConfig};
 
     /// No renderer, window or connection; the scene, pose and camera
     /// systems run against resources the test fills in.
@@ -162,6 +168,8 @@ pub(crate) mod test_util {
             Update,
             (
                 spawn::apply_scene,
+                spawn::instance_gltf,
+                heightmap::build,
                 render::apply_environment,
                 render::install_sky,
                 spawn::apply_poses,

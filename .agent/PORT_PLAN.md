@@ -159,8 +159,23 @@ Parity tests allow-list these with a reason string:
 - Pose updates matched by **entity id** first, name second (gzweb: first DFS name match).
 - Spot penumbra not clamped to ≥ 1; directional shadow map 4096 (not 4094).
 - Shadows/materials applied to **all** submeshes, not just the first descendant mesh.
+- `<submesh>` follows Gazebo: **every** submesh of that name is kept (gzweb: the first
+  three.js mesh, depth first), unnamed nodes' geometry joins the nearest named ancestor's,
+  COLLADA nodes are named by `name` only, and `center` centres each submesh's bounds under
+  its full transform (gzweb zeroes ancestor translations but keeps their rotations).
+- MTL: keys in any case and `-s`/`-o` as in three.js, but `map_Ka` is ignored (gzweb
+  rewrites its path, three.js never reads it; gz-common reads only `map_Kd`); absolute and
+  URI texture paths are used as they are (gzweb prefixes them with `materials/textures/`);
+  `map_Bump`/`bump` are normal maps, as in gz-common (three.js: bump maps). Not done:
+  `-bm`, `map_d`, `map_Ks`, per-texture `-s`/`-o` (one `uv_transform` per material, from
+  `map_Kd`).
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
+- An OBJ whose `.mtl` fails to load still shows, with the default material.
+- Heightmaps are built from the image Gazebo names (gzweb only uses message heights,
+  which Gazebo never sends, so it draws nothing).
+- Local mesh paths go straight to the websocket server (gzweb first fetches them over
+  HTTP relative to the page).
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
 - AudioTopic uses the *new* playback flag.
 - Unknown light types fall back to a point light (gzweb logs and adds nothing).
@@ -209,17 +224,19 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - `visible`, `cast_shadows`, collisions hidden.
 
 **Phase 3: Geometry and assets**
-- Primitives: ellipsoid, plane normal. Heightmap (≤256 segments, texture repeat).
+- Primitives: ellipsoid, plane normal (done in Phase 2). Heightmap (done 2026-10-17 from
+  the image, ≤1025 vertices a side, texture repeat; layer blending still to do).
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
-  and de-dup.
+  and de-dup. (Done 2026-10-17; local paths skip HTTP, see DESIGN.md "Assets".)
 - **Collada** (done 2026-10-17, see DESIGN.md "Assets"): `gz-collada` (mesh-loader's
   parsers, vendored, with a rewritten scene assembly) as a Bevy `AssetLoader`. `<unit>` is
   applied; `<up_axis>` is not, as in gz-common and gzweb. Not done:
-  - `<submesh>`/`center`.
-  - `<instance_controller>` (skinned meshes): skipped, with one warning per file.
-- OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`).
-- Submesh selection + centering (`useSubMesh` semantics), mesh scale.
+  `<instance_controller>` (skinned meshes): skipped, with one warning per file.
+- OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`)
+  (done 2026-10-17: own loader on `tobj`, see DESIGN.md "OBJ").
+- Submesh selection + centering (done 2026-10-17, Gazebo's rules, see DESIGN.md
+  "Submeshes"), mesh scale (done in Phase 2).
 
 **Phase 4: Materials**
 - gzweb colour rule, opacity/blend, alpha-mask for RGBA textures, double-sided.
