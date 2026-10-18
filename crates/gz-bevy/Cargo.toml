@@ -44,6 +44,8 @@ features = [
     "Request",
     "RequestInit",
     "Response",
+    "AbortController",
+    "AbortSignal",
 ]
 
 [lints]

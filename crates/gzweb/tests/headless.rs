@@ -105,6 +105,7 @@ fn start_mirror(lock: &Path) -> String {
         lock: Some(lock.to_path_buf()),
         upstream: None,
         offline: std::env::var("GZ_HTTP_OFFLINE").is_ok_and(|v| v == "true"),
+        fetch_timeout: mirror::FETCH_TIMEOUT,
     };
     std::thread::spawn(move || mirror::serve_on(listener, opts));
     base
