@@ -228,7 +228,8 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 
 **Phase 3: Geometry and assets**
 - Primitives: ellipsoid, plane normal (done in Phase 2). Heightmap (done 2026-10-17 from
-  the image, ≤1025 vertices a side, texture repeat; layer blending still to do).
+  the image, ≤1025 vertices a side, texture repeat; layer blending by height done
+  2026-10-18, up to 4 layers as in ogre2, see DESIGN.md "Heightmaps").
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
   and de-dup. (Done 2026-10-17; local paths skip HTTP, see DESIGN.md "Assets".)
