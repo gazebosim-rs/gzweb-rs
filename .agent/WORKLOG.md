@@ -352,4 +352,5 @@ These are findings for the plan, not changes:
   position.
 - `wgpu-types` dropped: Bevy doesn't re-export `wgpu::Backend`, so the HUD
   matches the backend's `Debug` name.
+- CI names toolchain 1.97.1; cargo-deny runs on minimal stable.
 - Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).

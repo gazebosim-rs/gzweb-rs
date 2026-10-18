@@ -21,7 +21,7 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Rust stable (edition 2021) |
+| Language | Rust 1.97.1, pinned by `rust-toolchain.toml` (edition 2021) |
 | Engine, ECS, rendering, UI | [Bevy](https://bevyengine.org/) 0.20 (wgpu 30, rustc 1.97.1; WebGPU only in the browser for now; bevy_ui) |
 | Web target | `wasm32-unknown-unknown`, `wasm-bindgen`, `web-sys` |
 | Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs (Harmonic) |

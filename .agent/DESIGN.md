@@ -359,3 +359,8 @@ changes.
   line.
 - When gzweb-rs deliberately differs from gzweb, list it in PORT_PLAN.md §2.5
   and in `tests/parity/allowlist.toml`, with a reason.
+- **On every Bevy upgrade:**
+  - bump `rust-toolchain.toml` and the `dtolnay/rust-toolchain@` versions in
+    `.github/workflows/ci.yml` if Bevy's MSRV changes;
+  - revisit the advisory ignores in `deny.toml`;
+  - update the Bevy and wgpu versions in CONTEXT.md and PORT_PLAN.md.

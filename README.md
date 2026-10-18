@@ -51,7 +51,6 @@ snapshot once everything has loaded, then exits.
 ## Browser
 
 ```bash
-rustup target add wasm32-unknown-unknown
 ./build.sh     # release wasm + wasm-bindgen (installs the matching CLI if needed)
 ./run.sh       # serves the repo on http://localhost:8000
 ```
@@ -77,11 +76,10 @@ Lint policy lives in `[workspace.lints]` (`Cargo.toml`) and `clippy.toml`. In
 production code, `unsafe` is forbidden and `unwrap()` is denied. Dependency
 policy lives in `deny.toml`; every advisory ignore needs a reason.
 
-One-time setup:
+One-time setup (rustup installs the pinned toolchain, its components and
+the wasm32 target from `rust-toolchain.toml` on first use):
 
 ```bash
-rustup component add rustfmt clippy llvm-tools-preview
-rustup target add wasm32-unknown-unknown
 cargo install cargo-llvm-cov cargo-deny --locked
 pipx install pre-commit && pre-commit install
 ```

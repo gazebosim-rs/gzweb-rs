@@ -8,14 +8,14 @@ all-features = false
 [advisories]
 version = 2
 yanked = "deny"
-# Each ignore needs a reason and should be revisited on every Bevy upgrade.
+# Each ignore needs a reason and should be revisited on every Bevy upgrade
+# (.agent/DESIGN.md "Conventions").
 ignore = [
-  # ruzstd decompression bomb (OOM). Fixed in 0.9.1, but bevy_image 0.18
+  # ruzstd decompression bomb (OOM). Fixed in 0.9.1, but bevy_image 0.20
   # requires ^0.8. Reachable only through zstd-compressed KTX2 textures from
   # the connected Gazebo server or Fuel. Drop when Bevy moves to >= 0.9.1.
-  { id = "RUSTSEC-2026-0344", reason = "transitive via bevy_image 0.18; no compatible fix" },
+  { id = "RUSTSEC-2026-0344", reason = "transitive via bevy_image 0.20; no compatible fix" },
   # Unmaintained, no known vulnerability; transitive via Bevy.
-  { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, transitive via Bevy" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, transitive via bevy_text" },
 ]
 
