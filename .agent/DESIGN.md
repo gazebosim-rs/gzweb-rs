@@ -177,7 +177,7 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 |---|---|
 | glTF/GLB | Bevy |
 | OBJ + MTL | `gz_bevy::obj::ObjLoader` on `tobj` (below) |
-| STL | own loader on `stl_io` (flat shaded; zero face normals come from the winding) |
+| STL | `gz_bevy::stl::StlLoader`: ASCII and binary, told apart as three.js does (flat shaded; zero face normals come from the winding) |
 | Collada (`.dae`) | `gz_bevy::collada::ColladaLoader` on `gz-collada` (below) |
 
 **Collada.** `gz-collada` vendors mesh-loader's XML, geometry and effect

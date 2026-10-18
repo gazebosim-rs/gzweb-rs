@@ -343,6 +343,9 @@ These are findings for the plan, not changes:
   planet's centre (dark, orange, no shadows). `render::GzAtmosphere` spawns
   it at Bevy's default (below the origin); the camera keeps
   `AtmosphereSettings`.
-- `bevy_stl` has no 0.20 release: `gz_bevy::stl` on `stl_io`; faces with
-  zero normals use their winding (they rendered unlit before).
+- `bevy_stl` has no 0.20 release: own `gz_bevy::stl` parser, after
+  `stl_io` proved too strict (binary files whose header starts `solid `
+  read as ASCII; bare `solid` lines failed). Binary vs ASCII as three.js
+  decides it; non-indexed, 3 vertices per face. Faces with zero normals
+  use their winding (they rendered unlit before).
 - Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).

@@ -11,7 +11,6 @@ gz-collada = { path = "../gz-collada", version = "0.1.0" }
 prost.workspace = true
 serde_json.workspace = true
 bevy = { version = "0.20", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
-stl_io = "0.10"
 async-channel = "2"
 wgpu-types = "30"
 crossbeam-channel = "0.5"

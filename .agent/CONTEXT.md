@@ -27,7 +27,7 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 | Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs (Harmonic) |
 | Native websocket | `tungstenite` 0.26 |
 | Camera controls | `bevy_panorbit_camera` 0.34 |
-| Mesh loaders | Bevy glTF, own COLLADA (`gz-collada`), OBJ (`tobj`) and STL (`stl_io`) loaders |
+| Mesh loaders | Bevy glTF, own COLLADA (`gz-collada`), OBJ (`tobj`) and STL loaders |
 | Parity harness | `gz-parity` (Rust) + Playwright/three.js (`parity/js`) |
 
 ---

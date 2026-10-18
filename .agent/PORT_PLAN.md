@@ -163,6 +163,9 @@ Parity tests allow-list these with a reason string:
   gzweb zeroes ancestor translations but keeps their rotations.
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
+- STL faces with a zero stored normal take their winding's normal (gzweb keeps
+  the zero normal, so they render unlit). ASCII STL starting `SOLID` loads
+  (three.js only looks for lowercase `solid`, then reads it as binary and fails).
 - An OBJ whose `.mtl` fails to load still shows, with the default material.
 - Heightmaps are built from the image Gazebo names (gzweb only uses message heights,
   which Gazebo never sends, so it draws nothing).
