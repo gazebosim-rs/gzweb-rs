@@ -117,7 +117,9 @@ fn parse_binary(bytes: &[u8]) -> Result<Vec<Facet>, StlError> {
     let f = |r: &[u8], i: usize| f32::from_le_bytes([r[i], r[i + 1], r[i + 2], r[i + 3]]);
     let v = |r: &[u8], i: usize| Vec3::new(f(r, i), f(r, i + 4), f(r, i + 8));
     Ok(body
-        .chunks_exact(RECORD)
+        .as_chunks::<RECORD>()
+        .0
+        .iter()
         .take(faces as usize)
         .map(|r| Facet {
             normal: v(r, 0),
