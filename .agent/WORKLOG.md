@@ -466,3 +466,27 @@ Branch `feature/phase-4-materials`. Materials follow Gazebo (gz-sim
   `shapes.sdf`, `sky.sdf` and the all-mesh world render brighter (linear
   colours, as in Gazebo); a synthetic showcase (PBR maps, glass, cut-out,
   emissive, DAE override) at ultra and low.
+
+## 2026-10-18: Heightmap layer blending
+
+- Rules checked against gz-rendering8 ogre2 (`Ogre2Heightmap.cc`, Terra
+  `gz/100.gz_CustomWeights_piece_ps.any`, `100.gz_CustomVs_piece_vs.any`)
+  and gz-common's `HeightmapData::MinElevation` (0 for images): layer
+  `i > 0` blends in with `smoothstep(min_height, min_height + fade_dist,
+  h)`, `h` above the terrain's lowest point (`origin.z`); colours `lerp`ed
+  in order; ≤ 4 textures / 3 blends; a layer without a blend has weight 0.
+  ogre1 (`OgreHeightmap.cc`) fades linearly.
+- `heightmap::TerrainMaterial` (`ExtendedMaterial<StandardMaterial,
+  TerrainExtension>`) for every terrain: layer 0 in the StandardMaterial,
+  layers 1–3 as individual textures with one shared sampler. WESL shaders
+  (Bevy 0.20 composes WESL, not naga_oil `#import`s), embedded: forward +
+  deferred (`terrain.wesl`) and a prepass that writes the blended normal
+  (`terrain_prepass.wesl`), since TAA/SSAO make the forward pass read
+  prepass normals. Normals blend with the colour weights (ogre adds them
+  on layer 0's); `fade_dist` 0 is a hard step.
+- Tangents when any drawn layer has a normal map; snapshots report layer 0
+  from `base` and wait for every drawn layer's textures.
+- Checked on the 3-layer `allmesh` world (dirt, grass > 1 m, fungus > 3 m)
+  at Low and Ultra: same bands in both (forward-only and prepass paths).
+- Not checked in a browser (WebGPU): the extension adds 6 textures and a
+  sampler per fragment stage.

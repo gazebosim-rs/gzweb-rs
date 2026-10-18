@@ -282,11 +282,51 @@ side), and lays it over `size.x` × `size.y` centred on `origin`, black at
 divides by `ImageHeightmap::MaxElevation`, the brightest pixel's red; the
 minimum is 0), the image's top row at +Y. Smooth normals; tangents, from
 the grid itself (mikktspace takes seconds at 1025²), only under a normal
-map. The first texture layer repeats every `size` metres (repeat sampler,
-16× anisotropy). Snapshots wait for the image and the layer's textures,
-and record the terrain's corners (`GeometryInfo::corners`). A terrain
-whose image fails is an empty mesh that still carries its material. Not done: blending layers by height (`<blend>`), DEM (GeoTIFF)
-heightmaps, mipmaps for the tiled textures.
+map (any drawn layer's). Snapshots wait for the image and the drawn
+layers' textures, and record the terrain's corners
+(`GeometryInfo::corners`). A terrain whose image fails is an empty mesh
+that still carries its material. Not done: DEM (GeoTIFF) heightmaps,
+mipmaps for the tiled textures.
+
+*Texture layers* follow gz-rendering8's ogre2 terrain (`Ogre2Heightmap.cc`,
+`media/Hlms/Terra/gz/100.gz_CustomWeights_piece_ps.any`):
+
+- Layer 0 covers the terrain. Layer `i > 0` is laid over the layers below
+  it with weight `smoothstep(min, min + fade_dist, h)` from `blends[i-1]`,
+  `h` being the height above the terrain's lowest point (Gazebo's
+  `localHeight`: `origin.z`, as an image's minimum elevation is 0). Colours
+  are `mix`ed in order, so the top layer wins. ogre1 fades linearly; ogre2,
+  Harmonic's default, is the reference.
+- Each layer repeats every `size` metres (repeat sampler, 16× anisotropy).
+- A layer without a blend never shows, and blends past the last layer do
+  nothing (ogre2's weight stays 0). A `fade_dist` of 0 is a hard step
+  (ogre2 hides that layer; ogre1 steps). A layer without a diffuse map
+  leaves the colour below it.
+- Normals are blended with the same weights (world-space normals of each
+  layer, `mix`ed and renormalised); a layer without a normal map is flat.
+  Ogre adds each layer's tangent-space normal on top of layer 0's instead,
+  so layer 0's bumps never fade.
+- At most `heightmap::MAX_LAYERS` = 4 layers (ogre2's limit; it takes a
+  5th only when layer 0 has no normal map and spans the terrain once).
+
+`heightmap::TerrainMaterial` is `ExtendedMaterial<StandardMaterial,
+TerrainExtension>`, used for every terrain, so there is one path and the
+snapshot reports layer 0 from `base`. Layer 0 is the StandardMaterial's
+base colour and normal map (`uv_transform` tiling); layers 1–3 are six
+individually bound textures (so sizes may differ) sharing one sampler,
+plus a uniform of tilings, min heights, fades and the base height. The
+extension adds 6 sampled textures and 1 sampler per fragment stage
+(WebGPU's default limit is 16 of each, shared with the view's and the
+StandardMaterial's six). Shaders are WESL, embedded
+(`gz-bevy/src/shaders/`): `terrain.wesl` (forward and deferred: Bevy's
+`pbr_input_from_standard_material`, then the layers, then
+`apply_pbr_lighting` and `main_pass_post_lighting_processing`, or
+`deferred_output`), `terrain_prepass.wesl` (writes the blended normal, which
+SSAO and the forward pass read under `LOAD_PREPASS_NORMALS`), and the shared
+`terrain_layers.wesl`. The height comes from the fragment's position in the
+mesh's frame (`get_local_from_world`), so the terrain may move. The weight
+maths is mirrored in Rust (`heightmap::layer_weight`/`layer_weights`) for
+tests; keep the two in sync.
 
 ## Materials
 
