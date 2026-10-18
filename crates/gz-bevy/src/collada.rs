@@ -409,7 +409,9 @@ mod tests {
     }
 
     fn update_until(app: &mut App, done: impl Fn(&World) -> bool) {
-        for _ in 0..500 {
+        // Generous: parallel tests load the machine.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             app.update();
             if done(app.world()) {
                 return;
@@ -462,7 +464,13 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        update_until(&mut app, |w| textured(w).normal_map_texture.is_none());
+        // ...and the good image may still be loading.
+        update_until(&mut app, |w| {
+            let m = textured(w);
+            m.normal_map_texture.is_none()
+                && m.base_color_texture
+                    .is_some_and(|i| w.resource::<Assets<Image>>().contains(&i))
+        });
         let m = textured(app.world());
         let image = m.base_color_texture.unwrap();
         let images = app.world().resource::<Assets<Image>>();
