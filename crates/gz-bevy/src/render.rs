@@ -248,8 +248,9 @@ pub fn clear_color(env: &GzEnvironment) -> Color {
     }
 }
 
-/// The planet of an `<sky>` atmosphere. Bevy places it below the origin, so
-/// the ground around the scene is level.
+/// The planet of a `<sky>` atmosphere. It has no `Transform`, so Bevy places
+/// its centre `inner_radius` below the origin, and the ground around the
+/// scene is level.
 #[derive(Component)]
 pub struct GzAtmosphere;
 
@@ -264,6 +265,7 @@ pub fn apply_environment(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     mut media: ResMut<Assets<ScatteringMedium>>,
+    mut medium: Local<Option<Handle<ScatteringMedium>>>,
     asset_server: Res<AssetServer>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut loads: ResMut<GzLoads>,
@@ -274,19 +276,18 @@ pub fn apply_environment(
     if !env.is_changed() || !env.loaded {
         return;
     }
+    let plan = plan(&env, &config);
     for planet in &planets {
         commands.entity(planet).despawn();
     }
-    if plan(&env, &config) == Environment::Atmosphere {
-        commands.spawn((
-            GzAtmosphere,
-            Atmosphere::earth(media.add(ScatteringMedium::default())),
-        ));
+    if plan == Environment::Atmosphere {
+        // One medium for every atmosphere, so its GPU tables are built once.
+        let medium = medium.get_or_insert_with(|| media.add(ScatteringMedium::default()));
+        commands.spawn((GzAtmosphere, Atmosphere::earth(medium.clone())));
     }
     if let Some([r, g, b]) = env.ambient {
         ambient.color = Color::srgb(r, g, b);
     }
-    let plan = plan(&env, &config);
     let lit_by_environment = plan == Environment::Studio
         || (plan == Environment::Atmosphere && config.quality.image_based_light());
     ambient.brightness = units::ambient_brightness(if lit_by_environment {
@@ -705,11 +706,18 @@ mod tests {
             .collect()
     }
 
+    /// The number of atmosphere planets, after checking that each sits
+    /// `inner_radius` below the origin with no `Transform` (which would put
+    /// it back at the origin).
     fn planets(app: &mut App) -> usize {
         let world = app.world_mut();
         world
-            .query_filtered::<(), (With<GzAtmosphere>, With<Atmosphere>)>()
+            .query_filtered::<(&Atmosphere, &GlobalTransform, Has<Transform>), With<GzAtmosphere>>()
             .iter(world)
+            .inspect(|(atmosphere, at, has_transform)| {
+                assert_eq!(at.translation(), -Vec3::Y * atmosphere.inner_radius);
+                assert!(!has_transform);
+            })
             .count()
     }
 
@@ -796,6 +804,23 @@ mod tests {
             app.world().resource::<GlobalAmbientLight>().color,
             Color::srgb(0.3, 0.3, 0.3)
         );
+
+        // Another sky scene replaces the planet, and shares its medium.
+        show(
+            &mut app,
+            msgs::Scene {
+                sky: Some(msgs::Sky::default()),
+                light: vec![sun()],
+                background: Some(msgs::Color {
+                    b: 1.0,
+                    a: 1.0,
+                    ..default()
+                }),
+                ..default()
+            },
+        );
+        assert_eq!(planets(&mut app), 1);
+        assert_eq!(app.world().resource::<Assets<ScatteringMedium>>().len(), 1);
 
         // A cubemap that fails to load falls back to the studio.
         show(

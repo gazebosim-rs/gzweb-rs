@@ -348,4 +348,6 @@ These are findings for the plan, not changes:
   read as ASCII; bare `solid` lines failed). Binary vs ASCII as three.js
   decides it; non-indexed, 3 vertices per face. Faces with zero normals
   use their winding (they rendered unlit before).
+- One `ScatteringMedium` for every atmosphere; tests check the planet's
+  position.
 - Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).

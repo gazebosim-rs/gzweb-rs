@@ -267,7 +267,10 @@ fails wgpu validation. An identical scene (a reconnect) changes nothing.
   above, darker below): a white ambient adds half of full sun.
 - `<sky>` without a cubemap, and a directional light: Bevy's physically based
   atmosphere, which also lights the scene. Without a sun it would be black,
-  so the studio is used.
+  so the studio is used. The atmosphere is a planet entity
+  (`render::GzAtmosphere`, replaced with each scene) with no `Transform`, so
+  Bevy puts its centre `inner_radius` below the origin; the camera carries
+  `AtmosphereSettings`. All planets share one `ScatteringMedium`.
 - `<sky>` with a cubemap (header `cubemap_uri` as gzweb reads it, or the
   field): loaded, then checked (six square power-of-two faces, ≤ 8192 px)
   and used as the skybox and the scene's light at its own brightness. A
