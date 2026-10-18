@@ -174,18 +174,69 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 | STL | `bevy_stl` |
 | Collada (`.dae`) | Not yet: pink placeholder, excluded from snapshots. See [`spikes/collada/REPORT.md`](../spikes/collada/REPORT.md). |
 
-## Rendering defaults (from gzweb)
+## Rendering
 
-| Setting | Value |
-|---|---|
-| Camera position | (-6, 0, 6), looking at the origin |
-| Field of view | 60° vertical |
-| Near / far planes | 0.01 / 1000 |
-| Clear colour | `0xb2b2b2`, unless the scene sets a background |
-| Ambient light | `0x191919` until the scene sets it |
+gzweb-rs does **not** copy gzweb's look (three.js r141, legacy lights, no tone
+mapping, flat ambient). It uses Bevy's physically based pipeline at its best
+(`gz-bevy/src/render.rs`). Scene structure and light *parameters* still follow
+Gazebo, and the parity snapshot compares those, not pixels.
 
-Light intensities use gzweb's three.js semantics in `LightDesc`. The Bevy unit
-mapping in `spawn::spawn_light` is provisional and gets calibrated in Phase 2.
+| | Low | High (default) | Ultra |
+|---|---|---|---|
+| Camera | HDR, TonyMcMapface, fixed exposure | + natural bloom | same as High |
+| Anti-aliasing | 4x MSAA | TAA | TAA |
+| Ambient occlusion | none | SSAO (high) | SSAO (high) |
+| Shadows (sun / point) | 1024 / 512 px | 2048 / 1024 px, 4 cascades to 150 m, temporal filtering | 4096 / 2048 px |
+| Fill light | flat ambient | image-based | image-based |
+
+Pick it with `--quality` or `?quality=`. A 4096 px sun shadow costs 256 MB
+of GPU memory (4 cascades), 4× the 2048 px one, for sharper distant
+shadows; the first cascade (5 m) is already ~2.5 mm per texel at 2048.
+
+**Units.** A Gazebo directional light of intensity 1 is 10 000 lux
+(`render::units::SUN_LUX`). The exposure renders a white surface facing it at
+1.0 before tone mapping, opened half a stop. Point and spot lights of
+intensity 1 light a surface 1 m away as brightly as the sun (4π sr × 10 000
+lux), with Bevy's inverse-square falloff and `range` as its cutoff, so they
+are dimmer than Gazebo's near-flat attenuation further out. Intensities are
+the message's `intensity` (unset means 1), not gzweb's attenuation-derived
+value; spot cones use `spot_inner_angle`/`spot_outer_angle`. The clear and
+fog colours go through the tone mapper too, so a 0xb2b2b2 background shows a
+little darker.
+
+**Environment.** Set from each new scene (`render::GzEnvironment`,
+`render::plan`); the camera is respawned for it (keeping its view), because
+Bevy keeps private per-camera environment-map and atmosphere state that only
+goes away with the entity, and a camera switching environment-map sources
+fails wgpu validation. An identical scene (a reconnect) changes nothing.
+
+- No `<sky>`: the background colour, plus image-based fill light from a 64 px
+  procedural studio cubemap in the scene's `<ambient>` colour (brighter
+  above, darker below): a white ambient adds half of full sun.
+- `<sky>` without a cubemap, and a directional light: Bevy's physically based
+  atmosphere, which also lights the scene. Without a sun it would be black,
+  so the studio is used.
+- `<sky>` with a cubemap (header `cubemap_uri` as gzweb reads it, or the
+  field): loaded, then checked (six square power-of-two faces, ≤ 8192 px)
+  and used as the skybox and the scene's light at its own brightness. A
+  cubemap that fails to load or doesn't qualify falls back to the studio.
+  Its orientation is not adjusted (unverified against a Gazebo cubemap).
+- `<fog>`: Bevy distance fog (linear with `end > start`, exponential,
+  exponential squared); none otherwise.
+- Without a GPU (`--snapshot`) or at `Quality::Low`, no environment maps:
+  a flat ambient light at the fill strength instead.
+
+`GlobalAmbientLight` takes the scene's ambient colour (the snapshot reports
+it; gzweb's 0x191919 until a scene sets one) and adds 5% of full sun under
+image-based light, so shadows never go black.
+
+**Grid.** Gazebo's 20 × 20 × 1 m grid, drawn with gizmos (their own
+`GridGizmos` group, depth-biased off the ground) when the scene's `grid` flag
+is set; G toggles it. Dark lines, because gizmos aren't exposed.
+
+**Defaults kept from gzweb:** camera at (-6, 0, 6) looking at the origin,
+60° vertical FOV, near/far 0.01/1000, clear colour `0xb2b2b2` unless the
+scene sets a background.
 
 ## Camera controls
 
@@ -218,6 +269,12 @@ writes the snapshot and exits:
 
 Pose streams don't count as activity, because they never stop on a live
 simulation.
+
+`--screenshot out.png` instead opens a fixed 1280×720 window at scale 1 (the
+parity harness's viewport), with the same settling rules and no HUD, saves a
+PNG (creating its directory) and exits: 1 if it couldn't save, 2 if no frame
+arrived before the timeout. It needs a GPU. Use it to review rendering
+changes.
 
 ## Conventions
 

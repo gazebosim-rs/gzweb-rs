@@ -9,6 +9,7 @@ pub mod camera;
 pub mod connection;
 pub mod driver;
 pub mod hud;
+pub mod render;
 pub mod snapshot;
 pub mod spawn;
 
@@ -25,12 +26,18 @@ pub struct GzConfig {
     pub key: Option<String>,
     /// gzweb `enableLights`: whether lights attached to links start visible.
     pub enable_lights: bool,
-    /// No window, no camera controls or HUD (snapshot / CI mode).
-    pub headless: bool,
+    /// Camera controls, HUD and sim stats (false for `--snapshot` and
+    /// `--screenshot`, which don't take input).
+    pub interactive: bool,
+    /// A GPU renders the scene (false for `--snapshot`); without one, GPU-only
+    /// work such as environment maps is skipped.
+    pub gpu: bool,
     /// Reconnect with backoff when the connection drops or fails.
     pub reconnect: bool,
     /// Extra PEM CA certificates to trust for `wss://` (native only).
     pub ca_cert: Option<std::path::PathBuf>,
+    /// How much rendering work to spend (`render::Quality`).
+    pub quality: render::Quality,
 }
 
 impl Default for GzConfig {
@@ -39,9 +46,11 @@ impl Default for GzConfig {
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,
-            headless: false,
+            interactive: true,
+            gpu: true,
             reconnect: true,
             ca_cert: None,
+            quality: render::Quality::default(),
         }
     }
 }
@@ -54,10 +63,11 @@ impl Plugin for GzWebPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.config.clone())
             .insert_resource(ClearColor(camera::CLEAR_COLOR))
-            // gzweb's ambient light colour is 0x191919 until the scene sets it.
+            // gzweb's colour until the scene sets one, at full fill strength
+            // until `render::apply_environment` picks the environment.
             .insert_resource(GlobalAmbientLight {
                 color: Color::srgb(25.0 / 255.0, 25.0 / 255.0, 25.0 / 255.0),
-                brightness: 300.0,
+                brightness: render::units::ambient_brightness(render::units::FILL),
                 affects_lightmapped_meshes: true,
             })
             .add_message::<connection::GzCommand>()
@@ -74,10 +84,20 @@ impl Plugin for GzWebPlugin {
             )
             .add_systems(
                 Update,
-                (connection::pump, spawn::apply_scene, spawn::apply_poses).chain(),
+                (
+                    connection::pump,
+                    spawn::apply_scene,
+                    render::apply_environment,
+                    render::install_sky,
+                    spawn::apply_poses,
+                )
+                    .chain(),
             );
+        render::configure(app, self.config.quality);
+        app.add_systems(Startup, render::setup_gizmos)
+            .add_systems(Update, render::draw_grid);
 
-        if !self.config.headless {
+        if self.config.interactive {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
                 .add_systems(Startup, hud::spawn_hud)
                 .add_systems(
@@ -89,6 +109,7 @@ impl Plugin for GzWebPlugin {
                         hud::update_status,
                         hud::update_sim,
                         hud::sim_keys,
+                        render::grid_key,
                     ),
                 );
         }
@@ -100,7 +121,7 @@ impl Plugin for GzWebPlugin {
 pub(crate) mod test_util {
     use bevy::prelude::*;
 
-    use crate::{camera, connection, spawn, GzAssetSourcesPlugin, GzConfig};
+    use crate::{camera, connection, render, spawn, GzAssetSourcesPlugin, GzConfig};
 
     /// No renderer, window or connection; the scene, pose and camera
     /// systems run against resources the test fills in.
@@ -116,6 +137,7 @@ pub(crate) mod test_util {
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .insert_resource(config)
         .insert_resource(ClearColor(camera::CLEAR_COLOR))
         .init_resource::<GlobalAmbientLight>()
@@ -124,13 +146,25 @@ pub(crate) mod test_util {
         .init_resource::<spawn::GzIndex>()
         .init_resource::<spawn::GzLoads>()
         .init_resource::<camera::GzCameraTarget>()
+        .init_resource::<render::GzEnvironment>()
+        .init_resource::<render::GzGrid>()
+        .init_resource::<render::PendingSky>()
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
             world: Some("w".into()),
             ..connection::GzStatus::new("ws://test")
         })
         .add_systems(Startup, (spawn::spawn_root, camera::spawn_camera))
-        .add_systems(Update, (spawn::apply_scene, spawn::apply_poses).chain());
+        .add_systems(
+            Update,
+            (
+                spawn::apply_scene,
+                render::apply_environment,
+                render::install_sky,
+                spawn::apply_poses,
+            )
+                .chain(),
+        );
         app
     }
 }
@@ -155,15 +189,17 @@ mod tests {
             AssetPlugin::default(),
             bevy::input::InputPlugin,
             TransformPlugin,
+            bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: format!("ws://127.0.0.1:{port}"),
-                headless: false,
+                interactive: true,
                 ..Default::default()
             },
         });
@@ -192,15 +228,17 @@ mod tests {
             GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             TransformPlugin,
+            bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_asset::<Scene>()
+        .init_asset::<bevy::pbr::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: "ws://127.0.0.1:1".into(),
-                headless: true,
+                interactive: false,
                 ..Default::default()
             },
         });

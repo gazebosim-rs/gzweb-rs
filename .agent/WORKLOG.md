@@ -247,3 +247,39 @@ These are findings for the plan, not changes:
 - The replay server drops its first connection at the first `sub`, not on a
   timer, so the reconnect test no longer depends on timing.
 - `frame::build` takes bytes (the old `String` version is gone).
+
+## 2026-10-17: Phase 2, rendering
+
+- **Decision:** don't match gzweb's rendering; use Bevy's best. Calibrating
+  to three.js legacy units first showed how far gzweb's look is from good
+  (ambient 1.0 with no tone mapping clips most worlds to white).
+- `render.rs`: HDR + TonyMcMapface (AgX looked flat on Gazebo's saturated
+  primaries) + bloom, TAA, SSAO, 4096 px cascaded shadows, image-based light
+  (procedural studio cubemap, or the sky's), Bevy's atmosphere for skies
+  without a cubemap, distance fog, Gazebo's grid. `--quality low`.
+- `--screenshot` for visual review (`target/visual/*.png` locally).
+- `gz-core`: fog parsed; the sky cubemap falls back to Harmonic's
+  `cubemap_uri` field.
+- **Environment switching:** a camera that changes environment-map source
+  fails wgpu validation, because Bevy's derived `EnvironmentMapLight` and the
+  atmosphere's private probe state stay on it. Fixed by respawning the camera
+  per environment (PR #20 review).
+- Not verified: a DDS cubemap sky (no corpus world has one), and the browser
+  build of these effects (WebGPU should support all of them).
+
+### PR #20 review fixes (2026-10-17)
+
+- Camera respawned per environment (the real cause of the "mip-count bug");
+  identical scenes on reconnect are a no-op. Lifecycle test covers studio →
+  atmosphere → failed cubemap → studio.
+- Cubemaps are checked once loaded (6 square power-of-two faces) and fall
+  back to the studio; tracked in `GzLoads` for screenshots.
+- Ambient colour only from the scene (gzweb's default otherwise); fill light
+  driven by `<ambient>`, 64 px sRGB studio map, a 5% ambient floor, no
+  atmosphere without a sun, no environment maps without a GPU or at Low.
+- Fog only when the scene has it (no divide-by-zero "off" fog).
+- Quality: Low / High (2048 px shadows) / Ultra (4096 px).
+- `--screenshot`: own save (creates the directory, exit 1 on failure), the
+  timeout covers a capture that never arrives, `.png` only.
+- `GzConfig.headless` split into `interactive` and `gpu`; spot lights use
+  `spot_inner_angle`; unset light intensity means 1.

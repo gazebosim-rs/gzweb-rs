@@ -1,12 +1,13 @@
 //! gzweb: renders a live Gazebo simulation.
 //!
-//! Native: `gzweb [--url ws://host:9002 | --port N] [--key KEY]
-//!               [--snapshot out.json [--settle-ms 1000] [--timeout-ms 60000]]`
-//! (`GZ_WEBSOCKET_PORT` is still honoured.) With `--snapshot` it runs
-//! headless (no window, no GPU), writes a parity snapshot once the scene has
-//! settled, and exits.
+//! Native: see [`USAGE`] (`GZ_WEBSOCKET_PORT` is still honoured).
+//! - `--snapshot out.json` runs with no window or GPU, writes a parity
+//!   snapshot once the scene has settled, and exits.
+//! - `--screenshot out.png` opens a fixed 1280x720 window, saves a frame once
+//!   the scene has settled, and exits (needs a GPU).
+//! - `--quality low|high|ultra` picks the rendering level (`render::Quality`).
 //!
-//! Browser: `index.html?url=ws://host:9002&key=KEY` (or `?port=N`).
+//! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`).
 
 use bevy::prelude::*;
 use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin};
@@ -19,15 +20,28 @@ const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
 #[derive(Debug)]
 struct Args {
     config: GzConfig,
+    mode: Mode,
     snapshot: Option<gz_bevy::snapshot::SnapshotRequest>,
     /// Fetch HTTPS assets through a `gz-parity mirror`.
     http_mirror: Option<String>,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
-                     [--reconnect | --no-reconnect] [--http-mirror URL] \
-                     [--snapshot OUT.json [--settle-ms MS] [--timeout-ms MS]]\n\
-                     Reconnecting is on by default, except in --snapshot mode.";
+                     [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
+                     [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] [--timeout-ms MS]\n\
+                     Reconnecting is on by default, except in --snapshot/--screenshot mode.";
+
+/// What kind of window the app runs with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// A resizable window (or the page's canvas) with controls and HUD.
+    Interactive,
+    /// A fixed 1280x720 window at scale 1, like the gzweb parity harness,
+    /// with no HUD, for `--screenshot`.
+    Capture,
+    /// No window or GPU (`--snapshot`).
+    Headless,
+}
 
 /// What the command line asked for.
 #[derive(Debug)]
@@ -49,9 +63,11 @@ fn parse_args(
     let mut url = None;
     let mut key = None;
     let mut snapshot = None;
+    let mut screenshot = None;
     let mut http_mirror = None;
     let mut ca_cert = None;
     let mut reconnect = None;
+    let mut quality = gz_bevy::render::Quality::default();
     let mut settle_ms = 1000.0;
     let mut timeout_ms = 60000.0;
 
@@ -71,7 +87,18 @@ fn parse_args(
             "--ca-cert" => ca_cert = Some(std::path::PathBuf::from(value()?)),
             "--reconnect" => reconnect = Some(true),
             "--no-reconnect" => reconnect = Some(false),
+            "--quality" => quality = value()?.parse()?,
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
+            "--screenshot" => {
+                let path = std::path::PathBuf::from(value()?);
+                if !path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+                {
+                    return Err(format!("--screenshot: '{}' is not a .png", path.display()));
+                }
+                screenshot = Some(path);
+            }
             "--settle-ms" => settle_ms = millis()?,
             "--timeout-ms" => timeout_ms = millis()?,
             "-h" | "--help" => return Ok(Command::Help),
@@ -79,17 +106,28 @@ fn parse_args(
         }
     }
 
+    let capture = snapshot.is_some() || screenshot.is_some();
     Ok(Command::Run(Args {
         config: GzConfig {
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
-            headless: snapshot.is_some(),
-            reconnect: reconnect.unwrap_or(snapshot.is_none()),
+            interactive: !capture,
+            gpu: screenshot.is_some() || snapshot.is_none(),
+            reconnect: reconnect.unwrap_or(!capture),
             ca_cert,
+            quality,
             ..Default::default()
         },
-        snapshot: snapshot.map(|out| gz_bevy::snapshot::SnapshotRequest {
-            out,
+        mode: if screenshot.is_some() {
+            Mode::Capture
+        } else if snapshot.is_some() {
+            Mode::Headless
+        } else {
+            Mode::Interactive
+        },
+        snapshot: capture.then(|| gz_bevy::snapshot::SnapshotRequest {
+            out: snapshot,
+            screenshot,
             settle_secs: settle_ms / 1000.0,
             timeout_secs: timeout_ms / 1000.0,
         }),
@@ -125,51 +163,70 @@ fn command() -> Result<Command, String> {
         config: GzConfig {
             url: get("url").unwrap_or_else(|| format!("ws://{host}:{port}")),
             key: get("key"),
+            quality: get("quality")
+                .and_then(|q| {
+                    q.parse()
+                        .map_err(|e| bevy::log::warn!("?quality={q}: {e}"))
+                        .ok()
+                })
+                .unwrap_or_default(),
             ..Default::default()
         },
+        mode: Mode::Interactive,
         snapshot: None,
         http_mirror: get("http_mirror"),
     }))
 }
 
-/// Bevy's default plugins, configured for a window (native or the
-/// `#bevy-canvas` element on wasm) or for headless snapshot mode: no window,
-/// no winit and no GPU backend.
-fn default_plugins(headless: bool) -> bevy::app::PluginGroupBuilder {
-    if headless {
-        use bevy::render::{settings::WgpuSettings, RenderPlugin};
-        use bevy::window::ExitCondition;
+/// Bevy's default plugins for `mode`: an interactive window (native, or the
+/// `#bevy-canvas` element on wasm), a fixed capture window, or headless
+/// snapshot mode (no window, no winit, no GPU backend).
+fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
+    let window = |w: Window| {
         DefaultPlugins
             .set(WindowPlugin {
-                primary_window: None,
-                exit_condition: ExitCondition::DontExit,
-                ..default()
-            })
-            .set(RenderPlugin {
-                render_creation: WgpuSettings {
-                    backends: None,
-                    ..default()
-                }
-                .into(),
-                ..default()
-            })
-            .disable::<bevy::winit::WinitPlugin>()
-    } else {
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "gzweb".into(),
-                    canvas: Some("#bevy-canvas".into()),
-                    fit_canvas_to_parent: true,
-                    prevent_default_event_handling: false,
-                    ..default()
-                }),
+                primary_window: Some(w),
                 ..default()
             })
             .set(bevy::log::LogPlugin {
                 filter: "wgpu=warn,naga=warn".into(),
                 ..default()
             })
+    };
+    match mode {
+        Mode::Headless => {
+            use bevy::render::{settings::WgpuSettings, RenderPlugin};
+            use bevy::window::ExitCondition;
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: None,
+                    exit_condition: ExitCondition::DontExit,
+                    ..default()
+                })
+                .set(RenderPlugin {
+                    render_creation: WgpuSettings {
+                        backends: None,
+                        ..default()
+                    }
+                    .into(),
+                    ..default()
+                })
+                .disable::<bevy::winit::WinitPlugin>()
+        }
+        Mode::Capture => window(Window {
+            title: "gzweb (capture)".into(),
+            resolution: bevy::window::WindowResolution::new(1280, 720)
+                .with_scale_factor_override(1.0),
+            resizable: false,
+            ..default()
+        }),
+        Mode::Interactive => window(Window {
+            title: "gzweb".into(),
+            canvas: Some("#bevy-canvas".into()),
+            fit_canvas_to_parent: true,
+            prevent_default_event_handling: false,
+            ..default()
+        }),
     }
 }
 
@@ -194,8 +251,8 @@ fn main() -> AppExit {
         http_mirror: args.http_mirror.clone(),
     });
 
-    app.add_plugins(default_plugins(args.config.headless));
-    if args.config.headless {
+    app.add_plugins(default_plugins(args.mode));
+    if args.mode == Mode::Headless {
         app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_secs_f64(1.0 / 120.0),
         ));
@@ -243,7 +300,7 @@ mod tests {
         let a = run_args(&[], None);
         assert_eq!(a.config.url, format!("ws://localhost:{DEFAULT_PORT}"));
         assert_eq!(a.config.key, None);
-        assert!(!a.config.headless);
+        assert!(a.config.interactive);
         assert!(a.snapshot.is_none());
     }
 
@@ -280,6 +337,10 @@ mod tests {
             Some(std::path::Path::new("ca.pem"))
         );
         assert!(!tls.config.reconnect);
+        assert_eq!(a.config.quality, gz_bevy::render::Quality::High);
+        let low = run_args(&["--quality", "low"], None);
+        assert_eq!(low.config.quality, gz_bevy::render::Quality::Low);
+        assert!(parse(&["--quality", "max"], None).is_err());
         let m = run_args(&["--http-mirror", "http://127.0.0.1:9101"], None);
         assert_eq!(m.http_mirror.as_deref(), Some("http://127.0.0.1:9101"));
     }
@@ -297,12 +358,23 @@ mod tests {
             ],
             None,
         );
-        assert!(a.config.headless);
+        assert!(!a.config.interactive && !a.config.gpu);
+        assert_eq!(a.mode, Mode::Headless);
         assert!(!a.config.reconnect);
+        let shot = run_args(&["--screenshot", "o.png"], None);
+        assert_eq!(shot.mode, Mode::Capture);
+        assert!(!shot.config.interactive && shot.config.gpu && !shot.config.reconnect);
+        let req = shot.snapshot.unwrap();
+        assert_eq!(req.out, None);
+        assert_eq!(
+            req.screenshot.as_deref(),
+            Some(std::path::Path::new("o.png"))
+        );
+        assert_eq!(run_args(&[], None).mode, Mode::Interactive);
         let forced = run_args(&["--snapshot", "o.json", "--reconnect"], None);
         assert!(forced.config.reconnect);
         let s = a.snapshot.expect("snapshot request");
-        assert_eq!(s.out, std::path::PathBuf::from("out.json"));
+        assert_eq!(s.out, Some(std::path::PathBuf::from("out.json")));
         assert_eq!(s.settle_secs, 0.25);
         assert_eq!(s.timeout_secs, 5.0);
     }
@@ -321,17 +393,24 @@ mod tests {
             parse(&["--settle-ms", "soon"], None).unwrap_err(),
             "--settle-ms: 'soon' is not a number"
         );
+        assert_eq!(
+            parse(&["--screenshot", "shot.jpg"], None).unwrap_err(),
+            "--screenshot: 'shot.jpg' is not a .png"
+        );
+        assert!(parse(&["--screenshot", "SHOT.PNG"], None).is_ok());
     }
 
     #[test]
     fn headless_plugins_drop_winit_and_windowed_keep_it() {
-        let headless = default_plugins(true);
+        let headless = default_plugins(Mode::Headless);
         assert!(headless.contains::<bevy::winit::WinitPlugin>());
         assert!(!headless.enabled::<bevy::winit::WinitPlugin>());
         assert!(headless.enabled::<bevy::render::RenderPlugin>());
 
-        let windowed = default_plugins(false);
-        assert!(windowed.enabled::<bevy::winit::WinitPlugin>());
-        assert!(windowed.enabled::<WindowPlugin>());
+        for mode in [Mode::Interactive, Mode::Capture] {
+            let windowed = default_plugins(mode);
+            assert!(windowed.enabled::<bevy::winit::WinitPlugin>());
+            assert!(windowed.enabled::<WindowPlugin>());
+        }
     }
 }

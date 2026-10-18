@@ -5,6 +5,7 @@ use bevy::input::mouse::MouseWheel;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
 
+use crate::render;
 use crate::spawn::gz_to_bevy;
 use crate::GzConfig;
 
@@ -28,10 +29,23 @@ pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<G
     let to_bevy = gz_to_bevy();
     let pos = to_bevy * Vec3::new(-6.0, 0.0, 6.0);
     let focus = to_bevy * Vec3::from_array(target.0);
+    let transform = Transform::from_translation(pos).looking_at(focus, Vec3::Y);
+    spawn_main_camera(&mut commands, &config, transform, Some(focus), CLEAR_COLOR);
+}
+
+/// Spawns the main camera at `transform` with the configured quality, and
+/// (when interactive) orbit controls about `focus`.
+pub fn spawn_main_camera(
+    commands: &mut Commands,
+    config: &GzConfig,
+    transform: Transform,
+    focus: Option<Vec3>,
+    clear_color: Color,
+) -> Entity {
     let mut camera = commands.spawn((
         Camera3d::default(),
         Camera {
-            clear_color: ClearColorConfig::Custom(CLEAR_COLOR),
+            clear_color: ClearColorConfig::Custom(clear_color),
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {
@@ -40,15 +54,17 @@ pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<G
             far: 1000.0,
             ..default()
         }),
-        Transform::from_translation(pos).looking_at(focus, Vec3::Y),
+        transform,
         MainCamera,
     ));
-    if !config.headless {
+    render::camera_components(&mut camera, config.quality);
+    if config.interactive {
         camera.insert(GzOrbitControls {
-            target: focus,
+            target: focus.unwrap_or(Vec3::ZERO),
             ..default()
         });
     }
+    camera.id()
 }
 
 /// Port of gzweb's patched three.js `OrbitControls` (`include/OrbitControls.js`).
@@ -195,6 +211,7 @@ pub fn orbit_controls(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::Quality;
     use bevy::camera::primitives::Aabb;
     use bevy::camera::visibility::SetViewVisibility;
     use bevy::camera::{CameraProjection, RenderTargetInfo};
@@ -561,10 +578,11 @@ mod tests {
 
     #[test]
     fn spawned_camera_uses_gzweb_defaults_and_controls_only_with_a_window() {
-        for headless in [false, true] {
+        for (interactive, quality) in [(true, Quality::High), (false, Quality::Low)] {
             let mut world = World::new();
             world.insert_resource(GzConfig {
-                headless,
+                interactive,
+                quality,
                 ..default()
             });
             world.init_resource::<GzCameraTarget>();
@@ -581,7 +599,15 @@ mod tests {
             ));
             assert!(matches!(cam.clear_color, ClearColorConfig::Custom(c) if c == CLEAR_COLOR));
             let controls = world.query::<&GzOrbitControls>().iter(&world).count();
-            assert_eq!(controls, usize::from(!headless));
+            assert_eq!(controls, usize::from(interactive));
+            // The screen-space effects only above Low.
+            let taa = world
+                .query_filtered::<(), With<bevy::anti_alias::taa::TemporalAntiAliasing>>()
+                .iter(&world)
+                .count();
+            assert_eq!(taa, usize::from(quality != Quality::Low));
+            let msaa = *world.query::<&Msaa>().single(&world).unwrap();
+            assert_eq!(msaa, quality.msaa());
         }
     }
 }

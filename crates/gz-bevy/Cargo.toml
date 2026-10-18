@@ -9,7 +9,7 @@ license = "Apache-2.0"
 gz-core.workspace = true
 prost.workspace = true
 serde_json.workspace = true
-bevy = { version = "0.18", features = ["webgpu", "webgl2"] }
+bevy = { version = "0.18", features = ["webgpu", "webgl2", "dds"] }
 bevy_obj = "0.18.2"
 bevy_stl = { version = "0.18.0", default-features = false }
 async-channel = "2"

@@ -41,7 +41,9 @@ cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 `wss://` works; `--ca-cert ca.pem` trusts a private CA. The client reconnects
 when the server goes away (`--no-reconnect` to turn that off).
 
-Space toggles play/pause and N steps a paused simulation.
+Space toggles play/pause, N steps a paused simulation and G toggles the grid.
+`--quality low` trades TAA, SSAO and shadow resolution for speed.
+`--screenshot out.png` saves one frame once the scene has loaded, then exits.
 
 `--snapshot out.json` runs headless, with no window or GPU. It writes a scene
 snapshot once everything has loaded, then exits.
