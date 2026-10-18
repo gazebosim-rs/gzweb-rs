@@ -501,6 +501,7 @@ fn synthetic_world(http: &str) -> Corpus {
         mesh("fbx", "/data/thing.fbx"),
         mesh("http", &format!("{http}/web/tri.obj")),
         mesh("http404", &format!("{http}/web/nope.obj")),
+        mesh("http_server", &format!("{http}/web/server_only.obj")),
     ];
     let mut lit = link("lit", vec![]);
     lit.light.push(light("lamp", LightType::Point));
@@ -588,6 +589,8 @@ fn synthetic_world(http: &str) -> Corpus {
     Builder::new("synthetic")
         .scene(&scene)
         .asset("pkg/meshes/tri.obj", OBJ)
+        // Not on the HTTP server: the websocket fallback finds it.
+        .asset(&format!("{http}/web/server_only.obj"), OBJ)
         .asset("pkg/meshes/two.obj", OBJ_MTL)
         .asset("pkg/meshes/two.mtl", MTL)
         .asset("/data/tri.stl", STL)
@@ -644,12 +647,14 @@ fn synthetic_world_spawns_every_feature() {
     assert!((glass.opacity - 0.5).abs() < 1e-6);
 
     // Mesh files over the websocket (relative, absolute, glTF with an
-    // external buffer) and over HTTP all load a 3-vertex triangle.
+    // external buffer), over HTTP and from the server after HTTP fails all
+    // load a 3-vertex triangle.
     for path in [
         "meshes/l/obj",
         "meshes/l/stl",
         "meshes/l/gltf",
         "meshes/l/http",
+        "meshes/l/http_server",
     ] {
         let g = node(&snap, path).geometry.as_ref().unwrap();
         assert_eq!(g.ty, "mesh", "{path}");

@@ -1,8 +1,11 @@
 //! Asset sources for Gazebo resources.
 //!
 //! gzweb loads a mesh/texture from its resolved URI over HTTP and, if that
-//! fails, asks the Gazebo websocket server for it (`asset,,,<uri>`). We pick
-//! the source up front instead:
+//! fails, asks the Gazebo websocket server for it (`asset,,,<uri>`). So does
+//! `gzhttps://`: a failed fetch falls back to the server, which resolves
+//! Fuel URLs to its local Fuel cache. Local paths have no HTTP location
+//! (gzweb fetches them relative to the page, which only finds files a site
+//! happens to serve), so they go straight to the server:
 //!
 //! | load URI ([`gz_core::uri::mesh_load_uri`]) | Bevy asset path               |
 //! |--------------------------------------------|-------------------------------|
@@ -187,15 +190,26 @@ impl AssetReader for WsAssetReader {
 
 struct HttpAssetReader {
     mirror: Option<String>,
+    /// Where a failed fetch is retried.
+    store: WsAssetStore,
 }
 
 impl AssetReader for HttpAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let url = http_url(path, self.mirror.as_deref());
-        match fetch_bytes(&url).await {
-            Ok(bytes) => Ok(VecReader::new(bytes)),
+        let http_error = match fetch_bytes(&url).await {
+            Ok(bytes) => return Ok(VecReader::new(bytes)),
+            Err(e) => e,
+        };
+        // The server knows the real URL, not the mirror's.
+        let uri = http_url(path, None);
+        match self.store.fetch(&uri).await {
+            Ok(bytes) => {
+                info!("HTTP asset '{url}' failed ({http_error}); got it from the server");
+                Ok(VecReader::new(bytes))
+            }
             Err(e) => {
-                warn!("HTTP asset '{url}' failed: {e}");
+                warn!("asset '{uri}' failed: HTTP: {http_error}; server: {e}");
                 Err(AssetReaderError::NotFound(path.to_path_buf()))
             }
         }
@@ -278,9 +292,11 @@ impl Plugin for GzAssetSourcesPlugin {
             HTTP_SOURCE,
             AssetSourceBuilder::new({
                 let mirror = self.http_mirror.clone();
+                let store = store.clone();
                 move || {
                     Box::new(HttpAssetReader {
                         mirror: mirror.clone(),
+                        store: store.clone(),
                     })
                 }
             }),
@@ -471,16 +487,28 @@ mod tests {
     }
 
     #[test]
-    fn http_reader_fetches_and_maps_failures_to_not_found() {
+    fn http_reader_fetches_then_falls_back_to_the_server() {
         let base = http_server(b"mesh");
-        let reader = HttpAssetReader { mirror: None };
+        let store = WsAssetStore::default();
+        let reader = HttpAssetReader {
+            mirror: None,
+            store: store.clone(),
+        };
+        let missing = format!("{base}/missing");
+        let gone = format!("{base}/gone");
+        store.deliver(&http_url(Path::new(&missing), None), Ok(b"cached".to_vec()));
+        store.deliver(
+            &http_url(Path::new(&gone), None),
+            Err("asset_not_found".into()),
+        );
         block_on(async {
             assert_eq!(
                 read_all(&reader, &format!("{base}/ok")).await.unwrap(),
                 b"mesh"
             );
+            assert_eq!(read_all(&reader, &missing).await.unwrap(), b"cached");
             assert!(matches!(
-                read_all(&reader, &format!("{base}/missing")).await,
+                read_all(&reader, &gone).await,
                 Err(AssetReaderError::NotFound(_))
             ));
             assert!(reader.read_meta(Path::new("x")).await.is_err());

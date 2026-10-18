@@ -164,6 +164,8 @@ Parity tests allow-list these with a reason string:
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - An OBJ whose `.mtl` fails to load still shows, with the default material.
+- Local mesh paths go straight to the websocket server (gzweb first fetches them over
+  HTTP relative to the page).
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
 - AudioTopic uses the *new* playback flag.
 - Unknown light types fall back to a point light (gzweb logs and adds nothing).
@@ -215,7 +217,7 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - Primitives: ellipsoid, plane normal. Heightmap (≤256 segments, texture repeat).
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
-  and de-dup.
+  and de-dup. (Done 2026-10-17; local paths skip HTTP, see DESIGN.md "Assets".)
 - **Collada** (done 2026-10-17, see DESIGN.md "Assets"): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
   `AssetLoader`. Fall back to a purpose-built loader if its material/texture coverage is
   insufficient. Honour `<up_axis>` and `<unit>`.

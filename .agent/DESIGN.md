@@ -158,9 +158,15 @@ browser handles `wss://` itself.
 
 | Load URI | Bevy path | Source |
 |---|---|---|
-| `https://…` | `gzhttps://…` | HTTP (ureq / fetch) |
+| `https://…` | `gzhttps://…` | HTTP (ureq / fetch), then the websocket `asset` request with the URL |
 | `/abs/path` | `wsasset://abs/abs/path` | websocket `asset` request |
 | `rel/path` | `wsasset://rel/rel/path` | websocket `asset` request |
+
+The fallback matters when Fuel is unreachable: the server resolves a Fuel
+URL to its local Fuel cache (`/gazebo/resource_paths/resolve`). Local paths
+skip HTTP: gzweb fetches them relative to the page, which only finds files
+the site happens to serve. Concurrent requests for one URI share one
+websocket request (`WsAssetStore`); Bevy's asset server dedups by path.
 
 Keeping the directory structure in the Bevy path makes relative references
 inside meshes (glTF buffers, OBJ `.mtl`, textures) resolve to the right

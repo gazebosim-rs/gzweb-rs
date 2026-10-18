@@ -316,3 +316,6 @@ These are findings for the plan, not changes:
   object names and resolved textures only relative to the `.mtl`). gzweb's
   MTL texture rules, MTL → PBR, flat normals when missing; headless test
   with two objects, two materials and a submesh.
+- Assets: a failed `gzhttps://` fetch retries through the websocket
+  `asset` request with the real URL (not the mirror's), as gzweb does.
+  Headless test serves a mesh only over the websocket.
