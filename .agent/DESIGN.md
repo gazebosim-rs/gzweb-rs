@@ -227,14 +227,15 @@ onto PBR:
   Bevy gets by squaring perceptual roughness), reflectance scaled by the
   specular luminance; Lambert roughness 1;
 - emission (white under a texture) through `units::emissive`, so 1 renders
-  at full brightness (SDF materials use it too); vertex colours sRGB;
+  at full brightness (SDF materials use it too);
+- every colour, vertex colours included, linear (see "Materials");
 - `constant` = unlit.
 
 On the 14 Fuel meshes in `spikes/collada/corpus`, triangle counts and world
 bounds match gzweb's three.js loader (`spikes/collada/run.sh`, then
 `cargo test -p gz-collada -- --ignored`; manual, not in CI). Not done:
-skinned meshes (`<instance_controller>`, skipped with a warning), and a
-visual's SDF material on a `.dae`.
+skinned meshes (`<instance_controller>`, skipped with a warning). A
+visual's SDF material replaces the file's (see "Materials").
 
 **OBJ.** `tobj` parses the OBJ and its `mtllib`s (read through the OBJ's
 own source first, since tobj's material callback is synchronous). Each
@@ -252,7 +253,8 @@ missing `.mtl` leaves the default material (gzweb never shows the mesh).
 MTL → PBR as for COLLADA: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness
 `(2/(n+2))^¼` from `Ns` or `Pr` as given, `Pm`, `Ke`/`map_Ke` through
 `units::emissive`, `map_Bump`/`bump`/`norm` as normal maps; textures repeat
-(three.js's MTLLoader default) and vertex colours are sRGB.
+(three.js's MTLLoader default); colours, vertex colours included, are
+linear.
 
 **Submeshes.** A mesh file that loads as a scene (COLLADA, OBJ, glTF) with a
 `<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `WorldAssetRoot`; an
@@ -285,6 +287,85 @@ map. The first texture layer repeats every `size` metres (repeat sampler,
 and record the terrain's corners (`GeometryInfo::corners`). A terrain
 whose image fails is an empty mesh that still carries its material. Not done: blending layers by height (`<blend>`), DEM (GeoTIFF)
 heightmaps, mipmaps for the tiled textures.
+
+## Materials
+
+`gz_bevy::material` turns a visual's `gz.msgs.Material` into a Bevy
+`StandardMaterial` by **Gazebo's** rules (gz-sim `SceneManager::CreateVisual`
+and `LoadMaterial`, gz-rendering `Ogre2Material`, ogre-next's PBS shaders),
+not gzweb's. The parity snapshot still compares the scene structure; where
+the material differs from gzweb's, PORT_PLAN §2.5 says so.
+
+**Colour space: linear.** ogre2 hands the message's floats straight to its
+PBS shaders, which light in linear space and write to sRGB targets
+(`PFG_RGBA8_UNORM_SRGB`, `gamma = Yes`), so an SDF `0.5` grey is linear 0.5
+(sRGB ≈ 0.74 on screen). gzweb feeds the same floats to three.js r141 with
+no colour management, which shows them as if they were sRGB (darker). We
+follow Gazebo: `Color::linear_rgb` for SDF materials, light colours, COLLADA
+effects, MTL colours, vertex colours and `units::emissive`. Colour textures
+(albedo, emissive, light map) are sRGB; normal, metalness, roughness and
+ambient-occlusion maps linear. Snapshots report the linear floats, the
+message's (and gzweb's) values. The scene's background, ambient and fog
+colours are unchanged (still read as sRGB).
+
+| Gazebo | Bevy |
+|---|---|
+| diffuse RGB (ogre2 never uses `ambient`) | `base_color`, × albedo map |
+| opacity `diffuse.a × (1 − transparency)` | below 1: `Premultiplied`, colour × α², reflectance × √α (ogre's `Transparent` mode: diffuse fades, reflections stay); under an albedo map plain `Blend` |
+| albedo map's alpha, alpha test ≥ 0.5 | `Mask(0.5)`; its shadow is cut too |
+| specular (`kS`, scales every reflection) | dielectric F0 = ogre's 3% × specular (`reflectance` 0.433, `specular_tint` √kS); no `<specular>` in the message: Bevy's 4% |
+| emissive | `units::emissive`, × emissive map (white when only the map is set, as ogre does) |
+| metal workflow: metalness, roughness | `metallic`, `perceptual_roughness` (both perceptual, as in ogre) |
+| metalness + roughness maps (red channel) | one `metallic_roughness_texture` (G roughness, B metalness), combined on the CPU |
+| normal map (PBR, else the legacy `normal_map`) | `normal_map_texture`; tangents generated (mikktspace) where the mesh has none |
+| ambient-occlusion map | `occlusion_texture` (Gazebo ignores it) |
+| light map (+ UV set) | a `Lightmap` on the mesh, UV1 (copied from UV0 if missing), `lightmap_exposure` so 1 adds the albedo at full |
+| `double_sided` | `double_sided`, `cull_mode: None` |
+| `render_order` | `depth_bias = render_order × 100` (Gazebo's scale for reverse depth) |
+| visual `cast_shadows` false | `NotShadowCaster` |
+| no material: primitive | gz-sim's `gz-grey`: diffuse 0.7, specular 1, roughness 0.2, metalness 1 |
+| no material: STL | ogre2's default: white, specular 0.2, roughness 0.5 |
+
+Textures load through the usual chain (`uri::mesh_load_uri`, then
+`assets::asset_path`: `model://`, `file://`, absolute paths and Fuel URLs
+alike), repeating (ogre's `TAM_WRAP`) with 16× anisotropy. Snapshots wait
+for them and for the combined maps.
+
+**Metalness and roughness.** Bevy wants glTF's combined image; Gazebo has
+two greyscale maps. `material::combine_metal_rough` waits until both have
+loaded (or failed), then writes an `Rgba8Unorm` image at the larger map's
+size (the other sampled nearest): G = roughness red, B = metalness red, 1
+where a map is missing so its scalar applies alone, as Bevy multiplies map
+and scalar like ogre. One image per pair of maps, shared by every material
+that uses it. A block-compressed map can't be read on the CPU; it falls
+back to the scalars with a warning. An `ExtendedMaterial` sampling two maps
+would avoid the copy but needs its own shader, prepass and shadow variants;
+the copy is once per pair.
+
+**Mesh visuals.** gz-sim calls `geom->SetMaterial(material)` on a mesh visual
+with a `<material>`, and gz-rendering's `BaseMesh::SetMaterial` puts that one
+material on **every** submesh, replacing the file's materials and textures
+(SubT's cave tiles rely on it for their PBR maps). Without a `<material>` the
+file's materials stay, with opacity × `(1 − transparency)` and the visual's
+`cast_shadows`. A mesh file's `WorldAssetRoot` carries
+`material::GzMeshMaterial`; an observer on `WorldInstanceReady` (beside the
+submesh one) applies it: one new material per visual for an SDF material,
+one faded copy per shared file material for a transparency. The file's own
+material assets are never changed. Meshes do get tangents (normal map) or a
+UV1 (light map) in place when they lack them: extra attributes change
+nothing for other users.
+
+**Not done, on purpose:**
+- the specular workflow's glossiness and specular maps (Gazebo renders it as
+  metal with default scalars, keeping the other maps; so do we);
+- `environment_map`: Bevy's environment maps are per camera or light probe,
+  not per material;
+- `lighting: false` (gz-sim never applies it either);
+- glTF and COLLADA materials keep their files' own rules (Phase 3).
+
+Gazebo itself only honours `double_sided` together with an albedo map (it is
+passed through `SetAlphaFromTexture`); we honour it always, as SDF
+specifies.
 
 ## Rendering
 

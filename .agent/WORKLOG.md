@@ -422,3 +422,47 @@ These are findings for the plan, not changes:
   `SceneFileLoader` and `GzSubmesh` work on `WorldAsset`/`WorldInstanceReady`,
   `AssetMut` needs a mutable borrow to mark a change, and `#23`'s own STL
   loader stays.
+
+## 2026-10-18: Phase 4, materials
+
+Branch `feature/phase-4-materials`. Materials follow Gazebo (gz-sim
+`SceneManager`, gz-rendering `Ogre2Material`, ogre-next PBS shaders, read in
+`~/work/gazebo/harmonic`), not gzweb. See DESIGN.md "Materials".
+
+- **Rules verified in the sources:**
+  - ogre2 uses diffuse only (ambient is stored, never rendered); opacity is
+    `(1 − transparency) × diffuse.a`; the `Transparent` mode scales the
+    diffuse by α² and F0 by α;
+  - an albedo map turns on an alpha test at 0.5 (if the texture has alpha)
+    and two-sided lighting from `double_sided`, and only then;
+  - the metalness and roughness maps are sampled `.x`; `kS` (specular)
+    multiplies every specular term; dielectric F0 is 3%;
+  - an emissive map is multiplied by the emissive colour only when that is
+    non-zero; a light map goes in the emissive slot, × diffuse;
+  - a visual without a material: primitives get `gz-grey` (metalness 1,
+    roughness 0.2), meshes keep theirs (STL: ogre2's white default);
+  - a mesh visual with a `<material>`: `BaseMesh::SetMaterial` puts it on
+    every submesh; without: transparency multiplies each submesh's;
+  - colours go to the shaders unconverted and render to sRGB targets:
+    linear.
+- **gz-core:** `MaterialDesc` carries the whole message (diffuse, ambient,
+  specular, emissive, render order, legacy normal map, PBR workflow and every
+  map as a load URI). gzweb's colour rule is gone.
+- **gz-bevy:** new `material` module (rules above, metalness/roughness
+  combine, scene-mesh overrides via `WorldInstanceReady`). Primitives get
+  tangents and UV1 when they need them. COLLADA, OBJ, vertex colours, light
+  colours and `units::emissive` are linear. Snapshots report linear colours
+  and, gzweb-rs only, the emissive, metallic-roughness, occlusion and light
+  maps; they wait for the combines.
+- **Tests:** unit tests per rule (colour, specular, opacity and blend modes,
+  defaults, combine, tangents/UV1, override and fade on an instanced scene,
+  map loading through the asset sources, DDS and TGA); the synthetic
+  headless world gained a PBR box with every map over websocket, HTTP and
+  `file://`, transparency cases, `gz-grey`, and a `.dae` with an SDF
+  material and one faded by transparency. Parity: every corpus passes,
+  Fuel worlds included (offline cache); `nested_model`'s material-less
+  primitives needed the `gazebo-default-material` allow-list entry.
+- **Visual check** (`--quality ultra`, against main's binary):
+  `shapes.sdf`, `sky.sdf` and the all-mesh world render brighter (linear
+  colours, as in Gazebo); a synthetic showcase (PBR maps, glass, cut-out,
+  emissive, DAE override) at ultra and low.

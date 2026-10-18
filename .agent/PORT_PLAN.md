@@ -21,7 +21,7 @@ worklog yet — start `.agent/WORKLOG.md` (dated entries: what changed, what was
 | Primitives | box, cylinder, sphere, plane, capsule, cone |
 | Meshes | glTF/GLB (bevy_gltf), STL (bevy_stl), OBJ (bevy_obj); DAE → pink cube |
 | Assets | `fuel://` HTTP source; `wsasset://` websocket proxy (wasm, `file://` only) |
-| Materials | diffuse, emissive, PBR scalars, transparency, double-sided |
+| Materials | diffuse, emissive, PBR scalars, transparency, double-sided (Phase 4 since: Gazebo's full rules) |
 | Dynamic poses | Subscribes to `dynamic_pose/info`, applies by name (see bugs) |
 | UI | FPS / backend / WS status text, orbit camera, click-to-refocus on ground plane |
 | Tests | 8 unit tests (fuel URI, frame split, scene proto round-trip) — all pass |
@@ -194,6 +194,18 @@ Parity tests allow-list these with a reason string:
   subscribes to `/world/<w>/stats`; snapshot mode keeps gzweb's exact frames.
 - A sky cubemap also comes from Harmonic's `Sky.cubemap_uri` field (gzweb reads only
   the header's `cubemap_uri`).
+- Materials follow Gazebo, not gzweb (decided 2026-10-18, DESIGN.md
+  "Materials"): colours are linear; the base colour is the diffuse colour (gzweb:
+  `0.4 * ambient + 0.6 * diffuse`, so a material whose ambient differs from its
+  diffuse reports a different colour); a primitive without a material is `gz-grey`
+  (gzweb: white; allow-listed as `gazebo-default-material`); `transparency` and
+  diffuse alpha make it transparent (gzweb ignores both); emissive colour, PBR
+  scalars (gzweb's `MeshStandardMaterial` keeps three's 0 / 1), the emissive,
+  metalness, roughness, ambient-occlusion and light maps, `double_sided` (Gazebo too
+  only with an albedo map), specular and `render_order` are used; an albedo map is
+  masked at 0.5 whatever the texture's format. A mesh visual's SDF material
+  replaces **every** submesh's, also on a COLLADA file with its own textures (gzweb:
+  the first mesh only, and never a textured COLLADA one without PBR).
 - Rendering does not match gzweb's look (decided 2026-10-17): HDR, tone mapping,
   TAA, SSAO, image-based light, atmosphere, fog and Gazebo's grid. Light
   brightness uses the message `intensity`; the snapshot still compares gzweb's
@@ -241,14 +253,26 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - Submesh selection + centering (done 2026-10-17, Gazebo's rules, see DESIGN.md
   "Submeshes"), mesh scale (done in Phase 2).
 
-**Phase 4: Materials**
-- gzweb colour rule, opacity/blend, alpha-mask for RGBA textures, double-sided.
-- PBR maps (albedo, normal, emissive, metallic-roughness), legacy `normal_map`.
-- A visual's SDF `<material>` and PBR maps on a `.dae` mesh: ignored now (the file's
-  own materials are used).
-- Texture loading via the same HTTP→websocket chain. DDS/TGA via Bevy's image features.
-- Decide and document the colour space: gzweb feeds raw floats to three r141 with no
-  sRGB conversion. Pick the Bevy equivalent so rendered colours match.
+**Phase 4: Materials** (done 2026-10-18, by Gazebo's rules, not gzweb's; see
+DESIGN.md "Materials")
+- Colour, opacity/blend, alpha mask for albedo maps, double-sided: done. Gazebo's rule
+  (diffuse only; opacity = diffuse alpha × (1 − transparency); ogre's `Transparent`
+  blending as premultiplied alpha; a 0.5 mask under an albedo map), not gzweb's
+  `0.4 * ambient + 0.6 * diffuse`. Specular scales reflections; `render_order`,
+  `cast_shadows` and Gazebo's `gz-grey` default too.
+- PBR maps (albedo, normal, emissive, metalness + roughness combined on the CPU into
+  Bevy's metallic-roughness image, ambient occlusion, light map), legacy
+  `normal_map`, tangents for normal maps: done. Not done: the environment map and the
+  specular workflow's glossiness/specular maps (Gazebo ignores those too).
+- A visual's SDF `<material>` on a mesh (`.dae`/`.obj`/`.glb`/`.stl`): done, replacing
+  every submesh's material as gz-rendering does; without one, the visual's
+  transparency fades a copy of the file's materials.
+- Texture loading via the same HTTP→websocket chain (`model://`, `file://`, Fuel
+  URLs): done. DDS/TGA: verified with Bevy's `dds`/`tga` features (uncompressed; a
+  block-compressed DDS needs a GPU that supports it).
+- Colour space: decided **linear**, as Gazebo's ogre2 uses the floats (gzweb's look
+  is darker). Applied to SDF materials, light colours, COLLADA, OBJ, vertex colours
+  and emission; background/ambient/fog colours unchanged.
 
 **Phase 5: Interaction and UI (Bevy + bevy_ui)**
 - Camera: orbit/dolly/pan mapping as gzweb, pick-point orbit target (mesh raycast via
