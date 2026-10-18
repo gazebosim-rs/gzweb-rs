@@ -312,3 +312,7 @@ These are findings for the plan, not changes:
   glTF), Gazebo's rules. Unit tests on a hand-built scene; headless test
   cuts the probe `.dae` to `ChildNode`, centred, and checks an unknown name
   leaves nothing.
+- OBJ: `gz_bevy::obj` on `tobj` replaces `bevy_obj` (which kept no
+  object names and resolved textures only relative to the `.mtl`). gzweb's
+  MTL texture rules, MTL → PBR, flat normals when missing; headless test
+  with two objects, two materials and a submesh.

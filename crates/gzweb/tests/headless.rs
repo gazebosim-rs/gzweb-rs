@@ -289,7 +289,11 @@ fn mesh(name: &str, filename: &str) -> msgs::Visual {
 
 /// The probe `.dae` cut down to one node, centred.
 fn submesh(name: &str, node: &str) -> msgs::Visual {
-    let mut v = mesh(name, "/data/robot.dae");
+    submesh_of(name, "/data/robot.dae", node)
+}
+
+fn submesh_of(name: &str, file: &str, node: &str) -> msgs::Visual {
+    let mut v = mesh(name, file);
     let m = v.geometry.as_mut().unwrap().mesh.as_mut().unwrap();
     m.submesh = node.into();
     m.center_submesh = true;
@@ -335,6 +339,11 @@ fn light(name: &str, ty: msgs::light::LightType) -> msgs::Light {
 }
 
 const OBJ: &[u8] = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+/// Two objects with their own materials; the second's texture is a bare
+/// file name, which gzweb looks for in `materials/textures`.
+const OBJ_MTL: &[u8] = b"mtllib two.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nvt 0 0\n\
+o first\nusemtl red\nf 1 2 3\no second\nusemtl tex\nf 1/1 2/1 4/1\nf 1/1 3/1 4/1\n";
+const MTL: &[u8] = b"newmtl red\nKd 1 0 0\nnewmtl tex\nKd 0 0 1\nmap_Kd t.png\n";
 const STL: &[u8] = b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\n\
 vertex 0 1 0\nendloop\nendfacet\nendsolid t\n";
 const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
@@ -481,6 +490,8 @@ fn synthetic_world(http: &str) -> Corpus {
     ];
     let meshes = vec![
         mesh("obj", "model://pkg/meshes/tri.obj"),
+        mesh("obj_mtl", "model://pkg/meshes/two.obj"),
+        submesh_of("obj_sub", "model://pkg/meshes/two.obj", "second"),
         mesh("stl", "file:///data/tri.stl"),
         mesh("gltf", "/data/tri.gltf"),
         mesh("dae", "/data/robot.dae"),
@@ -577,6 +588,8 @@ fn synthetic_world(http: &str) -> Corpus {
     Builder::new("synthetic")
         .scene(&scene)
         .asset("pkg/meshes/tri.obj", OBJ)
+        .asset("pkg/meshes/two.obj", OBJ_MTL)
+        .asset("pkg/meshes/two.mtl", MTL)
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
         .asset("/data/tri.bin", &tri_bin())
@@ -660,6 +673,21 @@ fn synthetic_world_spawns_every_feature() {
         assert!((aabb.max[i] + aabb.min[i]).abs() < 1e-6, "{aabb:?}");
         assert!(aabb.max[i] - aabb.min[i] < 0.02 + 1e-6, "{aabb:?}");
     }
+    // OBJ with an MTL: an object per `o`, each with its material; the
+    // bare texture name is looked for in materials/textures (not served).
+    let two = node(&snap, "meshes/l/obj_mtl");
+    let g = two.geometry.as_ref().unwrap();
+    assert_eq!((g.mesh_count, g.vertex_count), (2, 3 + 6), "{g:?}");
+    assert_eq!(two.material.as_ref().unwrap().color, [1.0, 0.0, 0.0]);
+    let sub = node(&snap, "meshes/l/obj_sub");
+    let g = sub.geometry.as_ref().unwrap();
+    assert_eq!((g.mesh_count, g.vertex_count), (1, 6), "{g:?}");
+    let m = sub.material.as_ref().unwrap();
+    assert_eq!(m.color, [0.0, 0.0, 1.0]);
+    assert_eq!(
+        m.maps.albedo.as_deref(),
+        Some("wsasset://rel/pkg/materials/textures/t.png")
+    );
     // Failed or unsupported loads have no geometry.
     for path in [
         "meshes/l/missing",

@@ -163,6 +163,7 @@ Parity tests allow-list these with a reason string:
   gzweb zeroes ancestor translations but keeps their rotations.
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
+- An OBJ whose `.mtl` fails to load still shows, with the default material.
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
 - AudioTopic uses the *new* playback flag.
 - Unknown light types fall back to a point light (gzweb logs and adds nothing).
@@ -218,7 +219,8 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - **Collada** (done 2026-10-17, see DESIGN.md "Assets"): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
   `AssetLoader`. Fall back to a purpose-built loader if its material/texture coverage is
   insufficient. Honour `<up_axis>` and `<unit>`.
-- OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`).
+- OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`)
+  (done 2026-10-17: own loader on `tobj`, see DESIGN.md "OBJ").
 - Submesh selection + centering (done 2026-10-17, Gazebo's rules, see DESIGN.md
   "Submeshes"), mesh scale (done in Phase 2).
 

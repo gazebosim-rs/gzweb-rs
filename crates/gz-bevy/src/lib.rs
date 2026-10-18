@@ -10,6 +10,7 @@ pub mod collada;
 pub mod connection;
 pub mod driver;
 pub mod hud;
+pub mod obj;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
@@ -79,8 +80,9 @@ impl Plugin for GzWebPlugin {
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()
             .init_resource::<camera::GzCameraTarget>()
-            .add_plugins((bevy_obj::ObjPlugin, bevy_stl::StlPlugin))
+            .add_plugins(bevy_stl::StlPlugin)
             .init_asset_loader::<collada::ColladaLoader>()
+            .init_asset_loader::<obj::ObjLoader>()
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),

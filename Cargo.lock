@@ -1082,18 +1082,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef8e4b7e61dfe7719bb03c884dc270cd46a82efb40f93e9933b990c5c190c59"
 
 [[package]]
-name = "bevy_obj"
-version = "0.18.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b073a19fcbc0ad9c1dbe4a97983d880383d9ae1f84ced60d5e413e73727692d"
-dependencies = [
- "bevy",
- "serde",
- "thiserror 2.0.21",
- "wobj",
-]
-
-[[package]]
 name = "bevy_pbr"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2893,7 +2881,6 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "bevy",
- "bevy_obj",
  "bevy_stl",
  "crossbeam-channel",
  "gz-collada",
@@ -2901,6 +2888,7 @@ dependencies = [
  "js-sys",
  "prost",
  "serde_json",
+ "tobj",
  "tungstenite",
  "ureq",
  "wasm-bindgen",
@@ -5230,6 +5218,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "tobj"
+version = "4.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6eb8e04167c1c0c76b5de63226fd733485ad63ef71e40de31e16272f47b099e2"
+
+[[package]]
 name = "tokio"
 version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6654,17 +6648,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "wobj"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0502c0794b9b6c0c6b1b868c67b2186149f8ca72d256b424180d750c1dc2bae8"
-dependencies = [
- "ahash",
- "indexmap",
- "winnow 1.0.4",
 ]
 
 [[package]]

@@ -170,7 +170,7 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 | Format | Loader |
 |---|---|
 | glTF/GLB | Bevy |
-| OBJ | `bevy_obj` |
+| OBJ + MTL | `gz_bevy::obj::ObjLoader` on `tobj` (below) |
 | STL | `bevy_stl` |
 | Collada (`.dae`) | `gz_bevy::collada::ColladaLoader` on `gz-collada` (below) |
 
@@ -189,7 +189,17 @@ emission in scene-referred units, `constant` = unlit. On the 14 Fuel meshes
 in `spikes/collada/corpus`, triangle counts and world bounds match gzweb's
 three.js loader (`cargo test -p gz-collada -- --ignored`).
 
-**Submeshes.** A mesh file that loads as a scene (COLLADA, glTF) with a
+**OBJ.** `tobj` parses the OBJ and its `mtllib`s (read through the OBJ's
+own source first, since tobj asks for them synchronously). Each `o`/`g` is a
+named entity with a child per material, as three.js builds it. Diffuse and
+ambient maps follow gzweb's `GzObjLoader` path rules (`model://` beside this
+model, paths with `/materials/textures` kept, bare names in
+`<model>/materials/textures/`); other maps are relative to the OBJ. A
+missing `.mtl` leaves the default material (gzweb never shows the mesh).
+MTL → PBR: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness from `Ns` or
+`Pr`, `Pm`, `Ke`/`map_Ke`, `map_Bump`/`bump`/`norm` as normal maps.
+
+**Submeshes.** A mesh file that loads as a scene (COLLADA, OBJ, glTF) with a
 `<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `SceneRoot`; an
 observer on `SceneInstanceReady` keeps the first node (depth first) with
 that name and geometry of its own, drops everything else (its child nodes
