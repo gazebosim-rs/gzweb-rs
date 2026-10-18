@@ -322,8 +322,15 @@ These are findings for the plan, not changes:
 - Heightmaps: `GeometryDesc::Heightmap`, terrain from the image (Gazebo's
   rules) or message heights; first layer textured. `heightmap` corpus:
   material matches gzweb, geometry allow-listed (`gzweb-heightmap-empty`).
-  **Pending:** `heightmap_bowl.png` must be added to
-  `tests/corpus/heightmap/http.lock.json` (Fuel answered 502 all day, so
-  the ignored test fails offline: the image's websocket fallback shows up
-  in the protocol diff).
 - Websocket fallback requests the unescaped URL (`source_url`), as gzweb.
+
+## 2026-10-18: Heightmap image in the lock
+
+- `heightmap_bowl.png` added to `tests/corpus/heightmap/http.lock.json`,
+  so `heightmap_matches_gzweb` passes offline. fuel.gazebosim.org still
+  answered 502; the bytes came from fuel.ignitionrobotics.org (same Fuel
+  server, which served all six already-locked files with matching hashes,
+  and the image equals gz-sim's `test/media/heightmap_bowl.png`). Seeded
+  into `target/http-cache`; the mirror wrote the lock entry.
+- CI's HTTP cache doesn't have the image yet: the Fuel job fetches it from
+  fuel.gazebosim.org and fails while that is down.
