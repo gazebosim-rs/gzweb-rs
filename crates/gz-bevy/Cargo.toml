@@ -12,7 +12,6 @@ prost.workspace = true
 serde_json.workspace = true
 bevy = { version = "0.20", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
 async-channel = "2"
-wgpu-types = "30"
 crossbeam-channel = "0.5"
 tobj = { version = "4.0.5", default-features = false, features = ["async"] }
 

@@ -350,4 +350,6 @@ These are findings for the plan, not changes:
   use their winding (they rendered unlit before).
 - One `ScatteringMedium` for every atmosphere; tests check the planet's
   position.
+- `wgpu-types` dropped: Bevy doesn't re-export `wgpu::Backend`, so the HUD
+  matches the backend's `Debug` name.
 - Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).

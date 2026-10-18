@@ -1,5 +1,5 @@
 //! A Bevy `AssetLoader` for Wavefront OBJ with MTL materials, parsed by
-//! `tobj`, built like the COLLADA loader's [`Scene`]:
+//! `tobj`, built like the COLLADA loader's [`WorldAsset`]:
 //!
 //! - Every `o`/`g` object is an entity with its `Name` (for `<submesh>`),
 //!   and a child per material it uses.

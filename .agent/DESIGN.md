@@ -57,7 +57,7 @@ GzWorldRoot
 ├── model (GzEntity kind=model, Transform = model pose)
 │   ├── link
 │   │   ├── visual (GzVisual, Transform = visual pose, scale = <mesh><scale>)
-│   │   │   └── geometry child (Mesh3d / SceneRoot; primitive-specific local transform)
+│   │   │   └── geometry child (Mesh3d / WorldAssetRoot; primitive-specific local transform)
 │   │   └── light (GzLight) └── emitter child (Bevy light, looks along direction)
 │   └── nested model …
 └── top-level light
@@ -206,8 +206,8 @@ MTL → PBR: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness from `Ns` or
 `Pr`, `Pm`, `Ke`/`map_Ke`, `map_Bump`/`bump`/`norm` as normal maps.
 
 **Submeshes.** A mesh file that loads as a scene (COLLADA, OBJ, glTF) with a
-`<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `SceneRoot`; an
-observer on `SceneInstanceReady` keeps the first node (depth first) with
+`<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `WorldAssetRoot`; an
+observer on `WorldInstanceReady` keeps the first node (depth first) with
 that name and geometry of its own, drops everything else (its child nodes
 too), and with `center` shifts the root so the bounds' centre is the
 visual's origin. These are Gazebo's rules; gzweb zeroes the ancestors'

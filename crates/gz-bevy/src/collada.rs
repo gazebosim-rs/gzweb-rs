@@ -1,5 +1,5 @@
 //! A Bevy `AssetLoader` for COLLADA (`.dae`): [`gz_collada`]'s node tree
-//! becomes a [`Scene`], like the glTF loader's.
+//! becomes a [`WorldAsset`], like the glTF loader's.
 //!
 //! - The root entity scales by the document's `<unit>`; `<up_axis>` is
 //!   ignored, as in Gazebo and gzweb.
