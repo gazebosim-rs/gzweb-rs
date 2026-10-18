@@ -9,22 +9,25 @@
 
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::asset::{LoadState, RenderAssetUsages};
+use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::core_pipeline::Skybox;
+use bevy::light::atmosphere::ScatteringMedium;
+use bevy::light::Atmosphere;
 use bevy::light::{
     AtmosphereEnvironmentMapLight, DirectionalLightShadowMap, GeneratedEnvironmentMapLight,
     PointLightShadowMap, ShadowFilteringMethod,
 };
 use bevy::pbr::{
-    Atmosphere, AtmosphereSettings, DistanceFog, FogFalloff, ScatteringMedium,
-    ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel,
+    AtmosphereSettings, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
+    ScreenSpaceAmbientOcclusionQualityLevel,
 };
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
-use bevy::render::view::{Hdr, Msaa};
+use bevy::render::view::Msaa;
 use gz_core::scene::{FogDesc, SceneDesc};
 
 use crate::assets;
@@ -245,6 +248,11 @@ pub fn clear_color(env: &GzEnvironment) -> Color {
     }
 }
 
+/// The planet of an `<sky>` atmosphere. Bevy places it below the origin, so
+/// the ground around the scene is level.
+#[derive(Component)]
+pub struct GzAtmosphere;
+
 /// Applies a changed [`GzEnvironment`]. The camera is respawned, keeping its
 /// view: Bevy keeps private per-camera state for environment maps and the
 /// atmosphere that only goes away with the entity, and a camera that
@@ -261,9 +269,19 @@ pub fn apply_environment(
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
     cameras: Query<(Entity, &Transform, Option<&GzOrbitControls>), With<MainCamera>>,
+    planets: Query<Entity, With<GzAtmosphere>>,
 ) {
     if !env.is_changed() || !env.loaded {
         return;
+    }
+    for planet in &planets {
+        commands.entity(planet).despawn();
+    }
+    if plan(&env, &config) == Environment::Atmosphere {
+        commands.spawn((
+            GzAtmosphere,
+            Atmosphere::earth(media.add(ScatteringMedium::default())),
+        ));
     }
     if let Some([r, g, b]) = env.ambient {
         ambient.color = Color::srgb(r, g, b);
@@ -293,10 +311,7 @@ pub fn apply_environment(
                 cam.insert(studio_light(&mut images, env.ambient_or_default()));
             }
             Environment::Atmosphere => {
-                cam.insert((
-                    Atmosphere::earthlike(media.add(ScatteringMedium::default())),
-                    AtmosphereSettings::default(),
-                ));
+                cam.insert(AtmosphereSettings::default());
                 if config.quality.image_based_light() {
                     cam.insert(AtmosphereEnvironmentMapLight::default());
                 }
@@ -337,7 +352,7 @@ pub fn install_sky(
         return;
     };
     let usable = match images.get_mut(&handle) {
-        Some(image) => make_cubemap(image),
+        Some(mut image) => make_cubemap(&mut image),
         None if matches!(asset_server.load_state(&handle), LoadState::Failed(_)) => false,
         None => return,
     };
@@ -346,7 +361,7 @@ pub fn install_sky(
     let mut cam = commands.entity(camera);
     if usable {
         cam.insert(Skybox {
-            image: handle.clone(),
+            image: Some(handle.clone()),
             brightness: units::UNIT_LUMINANCE,
             ..default()
         });
@@ -690,6 +705,14 @@ mod tests {
             .collect()
     }
 
+    fn planets(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world
+            .query_filtered::<(), (With<GzAtmosphere>, With<Atmosphere>)>()
+            .iter(world)
+            .count()
+    }
+
     fn has<C: Component>(app: &mut App) -> bool {
         let world = app.world_mut();
         world
@@ -763,7 +786,8 @@ mod tests {
                 ..default()
             },
         );
-        assert!(has::<Atmosphere>(&mut app));
+        assert!(has::<AtmosphereSettings>(&mut app));
+        assert_eq!(planets(&mut app), 1);
         assert!(has::<AtmosphereEnvironmentMapLight>(&mut app));
         assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
         assert!(!has::<EnvironmentMapLight>(&mut app));
@@ -784,7 +808,8 @@ mod tests {
                 ..default()
             },
         );
-        assert!(!has::<Atmosphere>(&mut app));
+        assert!(!has::<AtmosphereSettings>(&mut app));
+        assert_eq!(planets(&mut app), 0);
         assert!(app.world().resource::<PendingSky>().0.is_some());
         for _ in 0..200 {
             app.update();
@@ -860,6 +885,7 @@ mod tests {
         app.add_plugins((
             MinimalPlugins,
             AssetPlugin::default(),
+            bevy::mesh::MeshPlugin,
             bevy::gizmos::GizmoPlugin,
         ))
         .init_resource::<ButtonInput<KeyCode>>()

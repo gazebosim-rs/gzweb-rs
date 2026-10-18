@@ -44,7 +44,7 @@ impl std::fmt::Display for ColladaError {
 impl std::error::Error for ColladaError {}
 
 impl AssetLoader for ColladaLoader {
-    type Asset = Scene;
+    type Asset = WorldAsset;
     type Settings = ();
     type Error = ColladaError;
 
@@ -53,7 +53,7 @@ impl AssetLoader for ColladaLoader {
         reader: &mut dyn Reader,
         _settings: &(),
         load_context: &mut LoadContext<'_>,
-    ) -> Result<Scene, ColladaError> {
+    ) -> Result<WorldAsset, ColladaError> {
         let mut bytes = Vec::new();
         reader
             .read_to_end(&mut bytes)
@@ -68,7 +68,7 @@ impl AssetLoader for ColladaLoader {
     }
 }
 
-fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
+fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> WorldAsset {
     // A primitive with a normal map needs tangents on its mesh.
     let mut needs_tangents = vec![false; dae.meshes.len()];
     for (_, p) in dae.instances() {
@@ -95,7 +95,7 @@ fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
             let texture = |cx: &mut LoadContext<'_>, tex: &Option<String>, srgb: bool| {
                 let path = texture_path(&dae_path, tex.as_deref()?)?;
                 Some(
-                    cx.loader()
+                    cx.load_builder()
                         .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
                         .load(path),
                 )
@@ -108,7 +108,7 @@ fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
         .collect();
     // Primitives without a material get COLLADA's default grey.
     let fallback = cx.add_labeled_asset(
-        "MaterialDefault".into(),
+        "MaterialDefault",
         material(&gz_collada::Material::default()),
     );
 
@@ -123,7 +123,7 @@ fn build_scene(dae: &gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
     for node in &dae.roots {
         spawn_node(&mut world, node, root, &meshes, &materials, &fallback);
     }
-    Scene::new(world)
+    WorldAsset::new(world)
 }
 
 fn spawn_node(
@@ -243,7 +243,7 @@ pub fn texture_path(dae: &AssetPath<'_>, texture: &str) -> Option<AssetPath<'sta
             .ok()
             .map(AssetPath::into_owned);
     }
-    dae.resolve_embed(texture).ok()
+    dae.resolve_embed_str(texture).ok()
 }
 
 #[cfg(test)]

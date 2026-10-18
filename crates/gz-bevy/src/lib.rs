@@ -15,6 +15,7 @@ pub mod obj;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
+pub mod stl;
 pub mod submesh;
 
 use bevy::prelude::*;
@@ -81,8 +82,8 @@ impl Plugin for GzWebPlugin {
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()
             .init_resource::<camera::GzCameraTarget>()
-            .add_plugins(bevy_stl::StlPlugin)
             .init_asset_loader::<collada::ColladaLoader>()
+            .init_asset_loader::<stl::StlLoader>()
             .init_asset_loader::<obj::ObjLoader>()
             .add_systems(
                 Startup,
@@ -143,8 +144,8 @@ pub(crate) mod test_util {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<Scene>()
-        .init_asset::<bevy::pbr::ScatteringMedium>()
+        .init_asset::<WorldAsset>()
+        .init_asset::<bevy::light::atmosphere::ScatteringMedium>()
         .insert_resource(config)
         .insert_resource(ClearColor(camera::CLEAR_COLOR))
         .init_resource::<GlobalAmbientLight>()
@@ -197,13 +198,14 @@ mod tests {
             AssetPlugin::default(),
             bevy::input::InputPlugin,
             TransformPlugin,
+            bevy::mesh::MeshPlugin,
             bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<Scene>()
-        .init_asset::<bevy::pbr::ScatteringMedium>()
+        .init_asset::<WorldAsset>()
+        .init_asset::<bevy::light::atmosphere::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: format!("ws://127.0.0.1:{port}"),
@@ -236,13 +238,14 @@ mod tests {
             GzAssetSourcesPlugin::default(),
             AssetPlugin::default(),
             TransformPlugin,
+            bevy::mesh::MeshPlugin,
             bevy::gizmos::GizmoPlugin,
         ))
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<Scene>()
-        .init_asset::<bevy::pbr::ScatteringMedium>()
+        .init_asset::<WorldAsset>()
+        .init_asset::<bevy::light::atmosphere::ScatteringMedium>()
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: "ws://127.0.0.1:1".into(),

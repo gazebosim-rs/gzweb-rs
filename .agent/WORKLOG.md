@@ -13,7 +13,7 @@ Dated entries: what changed, and what was verified. Newest first.
   `unwrap`s were replaced; a poisoned asset-store lock is now recovered.
 - **cargo-deny:** path dependencies now carry versions. Three advisories are
   ignored with reasons in `deny.toml`:
-  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy 0.18 requires 0.8;
+  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy (0.18 and 0.20) requires 0.8;
   - paste, unmaintained;
   - ttf-parser, unmaintained.
 - **Testability refactors:**
@@ -327,3 +327,22 @@ These are findings for the plan, not changes:
   the ignored test fails offline: the image's websocket fallback shows up
   in the protocol diff).
 - Websocket fallback requests the unescaped URL (`source_url`), as gzweb.
+- JPEG and TGA textures enabled (glTF/COLLADA models with JPEGs loaded
+  untextured).
+
+## Bevy 0.20
+
+- Bevy 0.18 → 0.20; `rust-toolchain.toml` pins rustc 1.97.1 (Bevy's MSRV).
+- Renames: `Scene`/`SceneRoot`/`SceneInstanceReady` →
+  `WorldAsset`/`WorldAssetRoot`/`WorldInstanceReady` (`Scene` is now the
+  BSN trait), `load_with_settings` → `load_builder().with_settings()`,
+  `resolve_embed(&str)` → `resolve_embed_str`, `shadows_enabled` →
+  `shadow_maps_enabled`, `FontSize::Px`, `Hdr` in `bevy::camera`.
+- `Atmosphere` is now a planet entity (its transform is the planet's
+  centre), not a camera component: on the camera it put the camera at the
+  planet's centre (dark, orange, no shadows). `render::GzAtmosphere` spawns
+  it at Bevy's default (below the origin); the camera keeps
+  `AtmosphereSettings`.
+- `bevy_stl` has no 0.20 release: `gz_bevy::stl` on `stl_io`; faces with
+  zero normals use their winding (they rendered unlit before).
+- Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).

@@ -55,7 +55,7 @@ const OPTIONS: tobj::LoadOptions = tobj::LoadOptions {
 };
 
 impl AssetLoader for ObjLoader {
-    type Asset = Scene;
+    type Asset = WorldAsset;
     type Settings = ();
     type Error = ObjError;
 
@@ -64,7 +64,7 @@ impl AssetLoader for ObjLoader {
         reader: &mut dyn Reader,
         _settings: &(),
         cx: &mut LoadContext<'_>,
-    ) -> Result<Scene, ObjError> {
+    ) -> Result<WorldAsset, ObjError> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await.map_err(ObjError::Io)?;
         let obj_path = cx.path().clone_owned();
@@ -72,7 +72,7 @@ impl AssetLoader for ObjLoader {
         // tobj asks for material libraries synchronously, so read them first.
         let mut libraries = HashMap::new();
         for name in mtllibs(&bytes) {
-            let Ok(path) = obj_path.resolve_embed(&name) else {
+            let Ok(path) = obj_path.resolve_embed_str(&name) else {
                 continue;
             };
             match cx.read_asset_bytes(path.clone()).await {
@@ -118,7 +118,11 @@ fn mtllibs(obj: &[u8]) -> Vec<String> {
     out
 }
 
-fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadContext<'_>) -> Scene {
+fn build_scene(
+    models: &[tobj::Model],
+    mtls: &[tobj::Material],
+    cx: &mut LoadContext<'_>,
+) -> WorldAsset {
     let obj_path = cx.path().clone_owned();
     let materials: Vec<Handle<StandardMaterial>> = mtls
         .iter()
@@ -129,7 +133,7 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
                 |cx: &mut LoadContext<'_>, tex: Option<AssetPath<'static>>, srgb: bool| {
                     let path = tex?;
                     Some(
-                        cx.loader()
+                        cx.load_builder()
                             .with_settings(move |s: &mut ImageLoaderSettings| s.is_srgb = srgb)
                             .load(path),
                     )
@@ -158,10 +162,7 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
             cx.add_labeled_asset(format!("Material{i}"), mat)
         })
         .collect();
-    let fallback = cx.add_labeled_asset(
-        "MaterialDefault".into(),
-        material(&tobj::Material::default()),
-    );
+    let fallback = cx.add_labeled_asset("MaterialDefault", material(&tobj::Material::default()));
 
     let mut world = World::new();
     let root = world
@@ -208,7 +209,7 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
             ChildOf(parent),
         ));
     }
-    Scene::new(world)
+    WorldAsset::new(world)
 }
 
 fn normal_map(m: &tobj::Material) -> Option<&str> {
@@ -346,7 +347,7 @@ pub fn texture_path(
             .ok()
             .map(AssetPath::into_owned)
     } else {
-        obj.resolve_embed(&rewritten).ok()
+        obj.resolve_embed_str(&rewritten).ok()
     }
 }
 

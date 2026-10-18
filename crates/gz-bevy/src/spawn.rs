@@ -359,7 +359,7 @@ fn spawn_mesh_file(
     let path = assets::asset_path(load_uri);
     match uri::extension(load_uri).as_str() {
         "glb" | "gltf" => {
-            let scene: Handle<Scene> = ctx
+            let scene: Handle<WorldAsset> = ctx
                 .asset_server
                 .load(GltfAssetLabel::Scene(0).from_asset(path));
             spawn_scene(ctx, visual, parent, scene);
@@ -378,7 +378,7 @@ fn spawn_mesh_file(
             ));
         }
         "obj" | "dae" => {
-            let scene: Handle<Scene> = ctx.asset_server.load(path);
+            let scene: Handle<WorldAsset> = ctx.asset_server.load(path);
             spawn_scene(ctx, visual, parent, scene);
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
@@ -386,11 +386,11 @@ fn spawn_mesh_file(
 }
 
 /// A mesh file's scene, cut down to its `<submesh>` if it names one.
-fn spawn_scene(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, scene: Handle<Scene>) {
+fn spawn_scene(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, scene: Handle<WorldAsset>) {
     ctx.loads.0.push(scene.clone().untyped());
-    let mut entity = ctx
-        .commands
-        .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+    let mut entity =
+        ctx.commands
+            .spawn((WorldAssetRoot(scene), Transform::IDENTITY, ChildOf(parent)));
     if let GeometryDesc::Mesh {
         submesh: Some(name),
         center_submesh,
@@ -475,7 +475,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 color,
                 intensity: render::units::point_lumens(intensity),
                 range,
-                shadows_enabled: light.cast_shadows,
+                shadow_maps_enabled: light.cast_shadows,
                 ..default()
             });
         }
@@ -488,7 +488,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 range,
                 outer_angle: outer,
                 inner_angle: inner,
-                shadows_enabled: light.cast_shadows,
+                shadow_maps_enabled: light.cast_shadows,
                 ..default()
             });
         }
@@ -497,7 +497,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 DirectionalLight {
                     color,
                     illuminance: render::units::directional_lux(intensity),
-                    shadows_enabled: light.cast_shadows,
+                    shadow_maps_enabled: light.cast_shadows,
                     ..default()
                 },
                 // Sharp near the camera, out to a typical Gazebo world's size.

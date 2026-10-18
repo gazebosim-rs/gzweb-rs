@@ -1,7 +1,7 @@
 # gzweb → gzweb-rs Port: Gap Analysis, Implementation Plan, Parity Test Plan
 
 Status as of 2026-10-16. Reference implementation: `../gzweb` (v3.0.1, three.js r141).
-Rust port: this repo (Bevy 0.18, wgpu 27). Bevy is the renderer **and** the UI toolkit
+Rust port: this repo (Bevy 0.20, wgpu 30). Bevy is the renderer **and** the UI toolkit
 (bevy_ui) — no three.js, no DOM-built UI beyond the bare canvas host page.
 
 Companion docs: [`CONTEXT.md`](./CONTEXT.md), [`DESIGN.md`](./DESIGN.md). There is no
@@ -243,7 +243,7 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
   native-only, so use a line-mesh fallback on wasm), show collisions, toggle lights, joint
   visuals, grid toggle.
 - bevy_ui panels: connection status, play/pause/stop, entity tree, view toggles, loading
-  progress (WsLoadingManager equivalent). Evaluate `bevy_feathers` widgets if stable in 0.18.
+  progress (WsLoadingManager equivalent). Evaluate `bevy_feathers` widgets if stable in 0.20.
 - Screenshot (Bevy `Screenshot`), `GzWeb` embedding API (§2.3).
 
 **Phase 6: Extras**

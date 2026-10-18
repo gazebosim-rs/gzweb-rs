@@ -31,7 +31,7 @@ pub fn spawn_hud(mut commands: Commands) {
         ..default()
     };
     let font = TextFont {
-        font_size: 20.0,
+        font_size: FontSize::Px(20.0),
         ..default()
     };
     commands.spawn((
@@ -65,7 +65,7 @@ pub fn spawn_hud(mut commands: Commands) {
     commands.spawn((
         Text::new(HINT),
         TextFont {
-            font_size: 16.0,
+            font_size: FontSize::Px(16.0),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -264,12 +264,7 @@ mod tests {
     fn adapter_colour_follows_the_backend() {
         let info = |backend| wgpu_types::AdapterInfo {
             name: "gpu".into(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu_types::DeviceType::Other,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
+            ..wgpu_types::AdapterInfo::new(wgpu_types::DeviceType::Other, backend)
         };
         assert_eq!(
             adapter_style(&info(wgpu_types::Backend::Vulkan)),

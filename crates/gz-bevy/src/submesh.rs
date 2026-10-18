@@ -9,9 +9,9 @@
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use bevy::scene::SceneInstanceReady;
+use bevy::world_serialization::WorldInstanceReady;
 
-/// On a `SceneRoot`: keep only this submesh once the scene is instanced.
+/// On a `WorldAssetRoot`: keep only this submesh once the scene is instanced.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct GzSubmesh {
     pub name: String,
@@ -20,10 +20,10 @@ pub struct GzSubmesh {
     pub applied: bool,
 }
 
-/// Observer for [`SceneInstanceReady`] on an entity with [`GzSubmesh`].
+/// Observer for [`WorldInstanceReady`] on an entity with [`GzSubmesh`].
 #[allow(clippy::too_many_arguments)]
 pub fn select(
-    ready: On<SceneInstanceReady>,
+    ready: On<WorldInstanceReady>,
     mut commands: Commands,
     mut roots: Query<&mut GzSubmesh>,
     children: Query<&Children>,
@@ -133,7 +133,7 @@ mod tests {
             MinimalPlugins,
             AssetPlugin::default(),
             TransformPlugin,
-            bevy::scene::ScenePlugin,
+            bevy::world_serialization::WorldSerializationPlugin,
         ))
         .init_asset::<Mesh>();
         let tri = |x: f32| {
@@ -174,12 +174,12 @@ mod tests {
         world.spawn((Mesh3d(b), Transform::IDENTITY, ChildOf(hand)));
         let scene = app
             .world_mut()
-            .resource_mut::<Assets<Scene>>()
-            .add(Scene::new(world));
+            .resource_mut::<Assets<WorldAsset>>()
+            .add(WorldAsset::new(world));
         let e = app
             .world_mut()
             .spawn((
-                SceneRoot(scene),
+                WorldAssetRoot(scene),
                 Transform::IDENTITY,
                 GzSubmesh {
                     name: submesh.into(),

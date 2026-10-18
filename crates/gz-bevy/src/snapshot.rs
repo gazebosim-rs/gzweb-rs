@@ -45,7 +45,7 @@ pub fn snapshot_when_settled(
     index: Res<GzIndex>,
     loads: Res<GzLoads>,
     asset_server: Res<AssetServer>,
-    scene_roots: Query<(&SceneRoot, Option<&Children>, Option<&GzSubmesh>)>,
+    scene_roots: Query<(&WorldAssetRoot, Option<&Children>, Option<&GzSubmesh>)>,
     terrains: Query<&GzHeightmap>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,

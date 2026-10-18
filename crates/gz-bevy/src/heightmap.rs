@@ -48,9 +48,10 @@ pub fn spawn(
     parent: Entity,
 ) -> Option<UntypedHandle> {
     let image: Option<Handle<Image>> = desc.image_uri.as_ref().map(|uri| {
-        asset_server.load_with_settings(assets::asset_path(uri), |s: &mut ImageLoaderSettings| {
-            s.is_srgb = false;
-        })
+        asset_server
+            .load_builder()
+            .with_settings(|s: &mut ImageLoaderSettings| s.is_srgb = false)
+            .load(assets::asset_path(uri))
     });
     let material = materials.add(material(asset_server, desc));
     commands.spawn((
@@ -79,9 +80,9 @@ fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMateria
     };
     let texture = |uri: &Option<String>, srgb: bool| {
         uri.as_ref().map(|uri| {
-            asset_server.load_with_settings(
-                assets::asset_path(uri),
-                move |s: &mut ImageLoaderSettings| {
+            asset_server
+                .load_builder()
+                .with_settings(move |s: &mut ImageLoaderSettings| {
                     s.is_srgb = srgb;
                     s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
                         address_mode_u: ImageAddressMode::Repeat,
@@ -89,8 +90,8 @@ fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMateria
                         anisotropy_clamp: 16,
                         ..ImageSamplerDescriptor::linear()
                     });
-                },
-            )
+                })
+                .load(assets::asset_path(uri))
         })
     };
     let repeats = Vec2::new(
