@@ -41,6 +41,11 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// a slow link, but a body that stalls still fails.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Fuel, and its old domain, which serves the same files. The old domain is
+/// tried only for files the lock pins, so what it returns is still checked.
+const FUEL: &str = "fuel.gazebosim.org/";
+const FUEL_OLD: &str = "fuel.ignitionrobotics.org/";
+
 struct State {
     opts: MirrorOptions,
     lock: Mutex<Lock>,
@@ -112,7 +117,12 @@ fn get(state: &State, target: &str) -> Result<Vec<u8>, (u16, String)> {
         Ok(body) => body,
         Err(_) if state.opts.offline => return Err((404, "not cached (offline)".into())),
         Err(_) => {
-            let body = fetch(state, rest)?;
+            let body = fetch(state, rest).or_else(|e| match old_fuel(state, rest, &url) {
+                Some(alt) => {
+                    fetch(state, &alt).map_err(|alt_e| (e.0, format!("{}; {}", e.1, alt_e.1)))
+                }
+                None => Err(e),
+            })?;
             let tmp = file.with_extension("part");
             std::fs::write(&tmp, &body)
                 .and_then(|()| std::fs::rename(&tmp, &file))
@@ -122,6 +132,13 @@ fn get(state: &State, target: &str) -> Result<Vec<u8>, (u16, String)> {
     };
     check_lock(state, &url, &body)?;
     Ok(body)
+}
+
+/// `rest` on Fuel's old domain, when it is a Fuel file the lock pins.
+fn old_fuel(state: &State, rest: &str, url: &str) -> Option<String> {
+    let path = rest.strip_prefix(FUEL)?;
+    let lock = state.lock.lock().unwrap_or_else(PoisonError::into_inner);
+    lock.contains_key(url).then(|| format!("{FUEL_OLD}{path}"))
 }
 
 fn fetch(state: &State, rest: &str) -> Result<Vec<u8>, (u16, String)> {

@@ -13,7 +13,8 @@ use std::time::Duration;
 use gz_parity::mirror::{self, MirrorOptions};
 
 /// Serves `/<anything>` with the path as the body, or 404 when the path
-/// contains "missing"; a path with "stall" sends half its body and hangs.
+/// contains "missing" or is on fuel.gazebosim.org (which is down); a path
+/// with "stall" sends half its body and hangs.
 /// Returns the base URL and a hit counter.
 fn upstream() -> (String, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -31,11 +32,12 @@ fn upstream() -> (String, Arc<AtomicUsize>) {
                 std::thread::sleep(Duration::from_secs(5));
                 continue;
             }
-            let (status, body) = if path.contains("missing") {
-                ("404 Not Found", String::new())
-            } else {
-                ("200 OK", path)
-            };
+            let (status, body) =
+                if path.contains("missing") || path.starts_with("/fuel.gazebosim.org/") {
+                    ("404 Not Found", String::new())
+                } else {
+                    ("200 OK", path)
+                };
             let _ = write!(
                 stream,
                 "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -111,6 +113,32 @@ fn a_changed_file_fails_the_lock() {
     let (status, body) = get(&format!("{base}/fuel.example/x.dae"));
     assert_eq!(status, 502);
     assert!(body.contains("lock has 0000"), "{body}");
+}
+
+#[test]
+fn locked_fuel_files_fall_back_to_the_old_domain() {
+    use sha2::{Digest, Sha256};
+    let tmp = common::scratch("mirror-old-fuel");
+    let lock = tmp.join("http.lock.json");
+    let sum: String = Sha256::digest(b"/fuel.ignitionrobotics.org/m/a.dae")
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    std::fs::write(
+        &lock,
+        format!(r#"{{"https://fuel.gazebosim.org/m/a.dae": "{sum}"}}"#),
+    )
+    .unwrap();
+    let (up, _) = upstream();
+    let base = start(opts(&tmp.join("cache"), Some(&lock), Some(&up), false));
+    let (status, body) = get(&format!("{base}/fuel.gazebosim.org/m/a.dae"));
+    assert_eq!(
+        (status, body.as_str()),
+        (200, "/fuel.ignitionrobotics.org/m/a.dae")
+    );
+    // A file the lock doesn't pin isn't taken from the old domain.
+    let (status, body) = get(&format!("{base}/fuel.gazebosim.org/m/b.dae"));
+    assert_eq!(status, 404, "{body}");
 }
 
 #[test]
