@@ -264,6 +264,7 @@ pub fn terrain_mesh(grid: &Grid, desc: &HeightmapDesc) -> Option<Mesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::mesh::VertexAttributeValues;
 
     fn desc() -> HeightmapDesc {
@@ -344,6 +345,98 @@ mod tests {
             heights: vec![1.0; 4000],
         };
         assert_eq!(resample(&huge, 1).width, MAX_VERTICES_PER_SIDE);
+    }
+
+    /// Spawns `desc` under a fresh entity and runs until it is built.
+    fn built(desc: HeightmapDesc) -> (App, Entity) {
+        let mut app = crate::test_util::scene_app(crate::GzConfig::default());
+        let world = app.world_mut();
+        let parent = world.spawn(Transform::IDENTITY).id();
+        world
+            .run_system_once(
+                move |mut commands: Commands,
+                      server: Res<AssetServer>,
+                      mut materials: ResMut<Assets<StandardMaterial>>| {
+                    spawn(&mut commands, &server, &mut materials, &desc, parent);
+                },
+            )
+            .unwrap();
+        for _ in 0..200 {
+            app.update();
+            let world = app.world_mut();
+            if world.query::<&GzHeightmap>().iter(world).all(|t| t.built) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let world = app.world_mut();
+        let e = world
+            .query_filtered::<Entity, With<GzHeightmap>>()
+            .single(world)
+            .unwrap();
+        (app, e)
+    }
+
+    fn vertices(app: &App, e: Entity) -> usize {
+        let mesh = app.world().get::<Mesh3d>(e).expect("a mesh once built");
+        let mesh = app.world().resource::<Assets<Mesh>>().get(&mesh.0).unwrap();
+        mesh.count_vertices()
+    }
+
+    #[test]
+    fn message_heights_build_without_an_image_and_untextured_is_grey() {
+        let (app, e) = built(HeightmapDesc {
+            heights: vec![0.0, 1.0, 2.0, 3.0],
+            width: 2,
+            height: 2,
+            sampling: 2,
+            ..desc()
+        });
+        assert!(app.world().get::<GzHeightmap>(e).unwrap().built);
+        assert_eq!(vertices(&app, e), 9);
+        let mat = app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(e)
+            .unwrap();
+        let mat = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&mat.0)
+            .unwrap();
+        assert_eq!(mat.base_color, Color::srgb_u8(0x55, 0x55, 0x55));
+    }
+
+    #[test]
+    fn a_missing_image_is_an_empty_textured_terrain() {
+        let (app, e) = built(HeightmapDesc {
+            image_uri: Some("does/not/exist.png".into()),
+            layers: vec![gz_core::scene::HeightmapLayer {
+                diffuse: Some("https://fuel.example/d.png".into()),
+                normal: None,
+                size: 2.0,
+            }],
+            ..desc()
+        });
+        assert!(app.world().get::<GzHeightmap>(e).unwrap().built);
+        assert_eq!(vertices(&app, e), 0);
+        let mat = app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(e)
+            .unwrap();
+        let mat = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&mat.0)
+            .unwrap();
+        assert_eq!(
+            mat.base_color_texture
+                .as_ref()
+                .and_then(|h| h.path())
+                .map(|p| p.to_string()),
+            Some("gzhttps://fuel.example/d.png".into())
+        );
+        // 4 m by 2 m, one repeat every 2 m.
+        assert_eq!(mat.uv_transform, Affine2::from_scale(Vec2::new(2.0, 1.0)));
     }
 
     #[test]

@@ -606,9 +606,9 @@ mod tests {
                     },
                 ),
                 msgs::Visual {
-                    name: "terrain".into(),
+                    name: "polyline".into(),
                     geometry: Some(msgs::Geometry {
-                        heightmap: Some(Default::default()),
+                        r#type: msgs::geometry::Type::Polyline as i32,
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -725,8 +725,8 @@ mod tests {
         assert_eq!(mat.cull_mode, None);
 
         // Unsupported geometry spawns the node but no mesh.
-        let terrain = entity(&mut app, "terrain");
-        assert!(app.world().get::<Children>(terrain).is_none());
+        let polyline = entity(&mut app, "polyline");
+        assert!(app.world().get::<Children>(polyline).is_none());
     }
 
     #[test]
