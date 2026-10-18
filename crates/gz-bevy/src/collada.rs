@@ -1,10 +1,11 @@
-//! A Bevy `AssetLoader` for COLLADA (`.dae`): [`gz_collada`]'s node tree
-//! becomes a [`Scene`], like the glTF loader's.
+//! COLLADA (`.dae`) for [`SceneFileLoader`](crate::mesh_file::SceneFileLoader):
+//! [`gz_collada`]'s node tree becomes a [`Scene`], like the glTF loader's.
 //!
-//! - The root entity scales by the document's `<unit>`; `<up_axis>` is
-//!   ignored, as in Gazebo and gzweb.
-//! - Every COLLADA node is an entity with its `Name` and local `Transform`,
-//!   so `<submesh>` can find it; each primitive is a child with its mesh and
+//! - The root entity (unnamed) scales by the document's `<unit>`;
+//!   `<up_axis>` is ignored, as in Gazebo and gzweb.
+//! - Every COLLADA node is an entity with its local `Transform` and, if it
+//!   has a `name` attribute, that `Name` (gz-common names submeshes after
+//!   it, never the `id`); each primitive is a child with its mesh and
 //!   material.
 //! - Textures load through the same sources as the `.dae` (`gzhttps://`,
 //!   `wsasset://`), relative to it, and repeat unless the file says not to.
@@ -14,64 +15,21 @@
 //! Materials are COLLADA's Phong/Blinn/Lambert effects mapped onto Bevy's
 //! PBR `StandardMaterial` (see `material` for the rules).
 
-use bevy::asset::io::Reader;
-use bevy::asset::{AssetLoadFailedEvent, AssetLoader, AssetPath, LoadContext, RenderAssetUsages};
+use bevy::asset::{AssetLoadFailedEvent, LoadContext};
 use bevy::color::Luminance;
-use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
-use bevy::mesh::PrimitiveTopology;
 use bevy::prelude::*;
 use bevy::render::render_resource::Face;
 
-use crate::assets;
+use crate::mesh_file::{self, MeshParts};
 use crate::render::units;
 
-#[derive(Default, TypePath)]
-pub struct ColladaLoader;
-
-/// Why a `.dae` failed to load.
-#[derive(Debug)]
-pub enum ColladaError {
-    Io(std::io::Error),
-    Parse(gz_collada::Error),
-}
-
-impl std::fmt::Display for ColladaError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ColladaError::Io(e) => write!(f, "reading the file: {e}"),
-            ColladaError::Parse(e) => write!(f, "invalid COLLADA: {e}"),
-        }
+/// Parses a `.dae` file into a scene.
+pub fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<Scene, gz_collada::Error> {
+    let dae = gz_collada::parse(bytes)?;
+    for warning in &dae.warnings {
+        warn!("{}: {warning}", cx.path());
     }
-}
-
-impl std::error::Error for ColladaError {}
-
-impl AssetLoader for ColladaLoader {
-    type Asset = Scene;
-    type Settings = ();
-    type Error = ColladaError;
-
-    async fn load(
-        &self,
-        reader: &mut dyn Reader,
-        _settings: &(),
-        load_context: &mut LoadContext<'_>,
-    ) -> Result<Scene, ColladaError> {
-        let mut bytes = Vec::new();
-        reader
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(ColladaError::Io)?;
-        let dae = gz_collada::parse(&bytes).map_err(ColladaError::Parse)?;
-        for warning in &dae.warnings {
-            warn!("{}: {warning}", load_context.path());
-        }
-        Ok(build_scene(dae, load_context))
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["dae"]
-    }
+    Ok(build_scene(dae, cx))
 }
 
 fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
@@ -101,16 +59,9 @@ fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
             let texture =
                 |cx: &mut LoadContext<'_>, tex: &Option<gz_collada::Texture>, srgb: bool| {
                     let tex = tex.as_ref()?;
-                    let path = texture_path(&dae_path, &tex.path)?;
-                    let sampler = sampler(tex.repeat);
-                    Some(
-                        cx.loader()
-                            .with_settings(move |s: &mut ImageLoaderSettings| {
-                                s.is_srgb = srgb;
-                                s.sampler = sampler.clone();
-                            })
-                            .load(path),
-                    )
+                    let path = mesh_file::texture_path(&dae_path, &tex.path)?;
+                    let sampler = mesh_file::sampler(tex.repeat, 1);
+                    mesh_file::load_texture(cx, path, srgb, sampler)
                 };
             mat.base_color_texture = texture(cx, &m.diffuse_texture, true);
             mat.normal_map_texture = texture(cx, &m.normal_texture, false);
@@ -127,7 +78,6 @@ fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
     let mut world = World::new();
     let root = world
         .spawn((
-            Name::new("collada"),
             Transform::from_scale(Vec3::splat(dae.unit)),
             Visibility::default(),
         ))
@@ -146,19 +96,15 @@ fn spawn_node(
     materials: &[Handle<StandardMaterial>],
     fallback: &Handle<StandardMaterial>,
 ) {
-    let name = node
-        .name
-        .clone()
-        .or_else(|| node.id.clone())
-        .unwrap_or_default();
-    let entity = world
-        .spawn((
-            Name::new(name),
-            transform(&node.transform),
-            Visibility::default(),
-            ChildOf(parent),
-        ))
-        .id();
+    let mut entity = world.spawn((
+        transform(&node.transform),
+        Visibility::default(),
+        ChildOf(parent),
+    ));
+    if let Some(name) = &node.name {
+        entity.insert(Name::new(name.clone()));
+    }
+    let entity = entity.id();
     for p in &node.primitives {
         let material = p.material.map_or(fallback, |m| &materials[m]);
         world.spawn((
@@ -180,55 +126,16 @@ fn transform(rows: &[[f32; 4]; 4]) -> Transform {
 }
 
 /// Unindexed triangles as a Bevy mesh (flat normals and tangents work
-/// without an index buffer). COLLADA's V points up, Bevy's down; vertex
-/// colours are sRGB, as three.js reads them.
+/// without an index buffer); see [`MeshParts::build`].
 fn mesh(m: gz_collada::Mesh, tangents: bool) -> Mesh {
-    let n = m.positions.len();
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, m.positions);
-    if m.normals.len() == n {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, m.normals);
-    } else {
-        mesh.compute_flat_normals();
+    MeshParts {
+        positions: m.positions,
+        normals: m.normals,
+        uvs: m.texcoords,
+        colors: m.colors,
+        indices: None,
     }
-    if m.texcoords.len() == n {
-        let uvs: Vec<[f32; 2]> = m.texcoords.into_iter().map(|[u, v]| [u, 1.0 - v]).collect();
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    }
-    if m.colors.len() == n {
-        let linear: Vec<[f32; 4]> = m
-            .colors
-            .into_iter()
-            .map(|[r, g, b, a]| LinearRgba::from(Color::srgba(r, g, b, a)).to_f32_array())
-            .collect();
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, linear);
-    }
-    if tangents && mesh.contains_attribute(Mesh::ATTRIBUTE_UV_0) {
-        if let Err(e) = mesh.generate_tangents() {
-            warn!("COLLADA mesh: no tangents for its normal map: {e}");
-        }
-    }
-    mesh
-}
-
-/// Linear filtering, repeating (three.js's default for COLLADA) or clamped
-/// per axis.
-pub(crate) fn sampler(repeat: [bool; 2]) -> ImageSampler {
-    let mode = |repeat| {
-        if repeat {
-            ImageAddressMode::Repeat
-        } else {
-            ImageAddressMode::ClampToEdge
-        }
-    };
-    ImageSampler::Descriptor(ImageSamplerDescriptor {
-        address_mode_u: mode(repeat[0]),
-        address_mode_v: mode(repeat[1]),
-        ..ImageSamplerDescriptor::linear()
-    })
+    .build(tangents, "COLLADA mesh")
 }
 
 /// A COLLADA effect as a PBR material (textures are added by the loader).
@@ -239,10 +146,8 @@ pub(crate) fn sampler(repeat: [bool; 2]) -> ImageSampler {
 ///   blends. A `<transparent>` texture with full opacity is a cut-out: the
 ///   diffuse texture's alpha is masked at 0.5 (three.js blends; a mask
 ///   sorts and casts shadows correctly).
-/// - Phong/Blinn: roughness follows the exponent. `sqrt(2 / (n + 2))` is
-///   the GGX α of the usual Blinn-Phong mapping, and Bevy squares
-///   perceptual roughness to get α, so this is its square root.
-///   Reflectance (F0, 4% by default) scales with the specular colour's
+/// - Phong/Blinn: roughness follows the exponent
+///   ([`mesh_file::phong_roughness`]). Reflectance (F0, 4% by default) scales with the specular colour's
 ///   luminance. Lambert has no highlight: roughness 1.
 /// - Nothing is metallic. Emission (white under an emission texture) uses
 ///   [`units::emissive`]; `constant` shading is unlit.
@@ -276,9 +181,7 @@ fn material(m: &gz_collada::Material) -> StandardMaterial {
         perceptual_roughness: if lambert {
             1.0
         } else {
-            (2.0 / (m.shininess.max(0.0) + 2.0))
-                .powf(0.25)
-                .clamp(0.089, 1.0)
+            mesh_file::phong_roughness(m.shininess)
         },
         reflectance: if lambert {
             0.5
@@ -292,19 +195,6 @@ fn material(m: &gz_collada::Material) -> StandardMaterial {
         cull_mode: (!m.double_sided).then_some(Face::Back),
         ..default()
     }
-}
-
-/// Where a texture the `.dae` names lives: a URI or absolute path through
-/// the usual sources, else relative to the `.dae` itself.
-fn texture_path(dae: &AssetPath<'_>, texture: &str) -> Option<AssetPath<'static>> {
-    let absolute = texture.contains("://") || texture.starts_with('/');
-    if absolute {
-        let load_uri = gz_core::uri::mesh_load_uri(texture);
-        return AssetPath::try_parse(&assets::asset_path(&load_uri))
-            .ok()
-            .map(AssetPath::into_owned);
-    }
-    dae.resolve_embed(texture).ok()
 }
 
 /// Drops textures that failed to load from every `StandardMaterial` (the
@@ -363,6 +253,7 @@ pub fn drop_failed_textures(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::image::{ImageAddressMode, ImageSampler};
 
     fn dae(name: &str) -> gz_collada::Scene {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -383,41 +274,6 @@ mod tests {
         assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
         // 90° about Z: X goes to Y.
         assert!((t.rotation * Vec3::X - Vec3::Y).length() < 1e-6);
-    }
-
-    #[test]
-    fn meshes_flip_v_linearise_colours_and_fill_in_normals() {
-        let soup = gz_collada::Mesh {
-            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-            texcoords: vec![[0.0, 0.25], [1.0, 0.0], [0.0, 1.0]],
-            colors: vec![[0.5, 1.0, 0.0, 1.0]; 3],
-            ..default()
-        };
-        let m = mesh(soup.clone(), true);
-        assert!(m.indices().is_none());
-        assert!(m.contains_attribute(Mesh::ATTRIBUTE_NORMAL));
-        assert!(m.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
-        let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) =
-            m.attribute(Mesh::ATTRIBUTE_COLOR)
-        else {
-            panic!("no colours");
-        };
-        // sRGB 0.5 is linear 0.214.
-        assert!((colors[0][0] - 0.214).abs() < 1e-3, "{:?}", colors[0]);
-        assert_eq!(colors[0][1..], [1.0, 0.0, 1.0]);
-        let Some(bevy::mesh::VertexAttributeValues::Float32x2(uv)) =
-            m.attribute(Mesh::ATTRIBUTE_UV_0)
-        else {
-            panic!("no UVs");
-        };
-        assert_eq!(uv[0], [0.0, 0.75]);
-        // No UVs: no tangents, and no failure.
-        let bare = gz_collada::Mesh {
-            positions: soup.positions,
-            normals: vec![[0.0, 0.0, 1.0]; 3],
-            ..default()
-        };
-        assert!(!mesh(bare, true).contains_attribute(Mesh::ATTRIBUTE_TANGENT));
     }
 
     #[test]
@@ -485,28 +341,40 @@ mod tests {
     }
 
     #[test]
-    fn samplers_repeat_unless_told_not_to() {
-        let ImageSampler::Descriptor(d) = sampler([true, false]) else {
-            panic!("no descriptor");
+    fn meshes_are_triangle_soups() {
+        let soup = gz_collada::Mesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            ..default()
         };
-        assert_eq!(d.address_mode_u, ImageAddressMode::Repeat);
-        assert_eq!(d.address_mode_v, ImageAddressMode::ClampToEdge);
-        assert_eq!(d.mag_filter, bevy::image::ImageFilterMode::Linear);
+        let m = mesh(soup, false);
+        assert!(m.indices().is_none());
+        assert!(m.contains_attribute(Mesh::ATTRIBUTE_NORMAL));
     }
 
     #[test]
-    fn textures_resolve_relative_to_the_dae() {
-        let dae = AssetPath::parse("gzhttps://fuel.example/m/1/files/meshes/a.dae");
-        assert_eq!(
-            texture_path(&dae, "../materials/textures/a.png").unwrap(),
-            AssetPath::parse("gzhttps://fuel.example/m/1/files/materials/textures/a.png")
+    fn nodes_are_named_by_name_never_id() {
+        let mut probe = dae("probe.dae");
+        probe.roots[0].name = None;
+        let id = probe.roots[0].id.clone().unwrap();
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        let handles = vec![Handle::default(); probe.meshes.len()];
+        let mats = vec![Handle::default(); probe.materials.len()];
+        spawn_node(
+            &mut world,
+            &probe.roots[0],
+            root,
+            &handles,
+            &mats,
+            &Handle::default(),
         );
-        assert_eq!(
-            texture_path(&dae, "https://fuel.example/x.png").unwrap(),
-            AssetPath::parse("gzhttps://fuel.example/x.png")
-        );
-        let ws = texture_path(&dae, "/abs/x.png").unwrap();
-        assert_eq!(ws, AssetPath::parse("wsasset://abs/abs/x.png"));
+        let names: Vec<String> = world
+            .query::<&Name>()
+            .iter(&world)
+            .map(|n| n.to_string())
+            .collect();
+        assert!(!names.contains(&id), "{names:?}");
+        assert!(names.contains(&"ChildNode".to_string()), "{names:?}");
     }
 
     /// A 1×1 white PNG.
@@ -535,7 +403,7 @@ mod tests {
         .register_asset_loader(bevy::image::ImageLoader::new(
             bevy::image::CompressedImageFormats::NONE,
         ))
-        .init_asset_loader::<ColladaLoader>()
+        .init_asset_loader::<mesh_file::SceneFileLoader>()
         .add_systems(Update, drop_failed_textures);
         app
     }

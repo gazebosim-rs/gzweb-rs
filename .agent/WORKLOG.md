@@ -359,3 +359,28 @@ These are findings for the plan, not changes:
   into `target/http-cache`; the mirror wrote the lock entry.
 - CI's HTTP cache doesn't have the image yet: the Fuel job fetches it from
   fuel.gazebosim.org and fails while that is down.
+
+## 2026-10-18: PR #22 review fixes
+
+- Merged #21's review fixes; OBJ now uses its material rules (roughness
+  `(2/(n+2))^¼`, `units::emissive`, sRGB vertex colours, repeating textures).
+- `.DAE` loaded as OBJ (Bevy matches extensions case-sensitively and fell
+  back to the last `Scene` loader); `.GLB` found no loader (a labelled
+  path). One `mesh_file::SceneFileLoader` for COLLADA and OBJ, glTF loaded
+  as a `Gltf`; headless test with `.GLTF`, `.DAE`, `.Obj`, `.STL`.
+- `mesh_file`: the loaders' shared texture paths/loading, Phong roughness
+  and mesh tail. Textures climbing out of their source are refused (Bevy
+  panicked in the loader).
+- `<submesh>`: Gazebo's rules, checked against gz-common (COLLADA, Assimp,
+  OBJ loaders) and gz-rendering's `Ogre2MeshFactory`: every match, unnamed
+  nodes join the named ancestor, COLLADA `name` only, each submesh centred
+  on its own bounds; idempotent on respawn.
+- Heightmaps: the brightest pixel is at `size.z` (gz `MaxElevation`);
+  layer textures tracked for snapshots; image CPU-only; grid tangents only
+  under a normal map (1025²: ~14 ms instead of 3 s); snapshot corners and a
+  headless orientation check.
+- OBJ: absolute/URI texture paths through the sources, MTL keys in any
+  case, `-s`/`-o` → `uv_transform`, `map_Ka` dropped, gzweb's
+  `/materials/textures` rule matched; tobj's unused `async` feature off.
+- Assets: hosts that fail to connect or time out are skipped for 5 min;
+  unanswered websocket `asset` requests fail after 60 s.

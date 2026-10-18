@@ -159,8 +159,16 @@ Parity tests allow-list these with a reason string:
 - Pose updates matched by **entity id** first, name second (gzweb: first DFS name match).
 - Spot penumbra not clamped to ≥ 1; directional shadow map 4096 (not 4094).
 - Shadows/materials applied to **all** submeshes, not just the first descendant mesh.
-- `<submesh><center>` centres the submesh's bounds under its full transform (Gazebo);
-  gzweb zeroes ancestor translations but keeps their rotations.
+- `<submesh>` follows Gazebo: **every** submesh of that name is kept (gzweb: the first
+  three.js mesh, depth first), unnamed nodes' geometry joins the nearest named ancestor's,
+  COLLADA nodes are named by `name` only, and `center` centres each submesh's bounds under
+  its full transform (gzweb zeroes ancestor translations but keeps their rotations).
+- MTL: keys in any case and `-s`/`-o` as in three.js, but `map_Ka` is ignored (gzweb
+  rewrites its path, three.js never reads it; gz-common reads only `map_Kd`); absolute and
+  URI texture paths are used as they are (gzweb prefixes them with `materials/textures/`);
+  `map_Bump`/`bump` are normal maps, as in gz-common (three.js: bump maps). Not done:
+  `-bm`, `map_d`, `map_Ks`, per-texture `-s`/`-o` (one `uv_transform` per material, from
+  `map_Kd`).
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - An OBJ whose `.mtl` fails to load still shows, with the default material.

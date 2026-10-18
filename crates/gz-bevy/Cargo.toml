@@ -15,7 +15,7 @@ bevy_stl = { version = "0.18.0", default-features = false }
 async-channel = "2"
 wgpu-types = "27"
 crossbeam-channel = "0.5"
-tobj = { version = "4.0.5", default-features = false, features = ["async"] }
+tobj = { version = "4.0.5", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gz-core = { workspace = true, features = ["native"] }

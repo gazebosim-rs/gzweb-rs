@@ -2,22 +2,22 @@
 //!
 //! gzweb only draws heights carried in the message, which Gazebo never
 //! sends, so its terrain is empty. Like Gazebo we load the heightmap image
-//! (grayscale, black = 0, white = `size.z`), sample it `sampling` times per
-//! pixel with bilinear filtering, and lay it over `size.x` × `size.y` centred
-//! on `origin`, the image's top row at +Y. Heights in the message are used
-//! as they are.
+//! (grayscale; black at `origin.z`, the brightest pixel at `origin.z +
+//! size.z`), sample it `sampling` times per pixel with bilinear filtering,
+//! and lay it over `size.x` × `size.y` centred on `origin`, the image's top
+//! row at +Y. Heights in the message are used as they are.
 //!
 //! The first texture layer covers the terrain, repeating every `size`
 //! metres (as in gzweb). Height blending between layers is not done yet.
 
 use bevy::asset::{LoadState, RenderAssetUsages};
-use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
+use bevy::image::ImageLoaderSettings;
 use bevy::math::Affine2;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use gz_core::scene::HeightmapDesc;
 
-use crate::assets;
+use crate::{assets, mesh_file};
 
 /// Vertices along a side are capped here (about a million in all).
 pub const MAX_VERTICES_PER_SIDE: usize = 1025;
@@ -29,6 +29,8 @@ pub struct GzHeightmap {
     pub image: Option<Handle<Image>>,
     /// Set once the terrain is built, or its image failed.
     pub built: bool,
+    /// Vertices per row and column of the built terrain (0 when empty).
+    pub grid_size: (usize, usize),
 }
 
 /// A grid of heights in metres, row 0 at +Y.
@@ -39,32 +41,47 @@ pub struct Grid {
     pub heights: Vec<f32>,
 }
 
-/// Starts loading the heightmap (and its textures) for a visual.
+/// Starts loading the heightmap and its textures for a visual; returns
+/// what it loads, for snapshots to wait on.
 pub fn spawn(
     commands: &mut Commands,
     asset_server: &AssetServer,
     materials: &mut Assets<StandardMaterial>,
     desc: &HeightmapDesc,
     parent: Entity,
-) -> Option<UntypedHandle> {
+) -> Vec<UntypedHandle> {
+    // Only read on the CPU, never uploaded.
     let image: Option<Handle<Image>> = desc.image_uri.as_ref().map(|uri| {
         asset_server.load_with_settings(assets::asset_path(uri), |s: &mut ImageLoaderSettings| {
             s.is_srgb = false;
+            s.asset_usage = RenderAssetUsages::MAIN_WORLD;
         })
     });
-    let material = materials.add(material(asset_server, desc));
+    let material = material(asset_server, desc);
+    let loads: Vec<UntypedHandle> = image
+        .iter()
+        .map(|h| h.clone().untyped())
+        .chain(
+            [&material.base_color_texture, &material.normal_map_texture]
+                .into_iter()
+                .flatten()
+                .map(|h| h.clone().untyped()),
+        )
+        .collect();
+    let material = materials.add(material);
     commands.spawn((
         GzHeightmap {
             desc: desc.clone(),
-            image: image.clone(),
+            image,
             built: false,
+            grid_size: (0, 0),
         },
         MeshMaterial3d(material),
         Transform::IDENTITY,
         Visibility::default(),
         ChildOf(parent),
     ));
-    image.map(|h| h.untyped())
+    loads
 }
 
 /// The first layer's textures, repeating every `size` metres.
@@ -81,15 +98,7 @@ fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMateria
         uri.as_ref().map(|uri| {
             asset_server.load_with_settings(
                 assets::asset_path(uri),
-                move |s: &mut ImageLoaderSettings| {
-                    s.is_srgb = srgb;
-                    s.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                        address_mode_u: ImageAddressMode::Repeat,
-                        address_mode_v: ImageAddressMode::Repeat,
-                        anisotropy_clamp: 16,
-                        ..ImageSamplerDescriptor::linear()
-                    });
-                },
+                mesh_file::image_settings(srgb, mesh_file::sampler([true; 2], 16)),
             )
         })
     };
@@ -143,13 +152,23 @@ pub fn build(
             },
         };
         terrain.built = true;
+        // Tangents only matter to a normal map.
+        let tangents = terrain
+            .desc
+            .layers
+            .first()
+            .is_some_and(|l| l.normal.is_some());
+        let grid = grid.map(|g| resample(&g, terrain.desc.sampling as usize));
         // Without heights the terrain is an empty mesh, which still carries
         // its material (gzweb's terrain is always empty).
         let mesh = grid
-            .and_then(|g| {
-                terrain_mesh(&resample(&g, terrain.desc.sampling as usize), &terrain.desc)
-            })
-            .unwrap_or_else(empty_mesh);
+            .as_ref()
+            .and_then(|g| terrain_mesh(g, &terrain.desc, tangents));
+        if mesh.is_some() {
+            let g = grid.as_ref().expect("a mesh has a grid");
+            terrain.grid_size = (g.width, g.height);
+        }
+        let mesh = mesh.unwrap_or_else(empty_mesh);
         commands.entity(entity).insert(Mesh3d(meshes.add(mesh)));
     }
 }
@@ -162,16 +181,27 @@ fn empty_mesh() -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new())
 }
 
-/// Image values as heights (0..=`scale`), or `None` if a pixel can't be read.
+/// Image values as heights, or `None` if a pixel can't be read. As in
+/// Gazebo, black is 0 and the brightest pixel `scale`: gz-rendering divides
+/// by the image's maximum elevation (`ImageHeightmap::MaxElevation`, the red
+/// value of the pixel with the largest R+G+B; the minimum is 0), so an image
+/// that is never white still spans `size.z`. An all-black image is flat.
 pub fn image_grid(image: &Image, scale: f32) -> Option<Grid> {
     let (width, height) = (image.width() as usize, image.height() as usize);
     let mut heights = Vec::with_capacity(width * height);
+    let (mut brightest, mut max) = (f32::NEG_INFINITY, 0.0);
     for y in 0..height as u32 {
         for x in 0..width as u32 {
             let c = image.get_color_at(x, y).ok()?.to_linear();
-            heights.push(c.red * scale);
+            let sum = c.red + c.green + c.blue;
+            if sum > brightest {
+                (brightest, max) = (sum, c.red);
+            }
+            heights.push(c.red);
         }
     }
+    let k = if max > 1e-6 { scale / max } else { scale };
+    heights.iter_mut().for_each(|h| *h *= k);
     Some(Grid {
         width,
         height,
@@ -216,8 +246,9 @@ pub fn resample(grid: &Grid, sampling: usize) -> Grid {
 }
 
 /// The terrain in the visual's Gazebo frame, with smooth normals, UVs over
-/// [0, 1] (the material repeats them) and tangents. `None` below 2×2.
-pub fn terrain_mesh(grid: &Grid, desc: &HeightmapDesc) -> Option<Mesh> {
+/// [0, 1] (the material repeats them) and, with `tangents`, tangents.
+/// `None` below 2×2.
+pub fn terrain_mesh(grid: &Grid, desc: &HeightmapDesc, tangents: bool) -> Option<Mesh> {
     let (w, h) = (grid.width, grid.height);
     if w < 2 || h < 2 || grid.heights.len() != w * h {
         return None;
@@ -255,10 +286,47 @@ pub fn terrain_mesh(grid: &Grid, desc: &HeightmapDesc) -> Option<Mesh> {
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices));
     mesh.compute_smooth_normals();
-    if let Err(e) = mesh.generate_tangents() {
-        warn!("heightmap: no tangents: {e}");
+    if tangents {
+        let tangents = grid_tangents(grid, desc, &mesh);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
     }
     Some(mesh)
+}
+
+/// Tangents of the regular grid, without mikktspace (which takes seconds
+/// on a 1025² terrain): ∂p/∂u by central differences, made orthogonal to
+/// the normal, with Bevy's handedness (`w` is the sign that makes
+/// `w · (n × t)` point against ∂p/∂v: Bevy's V runs down the texture).
+fn grid_tangents(grid: &Grid, desc: &HeightmapDesc, mesh: &Mesh) -> Vec<[f32; 4]> {
+    let (w, h) = (grid.width, grid.height);
+    let [sx, sy, _] = desc.size.map(|v| v as f32);
+    let Some(bevy::mesh::VertexAttributeValues::Float32x3(normals)) =
+        mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+    else {
+        return vec![[1.0, 0.0, 0.0, 1.0]; w * h];
+    };
+    let at = |r: usize, c: usize| grid.heights[r * w + c];
+    let mut out = Vec::with_capacity(w * h);
+    for r in 0..h {
+        let (r0, r1) = (r.saturating_sub(1), (r + 1).min(h - 1));
+        for c in 0..w {
+            let (c0, c1) = (c.saturating_sub(1), (c + 1).min(w - 1));
+            // Per unit of u (x grows with u) and of v (y shrinks with v).
+            let du = (c1 - c0) as f32 / (w - 1) as f32;
+            let dv = (r1 - r0) as f32 / (h - 1) as f32;
+            let dp_du = Vec3::new(sx, 0.0, (at(r, c1) - at(r, c0)) / du);
+            let dp_dv = Vec3::new(0.0, -sy, (at(r1, c) - at(r0, c)) / dv);
+            let n = Vec3::from_array(normals[r * w + c]);
+            let t = (dp_du - n * n.dot(dp_du)).normalize_or(Vec3::X);
+            let sign = if n.cross(t).dot(dp_dv) > 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
+            out.push([t.x, t.y, t.z, sign]);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -281,6 +349,14 @@ mod tests {
         }
     }
 
+    fn positions(mesh: &Mesh) -> &[[f32; 3]] {
+        let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+        else {
+            panic!("no positions");
+        };
+        p
+    }
+
     #[test]
     fn terrain_is_centred_with_the_top_row_at_plus_y() {
         let grid = Grid {
@@ -288,21 +364,19 @@ mod tests {
             height: 2,
             heights: vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
         };
-        let mesh = terrain_mesh(&grid, &desc()).unwrap();
-        let Some(VertexAttributeValues::Float32x3(p)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        else {
-            panic!("no positions");
-        };
+        let mesh = terrain_mesh(&grid, &desc(), false).unwrap();
+        let p = positions(&mesh);
         assert_eq!(p[0], [-1.0, 1.0, 0.5]);
         assert_eq!(p[2], [3.0, 1.0, 2.5]);
         assert_eq!(p[3], [-1.0, -1.0, 3.5]);
         assert_eq!(mesh.indices().unwrap().len(), 2 * 2 * 3);
+        assert!(!mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
         // Flat terrain faces +Z.
         let flat = Grid {
             heights: vec![0.0; 6],
             ..grid
         };
-        let mesh = terrain_mesh(&flat, &desc()).unwrap();
+        let mesh = terrain_mesh(&flat, &desc(), true).unwrap();
         let Some(VertexAttributeValues::Float32x3(n)) = mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
         else {
             panic!("no normals");
@@ -315,9 +389,41 @@ mod tests {
                 height: 1,
                 heights: vec![0.0]
             },
-            &desc()
+            &desc(),
+            true
         )
         .is_none());
+    }
+
+    #[test]
+    fn grid_tangents_match_mikktspace() {
+        // A smooth bump, finely sampled: mikktspace averages face tangents,
+        // so the two agree closely but not exactly.
+        let n = 33;
+        let heights = (0..n * n)
+            .map(|i| {
+                let (x, y) = ((i % n) as f32 / 8.0, (i / n) as f32 / 8.0);
+                (x.sin() * y.cos()) * 0.5
+            })
+            .collect();
+        let grid = Grid {
+            width: n,
+            height: n,
+            heights,
+        };
+        let ours = terrain_mesh(&grid, &desc(), true).unwrap();
+        let mut mikk = ours.clone();
+        mikk.generate_tangents().unwrap();
+        let tangents = |m: &Mesh| match m.attribute(Mesh::ATTRIBUTE_TANGENT) {
+            Some(VertexAttributeValues::Float32x4(t)) => t.clone(),
+            _ => panic!("no tangents"),
+        };
+        let (a, b) = (tangents(&ours), tangents(&mikk));
+        for (i, (a, b)) in a.iter().zip(&b).enumerate() {
+            assert_eq!(a[3], b[3], "handedness at {i}");
+            let dot = Vec3::from_slice(a).dot(Vec3::from_slice(b));
+            assert!(dot > 0.999, "vertex {i}: {a:?} vs {b:?}");
+        }
     }
 
     #[test]
@@ -347,17 +453,26 @@ mod tests {
         assert_eq!(resample(&huge, 1).width, MAX_VERTICES_PER_SIDE);
     }
 
-    /// Spawns `desc` under a fresh entity and runs until it is built.
-    fn built(desc: HeightmapDesc) -> (App, Entity) {
+    /// Spawns `desc` under a fresh entity in an app that reads PNGs, with
+    /// `served` answered by the (absent) server, and runs until it is
+    /// built. Returns what `spawn` loads too.
+    fn built(desc: HeightmapDesc, served: &[(&str, assets::AssetResult)]) -> Built {
         let mut app = crate::test_util::scene_app(crate::GzConfig::default());
+        app.register_asset_loader(bevy::image::ImageLoader::new(
+            bevy::image::CompressedImageFormats::NONE,
+        ));
+        let store = app.world().resource::<assets::WsAssetStore>().clone();
+        for (uri, result) in served {
+            store.deliver(uri, result.clone());
+        }
         let world = app.world_mut();
         let parent = world.spawn(Transform::IDENTITY).id();
-        world
+        let loads = world
             .run_system_once(
                 move |mut commands: Commands,
                       server: Res<AssetServer>,
                       mut materials: ResMut<Assets<StandardMaterial>>| {
-                    spawn(&mut commands, &server, &mut materials, &desc, parent);
+                    spawn(&mut commands, &server, &mut materials, &desc, parent)
                 },
             )
             .unwrap();
@@ -370,64 +485,92 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let world = app.world_mut();
-        let e = world
+        let entity = world
             .query_filtered::<Entity, With<GzHeightmap>>()
             .single(world)
             .unwrap();
-        (app, e)
+        Built { app, entity, loads }
     }
 
-    fn vertices(app: &App, e: Entity) -> usize {
-        let mesh = app.world().get::<Mesh3d>(e).expect("a mesh once built");
-        let mesh = app.world().resource::<Assets<Mesh>>().get(&mesh.0).unwrap();
-        mesh.count_vertices()
+    struct Built {
+        app: App,
+        entity: Entity,
+        loads: Vec<UntypedHandle>,
+    }
+
+    impl Built {
+        fn mesh(&self) -> &Mesh {
+            let mesh = self
+                .app
+                .world()
+                .get::<Mesh3d>(self.entity)
+                .expect("a mesh once built");
+            self.app
+                .world()
+                .resource::<Assets<Mesh>>()
+                .get(&mesh.0)
+                .unwrap()
+        }
+
+        fn material(&self) -> &StandardMaterial {
+            let mat = self
+                .app
+                .world()
+                .get::<MeshMaterial3d<StandardMaterial>>(self.entity)
+                .unwrap();
+            self.app
+                .world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(&mat.0)
+                .unwrap()
+        }
+
+        fn terrain(&self) -> &GzHeightmap {
+            self.app.world().get::<GzHeightmap>(self.entity).unwrap()
+        }
     }
 
     #[test]
     fn message_heights_build_without_an_image_and_untextured_is_grey() {
-        let (app, e) = built(HeightmapDesc {
-            heights: vec![0.0, 1.0, 2.0, 3.0],
-            width: 2,
-            height: 2,
-            sampling: 2,
-            ..desc()
-        });
-        assert!(app.world().get::<GzHeightmap>(e).unwrap().built);
-        assert_eq!(vertices(&app, e), 9);
-        let mat = app
-            .world()
-            .get::<MeshMaterial3d<StandardMaterial>>(e)
-            .unwrap();
-        let mat = app
-            .world()
-            .resource::<Assets<StandardMaterial>>()
-            .get(&mat.0)
-            .unwrap();
-        assert_eq!(mat.base_color, Color::srgb_u8(0x55, 0x55, 0x55));
+        let b = built(
+            HeightmapDesc {
+                heights: vec![0.0, 1.0, 2.0, 3.0],
+                width: 2,
+                height: 2,
+                sampling: 2,
+                ..desc()
+            },
+            &[],
+        );
+        assert!(b.terrain().built);
+        assert_eq!(b.terrain().grid_size, (3, 3));
+        assert_eq!(b.mesh().count_vertices(), 9);
+        assert!(b.loads.is_empty());
+        assert_eq!(b.material().base_color, Color::srgb_u8(0x55, 0x55, 0x55));
+    }
+
+    fn layer() -> gz_core::scene::HeightmapLayer {
+        gz_core::scene::HeightmapLayer {
+            diffuse: Some("https://fuel.example/d.png".into()),
+            normal: Some("https://fuel.example/n.png".into()),
+            size: 2.0,
+        }
     }
 
     #[test]
     fn a_missing_image_is_an_empty_textured_terrain() {
-        let (app, e) = built(HeightmapDesc {
-            image_uri: Some("does/not/exist.png".into()),
-            layers: vec![gz_core::scene::HeightmapLayer {
-                diffuse: Some("https://fuel.example/d.png".into()),
-                normal: None,
-                size: 2.0,
-            }],
-            ..desc()
-        });
-        assert!(app.world().get::<GzHeightmap>(e).unwrap().built);
-        assert_eq!(vertices(&app, e), 0);
-        let mat = app
-            .world()
-            .get::<MeshMaterial3d<StandardMaterial>>(e)
-            .unwrap();
-        let mat = app
-            .world()
-            .resource::<Assets<StandardMaterial>>()
-            .get(&mat.0)
-            .unwrap();
+        let b = built(
+            HeightmapDesc {
+                image_uri: Some("does/not/exist.png".into()),
+                layers: vec![layer()],
+                ..desc()
+            },
+            &[("does/not/exist.png", Err("asset_not_found".into()))],
+        );
+        assert!(b.terrain().built);
+        assert_eq!(b.mesh().count_vertices(), 0);
+        assert_eq!(b.terrain().grid_size, (0, 0));
+        let mat = b.material();
         assert_eq!(
             mat.base_color_texture
                 .as_ref()
@@ -437,22 +580,79 @@ mod tests {
         );
         // 4 m by 2 m, one repeat every 2 m.
         assert_eq!(mat.uv_transform, Affine2::from_scale(Vec2::new(2.0, 1.0)));
+        // Snapshots wait for the image and both layer textures.
+        let paths: Vec<String> = b
+            .loads
+            .iter()
+            .filter_map(|h| h.path().map(|p| p.to_string()))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "wsasset://rel/does/not/exist.png",
+                "gzhttps://fuel.example/d.png",
+                "gzhttps://fuel.example/n.png"
+            ]
+        );
     }
 
     #[test]
-    fn image_values_scale_to_size_z() {
-        let image = Image::new(
-            bevy::render::render_resource::Extent3d {
-                width: 2,
-                height: 1,
-                depth_or_array_layers: 1,
+    fn an_image_is_laid_out_top_row_at_plus_y_and_stays_on_the_cpu() {
+        // 3×3 grey: white in the centre, 128 in the bottom-right corner.
+        let png = include_bytes!("../../gzweb/tests/data/terrain.png").to_vec();
+        let b = built(
+            HeightmapDesc {
+                image_uri: Some("t.png".into()),
+                ..desc()
             },
-            bevy::render::render_resource::TextureDimension::D2,
-            vec![0, 0, 0, 255, 255, 255, 255, 255],
-            bevy::render::render_resource::TextureFormat::Rgba8Unorm,
-            RenderAssetUsages::default(),
+            &[("t.png", Ok(png))],
         );
-        let grid = image_grid(&image, 10.0).unwrap();
-        assert_eq!(grid.heights, vec![0.0, 10.0]);
+        assert_eq!(b.terrain().grid_size, (3, 3));
+        let image = b.terrain().image.clone().unwrap();
+        let images = b.app.world().resource::<Assets<Image>>();
+        assert_eq!(
+            images.get(&image).unwrap().asset_usage,
+            RenderAssetUsages::MAIN_WORLD
+        );
+        let p = positions(b.mesh());
+        // Origin (1, 0, 0.5), 4 × 2 × 10: the centre is the brightest, at
+        // the top; the last pixel (bottom row, right) is at +X, -Y.
+        assert_eq!(p[4], [1.0, 0.0, 10.5]);
+        assert_eq!(p[8][..2], [3.0, -1.0]);
+        assert!(
+            (p[8][2] - (0.5 + 10.0 * 128.0 / 255.0)).abs() < 1e-4,
+            "{p:?}"
+        );
+        assert_eq!(p[0], [-1.0, 1.0, 0.5]);
+        // No normal map, no tangents.
+        assert!(!b.mesh().contains_attribute(Mesh::ATTRIBUTE_TANGENT));
+    }
+
+    #[test]
+    fn image_values_scale_so_the_brightest_is_size_z() {
+        let image = |data: Vec<u8>| {
+            Image::new(
+                bevy::render::render_resource::Extent3d {
+                    width: 3,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                bevy::render::render_resource::TextureDimension::D2,
+                data,
+                bevy::render::render_resource::TextureFormat::Rgba8Unorm,
+                RenderAssetUsages::MAIN_WORLD,
+            )
+        };
+        let white = image(vec![0, 0, 0, 255, 255, 255, 255, 255, 51, 51, 51, 255]);
+        let grid = image_grid(&white, 10.0).unwrap();
+        assert_eq!(grid.heights, vec![0.0, 10.0, 2.0]);
+        // Never white: the brightest pixel still reaches size.z.
+        let grey = image(vec![0, 0, 0, 255, 102, 102, 102, 255, 51, 51, 51, 255]);
+        let grid = image_grid(&grey, 10.0).unwrap();
+        assert!((grid.heights[1] - 10.0).abs() < 1e-5, "{:?}", grid.heights);
+        assert!((grid.heights[2] - 5.0).abs() < 1e-5, "{:?}", grid.heights);
+        // All black stays flat.
+        let black = image(vec![0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255]);
+        assert_eq!(image_grid(&black, 10.0).unwrap().heights, vec![0.0; 3]);
     }
 }

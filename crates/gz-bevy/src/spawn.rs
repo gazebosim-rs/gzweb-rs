@@ -69,6 +69,41 @@ pub struct GzIndex {
 #[derive(Resource, Default)]
 pub struct GzLoads(pub Vec<UntypedHandle>);
 
+/// A glTF mesh waiting for its file; [`instance_gltf`] then adds the
+/// `SceneRoot` for its scene. It is loaded by asset type rather than as
+/// `file#Scene0`, which Bevy would match to a loader by extension, case
+/// sensitively (a `.GLB` would find none).
+#[derive(Component, Debug, Clone)]
+pub struct GzGltf(pub Handle<Gltf>);
+
+/// Instances each loaded glTF's default scene (else its first), as three.js's
+/// `GLTFLoader` does.
+pub fn instance_gltf(
+    mut commands: Commands,
+    pending: Query<(Entity, &GzGltf), Without<SceneRoot>>,
+    gltfs: Option<Res<Assets<Gltf>>>,
+) {
+    let Some(gltfs) = gltfs else { return };
+    for (entity, gltf) in &pending {
+        let Some(gltf) = gltfs.get(&gltf.0) else {
+            continue;
+        };
+        match gltf
+            .default_scene
+            .clone()
+            .or_else(|| gltf.scenes.first().cloned())
+        {
+            Some(scene) => {
+                commands.entity(entity).insert(SceneRoot(scene));
+            }
+            None => {
+                warn!("glTF has no scene");
+                commands.entity(entity).remove::<GzGltf>();
+            }
+        }
+    }
+}
+
 pub fn spawn_root(mut commands: Commands, mut index: ResMut<GzIndex>) {
     let root = commands
         .spawn((
@@ -265,9 +300,9 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
             return;
         }
         GeometryDesc::Heightmap(desc) => {
-            let image =
+            let loads =
                 heightmap::spawn(ctx.commands, ctx.asset_server, ctx.materials, desc, parent);
-            ctx.loads.0.extend(image);
+            ctx.loads.0.extend(loads);
             return;
         }
         GeometryDesc::Unsupported(kind) => {
@@ -355,10 +390,13 @@ fn spawn_mesh_file(
     let path = assets::asset_path(load_uri);
     match uri::extension(load_uri).as_str() {
         "glb" | "gltf" => {
-            let scene: Handle<Scene> = ctx
-                .asset_server
-                .load(GltfAssetLabel::Scene(0).from_asset(path));
-            spawn_scene(ctx, visual, parent, scene);
+            let gltf: Handle<Gltf> = ctx.asset_server.load(path);
+            ctx.loads.0.push(gltf.clone().untyped());
+            let entity = ctx
+                .commands
+                .spawn((GzGltf(gltf), Transform::IDENTITY, ChildOf(parent)))
+                .id();
+            add_submesh(ctx, visual, entity);
         }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
@@ -373,27 +411,31 @@ fn spawn_mesh_file(
                 ChildOf(parent),
             ));
         }
+        // `SceneFileLoader` reads both, in any case.
         "obj" | "dae" => {
             let scene: Handle<Scene> = ctx.asset_server.load(path);
-            spawn_scene(ctx, visual, parent, scene);
+            ctx.loads.0.push(scene.clone().untyped());
+            let entity = ctx
+                .commands
+                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)))
+                .id();
+            add_submesh(ctx, visual, entity);
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
     }
 }
 
-/// A mesh file's scene, cut down to its `<submesh>` if it names one.
-fn spawn_scene(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, scene: Handle<Scene>) {
-    ctx.loads.0.push(scene.clone().untyped());
-    let mut entity = ctx
-        .commands
-        .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
+/// Cuts a mesh file's scene on `entity` down to its `<submesh>`, if the
+/// visual names one, once it is instanced.
+fn add_submesh(ctx: &mut SpawnCtx, visual: &VisualDesc, entity: Entity) {
     if let GeometryDesc::Mesh {
         submesh: Some(name),
         center_submesh,
         ..
     } = &visual.geometry
     {
-        entity
+        ctx.commands
+            .entity(entity)
             .insert(submesh::GzSubmesh {
                 name: name.clone(),
                 center: *center_submesh,
