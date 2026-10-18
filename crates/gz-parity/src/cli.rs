@@ -135,6 +135,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                 lock: flags.get("lock").map(PathBuf::from),
                 upstream: flags.get("upstream").cloned(),
                 offline: num(&flags, "offline", false)?,
+                fetch_timeout: mirror::FETCH_TIMEOUT,
             };
             mirror::serve_on(listener, opts)?;
             Ok(ExitCode::SUCCESS)

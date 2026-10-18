@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers (OBJ-only fields removed).
+
 use std::{fmt, path::PathBuf};
 
 pub(crate) type Vec2 = [f32; 2];
@@ -28,8 +30,6 @@ pub struct Mesh {
     pub normals: Vec<Vec3>,
     pub faces: Vec<Face>,
     pub colors: [Vec<Color4>; MAX_NUMBER_OF_COLOR_SETS],
-    #[cfg(feature = "obj")]
-    pub(crate) material_index: u32,
 }
 
 impl Mesh {
@@ -79,8 +79,6 @@ impl Mesh {
             normals,
             faces,
             colors: [colors0, colors1],
-            #[cfg(feature = "obj")]
-            material_index: u32::MAX,
         }
     }
 }

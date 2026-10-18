@@ -1,3 +1,10 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+//
+// gz-collada: nothing here panics on a bad document. A source that doesn't
+// resolve, isn't a `<float_array>` or overruns its array yields nothing,
+// and an index past the end of `<p>` ends the iteration. `crate::validate`
+// turns those cases into errors before these iterators run.
+
 use std::{
     iter::{self, FusedIterator},
     ops::Range,
@@ -10,13 +17,13 @@ use crate::vendor::{
 };
 
 #[derive(Clone)]
-pub(super) struct Mesh<'a> {
-    pub(super) doc: &'a ast::Document<'a>,
-    pub(super) xml: &'a ast::Geometry<'a>,
+pub(crate) struct Mesh<'a> {
+    pub(crate) doc: &'a ast::Document<'a>,
+    pub(crate) xml: &'a ast::Geometry<'a>,
 }
 
 impl<'a> Mesh<'a> {
-    pub(super) fn primitives(&self) -> Primitives<'a> {
+    pub(crate) fn primitives(&self) -> Primitives<'a> {
         Primitives {
             mesh: self.clone(),
             iter: self.xml.mesh.primitives.iter().enumerate(),
@@ -24,7 +31,7 @@ impl<'a> Mesh<'a> {
     }
 }
 
-pub(super) struct Primitives<'a> {
+pub(crate) struct Primitives<'a> {
     mesh: Mesh<'a>,
     iter: iter::Enumerate<slice::Iter<'a, ast::Primitive<'a>>>,
 }
@@ -48,274 +55,205 @@ impl ExactSizeIterator for Primitives<'_> {}
 impl FusedIterator for Primitives<'_> {}
 
 #[derive(Clone)]
-pub(super) struct Primitive<'a> {
-    pub(super) mesh: Mesh<'a>,
-    pub(super) xml: &'a ast::Primitive<'a>,
+pub(crate) struct Primitive<'a> {
+    pub(crate) mesh: Mesh<'a>,
+    pub(crate) xml: &'a ast::Primitive<'a>,
+}
+
+/// gz-collada: the `stride`-sized chunks of the float array behind
+/// `source`, or `None` when it doesn't resolve, isn't a `<float_array>`, has
+/// fewer than `min` float params, or its accessor overruns the array. With
+/// `counted`, only the accessor's `count` chunks (upstream ignored `count`
+/// for texture coordinates, as three.js does).
+fn floats<'a>(
+    doc: &'a ast::Document<'a>,
+    source: &ast::Uri<'a, ast::Accessor<'a>>,
+    min: usize,
+    counted: bool,
+) -> Option<slice::ChunksExact<'a, f32>> {
+    let acc = doc.get(source)?;
+    let data = doc.get(&acc.source)?.as_float()?;
+    let stride = acc.stride as usize;
+    if stride < min || acc.params.len() < min || acc.params.iter().any(|p| p.ty != "float") {
+        return None;
+    }
+    let len = (acc.count as usize).checked_mul(stride)?;
+    if len > data.len() {
+        return None;
+    }
+    Some(if counted { &data[..len] } else { data }.chunks_exact(stride))
 }
 
 impl<'a> Primitive<'a> {
-    pub(super) fn positions(&self) -> Positions<'a> {
-        let input = match &self.xml.input {
-            Some(input) => input,
-            None => return Positions(None),
-        };
-        if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-            let position = &self.mesh.xml.mesh.vertices.input.position;
-            let acc = &self.mesh.doc[&position.source];
-            let data = self.mesh.doc[&acc.source].as_float().unwrap();
-            // ["X", "Y", "Z"]
-            if acc.stride < 3 || acc.params.len() < 3 || acc.params.iter().any(|p| p.ty != "float")
-            {
-                // TODO: error?
-                return Positions(None);
-            }
-            assert!((acc.count * acc.stride) as usize <= data.len());
-            Positions(Some((acc.count, data.chunks(acc.stride as usize))))
-        } else {
-            // TODO: search other mesh's vertices
-            todo!()
-        }
+    // gz-collada: VERTEX always means this mesh's own `<vertices>` (a mesh
+    // has exactly one), as in three.js; upstream compared the input's id and
+    // hit `todo!()` when it differed.
+    fn vertices(&self) -> &'a ast::VerticesInputs<'a> {
+        &self.mesh.xml.mesh.vertices.input
     }
 
-    pub(super) fn normals(&self) -> Normals<'a> {
-        let acc = match &self.xml.input {
-            Some(input) => match &input.normal {
-                Some(normal) => &self.mesh.doc[&normal.source],
-                None => {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        match &self.mesh.xml.mesh.vertices.input.normal {
-                            Some(normal) => &self.mesh.doc[&normal.source],
-                            None => return Positions(None),
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                }
-            },
-            None => return Positions(None),
-        };
-        let data = self.mesh.doc[&acc.source].as_float().unwrap();
+    pub(crate) fn positions(&self) -> Positions<'a> {
+        if self.xml.input.is_none() {
+            return Positions(None);
+        }
         // ["X", "Y", "Z"]
-        if acc.stride < 3 || acc.params.len() < 3 || acc.params.iter().any(|p| p.ty != "float") {
-            // TODO: error?
-            return Positions(None);
-        }
-        assert!((acc.count * acc.stride) as usize <= data.len());
-        Positions(Some((acc.count, data.chunks(acc.stride as usize))))
+        Positions(floats(
+            self.mesh.doc,
+            &self.vertices().position.source,
+            3,
+            true,
+        ))
     }
 
-    pub(super) fn texcoords(&self, set: usize) -> Texcoords<'a> {
-        let acc = match &self.xml.input {
-            Some(input) => {
-                if let Some(texcoord) = input.texcoord.get(set) {
-                    &self.mesh.doc[&texcoord.source]
-                } else if set == 0 {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        match &self.mesh.xml.mesh.vertices.input.texcoord {
-                            Some(texcoord) => &self.mesh.doc[&texcoord.source],
-                            None => return Texcoords(None),
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                } else {
-                    return Texcoords(None);
-                }
-            }
-            None => return Texcoords(None),
+    pub(crate) fn normals(&self) -> Normals<'a> {
+        let Some(input) = &self.xml.input else {
+            return Positions(None);
         };
-        let data = self.mesh.doc[&acc.source].as_float().unwrap();
-        // ["S", "T"] or ["S", "T", "P"]
-        if acc.stride < 2 || acc.params.len() < 2 || acc.params.iter().any(|p| p.ty != "float") {
-            // TODO: error?
+        let source = match (&input.normal, &self.vertices().normal) {
+            (Some(normal), _) => &normal.source,
+            (None, Some(normal)) => &normal.source,
+            (None, None) => return Positions(None),
+        };
+        // ["X", "Y", "Z"]
+        Positions(floats(self.mesh.doc, source, 3, true))
+    }
+
+    pub(crate) fn texcoords(&self, set: usize) -> Texcoords<'a> {
+        let Some(input) = &self.xml.input else {
             return Texcoords(None);
-        }
-        assert!((acc.count * acc.stride) as usize <= data.len());
-        Texcoords(Some(TexcoordsInner {
-            iter: data.chunks(acc.stride as usize),
-        }))
+        };
+        let source = match (input.texcoord.get(set), &self.vertices().texcoord) {
+            (Some(texcoord), _) => &texcoord.source,
+            (None, Some(texcoord)) if set == 0 => &texcoord.source,
+            _ => return Texcoords(None),
+        };
+        // ["S", "T"] or ["S", "T", "P"]
+        Texcoords(floats(self.mesh.doc, source, 2, false))
     }
 
-    pub(super) fn colors(&self) -> Colors<'a> {
-        let acc = match &self.xml.input {
-            Some(input) => match &input.color {
-                Some(color) => &self.mesh.doc[&color.source],
-                None => {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        match &self.mesh.xml.mesh.vertices.input.color {
-                            Some(color) => &self.mesh.doc[&color.source],
-                            None => return Positions(None),
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                }
-            },
-            None => return Positions(None),
-        };
-        let data = self.mesh.doc[&acc.source].as_float().unwrap();
-        // ["R", "G", "B"] or ["R", "G", "B", "A"]
-        if acc.stride < 3 || acc.params.len() < 3 || acc.params.iter().any(|p| p.ty != "float") {
-            // TODO: error?
+    pub(crate) fn colors(&self) -> Colors<'a> {
+        let Some(input) = &self.xml.input else {
             return Positions(None);
-        }
-        assert!((acc.count * acc.stride) as usize <= data.len());
-        Positions(Some((acc.count, data.chunks(acc.stride as usize))))
+        };
+        let source = match (&input.color, &self.vertices().color) {
+            (Some(color), _) => &color.source,
+            (None, Some(color)) => &color.source,
+            (None, None) => return Positions(None),
+        };
+        // ["R", "G", "B"] or ["R", "G", "B", "A"]
+        Positions(floats(self.mesh.doc, source, 3, true))
     }
 
     fn vertex_indices_inner(&self, offset: u32) -> IndicesInner<'a> {
+        let polygons = |strip| IndicesInner::Polygons {
+            offset,
+            indices: &self.xml.p,
+            stride: self.xml.stride,
+            vcount: self.xml.vcount.iter(),
+            index: 0,
+            current: None,
+            strip,
+        };
         match self.xml.ty {
             ast::PrimitiveType::Lines | ast::PrimitiveType::LineStrips => IndicesInner::Skip,
-            ast::PrimitiveType::Polylist | ast::PrimitiveType::Polygons => IndicesInner::Polylist {
-                offset,
-                indices: &self.xml.p,
-                stride: self.xml.stride,
-                index: 0,
-                vcount: self.xml.vcount.iter(),
-                range: None,
-            },
+            ast::PrimitiveType::Polylist
+            | ast::PrimitiveType::Polygons
+            | ast::PrimitiveType::TriFans => polygons(false),
+            // gz-collada: strips used to share the fan code.
+            ast::PrimitiveType::TriStrips => polygons(true),
             ast::PrimitiveType::Triangles => IndicesInner::Triangles {
                 offset,
-                indices: self.xml.p.chunks(self.xml.stride as usize),
+                indices: self.xml.p.chunks(self.xml.stride.max(1) as usize),
             },
-            ast::PrimitiveType::TriStrips | ast::PrimitiveType::TriFans => {
-                IndicesInner::TriStrips {
-                    offset,
-                    indices: &self.xml.p,
-                    stride: self.xml.stride,
-                    index: 0,
-                    vcount: self.xml.vcount.iter(),
-                    range: None,
-                }
-            }
         }
     }
 
     fn vertex_indices_size(&self) -> u32 {
         match self.xml.ty {
-            ast::PrimitiveType::Polylist | ast::PrimitiveType::Polygons => self
+            ast::PrimitiveType::Polylist
+            | ast::PrimitiveType::Polygons
+            | ast::PrimitiveType::TriStrips
+            | ast::PrimitiveType::TriFans => self
                 .xml
                 .vcount
                 .iter()
-                .map(|count| if *count >= 3 { count - 2 } else { 0 })
+                .map(|count| count.saturating_sub(2))
                 .sum(),
             ast::PrimitiveType::Triangles => self.xml.count,
-            ast::PrimitiveType::TriStrips | ast::PrimitiveType::TriFans => {
-                self.xml.vcount.iter().map(|&count| count - 2).sum()
-            }
             ast::PrimitiveType::Lines => 0,
             ast::PrimitiveType::LineStrips => 0,
         }
     }
 
-    pub(super) fn vertex_indices(&self) -> VertexIndices<'a> {
-        let offset = match &self.xml.input {
-            Some(input) => input.vertex.offset,
-            None => return VertexIndices::none(),
-        };
-        VertexIndices {
-            remaining: self.vertex_indices_size(),
-            inner: self.vertex_indices_inner(offset),
+    fn indices(&self, offset: Option<u32>) -> VertexIndices<'a> {
+        match offset {
+            Some(offset) => VertexIndices {
+                remaining: self.vertex_indices_size(),
+                inner: self.vertex_indices_inner(offset),
+            },
+            None => VertexIndices::none(),
         }
     }
 
-    pub(super) fn normal_indices(&self) -> VertexIndices<'a> {
-        let offset = match &self.xml.input {
-            Some(input) => match &input.normal {
-                Some(normal) => normal.offset,
-                None => {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        if self.mesh.xml.mesh.vertices.input.normal.is_some() {
-                            input.vertex.offset
-                        } else {
-                            return VertexIndices::none();
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                }
-            },
-            None => return VertexIndices::none(),
-        };
-        VertexIndices {
-            remaining: self.vertex_indices_size(),
-            inner: self.vertex_indices_inner(offset),
-        }
+    pub(crate) fn vertex_indices(&self) -> VertexIndices<'a> {
+        self.indices(self.xml.input.as_ref().map(|input| input.vertex.offset))
     }
 
-    pub(super) fn texcoord_indices(&self, set: usize) -> VertexIndices<'a> {
-        let offset = match &self.xml.input {
-            Some(input) => match input.texcoord.get(set) {
-                Some(texcoord) => texcoord.offset,
-                None => {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        if self.mesh.xml.mesh.vertices.input.texcoord.is_some() {
-                            input.vertex.offset
-                        } else {
-                            return VertexIndices::none();
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                }
-            },
-            None => return VertexIndices::none(),
-        };
-        VertexIndices {
-            remaining: self.vertex_indices_size(),
-            inner: self.vertex_indices_inner(offset),
-        }
+    pub(crate) fn normal_indices(&self) -> VertexIndices<'a> {
+        let offset = self
+            .xml
+            .input
+            .as_ref()
+            .and_then(|input| match &input.normal {
+                Some(normal) => Some(normal.offset),
+                None => self.vertices().normal.as_ref().map(|_| input.vertex.offset),
+            });
+        self.indices(offset)
     }
 
-    pub(super) fn color_indices(&self) -> VertexIndices<'a> {
-        let offset = match &self.xml.input {
-            Some(input) => match &input.color {
-                Some(color) => color.offset,
-                None => {
-                    if self.mesh.xml.mesh.vertices.id == input.vertex.source {
-                        if self.mesh.xml.mesh.vertices.input.color.is_some() {
-                            input.vertex.offset
-                        } else {
-                            return VertexIndices::none();
-                        }
-                    } else {
-                        // TODO: search other mesh's vertices
-                        todo!()
-                    }
-                }
-            },
-            None => return VertexIndices::none(),
-        };
-        VertexIndices {
-            remaining: self.vertex_indices_size(),
-            inner: self.vertex_indices_inner(offset),
-        }
+    pub(crate) fn texcoord_indices(&self, set: usize) -> VertexIndices<'a> {
+        let offset = self
+            .xml
+            .input
+            .as_ref()
+            .and_then(|input| match input.texcoord.get(set) {
+                Some(texcoord) => Some(texcoord.offset),
+                None if set == 0 => self
+                    .vertices()
+                    .texcoord
+                    .as_ref()
+                    .map(|_| input.vertex.offset),
+                None => None,
+            });
+        self.indices(offset)
+    }
+
+    pub(crate) fn color_indices(&self) -> VertexIndices<'a> {
+        let offset = self
+            .xml
+            .input
+            .as_ref()
+            .and_then(|input| match &input.color {
+                Some(color) => Some(color.offset),
+                None => self.vertices().color.as_ref().map(|_| input.vertex.offset),
+            });
+        self.indices(offset)
     }
 }
 
-pub(super) struct Positions<'a>(Option<(u32, slice::Chunks<'a, f32>)>);
+pub(crate) struct Positions<'a>(Option<slice::ChunksExact<'a, f32>>);
 
 impl Iterator for Positions<'_> {
     type Item = Vec3;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (count, iter) = self.0.as_mut()?;
-        let v = iter.next().unwrap();
-        *count -= 1;
-        if *count == 0 {
-            self.0 = None;
-        }
+        let v = self.0.as_mut()?.next()?;
         Some([v[0], v[1], v[2]])
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match &self.0 {
-            Some((_, iter)) => iter.size_hint(),
+            Some(iter) => iter.size_hint(),
             None => (0, Some(0)),
         }
     }
@@ -324,32 +262,22 @@ impl Iterator for Positions<'_> {
 impl ExactSizeIterator for Positions<'_> {}
 impl FusedIterator for Positions<'_> {}
 
-pub(super) type Normals<'a> = Positions<'a>;
-pub(super) type Colors<'a> = Positions<'a>;
+pub(crate) type Normals<'a> = Positions<'a>;
+pub(crate) type Colors<'a> = Positions<'a>;
 
-pub(super) struct Texcoords<'a>(Option<TexcoordsInner<'a>>);
-
-struct TexcoordsInner<'a> {
-    iter: slice::Chunks<'a, f32>,
-}
+pub(crate) struct Texcoords<'a>(Option<slice::ChunksExact<'a, f32>>);
 
 impl Iterator for Texcoords<'_> {
     type Item = Vec2;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let inner = self.0.as_mut()?;
-        match inner.iter.next() {
-            Some(v) => Some([v[0], v[1]]),
-            None => {
-                self.0 = None;
-                None
-            }
-        }
+        let v = self.0.as_mut()?.next()?;
+        Some([v[0], v[1]])
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         match &self.0 {
-            Some(inner) => inner.iter.size_hint(),
+            Some(iter) => iter.size_hint(),
             None => (0, Some(0)),
         }
     }
@@ -358,31 +286,30 @@ impl Iterator for Texcoords<'_> {
 impl ExactSizeIterator for Texcoords<'_> {}
 impl FusedIterator for Texcoords<'_> {}
 
-pub(super) struct VertexIndices<'a> {
+pub(crate) struct VertexIndices<'a> {
     remaining: u32,
     inner: IndicesInner<'a>,
 }
 
 enum IndicesInner<'a> {
-    Polylist {
+    /// gz-collada: polylists, polygons, fans and strips, one `vcount` entry
+    /// per polygon (or fan, or strip).
+    Polygons {
         offset: u32,
         indices: &'a [u32],
         stride: u32,
         vcount: slice::Iter<'a, u32>,
+        /// Index into `indices` of the current polygon's first vertex.
         index: usize,
-        range: Option<Range<u32>>,
+        /// The current polygon's remaining triangles, and its vertex count.
+        current: Option<(Range<usize>, usize)>,
+        /// Triangulate as a strip, `(k, k+1, k+2)` with alternating
+        /// winding, instead of as a fan, `(0, k, k+1)`.
+        strip: bool,
     },
     Triangles {
         offset: u32,
         indices: slice::Chunks<'a, u32>,
-    },
-    TriStrips {
-        offset: u32,
-        indices: &'a [u32],
-        stride: u32,
-        vcount: slice::Iter<'a, u32>,
-        index: usize,
-        range: Option<Range<u32>>,
     },
     Skip,
     None,
@@ -395,6 +322,55 @@ impl VertexIndices<'_> {
             inner: IndicesInner::None,
         }
     }
+
+    fn next_face(&mut self) -> Option<Face> {
+        match &mut self.inner {
+            IndicesInner::Polygons {
+                offset,
+                indices,
+                stride,
+                vcount,
+                index,
+                current,
+                strip,
+            } => {
+                let stride = *stride as usize;
+                let corners = loop {
+                    if let Some((triangles, vc)) = current {
+                        if let Some(k) = triangles.next() {
+                            break if !*strip {
+                                [0, k, k + 1]
+                            } else if k % 2 == 0 {
+                                [k, k + 1, k + 2]
+                            } else {
+                                [k + 1, k, k + 2]
+                            };
+                        }
+                        *index += stride * *vc;
+                        *current = None;
+                    }
+                    // gz-collada: a polygon with fewer than three vertices
+                    // is skipped without using up a triangle (upstream
+                    // recursed without advancing `index`).
+                    let vc = *vcount.next()? as usize;
+                    *current = Some(match (vc < 3, *strip) {
+                        (true, _) => (0..0, vc),
+                        (false, false) => (1..vc - 1, vc),
+                        (false, true) => (0..vc - 2, vc),
+                    });
+                };
+                let base = *index + *offset as usize;
+                let at = |c: usize| indices.get(base + stride * c).copied();
+                Some([at(corners[0])?, at(corners[1])?, at(corners[2])?])
+            }
+            IndicesInner::Triangles { offset, indices } => {
+                let offset = *offset as usize;
+                let mut corner = || indices.next()?.get(offset).copied();
+                Some([corner()?, corner()?, corner()?])
+            }
+            IndicesInner::Skip | IndicesInner::None => None,
+        }
+    }
 }
 
 impl Iterator for VertexIndices<'_> {
@@ -405,84 +381,16 @@ impl Iterator for VertexIndices<'_> {
             return None;
         }
         self.remaining -= 1;
-
-        match &mut self.inner {
-            IndicesInner::Polylist {
-                offset,
-                indices,
-                stride,
-                index,
-                vcount,
-                range,
-            }
-            | IndicesInner::TriStrips {
-                offset,
-                indices,
-                stride,
-                index,
-                vcount,
-                range,
-            } => {
-                let offset = *offset as usize;
-                let stride = *stride as usize;
-                if let Some(r) = range {
-                    if let Some(k) = r.next() {
-                        let x = *index + offset;
-                        let y = *index + offset + stride * k as usize;
-                        let z = *index + offset + stride * (k as usize + 1);
-                        let value = [indices[x], indices[y], indices[z]];
-                        // NOTE: Do *not* increment index until range ends.
-                        return Some(value);
-                    }
-                    let vc = r.end + 1;
-                    *index += stride * vc as usize;
-                    *range = None;
-                }
-                let vc = *vcount.next()?;
-                match vc {
-                    3 => {
-                        let x = *index + offset;
-                        let y = *index + offset + stride;
-                        let z = *index + offset + stride * 2;
-                        let value = [indices[x], indices[y], indices[z]];
-                        *index += stride * vc as usize;
-                        Some(value)
-                    }
-                    1..=2 => self.next(),
-                    0 => unreachable!(),
-                    _ => {
-                        let mut ri = 1..vc - 1;
-                        let k = ri.next().unwrap();
-                        let x = *index + offset;
-                        let y = *index + offset + stride * k as usize;
-                        let z = *index + offset + stride * (k as usize + 1);
-                        let value = [indices[x], indices[y], indices[z]];
-                        // Set range for next call.
-                        // NOTE: Do *not* increment index until range ends.
-                        *range = Some(ri);
-                        Some(value)
-                    }
-                }
-            }
-            IndicesInner::Triangles { offset, indices } => {
-                let indices1 = indices.next().unwrap();
-                let indices2 = indices.next().unwrap();
-                let indices3 = indices.next().unwrap();
-                Some([
-                    indices1[*offset as usize],
-                    indices2[*offset as usize],
-                    indices3[*offset as usize],
-                ])
-            }
-            IndicesInner::Skip => self.next(),
-            IndicesInner::None => unreachable!(),
+        let face = self.next_face();
+        if face.is_none() {
+            self.remaining = 0;
         }
+        face
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining as usize, Some(self.remaining as usize))
+        (0, Some(self.remaining as usize))
     }
 }
 
-impl ExactSizeIterator for VertexIndices<'_> {}
 impl FusedIterator for VertexIndices<'_> {}

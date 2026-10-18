@@ -74,6 +74,11 @@ pub struct GeometryInfo {
     pub aabb_world: Option<Aabb>,
     pub mesh_count: u32,
     pub vertex_count: u64,
+    /// Heightmaps only: the terrain's corner vertices in the world frame,
+    /// for the image's top-left, top-right, bottom-left and bottom-right
+    /// pixels (orientation; not compared).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corners: Vec<[f64; 3]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

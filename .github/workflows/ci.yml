@@ -162,15 +162,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: fuel
-      - uses: actions/cache@v4
+      # Restored from the newest cache (the key itself never matches), and
+      # saved below under a hash of its contents only when a run fetched
+      # something new: a client change can need a locked file that no
+      # earlier run fetched.
+      - name: Restore the Fuel cache
+        id: http-cache
+        uses: actions/cache/restore@v4
         with:
           path: .http-cache
-          # Saved every run: a client change can need a locked file that no
-          # earlier run fetched, and an exact-key hit would never save it.
-          key: http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}-${{ github.run_id }}
+          key: http-cache-restore-${{ github.run_id }}
           restore-keys: |
-            http-cache-${{ hashFiles('tests/corpus/*/http.lock.json') }}-
             http-cache-
       - run: cargo test --locked -p gzweb --test headless -- --ignored
       - name: Every fetched file is in a lock file
         run: git diff --exit-code -- tests/corpus
+      - name: Hash the Fuel cache
+        id: http-hash
+        run: echo "key=http-cache-${{ hashFiles('.http-cache/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Save the Fuel cache if it changed
+        if: steps.http-hash.outputs.key != 'http-cache-' && steps.http-hash.outputs.key != steps.http-cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: .http-cache
+          key: ${{ steps.http-hash.outputs.key }}

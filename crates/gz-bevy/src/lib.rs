@@ -11,6 +11,7 @@ pub mod connection;
 pub mod driver;
 pub mod heightmap;
 pub mod hud;
+pub mod mesh_file;
 pub mod obj;
 pub mod render;
 pub mod snapshot;
@@ -82,9 +83,8 @@ impl Plugin for GzWebPlugin {
             .init_resource::<spawn::GzIndex>()
             .init_resource::<spawn::GzLoads>()
             .init_resource::<camera::GzCameraTarget>()
-            .init_asset_loader::<collada::ColladaLoader>()
+            .init_asset_loader::<mesh_file::SceneFileLoader>()
             .init_asset_loader::<stl::StlLoader>()
-            .init_asset_loader::<obj::ObjLoader>()
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),
@@ -94,13 +94,15 @@ impl Plugin for GzWebPlugin {
                 (
                     connection::pump,
                     spawn::apply_scene,
+                    spawn::instance_gltf,
                     heightmap::build,
                     render::apply_environment,
                     render::install_sky,
                     spawn::apply_poses,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, collada::drop_failed_textures);
         render::configure(app, self.config.quality);
         app.add_systems(Startup, render::setup_gizmos)
             .add_systems(Update, render::draw_grid);
@@ -167,6 +169,7 @@ pub(crate) mod test_util {
             Update,
             (
                 spawn::apply_scene,
+                spawn::instance_gltf,
                 heightmap::build,
                 render::apply_environment,
                 render::install_sky,

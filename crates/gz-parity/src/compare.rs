@@ -534,6 +534,7 @@ mod tests {
                 }),
                 mesh_count: 1,
                 vertex_count: 24,
+                corners: vec![],
             }),
             material: Some(MaterialInfo {
                 color: [0.5; 3],

@@ -1,11 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Derived from probe.dae: one node, one geometry bound only to the textured
-     material (FCOLLADA bump in <extra>, transparency 0.5).
-     Hand-written probe for the spike: node hierarchy (rotate parent, translate
-     child), a geometry instanced 3 times (incl. via library_nodes /
-     instance_node), a two-material geometry (triangles + polylist quad),
-     centimeter units with node translations, Y_UP, FCOLLADA bump map,
-     transparency. Node names deliberately differ from geometry ids. -->
+     material (FCOLLADA bump in <extra>, transparency 0.5), in centimetres;
+     two more geometries are defined but never instanced. -->
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
   <asset>
     <unit name="centimeter" meter="0.01"/>

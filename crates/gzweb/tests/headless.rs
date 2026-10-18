@@ -105,6 +105,7 @@ fn start_mirror(lock: &Path) -> String {
         lock: Some(lock.to_path_buf()),
         upstream: None,
         offline: std::env::var("GZ_HTTP_OFFLINE").is_ok_and(|v| v == "true"),
+        fetch_timeout: mirror::FETCH_TIMEOUT,
     };
     std::thread::spawn(move || mirror::serve_on(listener, opts));
     base
@@ -346,8 +347,12 @@ o first\nusemtl red\nf 1 2 3\no second\nusemtl tex\nf 1/1 2/1 4/1\nf 1/1 3/1 4/1
 const MTL: &[u8] = b"newmtl red\nKd 1 0 0\nnewmtl tex\nKd 0 0 1\nmap_Kd t.png\n";
 const STL: &[u8] = b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\n\
 vertex 0 1 0\nendloop\nendfacet\nendsolid t\n";
-const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],
-"nodes":[{"mesh":0,"name":"tri"}],"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+/// Three instances of one triangle: `tri` (at x = 5) with an unnamed child
+/// (which belongs to `tri`'s submesh), and `other`.
+const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],
+"nodes":[{"mesh":0,"name":"tri","translation":[5,0,0],"children":[2]},
+{"mesh":0,"name":"other","translation":[-7,3,0]},{"mesh":0,"translation":[0,0,1]}],
+"meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
 "buffers":[{"byteLength":36,"uri":"tri.bin"}],"bufferViews":[{"buffer":0,"byteLength":36}],
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",
 "min":[0,0,0],"max":[1,1,0]}]}"#;
@@ -494,6 +499,11 @@ fn synthetic_world(http: &str) -> Corpus {
         submesh_of("obj_sub", "model://pkg/meshes/two.obj", "second"),
         mesh("stl", "file:///data/tri.stl"),
         mesh("gltf", "/data/tri.gltf"),
+        // Upper- and mixed-case extensions load with the right loader.
+        mesh("gltf_upper", "/data/TRI.GLTF"),
+        mesh("dae_upper", "/data/ROBOT.DAE"),
+        mesh("obj_upper", "model://pkg/meshes/TRI.Obj"),
+        mesh("stl_upper", "/data/TRI.STL"),
         mesh("dae", "/data/robot.dae"),
         submesh("dae_child", "ChildNode"),
         submesh_of("gltf_sub", "/data/tri.gltf", "tri"),
@@ -612,8 +622,17 @@ fn synthetic_world(http: &str) -> Corpus {
         .asset(&format!("{http}/web/server_only.obj"), OBJ)
         .asset("pkg/meshes/two.obj", OBJ_MTL)
         .asset("pkg/meshes/two.mtl", MTL)
+        // The bare `map_Kd t.png`, where gzweb's rule looks for it.
+        .asset(
+            "pkg/materials/textures/t.png",
+            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
+        )
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
+        .asset("/data/TRI.GLTF", GLTF.as_bytes())
+        .asset("/data/ROBOT.DAE", &probe_dae())
+        .asset("pkg/meshes/TRI.Obj", OBJ)
+        .asset("/data/TRI.STL", STL)
         .asset("/data/tri.bin", &tri_bin())
         .asset("/data/robot.dae", &probe_dae())
         .publish(pose_topic, "gz.msgs.Pose_V", &poses)
@@ -670,9 +689,9 @@ fn synthetic_world_spawns_every_feature() {
     // load a 3-vertex triangle.
     for path in [
         "meshes/l/obj",
+        "meshes/l/obj_upper",
         "meshes/l/stl",
-        "meshes/l/gltf",
-        "meshes/l/gltf_sub",
+        "meshes/l/stl_upper",
         "meshes/l/http",
         "meshes/l/http_server",
     ] {
@@ -686,10 +705,29 @@ fn synthetic_world_spawns_every_feature() {
             .fold(0.0, f64::max);
         assert!((extent - 2.0).abs() < 1e-3, "{path}: {aabb:?}");
     }
+    // glTF: all three triangles; `tri` keeps its own and its unnamed
+    // child's, each centred on the origin (so their bounds coincide).
+    for path in ["meshes/l/gltf", "meshes/l/gltf_upper"] {
+        let g = node(&snap, path).geometry.as_ref().unwrap();
+        assert_eq!((g.mesh_count, g.vertex_count), (3, 9), "{path}: {g:?}");
+    }
+    let sub = node(&snap, "meshes/l/gltf_sub").geometry.as_ref().unwrap();
+    assert_eq!((sub.mesh_count, sub.vertex_count), (2, 6), "{sub:?}");
+    let aabb = sub.aabb_world.as_ref().unwrap();
+    for i in 0..3 {
+        assert!((aabb.max[i] + aabb.min[i]).abs() < 1e-5, "{aabb:?}");
+    }
+    assert!((aabb.max[0] - aabb.min[0] - 2.0).abs() < 1e-5, "{aabb:?}");
     // Collada: the probe's node tree (5 primitive instances, 6 triangles,
     // one through <instance_node>), its textures missing.
-    let dae = node(&snap, "meshes/l/dae").geometry.as_ref().unwrap();
-    assert_eq!((dae.mesh_count, dae.vertex_count), (5, 18), "{dae:?}");
+    for path in ["meshes/l/dae", "meshes/l/dae_upper"] {
+        let dae = node(&snap, path).geometry.as_ref().unwrap();
+        assert_eq!(
+            (dae.mesh_count, dae.vertex_count),
+            (5, 18),
+            "{path}: {dae:?}"
+        );
+    }
     // <submesh> keeps one node's triangle (1 cm, scaled by 2) and centres it.
     let sub = node(&snap, "meshes/l/dae_child").geometry.as_ref().unwrap();
     assert_eq!((sub.mesh_count, sub.vertex_count), (1, 3), "{sub:?}");
@@ -699,7 +737,8 @@ fn synthetic_world_spawns_every_feature() {
         assert!(aabb.max[i] - aabb.min[i] < 0.02 + 1e-6, "{aabb:?}");
     }
     // OBJ with an MTL: an object per `o`, each with its material; the
-    // bare texture name is looked for in materials/textures (not served).
+    // bare texture name is found in materials/textures (a texture that
+    // failed would be dropped from the material).
     let two = node(&snap, "meshes/l/obj_mtl");
     let g = two.geometry.as_ref().unwrap();
     assert_eq!((g.mesh_count, g.vertex_count), (2, 3 + 6), "{g:?}");
@@ -725,6 +764,21 @@ fn synthetic_world_spawns_every_feature() {
     for i in 0..3 {
         assert!((aabb.min[i] - want.0[i]).abs() < 1e-5, "{aabb:?}");
         assert!((aabb.max[i] - want.1[i]).abs() < 1e-5, "{aabb:?}");
+    }
+    // Orientation: the image's corners in order (top-left, top-right,
+    // bottom-left, bottom-right); only the bottom-right pixel is grey.
+    let grey = 2.0 * 128.0 / 255.0;
+    let want = [
+        [-2.0, 2.0, 0.0],
+        [2.0, 2.0, 0.0],
+        [-2.0, -2.0, 0.0],
+        [2.0, -2.0, grey],
+    ];
+    assert_eq!(g.corners.len(), 4, "{g:?}");
+    for (got, want) in g.corners.iter().zip(want) {
+        for i in 0..3 {
+            assert!((got[i] - want[i]).abs() < 1e-4, "{:?}", g.corners);
+        }
     }
     // Failed or unsupported loads have no geometry.
     for path in [

@@ -17,8 +17,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 COVERAGE_MIN=${COVERAGE_MIN:-95}
-# Third-party code vendored as-is (mesh-loader's COLLADA parsers); its own
-# tests and the corpus tests exercise it, but it isn't held to the minimum.
+# Vendored third-party code (mesh-loader's COLLADA parsers, lightly
+# patched); gz-collada's tests exercise it on probes and malformed input,
+# but it isn't held to the minimum. (The Fuel corpus comparison with
+# three.js is a manual `--ignored` test, not part of this gate.)
 COVERAGE_IGNORE='crates/gz-collada/src/vendor/'
 LOCKED=()
 [ "${CHECK_LOCKED:-0}" = 1 ] && LOCKED=(--locked)

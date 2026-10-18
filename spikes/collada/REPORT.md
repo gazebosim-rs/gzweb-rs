@@ -29,7 +29,7 @@ comparison table is generated into `out/compare.md`.
 | Piece | What it does |
 |---|---|
 | `fetch.sh` | Downloads 14 `.dae` files from 10 Fuel models into `corpus/` (gitignored). |
-| `synthetic/*.dae` | Three hand-written probes for features the corpus lacks: a node hierarchy (rotated parent, translated child), one geometry instanced three times (once through `library_nodes`/`instance_node`), a two-material geometry (`<triangles>` + quad `<polylist>`), cm units with node translations, an FCOLLADA `<bump>` in `<extra>`, and transparency. |
+| `synthetic/*.dae` (now `crates/gz-collada/tests/data/`) | Three hand-written probes for features the corpus lacks: a node hierarchy (rotated parent, translated child), one geometry instanced three times (once through `library_nodes`/`instance_node`), a two-material geometry (`<triangles>` + quad `<polylist>`), cm units with node translations, an FCOLLADA `<bump>` in `<extra>`, and transparency. |
 | `src/summary.rs`, `src/main.rs` | `collada_spike [--runs N] files…` parses each file with `mesh_loader::collada::from_slice` and prints JSON lines: meshes, counts, AABBs, materials, textures, UV/normal presence, and the median parse time. |
 | `js/ref.mjs` | Node + jsdom + `three@0.141.0` running gzweb's own `../gzweb/include/ColladaLoader.js`. It copies the loader into `js/.vendor/` so `import "three"` resolves; only the TGALoader import path is rewritten. `TextureLoader.load` is stubbed to record URLs. Prints the same JSON, using `Box3.setFromObject(scene)`. |
 | `compare.py` | Joins the two outputs into `out/compare.md`. |

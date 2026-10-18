@@ -7,13 +7,13 @@ license = "Apache-2.0"
 
 [dependencies]
 gz-core.workspace = true
-gz-collada = { path = "../gz-collada", version = "0.1.0" }
+gz-collada.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 bevy = { version = "0.20", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
 async-channel = "2"
 crossbeam-channel = "0.5"
-tobj = { version = "4.0.5", default-features = false, features = ["async"] }
+tobj = { version = "4.0.5", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gz-core = { workspace = true, features = ["native"] }
@@ -42,6 +42,8 @@ features = [
     "Request",
     "RequestInit",
     "Response",
+    "AbortController",
+    "AbortSignal",
 ]
 
 [lints]

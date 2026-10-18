@@ -25,13 +25,21 @@ pub struct MirrorOptions {
     pub upstream: Option<String>,
     /// Never fetch; a cache miss is a 404.
     pub offline: bool,
+    /// Longest an upstream fetch may take, body included
+    /// ([`FETCH_TIMEOUT`] for the CLI).
+    pub fetch_timeout: Duration,
 }
 
 type Lock = BTreeMap<String, String>;
 
-/// For connecting to the upstream and for its response headers; less than
-/// a snapshot's 30 s timeout, so a stalled upstream shows up as a 404.
+/// For connecting to the upstream and for its response headers, so an
+/// upstream that never answers shows up as a 404 well within a snapshot's
+/// timeout.
 const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The CLI's [`MirrorOptions::fetch_timeout`]: generous, for large meshes on
+/// a slow link, but a body that stalls still fails.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
 struct State {
     opts: MirrorOptions,
@@ -122,11 +130,13 @@ fn fetch(state: &State, rest: &str) -> Result<Vec<u8>, (u16, String)> {
         None => format!("https://{rest}"),
     };
     let not_found = |e: ureq::Error| (404, format!("{url}: {e}"));
-    // A stalled upstream fails the request instead of hanging the client.
+    // An upstream that stalls, before the headers or in the body, fails the
+    // request instead of hanging the client.
     ureq::get(&url)
         .config()
         .timeout_connect(Some(TIMEOUT))
         .timeout_recv_response(Some(TIMEOUT))
+        .timeout_global(Some(state.opts.fetch_timeout))
         .build()
         .call()
         .map_err(not_found)?

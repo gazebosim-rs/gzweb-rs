@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 // Based on https://github.com/KokaKiwi/rust-hex/pull/62, but with several additional optimizations.
 
 use std::{io, mem};

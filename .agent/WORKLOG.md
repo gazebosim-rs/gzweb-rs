@@ -283,6 +283,7 @@ These are findings for the plan, not changes:
   timeout covers a capture that never arrives, `.png` only.
 - `GzConfig.headless` split into `interactive` and `gpu`; spot lights use
   `spot_inner_angle`; unset light intensity means 1.
+
 ## 2026-10-17: Collada
 
 - New crate `gz-collada`: mesh-loader 0.1.13's COLLADA parsers vendored
@@ -301,6 +302,30 @@ These are findings for the plan, not changes:
 - Coverage: the vendored code is excluded (`COVERAGE_IGNORE` in
   `scripts/check.sh`); `assemble.rs` and the loader are gated.
 - Not done: `<submesh>`/`center`.
+
+### PR #21 review fixes (2026-10-18)
+
+- **No panics on bad `.dae` files** (they aborted the wasm client): an XML
+  nesting pre-scan (roxmltree recurses; 300 levels), `<node>`s capped at
+  256, untrusted counts no longer size allocations, the iterators yield
+  nothing instead of panicking, and `validate.rs` checks each instantiated
+  primitive's sources, accessors and `<p>`. A `<Name_array>` hung the
+  parser (an upstream loop that never advanced); fixed.
+- `<instance_node>`: ancestor-stack cycle detection, a map lookup, and a 1M
+  node/primitive budget; plain nesting is no longer cut at 65.
+- Dangling scene references fail the load, as in three.js; VERTEX reads the
+  mesh's own `<vertices>`; polylists skip 1–2-vertex polygons correctly;
+  tristrips are strips; `<extra>` is best effort and its `<double_sided>`
+  is read; `<unit>` ≤ 0/NaN → 1; `<rotate>` axes normalised.
+- Loader: failed textures are dropped from materials (any
+  `StandardMaterial`), textures repeat, roughness `(2/(n+2))^¼`, Lambert
+  rough, reflectance from specular, opacity-only alpha, cut-outs masked,
+  emission textures glow, one `units::emissive` for COLLADA and SDF (SDF
+  emission was ~0), vertex colours linearised, no index buffer.
+- HTTP: 256 MB bodies, 5-minute whole-fetch timeouts (native and wasm), a
+  2-minute one in the mirror; CI saves the Fuel cache only when it changed.
+- Verified: the review's reproductions are tests in `gz-collada`; the
+  probes match three.js (triangles and bounds) with `run.sh`'s reference.
 
 ## 2026-10-17: Phase 3 — submeshes
 
@@ -322,10 +347,6 @@ These are findings for the plan, not changes:
 - Heightmaps: `GeometryDesc::Heightmap`, terrain from the image (Gazebo's
   rules) or message heights; first layer textured. `heightmap` corpus:
   material matches gzweb, geometry allow-listed (`gzweb-heightmap-empty`).
-  **Pending:** `heightmap_bowl.png` must be added to
-  `tests/corpus/heightmap/http.lock.json` (Fuel answered 502 all day, so
-  the ignored test fails offline: the image's websocket fallback shows up
-  in the protocol diff).
 - Websocket fallback requests the unescaped URL (`source_url`), as gzweb.
 - JPEG and TGA textures enabled (glTF/COLLADA models with JPEGs loaded
   untextured).
@@ -354,3 +375,46 @@ These are findings for the plan, not changes:
   matches the backend's `Debug` name.
 - CI names toolchain 1.97.1; cargo-deny runs on minimal stable.
 - Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).
+
+## 2026-10-18: Heightmap image in the lock
+
+- `heightmap_bowl.png` added to `tests/corpus/heightmap/http.lock.json`,
+  so `heightmap_matches_gzweb` passes offline. fuel.gazebosim.org still
+  answered 502; the bytes came from fuel.ignitionrobotics.org (same Fuel
+  server, which served all six already-locked files with matching hashes,
+  and the image equals gz-sim's `test/media/heightmap_bowl.png`). Seeded
+  into `target/http-cache`; the mirror wrote the lock entry.
+- CI's HTTP cache doesn't have the image yet: the Fuel job fetches it from
+  fuel.gazebosim.org and fails while that is down.
+
+## 2026-10-18: PR #22 review fixes
+
+- Merged #21's review fixes; OBJ now uses its material rules (roughness
+  `(2/(n+2))^¼`, `units::emissive`, sRGB vertex colours, repeating textures).
+- `.DAE` loaded as OBJ (Bevy matches extensions case-sensitively and fell
+  back to the last `Scene` loader); `.GLB` found no loader (a labelled
+  path). One `mesh_file::SceneFileLoader` for COLLADA and OBJ, glTF loaded
+  as a `Gltf`; headless test with `.GLTF`, `.DAE`, `.Obj`, `.STL`.
+- `mesh_file`: the loaders' shared texture paths/loading, Phong roughness
+  and mesh tail. Textures climbing out of their source are refused (Bevy
+  panicked in the loader).
+- `<submesh>`: Gazebo's rules, checked against gz-common (COLLADA, Assimp,
+  OBJ loaders) and gz-rendering's `Ogre2MeshFactory`: every match, unnamed
+  nodes join the named ancestor, COLLADA `name` only, each submesh centred
+  on its own bounds; idempotent on respawn.
+- Heightmaps: the brightest pixel is at `size.z` (gz `MaxElevation`);
+  layer textures tracked for snapshots; image CPU-only; grid tangents only
+  under a normal map (1025²: ~14 ms instead of 3 s); snapshot corners and a
+  headless orientation check.
+- OBJ: absolute/URI texture paths through the sources, MTL keys in any
+  case, `-s`/`-o` → `uv_transform`, `map_Ka` dropped, gzweb's
+  `/materials/textures` rule matched; tobj's unused `async` feature off.
+- Assets: hosts that fail to connect or time out are skipped for 5 min;
+  unanswered websocket `asset` requests fail after 60 s.
+
+## 2026-10-18: PR #22 review fixes on Bevy 0.20
+
+- Merged #22 (with #21's review fixes) into the 0.20 branch: the shared
+  `SceneFileLoader` and `GzSubmesh` work on `WorldAsset`/`WorldInstanceReady`,
+  `AssetMut` needs a mutable borrow to mark a change, and `#23`'s own STL
+  loader stays.

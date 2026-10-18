@@ -5,28 +5,47 @@
 //! geometry's primitives under one material and emitted geometries rather
 //! than instances.
 //!
-//! This is a child of the vendored `collada` module (see its `#[path]`), so
-//! it can read the parser's types.
+//! As in three.js, a reference the scene follows (geometry, material,
+//! effect, library node) must resolve, and only what the scene uses is
+//! built and validated; a missing image just drops the texture.
 
 use std::collections::HashMap;
 
-use super::iter;
-use super::{Document, Effect, Geometry, ImageSource, Node, ShadeType, Texture};
+use crate::validate;
+use crate::vendor::collada::{
+    iter, Document, Effect, Geometry, ImageSource, Node, ShadeType, Texture,
+};
 
-/// Deeper `instance_node` chains are treated as cycles.
-const MAX_DEPTH: usize = 64;
+/// Nodes plus primitives one document may expand to. `<instance_node>`s
+/// that each instance the next one twice grow exponentially.
+const BUDGET: usize = 1_000_000;
+
+/// Deepest node chain, counting `<instance_node>` expansions (the assembly
+/// recurses). Literal nesting is capped lower, by the parser.
+const MAX_DEPTH: usize = 1024;
 
 struct Builder<'d, 'a> {
     doc: &'d Document<'a>,
     meshes: Vec<crate::Mesh>,
     materials: Vec<crate::Material>,
-    /// (geometry id, primitive index) → mesh index.
-    mesh_index: HashMap<(&'a str, usize), usize>,
+    /// (geometry id, primitive index) → mesh index, or `None` if it has no
+    /// triangles.
+    mesh_index: HashMap<(&'a str, usize), Option<usize>>,
     /// material id → material index.
     material_index: HashMap<&'a str, usize>,
+    /// Node id → index, for `<instance_node>` (the first node with the id).
+    library: HashMap<&'a str, usize>,
+    /// Indices of the nodes being built, root first.
+    path: Vec<usize>,
+    /// Nodes and primitives emitted so far.
+    emitted: usize,
+    /// `<instance_controller>`s in the instantiated nodes.
+    controllers: usize,
+    /// `<instance_node>`s skipped because they instance an ancestor.
+    cycles: usize,
 }
 
-pub(super) fn assemble(doc: &Document<'_>) -> crate::Scene {
+pub(crate) fn assemble(doc: &Document<'_>) -> Result<crate::Scene, String> {
     let nodes = &doc.library_visual_scenes.nodes;
     // The scene `<scene>` instantiates, else the first visual scene.
     let wanted = doc
@@ -38,70 +57,112 @@ pub(super) fn assemble(doc: &Document<'_>) -> crate::Scene {
         .iter()
         .position(|n| n.visual_scene && wanted.is_none_or(|w| n.id == Some(w)))
         .or_else(|| nodes.iter().position(|n| n.visual_scene));
+    let mut library = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if let (false, Some(id)) = (node.visual_scene, node.id) {
+            library.entry(id).or_insert(i);
+        }
+    }
     let mut b = Builder {
         doc,
         meshes: Vec::new(),
         materials: Vec::new(),
         mesh_index: HashMap::new(),
         material_index: HashMap::new(),
+        library,
+        path: Vec::new(),
+        emitted: 0,
+        controllers: 0,
+        cycles: 0,
     };
     let roots = match scene {
         Some(i) => nodes[i]
             .children
             .iter()
-            .filter_map(|&c| b.node(c, 0))
-            .collect(),
+            .map(|&c| b.node(c))
+            .collect::<Result<_, _>>()?,
         None => Vec::new(),
     };
-    crate::Scene {
+    let mut warnings = Vec::new();
+    if b.controllers > 0 {
+        warnings.push(format!(
+            "{} <instance_controller>s (skinned meshes) are not supported and were skipped",
+            b.controllers
+        ));
+    }
+    if b.cycles > 0 {
+        warnings.push(format!(
+            "{} <instance_node>s instance their own ancestor and were skipped",
+            b.cycles
+        ));
+    }
+    Ok(crate::Scene {
         unit: doc.asset.unit,
         up_axis: doc.asset.up_axis,
         roots,
         meshes: b.meshes,
         materials: b.materials,
-    }
+        warnings,
+    })
 }
 
 impl<'a> Builder<'_, 'a> {
-    fn node(&mut self, index: usize, depth: usize) -> Option<crate::Node> {
-        if depth > MAX_DEPTH {
-            return None;
+    fn node(&mut self, index: usize) -> Result<crate::Node, String> {
+        if self.path.len() >= MAX_DEPTH {
+            return Err(format!(
+                "nodes nest more than {MAX_DEPTH} deep through <instance_node>"
+            ));
         }
+        self.path.push(index);
+        let node = self.build_node(index);
+        self.path.pop();
+        node
+    }
+
+    fn build_node(&mut self, index: usize) -> Result<crate::Node, String> {
         let doc = self.doc;
         let node: &Node<'a> = &doc.library_visual_scenes.nodes[index];
+        self.spend(1)?;
+        self.controllers += node.instance_controllers;
         let mut primitives = Vec::new();
         for instance in &node.instance_geometry {
-            let Some(geometry) = doc.get(&instance.url) else {
-                continue;
-            };
+            let url = instance.url.as_str();
+            let geometry = doc
+                .get(&instance.url)
+                .ok_or_else(|| format!("<instance_geometry>: no geometry #{url}"))?;
             for (i, prim) in geometry.mesh.primitives.iter().enumerate() {
-                let Some(mesh) = self.mesh(geometry, i) else {
+                let Some(mesh) = self.mesh(geometry, i)? else {
                     continue;
                 };
-                // The material this instance binds to the primitive's symbol.
-                let material = prim
+                // The material this instance binds to the primitive's symbol;
+                // an unbound symbol gets the default material.
+                let binding = prim
                     .material
-                    .and_then(|symbol| instance.materials.get(symbol))
-                    .and_then(|binding| self.material(binding.target.as_str()));
+                    .and_then(|symbol| instance.materials.get(symbol));
+                let material = match binding {
+                    Some(binding) => Some(self.material(binding.target.as_str())?),
+                    None => None,
+                };
+                self.spend(1)?;
                 primitives.push(crate::Primitive { mesh, material });
             }
         }
-        let mut children: Vec<crate::Node> = node
-            .children
-            .iter()
-            .filter_map(|&c| self.node(c, depth + 1))
-            .collect();
-        for id in &node.instance_node {
-            let library = doc
-                .library_visual_scenes
-                .nodes
-                .iter()
-                .position(|n| !n.visual_scene && n.id == Some(*id));
-            if let Some(child) = library.and_then(|l| self.node(l, depth + 1)) {
-                children.push(child);
-            }
+        let mut children = Vec::with_capacity(node.children.len() + node.instance_node.len());
+        for &child in &node.children {
+            children.push(self.node(child)?);
         }
-        Some(crate::Node {
+        for id in &node.instance_node {
+            let library = *self
+                .library
+                .get(id)
+                .ok_or_else(|| format!("<instance_node>: no node #{id}"))?;
+            if self.path.contains(&library) {
+                self.cycles += 1;
+                continue;
+            }
+            children.push(self.node(library)?);
+        }
+        Ok(crate::Node {
             name: node.name.map(str::to_string),
             id: node.id.map(str::to_string),
             transform: node.transform.rows(),
@@ -110,34 +171,53 @@ impl<'a> Builder<'_, 'a> {
         })
     }
 
-    /// The mesh of primitive `index` of `geometry`, built once; `None` if
-    /// it has no triangles.
-    fn mesh(&mut self, geometry: &Geometry<'a>, index: usize) -> Option<usize> {
-        if let Some(&m) = self.mesh_index.get(&(geometry.id, index)) {
-            return Some(m);
+    fn spend(&mut self, n: usize) -> Result<(), String> {
+        self.emitted += n;
+        if self.emitted > BUDGET {
+            return Err(format!(
+                "the scene expands to more than {BUDGET} nodes and primitives"
+            ));
         }
-        let mesh = build_mesh(self.doc, geometry, index);
-        if mesh.positions.is_empty() {
-            return None;
-        }
-        self.meshes.push(mesh);
-        let m = self.meshes.len() - 1;
-        self.mesh_index.insert((geometry.id, index), m);
-        Some(m)
+        Ok(())
     }
 
-    fn material(&mut self, id: &'a str) -> Option<usize> {
+    /// The mesh of primitive `index` of `geometry`, validated and built
+    /// once; `None` if it has no triangles.
+    fn mesh(&mut self, geometry: &Geometry<'a>, index: usize) -> Result<Option<usize>, String> {
+        if let Some(&m) = self.mesh_index.get(&(geometry.id, index)) {
+            return Ok(m);
+        }
+        validate::primitive(self.doc, geometry, index)?;
+        let mesh = build_mesh(self.doc, geometry, index);
+        let m = (!mesh.positions.is_empty()).then(|| {
+            self.meshes.push(mesh);
+            self.meshes.len() - 1
+        });
+        self.mesh_index.insert((geometry.id, index), m);
+        Ok(m)
+    }
+
+    fn material(&mut self, id: &'a str) -> Result<usize, String> {
         if let Some(&m) = self.material_index.get(id) {
-            return Some(m);
+            return Ok(m);
         }
         let doc = self.doc;
-        let material = doc.library_materials.materials.get(id)?;
-        let effect = doc.get(&material.instance_effect.url)?;
+        let material = doc
+            .library_materials
+            .materials
+            .get(id)
+            .ok_or_else(|| format!("<instance_material>: no material #{id}"))?;
+        let effect = doc.get(&material.instance_effect.url).ok_or_else(|| {
+            format!(
+                "material #{id}: no effect #{}",
+                material.instance_effect.url.as_str()
+            )
+        })?;
         self.materials
             .push(build_material(doc, material.name, effect));
         let m = self.materials.len() - 1;
         self.material_index.insert(id, m);
-        Some(m)
+        Ok(m)
     }
 }
 
@@ -207,7 +287,7 @@ fn gather<T: Copy>(values: &[T], face: [u32; 3]) -> Option<[T; 3]> {
 
 fn build_material(doc: &Document<'_>, name: Option<&str>, effect: &Effect<'_>) -> crate::Material {
     let t = &effect.profile.technique;
-    let texture = |tex: &Texture<'_>| texture_path(doc, effect, tex);
+    let texture = |tex: &Texture<'_>| texture(doc, effect, tex);
 
     // Refs: https://github.com/assimp/assimp/blob/v5.3.1/code/AssetLib/Collada/ColladaLoader.cpp#L1588
     let mut opacity = 1.0;
@@ -251,12 +331,17 @@ fn build_material(doc: &Document<'_>, name: Option<&str>, effect: &Effect<'_>) -
         normal_texture: texture(&t.bump),
         emission_texture: texture(&t.emission.texture),
         specular_texture: texture(&t.specular.texture),
+        transparent_texture: texture(&t.transparent.texture),
     }
 }
 
 /// The image a texture slot refers to (through a sampler and surface, or
-/// directly by image id), as a cleaned-up path.
-fn texture_path(doc: &Document<'_>, effect: &Effect<'_>, texture: &Texture<'_>) -> Option<String> {
+/// directly by image id), as a cleaned-up path, with its wrapping.
+fn texture(
+    doc: &Document<'_>,
+    effect: &Effect<'_>,
+    texture: &Texture<'_>,
+) -> Option<crate::Texture> {
     if texture.texture.is_empty() {
         return None;
     }
@@ -267,11 +352,15 @@ fn texture_path(doc: &Document<'_>, effect: &Effect<'_>, texture: &Texture<'_>) 
         .and_then(|s| effect.profile.surfaces.get(s.source))
         .and_then(|surface| doc.get(&surface.init_from));
     let image = via_sampler.or_else(|| doc.library_images.images.get(texture.texture))?;
-    match &image.source {
-        ImageSource::InitFrom(path) => clean_path(path),
+    let path = match &image.source {
+        ImageSource::InitFrom(path) => clean_path(path)?,
         // Embedded image data isn't supported.
-        _ => None,
-    }
+        _ => return None,
+    };
+    Some(crate::Texture {
+        path,
+        repeat: texture.wrap.unwrap_or([true; 2]),
+    })
 }
 
 /// `file://` removed, backslashes as slashes, and `/../x` as `../x`; `None`

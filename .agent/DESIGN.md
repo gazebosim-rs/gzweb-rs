@@ -15,8 +15,10 @@ crates/
                 scene      gzweb's rules: gz.msgs.Scene → SceneDesc node tree
                 uri        Fuel / file:// / model:// resolution (gzweb createFuelUri)
                 snapshot   gz-parity-snapshot/1 types
+  gz-collada/ No Bevy. COLLADA documents as a node tree (vendored parsers,
+              see "Assets").
   gz-bevy/    Bevy plugin: drivers, asset sources, spawning, poses, camera, HUD,
-              snapshot exporter.
+              snapshot exporter, COLLADA loader.
   gzweb/      The app: native binary (+ headless --snapshot mode) and wasm entry.
   gz-parity/  Native tool: record / replay / compare / compare-protocol.
 parity/       run.sh driver + js/ (gzweb reference exporter, Playwright).
@@ -24,8 +26,8 @@ tests/corpus/ Recorded websocket sessions. tests/parity/allowlist.toml.
 spikes/       Standalone experiments, not in the workspace (spikes/collada).
 ```
 
-Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`, and
-`gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
+Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`,
+`gz-collada ← gz-bevy`, and `gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
 can be tested without a GPU. `gz-bevy` only instantiates them.
 
 ## Data flow
@@ -168,6 +170,12 @@ skip HTTP: gzweb fetches them relative to the page, which only finds files
 the site happens to serve. Concurrent requests for one URI share one
 websocket request (`WsAssetStore`); Bevy's asset server dedups by path.
 
+A host that fails to connect or times out (not one answering with an error
+status) is skipped for 5 minutes (`HOST_DOWN_FOR`): its other assets go
+straight to the websocket instead of each waiting up to 40 s. An `asset`
+request the server doesn't answer fails after 60 s (`WS_ASSET_TIMEOUT`,
+checked by `connection::pump`).
+
 Keeping the directory structure in the Bevy path makes relative references
 inside meshes (glTF buffers, OBJ `.mtl`, textures) resolve to the right
 server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
@@ -175,55 +183,107 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 
 | Format | Loader |
 |---|---|
-| glTF/GLB | Bevy |
-| OBJ + MTL | `gz_bevy::obj::ObjLoader` on `tobj` (below) |
+| glTF/GLB | Bevy, loaded as a `Gltf` and instanced by `spawn::instance_gltf` |
+| OBJ + MTL | `gz_bevy::mesh_file::SceneFileLoader` → `gz_bevy::obj` on `tobj` (below) |
 | STL | `gz_bevy::stl::StlLoader`: ASCII and binary, told apart as three.js does (flat shaded; zero face normals come from the winding) |
-| Collada (`.dae`) | `gz_bevy::collada::ColladaLoader` on `gz-collada` (below) |
+| Collada (`.dae`) | `gz_bevy::mesh_file::SceneFileLoader` → `gz_bevy::collada` on `gz-collada` (below) |
+
+Extensions match in any case, as in Gazebo (`.DAE`, `.Obj`, `.GLB`). Bevy
+picks a loader by extension case-sensitively when more than one loader
+makes the asset type, or when a label is asked for (`x.glb#Scene0`), so
+COLLADA and OBJ share one `WorldAsset` loader that picks the parser from the
+lower-cased extension, and glTF loads by type. `mesh_file` also holds what
+the two loaders share: texture paths and loading (a path climbing out of
+its source is refused, since Bevy panics on it inside a loader), the Phong
+roughness and the mesh attributes (`MeshParts`).
 
 **Collada.** `gz-collada` vendors mesh-loader's XML, geometry and effect
-parsers (`src/vendor/`, Apache-2.0, excluded from the coverage gate) and
-replaces its scene assembly (`src/assemble.rs`): the instantiated visual
-scene as a node tree with names and local transforms (parent first), one
-mesh per primitive, per-instance material binding, `<instance_node>`, and
-normal maps from `<extra><technique><bump>`. The loader emits a Bevy
-`Scene`: a root scaled by `<unit>` (no `<up_axis>` rotation, like gz-common
-and gzweb), an entity per node with its `Name`, and a child per primitive.
-Textures load through the `.dae`'s own source, relative to it (or through
-`asset_path` when absolute). Effects map onto PBR: diffuse (white under a
-texture) × opacity, roughness `sqrt(2/(n+2))` from the Phong exponent,
-emission in scene-referred units, `constant` = unlit. On the 14 Fuel meshes
-in `spikes/collada/corpus`, triangle counts and world bounds match gzweb's
-three.js loader (`cargo test -p gz-collada -- --ignored`).
+parsers (`src/vendor/`, Apache-2.0, patched where marked `gz-collada:`,
+excluded from the coverage gate) and replaces its scene assembly
+(`src/assemble.rs`): the instantiated visual scene as a node tree with
+names and local transforms (parent first), one mesh per primitive,
+per-instance material binding, `<instance_node>` (cycles cut, at most 1M
+nodes and primitives), and normal maps and `<double_sided>` from any
+`<extra>` (best effort). A malformed document is an error, never a panic:
+XML nesting is capped at 300 levels and `<node>`s at 256 before the
+recursive parsers run, and `src/validate.rs` checks each instantiated
+primitive's sources, accessors and index counts. As in three.js, dangling
+geometry/material/effect/node references fail the load, unused geometry is
+not checked, and VERTEX always reads the mesh's own `<vertices>`.
+
+The loader emits a Bevy `WorldAsset`: an unnamed root scaled by `<unit>` (no
+`<up_axis>` rotation, like gz-common and gzweb), an entity per node with its
+`name` as its `Name` (never the `id`: gz-common names submeshes after
+`name`), and a child per primitive. Textures load through the `.dae`'s own source,
+relative to it (or through `asset_path` when absolute), repeating unless
+the file's `wrapU`/`wrapV` say otherwise. `collada::drop_failed_textures`
+removes a texture that failed to load from its material (any
+`StandardMaterial`), since Bevy would otherwise never draw it. Effects map
+onto PBR:
+- base colour: diffuse (white under a texture), alpha = opacity (three.js
+  ignores diffuse alpha); blended below 1, a 0.5 alpha mask for a
+  `<transparent>` texture;
+- Phong/Blinn roughness `(2/(n+2))^¼` (the GGX α `sqrt(2/(n+2))`, which
+  Bevy gets by squaring perceptual roughness), reflectance scaled by the
+  specular luminance; Lambert roughness 1;
+- emission (white under a texture) through `units::emissive`, so 1 renders
+  at full brightness (SDF materials use it too); vertex colours sRGB;
+- `constant` = unlit.
+
+On the 14 Fuel meshes in `spikes/collada/corpus`, triangle counts and world
+bounds match gzweb's three.js loader (`spikes/collada/run.sh`, then
+`cargo test -p gz-collada -- --ignored`; manual, not in CI). Not done:
+skinned meshes (`<instance_controller>`, skipped with a warning), and a
+visual's SDF material on a `.dae`.
 
 **OBJ.** `tobj` parses the OBJ and its `mtllib`s (read through the OBJ's
-own source first, since tobj asks for them synchronously). Each `o`/`g` is a
-named entity with a child per material, as three.js builds it. Diffuse and
-ambient maps follow gzweb's `GzObjLoader` path rules (`model://` beside this
-model, paths with `/materials/textures` kept, bare names in
-`<model>/materials/textures/`); other maps are relative to the OBJ. A
+own source first, since tobj's material callback is synchronous). Each
+`o`/`g` is a named entity with a child mesh per material (three.js builds
+one mesh per object with a group per material, gz-common a submesh per
+material); a later object with the same name is another entity. Diffuse
+maps follow gzweb's `GzObjLoader` path rules (`model://` beside this model,
+paths with `/materials/textures` kept, bare names in
+`<model>/materials/textures/`); URIs and absolute paths, and other maps,
+resolve like COLLADA textures (through the sources, else relative to the
+OBJ). MTL keys match in any case (three.js lower-cases them), and
+`map_Kd`'s `-s`/`-o` become the material's `uv_transform` (three.js's
+repeat/offset). `map_Ka` is ignored, as in three.js and gz-common. A
 missing `.mtl` leaves the default material (gzweb never shows the mesh).
-MTL → PBR: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness from `Ns` or
-`Pr`, `Pm`, `Ke`/`map_Ke`, `map_Bump`/`bump`/`norm` as normal maps.
+MTL → PBR as for COLLADA: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness
+`(2/(n+2))^¼` from `Ns` or `Pr` as given, `Pm`, `Ke`/`map_Ke` through
+`units::emissive`, `map_Bump`/`bump`/`norm` as normal maps; textures repeat
+(three.js's MTLLoader default) and vertex colours are sRGB.
 
 **Submeshes.** A mesh file that loads as a scene (COLLADA, OBJ, glTF) with a
 `<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `WorldAssetRoot`; an
-observer on `WorldInstanceReady` keeps the first node (depth first) with
-that name and geometry of its own, drops everything else (its child nodes
-too), and with `center` shifts the root so the bounds' centre is the
-visual's origin. These are Gazebo's rules; gzweb zeroes the ancestors'
-translations but keeps their rotations, which only differs when an ancestor
-rotates. An unknown name leaves nothing, as in both. Snapshots wait for
-`GzSubmesh::applied`.
+observer on `WorldInstanceReady` applies Gazebo's rules (gz-common's
+loaders, gz-rendering's `Ogre2MeshFactory`):
+- every primitive (a `Mesh3d` entity) is a submesh named after its nearest
+  ancestor node with a name (an unnamed node's geometry joins its named
+  ancestor's; a primitive's own name, like glTF's `Mesh.Material`, and
+  Bevy's `GltfNode<n>` for an unnamed glTF node, never count);
+- **every** submesh with the requested name is kept, under its ancestors'
+  transforms; everything else goes;
+- with `center`, each kept submesh moves so its own bounds (under those
+  transforms) centre on the visual's origin.
+
+Running again on a respawned scene is safe (it starts from the fresh
+entities; a centred submesh is marked). An unknown name leaves nothing.
+Snapshots wait for `GzSubmesh::applied`. gzweb differs (PORT_PLAN §2.5).
 
 **Heightmaps.** Gazebo never puts heights in the scene message (gzweb's
 terrain is therefore empty); it sends the image `filename`. `gz_bevy::heightmap`
-loads it through the asset chain (linear, not sRGB), samples it `sampling`
-times per pixel (bilinear, at most 1025 vertices a side), and lays it over
-`size.x` × `size.y` centred on `origin`, black at `origin.z`, white at
-`origin.z + size.z`, the image's top row at +Y. Smooth normals and tangents;
-the first texture layer repeats every `size` metres (repeat sampler, 16×
-anisotropy). A terrain whose image fails is an empty mesh that still carries
-its material. Not done: blending layers by height (`<blend>`), DEM (GeoTIFF)
+loads it through the asset chain (linear, not sRGB, kept on the CPU only),
+samples it `sampling` times per pixel (bilinear, at most 1025 vertices a
+side), and lays it over `size.x` × `size.y` centred on `origin`, black at
+`origin.z`, the brightest pixel at `origin.z + size.z` (gz-rendering
+divides by `ImageHeightmap::MaxElevation`, the brightest pixel's red; the
+minimum is 0), the image's top row at +Y. Smooth normals; tangents, from
+the grid itself (mikktspace takes seconds at 1025²), only under a normal
+map. The first texture layer repeats every `size` metres (repeat sampler,
+16× anisotropy). Snapshots wait for the image and the layer's textures,
+and record the terrain's corners (`GeometryInfo::corners`). A terrain
+whose image fails is an empty mesh that still carries its material. Not done: blending layers by height (`<blend>`), DEM (GeoTIFF)
 heightmaps, mipmaps for the tiled textures.
 
 ## Rendering

@@ -1,3 +1,5 @@
+// Modified for gzweb-rs; see `gz-collada:` markers.
+
 use super::*;
 
 /// The `<library_geometries>` element.
@@ -6,15 +8,15 @@ use super::*;
 ///
 /// [1.4] https://www.khronos.org/files/collada_spec_1_4.pdf#page=99
 #[derive(Default)]
-pub(super) struct LibraryGeometries<'a> {
+pub(crate) struct LibraryGeometries<'a> {
     // /// The unique identifier of this element.
-    // pub(super) id: Option<&'a str>,
+    // pub(crate) id: Option<&'a str>,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) geometries: BTreeMap<&'a str, Geometry<'a>>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) geometries: BTreeMap<&'a str, Geometry<'a>>,
 
-    pub(super) accessors: HashMap<&'a str, Accessor<'a>>,
-    pub(super) array_data: HashMap<&'a str, ArrayData<'a>>,
+    pub(crate) accessors: HashMap<&'a str, Accessor<'a>>,
+    pub(crate) array_data: HashMap<&'a str, ArrayData<'a>>,
 }
 
 /// The `<geometry>` element.
@@ -22,12 +24,12 @@ pub(super) struct LibraryGeometries<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=68
-pub(super) struct Geometry<'a> {
+pub(crate) struct Geometry<'a> {
     /// The unique identifier of this element.
-    pub(super) id: &'a str,
+    pub(crate) id: &'a str,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) mesh: Mesh<'a>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) mesh: Mesh<'a>,
 }
 
 /// The `<mesh>` element.
@@ -35,28 +37,28 @@ pub(super) struct Geometry<'a> {
 /// See the [specification][1.4] for details.
 ///
 /// [1.4]: https://www.khronos.org/files/collada_spec_1_4.pdf#page=112
-pub(super) struct Mesh<'a> {
-    pub(super) vertices: Vertices<'a>,
-    pub(super) primitives: Vec<Primitive<'a>>,
+pub(crate) struct Mesh<'a> {
+    pub(crate) vertices: Vertices<'a>,
+    pub(crate) primitives: Vec<Primitive<'a>>,
 }
 
-pub(super) struct Vertices<'a> {
+pub(crate) struct Vertices<'a> {
     /// The unique identifier of this element.
-    pub(super) id: &'a str,
+    pub(crate) id: &'a str,
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
-    pub(super) input: VerticesInputs<'a>,
+    // pub(crate) name: Option<&'a str>,
+    pub(crate) input: VerticesInputs<'a>,
 }
 
-pub(super) struct VerticesInputs<'a> {
-    pub(super) position: UnsharedInput<'a>,
-    pub(super) normal: Option<UnsharedInput<'a>>,
-    pub(super) texcoord: Option<UnsharedInput<'a>>,
-    pub(super) color: Option<UnsharedInput<'a>>,
+pub(crate) struct VerticesInputs<'a> {
+    pub(crate) position: UnsharedInput<'a>,
+    pub(crate) normal: Option<UnsharedInput<'a>>,
+    pub(crate) texcoord: Option<UnsharedInput<'a>>,
+    pub(crate) color: Option<UnsharedInput<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) enum PrimitiveType {
+pub(crate) enum PrimitiveType {
     /// The `<lines>` element.
     Lines,
     /// The `<linestrips>` element.
@@ -74,7 +76,7 @@ pub(super) enum PrimitiveType {
 }
 
 impl PrimitiveType {
-    pub(super) fn face_size(self) -> Option<u32> {
+    pub(crate) fn face_size(self) -> Option<u32> {
         match self {
             PrimitiveType::Lines | PrimitiveType::LineStrips => Some(2),
             PrimitiveType::Triangles | PrimitiveType::TriFans | PrimitiveType::TriStrips => Some(3),
@@ -82,31 +84,31 @@ impl PrimitiveType {
         }
     }
 
-    pub(super) fn min_face_size(self) -> u32 {
+    pub(crate) fn min_face_size(self) -> u32 {
         self.face_size().unwrap_or(1)
     }
 }
 
-pub(super) struct PrimitiveInputs<'a> {
-    pub(super) vertex: SharedInput<'a, Vertices<'a>>,
-    pub(super) normal: Option<SharedInput<'a>>,
-    pub(super) color: Option<SharedInput<'a>>,
-    pub(super) texcoord: Vec<SharedInput<'a>>,
+pub(crate) struct PrimitiveInputs<'a> {
+    pub(crate) vertex: SharedInput<'a, Vertices<'a>>,
+    pub(crate) normal: Option<SharedInput<'a>>,
+    pub(crate) color: Option<SharedInput<'a>>,
+    pub(crate) texcoord: Vec<SharedInput<'a>>,
 }
 
-pub(super) struct Primitive<'a> {
+pub(crate) struct Primitive<'a> {
     /// The type of this element.
-    pub(super) ty: PrimitiveType,
+    pub(crate) ty: PrimitiveType,
 
     // /// The name of this element.
-    // pub(super) name: Option<&'a str>,
+    // pub(crate) name: Option<&'a str>,
     /// The number of primitives.
-    pub(super) count: u32,
+    pub(crate) count: u32,
     /// A symbol for a material.
-    pub(super) material: Option<&'a str>,
+    pub(crate) material: Option<&'a str>,
 
     /// Declares the input semantics of a data source and connects a consumer to that source.
-    pub(super) input: Option<PrimitiveInputs<'a>>,
+    pub(crate) input: Option<PrimitiveInputs<'a>>,
     /// The number of vertices for one polygon.
     ///
     /// Only [polylist] actually have a vcount element, but we use this field to
@@ -128,17 +130,17 @@ pub(super) struct Primitive<'a> {
     /// [triangles]: PrimitiveType::Triangles
     /// [trifans]: PrimitiveType::TriFans
     /// [tristrips]: PrimitiveType::TriStrips
-    pub(super) vcount: Vec<u32>,
+    pub(crate) vcount: Vec<u32>,
     /// The vertex attributes (indices) for an individual primitive.
-    pub(super) p: Vec<u32>,
+    pub(crate) p: Vec<u32>,
 
-    pub(super) stride: u32,
+    pub(crate) stride: u32,
 }
 
 // -----------------------------------------------------------------------------
 // Parsing
 
-pub(super) fn parse_library_geometries<'a>(
+pub(crate) fn parse_library_geometries<'a>(
     cx: &mut Context<'a>,
     node: xml::Node<'a, '_>,
 ) -> io::Result<()> {
@@ -373,7 +375,9 @@ fn parse_primitive<'a>(node: xml::Node<'a, '_>, ty: PrimitiveType) -> io::Result
                     continue;
                 }
 
-                vcount.reserve(count as usize);
+                // gz-collada: `count` is untrusted; bound the reservation by
+                // the text (two bytes or more per value).
+                vcount.reserve(reservation(count as usize, node.trimmed_text()));
 
                 // TODO: use parse_int_array_exact?
                 let mut iter = xml::parse_int_array::<u32>(node.trimmed_text());
@@ -412,23 +416,19 @@ fn parse_primitive<'a>(node: xml::Node<'a, '_>, ty: PrimitiveType) -> io::Result
                         return Err(error::multiple_elems(node));
                     }
 
-                    let mut expected_count = 0;
-                    match ty {
-                        PrimitiveType::Polylist => {
-                            for &i in &vcount {
-                                expected_count += i as usize;
-                            }
-                        }
-                        PrimitiveType::Lines => {
-                            expected_count = count as usize * 2;
-                        }
-                        PrimitiveType::Triangles => {
-                            expected_count = count as usize * 3;
-                        }
-                        _ => unreachable!(),
-                    }
+                    // gz-collada: u64, so a huge `count` can't overflow
+                    // (wasm32's usize is 32 bits).
+                    let expected_count: u64 = match ty {
+                        PrimitiveType::Polylist => vcount.iter().map(|&i| u64::from(i)).sum(),
+                        PrimitiveType::Lines => u64::from(count) * 2,
+                        _ => u64::from(count) * 3,
+                    };
+                    let expected = expected_count.saturating_mul(u64::from(stride));
 
-                    p.reserve(expected_count * stride as usize);
+                    p.reserve(reservation(
+                        usize::try_from(expected).unwrap_or(usize::MAX),
+                        node.trimmed_text(),
+                    ));
 
                     // TODO: It seems some exporters put negative indices sometimes.
                     // TODO: use parse_int_array_exact?
@@ -442,11 +442,11 @@ fn parse_primitive<'a>(node: xml::Node<'a, '_>, ty: PrimitiveType) -> io::Result
                         })?);
                     }
 
-                    if p.len() != expected_count * stride as usize {
+                    if p.len() as u64 != expected {
                         // TODO: It seems SketchUp 15.3.331 writes the wrong 'count' for 'lines'.
                         bail!(
                             "incorrect index count in <p> element, expected {} but found {} ({})",
-                            expected_count * stride as usize,
+                            expected,
                             p.len(),
                             node.node_location()
                         );
@@ -458,7 +458,11 @@ fn parse_primitive<'a>(node: xml::Node<'a, '_>, ty: PrimitiveType) -> io::Result
                     // See the description of the `Primitive::vcount` field for more information.
 
                     if vcount.capacity() == 0 {
-                        vcount.reserve(count as usize);
+                        // gz-collada: bounded by the element count.
+                        vcount.reserve(
+                            (count as usize)
+                                .min(node.parent_element().map_or(0, |n| n.children().count())),
+                        );
                     }
 
                     let prev_len = p.len();
@@ -539,4 +543,10 @@ fn parse_primitive<'a>(node: xml::Node<'a, '_>, ty: PrimitiveType) -> io::Result
         p,
         stride,
     })
+}
+
+/// gz-collada: how many of `count` whitespace-separated values `text` can
+/// hold, at most (each takes a digit and a separator).
+fn reservation(count: usize, text: &str) -> usize {
+    count.min(text.len() / 2 + 1)
 }
