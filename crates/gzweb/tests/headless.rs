@@ -496,6 +496,7 @@ fn synthetic_world(http: &str) -> Corpus {
         mesh("gltf", "/data/tri.gltf"),
         mesh("dae", "/data/robot.dae"),
         submesh("dae_child", "ChildNode"),
+        submesh_of("gltf_sub", "/data/tri.gltf", "tri"),
         submesh("dae_nosuch", "NoSuchNode"),
         mesh("missing", "/data/missing.stl"),
         mesh("fbx", "/data/thing.fbx"),
@@ -671,6 +672,7 @@ fn synthetic_world_spawns_every_feature() {
         "meshes/l/obj",
         "meshes/l/stl",
         "meshes/l/gltf",
+        "meshes/l/gltf_sub",
         "meshes/l/http",
         "meshes/l/http_server",
     ] {
