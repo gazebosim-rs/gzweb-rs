@@ -15,8 +15,10 @@ crates/
                 scene      gzweb's rules: gz.msgs.Scene → SceneDesc node tree
                 uri        Fuel / file:// / model:// resolution (gzweb createFuelUri)
                 snapshot   gz-parity-snapshot/1 types
+  gz-collada/ No Bevy. COLLADA documents as a node tree (vendored parsers,
+              see "Assets").
   gz-bevy/    Bevy plugin: drivers, asset sources, spawning, poses, camera, HUD,
-              snapshot exporter.
+              snapshot exporter, COLLADA loader.
   gzweb/      The app: native binary (+ headless --snapshot mode) and wasm entry.
   gz-parity/  Native tool: record / replay / compare / compare-protocol.
 parity/       run.sh driver + js/ (gzweb reference exporter, Playwright).
@@ -24,8 +26,8 @@ tests/corpus/ Recorded websocket sessions. tests/parity/allowlist.toml.
 spikes/       Standalone experiments, not in the workspace (spikes/collada).
 ```
 
-Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`, and
-`gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
+Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`,
+`gz-collada ← gz-bevy`, and `gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
 can be tested without a GPU. `gz-bevy` only instantiates them.
 
 ## Data flow
@@ -175,20 +177,42 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 | Collada (`.dae`) | `gz_bevy::collada::ColladaLoader` on `gz-collada` (below) |
 
 **Collada.** `gz-collada` vendors mesh-loader's XML, geometry and effect
-parsers (`src/vendor/`, Apache-2.0, excluded from the coverage gate) and
-replaces its scene assembly (`src/assemble.rs`): the instantiated visual
-scene as a node tree with names and local transforms (parent first), one
-mesh per primitive, per-instance material binding, `<instance_node>`, and
-normal maps from `<extra><technique><bump>`. The loader emits a Bevy
-`Scene`: a root scaled by `<unit>` (no `<up_axis>` rotation, like gz-common
-and gzweb), an entity per node with its `Name`, and a child per primitive.
-Textures load through the `.dae`'s own source, relative to it (or through
-`asset_path` when absolute). Effects map onto PBR: diffuse (white under a
-texture) × opacity, roughness `sqrt(2/(n+2))` from the Phong exponent,
-emission in scene-referred units, `constant` = unlit. On the 14 Fuel meshes
-in `spikes/collada/corpus`, triangle counts and world bounds match gzweb's
-three.js loader (`cargo test -p gz-collada -- --ignored`). Not done:
-`<submesh>`/`center` selection.
+parsers (`src/vendor/`, Apache-2.0, patched where marked `gz-collada:`,
+excluded from the coverage gate) and replaces its scene assembly
+(`src/assemble.rs`): the instantiated visual scene as a node tree with
+names and local transforms (parent first), one mesh per primitive,
+per-instance material binding, `<instance_node>` (cycles cut, at most 1M
+nodes and primitives), and normal maps and `<double_sided>` from any
+`<extra>` (best effort). A malformed document is an error, never a panic:
+XML nesting is capped at 300 levels and `<node>`s at 256 before the
+recursive parsers run, and `src/validate.rs` checks each instantiated
+primitive's sources, accessors and index counts. As in three.js, dangling
+geometry/material/effect/node references fail the load, unused geometry is
+not checked, and VERTEX always reads the mesh's own `<vertices>`.
+
+The loader emits a Bevy `Scene`: a root scaled by `<unit>` (no `<up_axis>`
+rotation, like gz-common and gzweb), an entity per node with its `Name`,
+and a child per primitive. Textures load through the `.dae`'s own source,
+relative to it (or through `asset_path` when absolute), repeating unless
+the file's `wrapU`/`wrapV` say otherwise. `collada::drop_failed_textures`
+removes a texture that failed to load from its material (any
+`StandardMaterial`), since Bevy would otherwise never draw it. Effects map
+onto PBR:
+- base colour: diffuse (white under a texture), alpha = opacity (three.js
+  ignores diffuse alpha); blended below 1, a 0.5 alpha mask for a
+  `<transparent>` texture;
+- Phong/Blinn roughness `(2/(n+2))^¼` (the GGX α `sqrt(2/(n+2))`, which
+  Bevy gets by squaring perceptual roughness), reflectance scaled by the
+  specular luminance; Lambert roughness 1;
+- emission (white under a texture) through `units::emissive`, so 1 renders
+  at full brightness (SDF materials use it too); vertex colours sRGB;
+- `constant` = unlit.
+
+On the 14 Fuel meshes in `spikes/collada/corpus`, triangle counts and world
+bounds match gzweb's three.js loader (`spikes/collada/run.sh`, then
+`cargo test -p gz-collada -- --ignored`; manual, not in CI). Not done:
+`<submesh>`/`center` selection, skinned meshes (`<instance_controller>`,
+skipped with a warning), and a visual's SDF material on a `.dae`.
 
 ## Rendering
 

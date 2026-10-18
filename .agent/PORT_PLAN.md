@@ -213,16 +213,19 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
   and de-dup.
-- **Collada** (done 2026-10-17, see DESIGN.md "Assets"; `<submesh>`/`center` still
-  to do): evaluate the `mesh-loader` crate (pure Rust: DAE/STL/OBJ) as a Bevy
-  `AssetLoader`. Fall back to a purpose-built loader if its material/texture coverage is
-  insufficient. Honour `<up_axis>` and `<unit>`.
+- **Collada** (done 2026-10-17, see DESIGN.md "Assets"): `gz-collada` (mesh-loader's
+  parsers, vendored, with a rewritten scene assembly) as a Bevy `AssetLoader`. `<unit>` is
+  applied; `<up_axis>` is not, as in gz-common and gzweb. Not done:
+  - `<submesh>`/`center`.
+  - `<instance_controller>` (skinned meshes): skipped, with one warning per file.
 - OBJ/MTL texture path rewriting (`model://`, bare `map_Kd` → `materials/textures/`).
 - Submesh selection + centering (`useSubMesh` semantics), mesh scale.
 
 **Phase 4: Materials**
 - gzweb colour rule, opacity/blend, alpha-mask for RGBA textures, double-sided.
 - PBR maps (albedo, normal, emissive, metallic-roughness), legacy `normal_map`.
+- A visual's SDF `<material>` and PBR maps on a `.dae` mesh: ignored now (the file's
+  own materials are used).
 - Texture loading via the same HTTP→websocket chain. DDS/TGA via Bevy's image features.
 - Decide and document the colour space: gzweb feeds raw floats to three r141 with no
   sRGB conversion. Pick the Bevy equivalent so rendered colours match.
