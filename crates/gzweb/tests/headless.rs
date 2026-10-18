@@ -503,6 +503,19 @@ fn synthetic_world(http: &str) -> Corpus {
         mesh("http404", &format!("{http}/web/nope.obj")),
         mesh("http_server", &format!("{http}/web/server_only.obj")),
     ];
+    // A 3×3 image: black, a white centre and one mid-grey corner.
+    let terrain = visual(
+        "ground",
+        msgs::Geometry {
+            heightmap: Some(msgs::HeightmapGeom {
+                filename: "/data/terrain.png".into(),
+                size: v3(4.0, 4.0, 2.0),
+                origin: v3(0.0, 0.0, 0.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
     let mut lit = link("lit", vec![]);
     lit.light.push(light("lamp", LightType::Point));
 
@@ -532,6 +545,7 @@ fn synthetic_world(http: &str) -> Corpus {
         model: vec![
             model("shapes", 10, vec![link("l", shapes)]),
             model("meshes", 20, vec![link("l", meshes)]),
+            model("terrain", 50, vec![link("l", vec![terrain])]),
             model("lamp_post", 40, vec![lit]),
             nested,
         ],
@@ -589,6 +603,10 @@ fn synthetic_world(http: &str) -> Corpus {
     Builder::new("synthetic")
         .scene(&scene)
         .asset("pkg/meshes/tri.obj", OBJ)
+        .asset(
+            "/data/terrain.png",
+            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
+        )
         // Not on the HTTP server: the websocket fallback finds it.
         .asset(&format!("{http}/web/server_only.obj"), OBJ)
         .asset("pkg/meshes/two.obj", OBJ_MTL)
@@ -693,6 +711,19 @@ fn synthetic_world_spawns_every_feature() {
         m.maps.albedo.as_deref(),
         Some("wsasset://rel/pkg/materials/textures/t.png")
     );
+    // Heightmap from an image: centred, white at size.z, top row at +Y.
+    let g = node(&snap, "terrain/l/ground").geometry.as_ref().unwrap();
+    assert_eq!(
+        (g.ty.as_str(), g.mesh_count, g.vertex_count),
+        ("heightmap", 1, 9),
+        "{g:?}"
+    );
+    let aabb = g.aabb_world.as_ref().unwrap();
+    let want = ([-2.0, -2.0, 0.0], [2.0, 2.0, 2.0]);
+    for i in 0..3 {
+        assert!((aabb.min[i] - want.0[i]).abs() < 1e-5, "{aabb:?}");
+        assert!((aabb.max[i] - want.1[i]).abs() < 1e-5, "{aabb:?}");
+    }
     // Failed or unsupported loads have no geometry.
     for path in [
         "meshes/l/missing",

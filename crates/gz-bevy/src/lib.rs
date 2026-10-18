@@ -9,6 +9,7 @@ pub mod camera;
 pub mod collada;
 pub mod connection;
 pub mod driver;
+pub mod heightmap;
 pub mod hud;
 pub mod obj;
 pub mod render;
@@ -92,6 +93,7 @@ impl Plugin for GzWebPlugin {
                 (
                     connection::pump,
                     spawn::apply_scene,
+                    heightmap::build,
                     render::apply_environment,
                     render::install_sky,
                     spawn::apply_poses,
@@ -126,7 +128,7 @@ impl Plugin for GzWebPlugin {
 pub(crate) mod test_util {
     use bevy::prelude::*;
 
-    use crate::{camera, connection, render, spawn, GzAssetSourcesPlugin, GzConfig};
+    use crate::{camera, connection, heightmap, render, spawn, GzAssetSourcesPlugin, GzConfig};
 
     /// No renderer, window or connection; the scene, pose and camera
     /// systems run against resources the test fills in.
@@ -164,6 +166,7 @@ pub(crate) mod test_util {
             Update,
             (
                 spawn::apply_scene,
+                heightmap::build,
                 render::apply_environment,
                 render::install_sky,
                 spawn::apply_poses,

@@ -53,17 +53,24 @@ fn ws_request_uri(path: &Path) -> Option<String> {
     }
 }
 
-/// Inverse of [`asset_path`] for the HTTP source. With a `mirror`, HTTPS
-/// URLs become `<mirror>/<host>/<path>` (see `gz-parity mirror`).
+/// Inverse of [`asset_path`] for the HTTP source, ready to fetch. With a
+/// `mirror`, HTTPS URLs become `<mirror>/<host>/<path>` (see `gz-parity
+/// mirror`).
 fn http_url(path: &Path, mirror: Option<&str>) -> String {
-    let p = path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .replace(' ', "%20");
-    match (p.strip_prefix("http:/"), mirror) {
-        (Some(rest), _) => format!("http://{rest}"),
-        (None, Some(m)) => format!("{}/{p}", m.trim_end_matches('/')),
-        (None, None) => format!("https://{p}"),
+    let url = source_url(path).replace(' ', "%20");
+    match (url.strip_prefix("https://"), mirror) {
+        (Some(rest), Some(m)) => format!("{}/{rest}", m.trim_end_matches('/')),
+        _ => url,
+    }
+}
+
+/// Inverse of [`asset_path`] for the HTTP source: the URI as the scene
+/// wrote it (unescaped), which is what the websocket server resolves.
+fn source_url(path: &Path) -> String {
+    let p = path.to_string_lossy().replace('\\', "/");
+    match p.strip_prefix("http:/") {
+        Some(rest) => format!("http://{rest}"),
+        None => format!("https://{p}"),
     }
 }
 
@@ -202,7 +209,7 @@ impl AssetReader for HttpAssetReader {
             Err(e) => e,
         };
         // The server knows the real URL, not the mirror's.
-        let uri = http_url(path, None);
+        let uri = source_url(path);
         match self.store.fetch(&uri).await {
             Ok(bytes) => {
                 info!("HTTP asset '{url}' failed ({http_error}); got it from the server");
@@ -338,6 +345,12 @@ mod tests {
                 None
             ),
             "https://fuel.gazebosim.org/1.0/o/models/m%20m/1/files/a.glb"
+        );
+        assert_eq!(
+            source_url(Path::new(
+                "fuel.gazebosim.org/1.0/o/models/m m/1/files/a.glb"
+            )),
+            "https://fuel.gazebosim.org/1.0/o/models/m m/1/files/a.glb"
         );
         assert_eq!(
             http_url(
@@ -496,11 +509,8 @@ mod tests {
         };
         let missing = format!("{base}/missing");
         let gone = format!("{base}/gone");
-        store.deliver(&http_url(Path::new(&missing), None), Ok(b"cached".to_vec()));
-        store.deliver(
-            &http_url(Path::new(&gone), None),
-            Err("asset_not_found".into()),
-        );
+        store.deliver(&source_url(Path::new(&missing)), Ok(b"cached".to_vec()));
+        store.deliver(&source_url(Path::new(&gone)), Err("asset_not_found".into()));
         block_on(async {
             assert_eq!(
                 read_all(&reader, &format!("{base}/ok")).await.unwrap(),

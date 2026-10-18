@@ -215,6 +215,17 @@ translations but keeps their rotations, which only differs when an ancestor
 rotates. An unknown name leaves nothing, as in both. Snapshots wait for
 `GzSubmesh::applied`.
 
+**Heightmaps.** Gazebo never puts heights in the scene message (gzweb's
+terrain is therefore empty); it sends the image `filename`. `gz_bevy::heightmap`
+loads it through the asset chain (linear, not sRGB), samples it `sampling`
+times per pixel (bilinear, at most 1025 vertices a side), and lays it over
+`size.x` × `size.y` centred on `origin`, black at `origin.z`, white at
+`origin.z + size.z`, the image's top row at +Y. Smooth normals and tangents;
+the first texture layer repeats every `size` metres (repeat sampler, 16×
+anisotropy). A terrain whose image fails is an empty mesh that still carries
+its material. Not done: blending layers by height (`<blend>`), DEM (GeoTIFF)
+heightmaps, mipmaps for the tiled textures.
+
 ## Rendering
 
 gzweb-rs does **not** copy gzweb's look (three.js r141, legacy lights, no tone

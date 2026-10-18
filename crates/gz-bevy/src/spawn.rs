@@ -20,6 +20,7 @@ use gz_core::uri;
 
 use crate::assets;
 use crate::connection::GzInbox;
+use crate::heightmap;
 use crate::render::{self, GzEnvironment, GzGrid};
 use crate::submesh;
 use crate::GzConfig;
@@ -265,6 +266,12 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
         }
         GeometryDesc::Mesh { load_uri, .. } => {
             spawn_mesh_file(ctx, visual, parent, name, load_uri);
+            return;
+        }
+        GeometryDesc::Heightmap(desc) => {
+            let image =
+                heightmap::spawn(ctx.commands, ctx.asset_server, ctx.materials, desc, parent);
+            ctx.loads.0.extend(image);
             return;
         }
         GeometryDesc::Unsupported(kind) => {

@@ -164,6 +164,8 @@ Parity tests allow-list these with a reason string:
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - An OBJ whose `.mtl` fails to load still shows, with the default material.
+- Heightmaps are built from the image Gazebo names (gzweb only uses message heights,
+  which Gazebo never sends, so it draws nothing).
 - Local mesh paths go straight to the websocket server (gzweb first fetches them over
   HTTP relative to the page).
 - Publisher encodes binary protobuf (gzweb's `TextDecoder` round-trip corrupts bytes).
@@ -214,7 +216,8 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
 - `visible`, `cast_shadows`, collisions hidden.
 
 **Phase 3: Geometry and assets**
-- Primitives: ellipsoid, plane normal. Heightmap (≤256 segments, texture repeat).
+- Primitives: ellipsoid, plane normal (done in Phase 2). Heightmap (done 2026-10-17 from
+  the image, ≤1025 vertices a side, texture repeat; layer blending still to do).
 - URI resolution identical to gzweb: strip `file://`/`model://`, `createFuelUri`, HTTP first
   → websocket fallback on all platforms (one `AssetReader` doing the chain), per-URI cache
   and de-dup. (Done 2026-10-17; local paths skip HTTP, see DESIGN.md "Assets".)

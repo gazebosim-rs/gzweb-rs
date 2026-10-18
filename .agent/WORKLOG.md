@@ -319,3 +319,11 @@ These are findings for the plan, not changes:
 - Assets: a failed `gzhttps://` fetch retries through the websocket
   `asset` request with the real URL (not the mirror's), as gzweb does.
   Headless test serves a mesh only over the websocket.
+- Heightmaps: `GeometryDesc::Heightmap`, terrain from the image (Gazebo's
+  rules) or message heights; first layer textured. `heightmap` corpus:
+  material matches gzweb, geometry allow-listed (`gzweb-heightmap-empty`).
+  **Pending:** `heightmap_bowl.png` must be added to
+  `tests/corpus/heightmap/http.lock.json` (Fuel answered 502 all day, so
+  the ignored test fails offline: the image's websocket fallback shows up
+  in the protocol diff).
+- Websocket fallback requests the unescaped URL (`source_url`), as gzweb.

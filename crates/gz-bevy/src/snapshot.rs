@@ -17,6 +17,7 @@ use gz_core::transport::Status;
 
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
+use crate::heightmap::GzHeightmap;
 use crate::render::{GzEnvironment, GzGrid};
 use crate::spawn::{
     GzEntity, GzIndex, GzLight, GzLightEmitter, GzLoads, GzPlaceholder, GzVisual, GzWorldRoot,
@@ -45,6 +46,7 @@ pub fn snapshot_when_settled(
     loads: Res<GzLoads>,
     asset_server: Res<AssetServer>,
     scene_roots: Query<(&SceneRoot, Option<&Children>, Option<&GzSubmesh>)>,
+    terrains: Query<&GzHeightmap>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -91,6 +93,7 @@ pub fn snapshot_when_settled(
         && index.scene.is_some()
         && loads_done
         && scenes_instanced
+        && terrains.iter().all(|t| t.built)
         && now - inbox.last_activity_secs >= req.settle_secs;
 
     if !settled && !timed_out {
