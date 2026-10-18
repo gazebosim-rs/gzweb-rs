@@ -70,7 +70,7 @@ pub struct GzIndex {
 pub struct GzLoads(pub Vec<UntypedHandle>);
 
 /// A glTF mesh waiting for its file; [`instance_gltf`] then adds the
-/// `SceneRoot` for its scene. It is loaded by asset type rather than as
+/// `WorldAssetRoot` for its scene. It is loaded by asset type rather than as
 /// `file#Scene0`, which Bevy would match to a loader by extension, case
 /// sensitively (a `.GLB` would find none).
 #[derive(Component, Debug, Clone)]
@@ -80,7 +80,7 @@ pub struct GzGltf(pub Handle<Gltf>);
 /// `GLTFLoader` does.
 pub fn instance_gltf(
     mut commands: Commands,
-    pending: Query<(Entity, &GzGltf), Without<SceneRoot>>,
+    pending: Query<(Entity, &GzGltf), Without<WorldAssetRoot>>,
     gltfs: Option<Res<Assets<Gltf>>>,
 ) {
     let Some(gltfs) = gltfs else { return };
@@ -94,7 +94,7 @@ pub fn instance_gltf(
             .or_else(|| gltf.scenes.first().cloned())
         {
             Some(scene) => {
-                commands.entity(entity).insert(SceneRoot(scene));
+                commands.entity(entity).insert(WorldAssetRoot(scene));
             }
             None => {
                 warn!("glTF has no scene");
@@ -413,11 +413,11 @@ fn spawn_mesh_file(
         }
         // `SceneFileLoader` reads both, in any case.
         "obj" | "dae" => {
-            let scene: Handle<Scene> = ctx.asset_server.load(path);
+            let scene: Handle<WorldAsset> = ctx.asset_server.load(path);
             ctx.loads.0.push(scene.clone().untyped());
             let entity = ctx
                 .commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)))
+                .spawn((WorldAssetRoot(scene), Transform::IDENTITY, ChildOf(parent)))
                 .id();
             add_submesh(ctx, visual, entity);
         }
@@ -513,7 +513,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 color,
                 intensity: render::units::point_lumens(intensity),
                 range,
-                shadows_enabled: light.cast_shadows,
+                shadow_maps_enabled: light.cast_shadows,
                 ..default()
             });
         }
@@ -526,7 +526,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 range,
                 outer_angle: outer,
                 inner_angle: inner,
-                shadows_enabled: light.cast_shadows,
+                shadow_maps_enabled: light.cast_shadows,
                 ..default()
             });
         }
@@ -535,7 +535,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                 DirectionalLight {
                     color,
                     illuminance: render::units::directional_lux(intensity),
-                    shadows_enabled: light.cast_shadows,
+                    shadow_maps_enabled: light.cast_shadows,
                     ..default()
                 },
                 // Sharp near the camera, out to a typical Gazebo world's size.

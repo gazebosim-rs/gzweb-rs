@@ -315,6 +315,7 @@ mod tests {
                     x: 0.0,
                     y: *y,
                     window: self.window,
+                    phase: bevy::input::touch::TouchPhase::Moved,
                 });
             }
             self.app.update();

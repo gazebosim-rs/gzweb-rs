@@ -2,7 +2,7 @@
 //! between them, texture loading, the Phong roughness rule and the mesh
 //! attributes every format ends with.
 //!
-//! [`SceneFileLoader`] is the only loader of [`Scene`]s from files, so Bevy
+//! [`SceneFileLoader`] is the only loader of [`WorldAsset`]s from files, so Bevy
 //! picks it by asset type whatever the extension's case (`.DAE`, `.Obj`),
 //! and it picks the format from the lower-cased extension. Two loaders for
 //! one asset type would be chosen by extension, which Bevy matches
@@ -44,7 +44,7 @@ impl std::fmt::Display for SceneFileError {
 impl std::error::Error for SceneFileError {}
 
 impl AssetLoader for SceneFileLoader {
-    type Asset = Scene;
+    type Asset = WorldAsset;
     type Settings = ();
     type Error = SceneFileError;
 
@@ -53,7 +53,7 @@ impl AssetLoader for SceneFileLoader {
         reader: &mut dyn Reader,
         _settings: &(),
         cx: &mut LoadContext<'_>,
-    ) -> Result<Scene, SceneFileError> {
+    ) -> Result<WorldAsset, SceneFileError> {
         let ext = gz_core::uri::extension(&cx.path().path().to_string_lossy());
         if !matches!(ext.as_str(), "dae" | "obj") {
             return Err(SceneFileError::Format(ext));
@@ -70,7 +70,7 @@ impl AssetLoader for SceneFileLoader {
         }
     }
 
-    /// Both cases, for when another `Scene` loader is registered and Bevy
+    /// Both cases, for when another `WorldAsset` loader is registered and Bevy
     /// has to choose by extension; mixed case relies on this being the only
     /// one.
     fn extensions(&self) -> &[&str] {
@@ -122,7 +122,7 @@ pub fn load_texture(
         return None;
     }
     Some(
-        cx.loader()
+        cx.load_builder()
             .with_settings(image_settings(srgb, sampler))
             .load(path),
     )
@@ -139,7 +139,7 @@ pub fn texture_path(file: &AssetPath<'_>, texture: &str) -> Option<AssetPath<'st
             .ok()
             .map(AssetPath::into_owned);
     }
-    file.resolve_embed(texture).ok()
+    file.resolve_embed_str(texture).ok()
 }
 
 /// Perceptual roughness for a Phong/Blinn exponent: `sqrt(2 / (n + 2))` is
@@ -300,13 +300,14 @@ mod tests {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<Scene>()
+        .init_asset::<WorldAsset>()
         .register_asset_loader(bevy::image::ImageLoader::new(
             bevy::image::CompressedImageFormats::NONE,
         ))
         .init_asset_loader::<SceneFileLoader>();
         let server = app.world().resource::<AssetServer>().clone();
-        let handles: Vec<Handle<Scene>> = files.iter().map(|(n, ..)| server.load(*n)).collect();
+        let handles: Vec<Handle<WorldAsset>> =
+            files.iter().map(|(n, ..)| server.load(*n)).collect();
         for _ in 0..500 {
             app.update();
             let done = handles
@@ -317,9 +318,9 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let mut scenes = app.world_mut().resource_mut::<Assets<Scene>>();
+        let mut scenes = app.world_mut().resource_mut::<Assets<WorldAsset>>();
         for ((name, _, meshes), h) in files.iter().zip(&handles) {
-            match scenes.get_mut(h) {
+            match scenes.get_mut_untracked(h) {
                 Some(scene) => {
                     let n = scene.world.query::<&Mesh3d>().iter(&scene.world).count();
                     assert_eq!(n, *meshes, "{name}");

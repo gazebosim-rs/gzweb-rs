@@ -31,7 +31,7 @@ pub fn spawn_hud(mut commands: Commands) {
         ..default()
     };
     let font = TextFont {
-        font_size: 20.0,
+        font_size: FontSize::Px(20.0),
         ..default()
     };
     commands.spawn((
@@ -65,7 +65,7 @@ pub fn spawn_hud(mut commands: Commands) {
     commands.spawn((
         Text::new(HINT),
         TextFont {
-            font_size: 16.0,
+            font_size: FontSize::Px(16.0),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -98,7 +98,10 @@ pub fn update_adapter(
 ) {
     for (mut text, mut color) in &mut query {
         match &adapter {
-            Some(adapter) => (text.0, color.0) = adapter_style(&adapter.get_info()),
+            Some(adapter) => {
+                let info = adapter.get_info();
+                (text.0, color.0) = adapter_style(&format!("{:?}", info.backend), &info.name);
+            }
             None => {
                 text.0 = "Backend: none".into();
                 color.0 = Color::srgb(1.0, 0.0, 0.0);
@@ -107,18 +110,16 @@ pub fn update_adapter(
     }
 }
 
-/// HUD label and colour for a render adapter: blue for WebGL, yellow for
-/// the no-op backend, green otherwise.
-fn adapter_style(info: &wgpu_types::AdapterInfo) -> (String, Color) {
-    let color = match info.backend {
-        wgpu_types::Backend::Gl => Color::srgb(0.0, 0.5, 1.0),
-        wgpu_types::Backend::Noop => Color::srgb(1.0, 1.0, 0.0),
+/// HUD label and colour for a render adapter, from its `wgpu::Backend` (as
+/// `Debug` prints it; Bevy doesn't re-export the type) and name: blue for
+/// WebGL, yellow for the no-op backend, green otherwise.
+fn adapter_style(backend: &str, name: &str) -> (String, Color) {
+    let color = match backend {
+        "Gl" => Color::srgb(0.0, 0.5, 1.0),
+        "Noop" => Color::srgb(1.0, 1.0, 0.0),
         _ => Color::srgb(0.0, 1.0, 0.0),
     };
-    (
-        format!("Backend: {:?} ({})", info.backend, info.name),
-        color,
-    )
+    (format!("Backend: {backend} ({name})"), color)
 }
 
 pub fn update_status(
@@ -262,27 +263,12 @@ mod tests {
 
     #[test]
     fn adapter_colour_follows_the_backend() {
-        let info = |backend| wgpu_types::AdapterInfo {
-            name: "gpu".into(),
-            vendor: 0,
-            device: 0,
-            device_type: wgpu_types::DeviceType::Other,
-            driver: String::new(),
-            driver_info: String::new(),
-            backend,
-        };
         assert_eq!(
-            adapter_style(&info(wgpu_types::Backend::Vulkan)),
+            adapter_style("Vulkan", "gpu"),
             ("Backend: Vulkan (gpu)".into(), Color::srgb(0.0, 1.0, 0.0))
         );
-        assert_eq!(
-            adapter_style(&info(wgpu_types::Backend::Gl)).1,
-            Color::srgb(0.0, 0.5, 1.0)
-        );
-        assert_eq!(
-            adapter_style(&info(wgpu_types::Backend::Noop)).1,
-            Color::srgb(1.0, 1.0, 0.0)
-        );
+        assert_eq!(adapter_style("Gl", "gpu").1, Color::srgb(0.0, 0.5, 1.0));
+        assert_eq!(adapter_style("Noop", "gpu").1, Color::srgb(1.0, 1.0, 0.0));
     }
 
     #[test]
