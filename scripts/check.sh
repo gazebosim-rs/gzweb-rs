@@ -17,6 +17,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 COVERAGE_MIN=${COVERAGE_MIN:-95}
+# Vendored third-party code (mesh-loader's COLLADA parsers, lightly
+# patched); gz-collada's tests exercise it on probes and malformed input,
+# but it isn't held to the minimum. (The Fuel corpus comparison with
+# three.js is a manual `--ignored` test, not part of this gate.)
+COVERAGE_IGNORE='crates/gz-collada/src/vendor/'
 LOCKED=()
 [ "${CHECK_LOCKED:-0}" = 1 ] && LOCKED=(--locked)
 # Crates that build for the browser.
@@ -66,10 +71,11 @@ coverage() {
   mkdir -p target/coverage
   # Includes the headless end-to-end tests, which run the instrumented
   # gzweb binary as a child process.
-  cargo llvm-cov "${LOCKED[@]}" --workspace \
+  cargo llvm-cov "${LOCKED[@]}" --workspace --ignore-filename-regex "$COVERAGE_IGNORE" \
     --lcov --output-path target/coverage/lcov.info
   # Prints the per-file table, then fails if the total is under the minimum.
-  cargo llvm-cov report --summary-only --fail-under-lines "$COVERAGE_MIN"
+  cargo llvm-cov report --summary-only --ignore-filename-regex "$COVERAGE_IGNORE" \
+    --fail-under-lines "$COVERAGE_MIN"
 }
 
 case "${1:-all}" in

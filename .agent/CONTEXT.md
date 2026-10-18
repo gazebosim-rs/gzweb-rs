@@ -27,7 +27,7 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 | Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs (Harmonic) |
 | Native websocket | `tungstenite` 0.26 |
 | Camera controls | `bevy_panorbit_camera` 0.34 |
-| Mesh loaders | Bevy glTF, `bevy_obj`, `bevy_stl` (Collada: see `spikes/collada/REPORT.md`) |
+| Mesh loaders | Bevy glTF, `bevy_obj`, `bevy_stl`; Collada: `gz-collada` (mesh-loader's parsers, vendored) + `gz_bevy::collada` (DESIGN.md "Assets") |
 | Parity harness | `gz-parity` (Rust) + Playwright/three.js (`parity/js`) |
 
 ---
@@ -40,6 +40,7 @@ gzweb-rs/
 ├── crates/
 │   ├── gz-proto/    generated gz.msgs types (proto/ = vendored .proto files)
 │   ├── gz-core/     protocol, scene rules, URIs, snapshot types (no Bevy)
+│   ├── gz-collada/  COLLADA parsing into a node tree (no Bevy)
 │   ├── gz-bevy/     Bevy plugin
 │   ├── gzweb/       the app (native + wasm)
 │   └── gz-parity/   record / replay / compare tool

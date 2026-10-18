@@ -1,10 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Derived from probe.dae: only the rotate-parent / translate-child pair.
-     Hand-written probe for the spike: node hierarchy (rotate parent, translate
-     child), a geometry instanced 3 times (incl. via library_nodes /
-     instance_node), a two-material geometry (triangles + polylist quad),
-     centimeter units with node translations, Y_UP, FCOLLADA bump map,
-     transparency. Node names deliberately differ from geometry ids. -->
+<!-- Derived from probe.dae: only the rotate-parent / translate-child pair is
+     instanced, in centimetres (Y_UP); probe.dae's other geometries,
+     materials and library nodes are still defined but unused. -->
 <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
   <asset>
     <unit name="centimeter" meter="0.01"/>

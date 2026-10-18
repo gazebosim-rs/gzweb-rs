@@ -105,6 +105,7 @@ fn start_mirror(lock: &Path) -> String {
         lock: Some(lock.to_path_buf()),
         upstream: None,
         offline: std::env::var("GZ_HTTP_OFFLINE").is_ok_and(|v| v == "true"),
+        fetch_timeout: mirror::FETCH_TIMEOUT,
     };
     std::thread::spawn(move || mirror::serve_on(listener, opts));
     base
@@ -194,6 +195,11 @@ fn polylines_matches_gzweb() {
 }
 
 // ─── Synthetic world ────────────────────────────────────────────────────────
+
+/// gz-collada's hand-written probe: hierarchy, instancing, two materials.
+fn probe_dae() -> Vec<u8> {
+    std::fs::read(repo().join("crates/gz-collada/tests/data/probe.dae")).unwrap()
+}
 
 fn v3(x: f64, y: f64, z: f64) -> Option<msgs::Vector3d> {
     Some(msgs::Vector3d {
@@ -564,6 +570,7 @@ fn synthetic_world(http: &str) -> Corpus {
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
         .asset("/data/tri.bin", &tri_bin())
+        .asset("/data/robot.dae", &probe_dae())
         .publish(pose_topic, "gz.msgs.Pose_V", &poses)
         // Not a Pose_V / Scene, and a frame without a header: all tolerated.
         .publish_raw(
@@ -631,14 +638,12 @@ fn synthetic_world_spawns_every_feature() {
             .fold(0.0, f64::max);
         assert!((extent - 2.0).abs() < 1e-3, "{path}: {aabb:?}");
     }
-    // Collada is a placeholder (excluded); failed or unsupported loads have
-    // no geometry.
-    for path in [
-        "meshes/l/dae",
-        "meshes/l/missing",
-        "meshes/l/fbx",
-        "meshes/l/http404",
-    ] {
+    // Collada: the probe's node tree (5 primitive instances, 6 triangles,
+    // one through <instance_node>), its textures missing.
+    let dae = node(&snap, "meshes/l/dae").geometry.as_ref().unwrap();
+    assert_eq!((dae.mesh_count, dae.vertex_count), (5, 18), "{dae:?}");
+    // Failed or unsupported loads have no geometry.
+    for path in ["meshes/l/missing", "meshes/l/fbx", "meshes/l/http404"] {
         let g = node(&snap, path).geometry.as_ref();
         assert!(g.is_none_or(|g| g.vertex_count == 0), "{path}: {g:?}");
     }

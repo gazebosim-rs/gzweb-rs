@@ -1,0 +1,17 @@
+[package]
+name = "gz-collada"
+version = "0.1.0"
+edition = "2021"
+description = "COLLADA (.dae) loading for gzweb-rs: mesh-loader's parsers with a node-tree scene assembly"
+# The vendored mesh-loader code is Apache-2.0 as well.
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+roxmltree = "0.20"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

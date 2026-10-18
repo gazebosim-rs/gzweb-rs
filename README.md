@@ -6,9 +6,10 @@ server. The same code runs as a native desktop app (Vulkan, Metal or DX12) and
 in the browser (WebAssembly with WebGPU; a WebGL2 build is planned).
 
 Status: early. Primitive shapes, lights, basic materials and live pose updates
-work, and match gzweb on the recorded test worlds. glTF/OBJ/STL loading is wired
-up but not yet checked against a mesh world. Collada, textures and most of
-gzweb's UI are still to come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
+work, and match gzweb on the recorded test worlds. Collada meshes load with their
+textures and match gzweb's loader on Fuel models; glTF/OBJ/STL loading is wired
+up but not yet checked against a mesh world. Most of gzweb's UI is still to
+come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
 
 ## Layout
 
@@ -17,6 +18,7 @@ gzweb's UI are still to come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).
 | `crates/gzweb` | The app (native binary + wasm entry) |
 | `crates/gz-bevy` | Bevy plugin: connection, asset sources, scene spawning, camera, HUD |
 | `crates/gz-core` | Protocol, gzweb's scene rules, URI resolution (no Bevy) |
+| `crates/gz-collada` | COLLADA (`.dae`) parsing into a node tree (no Bevy) |
 | `crates/gz-proto` | `gz.msgs` types generated from vendored gz-msgs protos |
 | `crates/gz-parity` + `parity/` | Differential tests against the original gzweb |
 

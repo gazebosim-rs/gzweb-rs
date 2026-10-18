@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -24,9 +25,26 @@ pub struct MirrorOptions {
     pub upstream: Option<String>,
     /// Never fetch; a cache miss is a 404.
     pub offline: bool,
+    /// Longest an upstream fetch may take, body included
+    /// ([`FETCH_TIMEOUT`] for the CLI).
+    pub fetch_timeout: Duration,
 }
 
 type Lock = BTreeMap<String, String>;
+
+/// For connecting to the upstream and for its response headers, so an
+/// upstream that never answers shows up as a 404 well within a snapshot's
+/// timeout.
+const TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The CLI's [`MirrorOptions::fetch_timeout`]: generous, for large meshes on
+/// a slow link, but a body that stalls still fails.
+pub const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Fuel, and its old domain, which serves the same files. The old domain is
+/// tried only for files the lock pins, so what it returns is still checked.
+const FUEL: &str = "fuel.gazebosim.org/";
+const FUEL_OLD: &str = "fuel.ignitionrobotics.org/";
 
 struct State {
     opts: MirrorOptions,
@@ -99,7 +117,12 @@ fn get(state: &State, target: &str) -> Result<Vec<u8>, (u16, String)> {
         Ok(body) => body,
         Err(_) if state.opts.offline => return Err((404, "not cached (offline)".into())),
         Err(_) => {
-            let body = fetch(state, rest)?;
+            let body = fetch(state, rest).or_else(|e| match old_fuel(state, rest, &url) {
+                Some(alt) => {
+                    fetch(state, &alt).map_err(|alt_e| (e.0, format!("{}; {}", e.1, alt_e.1)))
+                }
+                None => Err(e),
+            })?;
             let tmp = file.with_extension("part");
             std::fs::write(&tmp, &body)
                 .and_then(|()| std::fs::rename(&tmp, &file))
@@ -111,13 +134,27 @@ fn get(state: &State, target: &str) -> Result<Vec<u8>, (u16, String)> {
     Ok(body)
 }
 
+/// `rest` on Fuel's old domain, when it is a Fuel file the lock pins.
+fn old_fuel(state: &State, rest: &str, url: &str) -> Option<String> {
+    let path = rest.strip_prefix(FUEL)?;
+    let lock = state.lock.lock().unwrap_or_else(PoisonError::into_inner);
+    lock.contains_key(url).then(|| format!("{FUEL_OLD}{path}"))
+}
+
 fn fetch(state: &State, rest: &str) -> Result<Vec<u8>, (u16, String)> {
     let url = match &state.opts.upstream {
         Some(base) => format!("{}/{rest}", base.trim_end_matches('/')),
         None => format!("https://{rest}"),
     };
     let not_found = |e: ureq::Error| (404, format!("{url}: {e}"));
+    // An upstream that stalls, before the headers or in the body, fails the
+    // request instead of hanging the client.
     ureq::get(&url)
+        .config()
+        .timeout_connect(Some(TIMEOUT))
+        .timeout_recv_response(Some(TIMEOUT))
+        .timeout_global(Some(state.opts.fetch_timeout))
+        .build()
         .call()
         .map_err(not_found)?
         .into_body()

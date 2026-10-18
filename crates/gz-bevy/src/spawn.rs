@@ -50,10 +50,6 @@ pub struct GzLight(pub LightDesc);
 #[derive(Component)]
 pub struct GzLightEmitter;
 
-/// A stand-in mesh for an unsupported format; excluded from snapshots.
-#[derive(Component)]
-pub struct GzPlaceholder;
-
 /// Lookup tables and spawn bookkeeping.
 #[derive(Resource, Default)]
 pub struct GzIndex {
@@ -358,12 +354,6 @@ fn spawn_mesh_file(
             ctx.commands
                 .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
         }
-        "obj" => {
-            let scene: Handle<Scene> = ctx.asset_server.load(path);
-            ctx.loads.0.push(scene.clone().untyped());
-            ctx.commands
-                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
-        }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
             ctx.loads.0.push(mesh.clone().untyped());
@@ -377,23 +367,11 @@ fn spawn_mesh_file(
                 ChildOf(parent),
             ));
         }
-        "dae" => {
-            warn!(
-                "visual '{name}': Collada is not supported yet ({load_uri}); showing a placeholder"
-            );
-            let mesh = ctx.meshes.add(Cuboid::new(0.5, 0.5, 0.5));
-            let material = ctx.materials.add(StandardMaterial {
-                base_color: Color::srgb(1.0, 0.08, 0.58),
-                unlit: true,
-                ..default()
-            });
-            ctx.commands.spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(material),
-                Transform::IDENTITY,
-                GzPlaceholder,
-                ChildOf(parent),
-            ));
+        "obj" | "dae" => {
+            let scene: Handle<Scene> = ctx.asset_server.load(path);
+            ctx.loads.0.push(scene.clone().untyped());
+            ctx.commands
+                .spawn((SceneRoot(scene), Transform::IDENTITY, ChildOf(parent)));
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
     }
@@ -414,7 +392,7 @@ pub fn standard_material(mat: &MaterialDesc, transparency: f64) -> StandardMater
         .unwrap_or((0.0, 0.5));
     StandardMaterial {
         base_color: Color::srgba(r, g, b, alpha),
-        emissive: LinearRgba::rgb(er, eg, eb),
+        emissive: render::units::emissive(Color::srgb(er, eg, eb)),
         metallic,
         perceptual_roughness,
         double_sided: mat.double_sided,
