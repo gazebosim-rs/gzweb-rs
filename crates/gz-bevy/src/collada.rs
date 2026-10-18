@@ -141,7 +141,8 @@ fn mesh(m: gz_collada::Mesh, tangents: bool) -> Mesh {
 /// A COLLADA effect as a PBR material (textures are added by the loader).
 ///
 /// - Base colour is the diffuse colour, or white under a diffuse texture
-///   (COLLADA's default grey would darken it). Alpha is the opacity alone,
+///   (COLLADA's default grey would darken it), linear as in Gazebo (see
+///   [`crate::material`]). Alpha is the opacity alone,
 ///   as in three.js, which ignores the diffuse colour's alpha; below 1 it
 ///   blends. A `<transparent>` texture with full opacity is a cut-out: the
 ///   diffuse texture's alpha is masked at 0.5 (three.js blends; a mask
@@ -168,15 +169,15 @@ fn material(m: &gz_collada::Material) -> StandardMaterial {
     let lambert = m.shading == gz_collada::Shading::Lambert;
     let [sr, sg, sb, _] = m.specular;
     // Bevy's F0 is 0.16 × reflectance²; its default 0.5 is 4%.
-    let specular = LinearRgba::from(Color::srgb(sr, sg, sb)).luminance();
+    let specular = LinearRgba::rgb(sr, sg, sb).luminance();
     let [er, eg, eb, _] = m.emission;
     let emission = if m.emission_texture.is_some() {
         Color::WHITE
     } else {
-        Color::srgb(er, eg, eb)
+        Color::linear_rgb(er, eg, eb)
     };
     StandardMaterial {
-        base_color: Color::srgba(r, g, b, alpha),
+        base_color: Color::linear_rgba(r, g, b, alpha),
         alpha_mode,
         perceptual_roughness: if lambert {
             1.0
@@ -281,7 +282,7 @@ mod tests {
     fn effects_become_pbr_materials() {
         let probe = dae("probe.dae");
         let red = material(&probe.materials[0]);
-        assert_eq!(red.base_color, Color::srgba(1.0, 0.0, 0.0, 1.0));
+        assert_eq!(red.base_color, Color::linear_rgba(1.0, 0.0, 0.0, 1.0));
         assert_eq!(red.alpha_mode, AlphaMode::Opaque);
         assert_eq!(red.cull_mode, Some(Face::Back));
         // A Lambert effect: no highlight.
@@ -289,7 +290,7 @@ mod tests {
         assert_eq!((red.perceptual_roughness, red.reflectance), (1.0, 0.5));
         let textured = material(&probe.materials[1]);
         // White under the texture, half transparent.
-        assert_eq!(textured.base_color, Color::srgba(1.0, 1.0, 1.0, 0.5));
+        assert_eq!(textured.base_color, Color::linear_rgba(1.0, 1.0, 1.0, 0.5));
         assert_eq!(textured.alpha_mode, AlphaMode::Blend);
         // Phong exponent 20: GGX α = sqrt(2/22), perceptual = sqrt(α).
         let shiny = (2.0f32 / 22.0).powf(0.25);
