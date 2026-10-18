@@ -41,3 +41,11 @@ field = "geometry.*"
 reason = """gzweb builds terrain only from heights in the message, which Gazebo never \
 sends, so its heightmap has no vertices. gzweb-rs loads the heightmap image, as Gazebo \
 does. PORT_PLAN.md section 2.5."""
+
+[[allow]]
+id = "gazebo-default-material"
+path = "model_00/*"
+field = "material.color"
+reason = """A primitive visual without a material is Gazebo's `gz-grey` (diffuse 0.7, \
+metallic) in gzweb-rs, as gz-sim's SceneManager renders it; gzweb leaves three's white. \
+PORT_PLAN.md section 2.5."""
