@@ -172,28 +172,84 @@ pub struct HeightmapLayer {
     pub size: f64,
 }
 
-/// Material in three.js terms, as gzweb `createMaterial` + `setMaterial`
-/// would build it, plus the extra message fields a PBR renderer can use.
+/// A visual's material as Gazebo renders it (gz-sim
+/// `SceneManager::LoadMaterial`, gz-rendering `Ogre2Material`), not as
+/// gzweb does. Colours are the message's floats, which Gazebo's ogre2 PBS
+/// shaders use as **linear** values; texture fields are load URIs (see
+/// [`uri::mesh_load_uri`]).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaterialDesc {
-    /// gzweb colour rule: `0.4 * ambient + 0.6 * diffuse` when both are set,
-    /// else `diffuse`, else white.
-    pub color: [f32; 3],
-    pub diffuse_alpha: f32,
+    /// RGBA. Gazebo's base colour; its alpha multiplies the opacity.
+    pub diffuse: Option<[f32; 4]>,
+    /// Kept for reference only: ogre2 never uses it (gzweb mixes
+    /// `0.4 * ambient + 0.6 * diffuse`).
+    pub ambient: Option<[f32; 4]>,
+    /// Scales every specular reflection (Ogre's `kS`).
+    pub specular: Option<[f32; 3]>,
     pub emissive: [f32; 3],
+    /// Depth bias for coplanar polygons: higher draws on top.
+    pub render_order: f32,
+    pub double_sided: bool,
+    /// The legacy `Material.normal_map` field.
+    pub normal_map: Option<String>,
     /// `Some` when the message carries a PBR block.
     pub pbr: Option<PbrDesc>,
-    pub double_sided: bool,
     /// Whether the message had a material at all.
     pub present: bool,
 }
 
+impl MaterialDesc {
+    /// A visual without a material.
+    pub fn absent() -> MaterialDesc {
+        MaterialDesc {
+            diffuse: None,
+            ambient: None,
+            specular: None,
+            emissive: [0.0; 3],
+            render_order: 0.0,
+            double_sided: false,
+            normal_map: None,
+            pbr: None,
+            present: false,
+        }
+    }
+
+    /// The normal map: the PBR one, else the legacy field.
+    pub fn normal_map(&self) -> Option<&str> {
+        self.pbr
+            .as_ref()
+            .and_then(|p| p.normal_map.as_deref())
+            .or(self.normal_map.as_deref())
+    }
+}
+
+/// `Material.PBR.WorkflowType`. Gazebo only renders the metal workflow;
+/// for the specular one it keeps the maps but not the scalars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PbrWorkflow {
+    /// `METAL`, and `NONE` (which gz-sim never sends).
+    Metal,
+    Specular,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PbrDesc {
+    pub workflow: PbrWorkflow,
     pub metalness: f64,
     pub roughness: f64,
     pub albedo_map: Option<String>,
     pub normal_map: Option<String>,
+    /// Red channel (Ogre samples `.x`).
+    pub metalness_map: Option<String>,
+    /// Red channel.
+    pub roughness_map: Option<String>,
+    pub emissive_map: Option<String>,
+    pub ambient_occlusion_map: Option<String>,
+    pub light_map: Option<String>,
+    /// UV set the light map uses.
+    pub light_map_uv: u32,
+    /// A per-material cubemap; not rendered (see DESIGN.md "Materials").
+    pub environment_map: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,38 +679,36 @@ fn heightmap_desc(h: &msgs::HeightmapGeom) -> HeightmapDesc {
 
 fn material_desc(mat: Option<&msgs::Material>) -> MaterialDesc {
     let Some(mat) = mat else {
-        // gzweb leaves its shared white Phong material in place.
-        return MaterialDesc {
-            color: [1.0; 3],
-            diffuse_alpha: 1.0,
-            emissive: [0.0; 3],
-            pbr: None,
-            double_sided: false,
-            present: false,
-        };
+        return MaterialDesc::absent();
     };
+    let rgba = |c: &msgs::Color| [c.r, c.g, c.b, c.a];
     let rgb = |c: &msgs::Color| [c.r, c.g, c.b];
-    let color = match (&mat.ambient, &mat.diffuse) {
-        (Some(a), Some(d)) => [
-            a.r * 0.4 + d.r * 0.6,
-            a.g * 0.4 + d.g * 0.6,
-            a.b * 0.4 + d.b * 0.6,
-        ],
-        (None, Some(d)) => rgb(d),
-        _ => [1.0; 3],
-    };
-    let non_empty = |s: &String| (!s.is_empty()).then(|| s.clone());
+    let load = |u: &str| (!u.is_empty()).then(|| uri::mesh_load_uri(u));
     MaterialDesc {
-        color,
-        diffuse_alpha: mat.diffuse.as_ref().map(|d| d.a).unwrap_or(1.0),
+        diffuse: mat.diffuse.as_ref().map(rgba),
+        ambient: mat.ambient.as_ref().map(rgba),
+        specular: mat.specular.as_ref().map(rgb),
         emissive: mat.emissive.as_ref().map(rgb).unwrap_or([0.0; 3]),
+        render_order: mat.render_order as f32,
+        double_sided: mat.double_sided,
+        normal_map: load(&mat.normal_map),
         pbr: mat.pbr.as_ref().map(|p| PbrDesc {
+            workflow: match msgs::material::pbr::WorkflowType::try_from(p.r#type) {
+                Ok(msgs::material::pbr::WorkflowType::Specular) => PbrWorkflow::Specular,
+                _ => PbrWorkflow::Metal,
+            },
             metalness: p.metalness,
             roughness: p.roughness,
-            albedo_map: non_empty(&p.albedo_map),
-            normal_map: non_empty(&p.normal_map),
+            albedo_map: load(&p.albedo_map),
+            normal_map: load(&p.normal_map),
+            metalness_map: load(&p.metalness_map),
+            roughness_map: load(&p.roughness_map),
+            emissive_map: load(&p.emissive_map),
+            ambient_occlusion_map: load(&p.ambient_occlusion_map),
+            light_map: load(&p.light_map),
+            light_map_uv: p.light_map_texcoord_set,
+            environment_map: load(&p.environment_map),
         }),
-        double_sided: mat.double_sided,
         present: true,
     }
 }
@@ -835,20 +889,21 @@ mod tests {
     }
 
     #[test]
-    fn material_colour_rule() {
+    fn materials_keep_gazebo_colours() {
+        // Gazebo renders the diffuse colour; ambient is only kept.
         let m = msgs::Material {
             ambient: color(1.0, 0.0, 0.0),
             diffuse: color(0.0, 1.0, 0.0),
+            specular: color(0.5, 0.5, 0.5),
+            render_order: 2.0,
             ..Default::default()
         };
         let d = material_desc(Some(&m));
-        assert!((d.color[0] - 0.4).abs() < 1e-6 && (d.color[1] - 0.6).abs() < 1e-6);
-        assert_eq!(material_desc(None).color, [1.0; 3]);
-        let only_diffuse = msgs::Material {
-            diffuse: color(0.2, 0.3, 0.4),
-            ..Default::default()
-        };
-        assert_eq!(material_desc(Some(&only_diffuse)).color, [0.2, 0.3, 0.4]);
+        assert_eq!(d.diffuse, Some([0.0, 1.0, 0.0, 1.0]));
+        assert_eq!(d.ambient, Some([1.0, 0.0, 0.0, 1.0]));
+        assert_eq!(d.specular, Some([0.5; 3]));
+        assert_eq!(d.render_order, 2.0);
+        assert_eq!(material_desc(None), MaterialDesc::absent());
     }
 
     #[test]
@@ -1442,16 +1497,17 @@ mod tests {
 
     #[test]
     fn material_variants() {
-        // Ambient without diffuse keeps three's white.
         let ambient_only = msgs::Material {
             ambient: color(1.0, 0.0, 0.0),
+            normal_map: "model://m/materials/textures/n.png".into(),
             ..Default::default()
         };
         let d = material_desc(Some(&ambient_only));
-        assert_eq!(d.color, [1.0; 3]);
-        assert_eq!(d.diffuse_alpha, 1.0);
+        assert_eq!(d.diffuse, None);
         assert!(d.present);
         assert!(!material_desc(None).present);
+        // The legacy normal map, as a load URI.
+        assert_eq!(d.normal_map(), Some("m/materials/textures/n.png"));
 
         let full = msgs::Material {
             diffuse: Some(msgs::Color {
@@ -1463,27 +1519,67 @@ mod tests {
             }),
             emissive: color(0.0, 0.5, 0.0),
             double_sided: true,
+            normal_map: "/legacy.png".into(),
             pbr: Some(msgs::material::Pbr {
+                r#type: msgs::material::pbr::WorkflowType::Metal as i32,
                 metalness: 0.8,
                 roughness: 0.3,
                 albedo_map: "file:///t/albedo.png".into(),
+                normal_map: "https://fuel.gazebosim.org/1.0/o/models/m/1/files/n.png".into(),
+                metalness_map:
+                    "/root/.gz/fuel/fuel.gazebosim.org/o/models/m/1/materials/textures/m.png".into(),
+                roughness_map: "model://m/r.png".into(),
+                emissive_map: "e.png".into(),
+                ambient_occlusion_map: "ao.png".into(),
+                light_map: "l.png".into(),
+                light_map_texcoord_set: 1,
+                environment_map: "env.dds".into(),
                 ..Default::default()
             }),
             ..Default::default()
         };
         let d = material_desc(Some(&full));
-        assert_eq!(d.diffuse_alpha, 0.25);
+        assert_eq!(d.diffuse, Some([1.0, 1.0, 1.0, 0.25]));
         assert_eq!(d.emissive, [0.0, 0.5, 0.0]);
         assert!(d.double_sided);
+        let fuel = "https://fuel.gazebosim.org/1.0/o/models/m/1/files";
         assert_eq!(
             d.pbr,
             Some(PbrDesc {
+                workflow: PbrWorkflow::Metal,
                 metalness: 0.8,
                 roughness: 0.3,
-                albedo_map: Some("file:///t/albedo.png".into()),
-                normal_map: None,
+                albedo_map: Some("/t/albedo.png".into()),
+                normal_map: Some(format!("{fuel}/n.png")),
+                metalness_map: Some(format!("{fuel}/materials/textures/m.png")),
+                roughness_map: Some("m/r.png".into()),
+                emissive_map: Some("e.png".into()),
+                ambient_occlusion_map: Some("ao.png".into()),
+                light_map: Some("l.png".into()),
+                light_map_uv: 1,
+                environment_map: Some("env.dds".into()),
             })
         );
+        // The PBR normal map wins over the legacy one.
+        assert_eq!(d.normal_map(), Some(format!("{fuel}/n.png").as_str()));
+
+        // The specular workflow; NONE counts as metal.
+        for (ty, want) in [
+            (
+                msgs::material::pbr::WorkflowType::Specular,
+                PbrWorkflow::Specular,
+            ),
+            (msgs::material::pbr::WorkflowType::None, PbrWorkflow::Metal),
+        ] {
+            let m = msgs::Material {
+                pbr: Some(msgs::material::Pbr {
+                    r#type: ty as i32,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            assert_eq!(material_desc(Some(&m)).pbr.unwrap().workflow, want);
+        }
     }
 
     #[test]

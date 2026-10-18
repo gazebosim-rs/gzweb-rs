@@ -18,6 +18,7 @@ use gz_core::transport::Status;
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
 use crate::heightmap::GzHeightmap;
+use crate::material::GzMaterials;
 use crate::render::{GzEnvironment, GzGrid};
 use crate::spawn::{
     GzEntity, GzGltf, GzIndex, GzLight, GzLightEmitter, GzLoads, GzVisual, GzWorldRoot,
@@ -48,6 +49,7 @@ pub fn snapshot_when_settled(
     scene_roots: Query<(&WorldAssetRoot, Option<&Children>, Option<&GzSubmesh>)>,
     gltfs: Query<&GzGltf, Without<WorldAssetRoot>>,
     terrains: Query<&GzHeightmap>,
+    gz_materials: Res<GzMaterials>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -99,6 +101,7 @@ pub fn snapshot_when_settled(
         && loads_done
         && scenes_instanced
         && terrains.iter().all(|t| t.built)
+        && gz_materials.settled()
         && now - inbox.last_activity_secs >= req.settle_secs;
 
     if !settled && !timed_out {
@@ -202,6 +205,7 @@ pub struct SnapshotQueries<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     meshes_q: Query<'w, 's, MeshData>,
     terrains: Query<'w, 's, &'static GzHeightmap>,
+    lightmaps: Query<'w, 's, &'static bevy::pbr::Lightmap>,
     emitters: Query<'w, 's, &'static GlobalTransform, With<GzLightEmitter>>,
     camera: Query<
         'w,
@@ -407,17 +411,27 @@ fn geometry_info(
 fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
     let mut mesh_entities = Vec::new();
     descendant_meshes(entity, q, &mut mesh_entities);
-    let handle = mesh_entities
-        .iter()
-        .find_map(|e| q.meshes_q.get(*e).ok().and_then(|(_, _, m)| m))?;
+    let (mesh, handle) = mesh_entities.iter().find_map(|e| {
+        q.meshes_q
+            .get(*e)
+            .ok()
+            .and_then(|(_, _, m)| m)
+            .map(|m| (*e, m))
+    })?;
     let m = q.materials.get(&handle.0)?;
-    let base = m.base_color.to_srgba();
+    // Linear, as the message's (and gzweb's) floats are.
+    let [r, g, b, opacity] = crate::material::reported_color(m);
     let emissive = crate::render::units::emission_color(m.emissive);
-    let path = |h: &Option<Handle<Image>>| h.as_ref().and_then(|h| h.path()).map(|p| p.to_string());
+    let path = |h: &Option<Handle<Image>>| {
+        h.as_ref().map(|h| {
+            h.path()
+                .map_or_else(|| "generated".into(), |p| p.to_string())
+        })
+    };
     Some(MaterialInfo {
-        color: [base.red as f64, base.green as f64, base.blue as f64],
-        opacity: base.alpha as f64,
-        transparent: matches!(m.alpha_mode, AlphaMode::Blend),
+        color: [r as f64, g as f64, b as f64],
+        opacity: opacity as f64,
+        transparent: matches!(m.alpha_mode, AlphaMode::Blend | AlphaMode::Premultiplied),
         emissive: [
             emissive.red as f64,
             emissive.green as f64,
@@ -428,6 +442,10 @@ fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
         maps: Maps {
             albedo: path(&m.base_color_texture),
             normal: path(&m.normal_map_texture),
+            emissive: path(&m.emissive_texture),
+            metallic_roughness: path(&m.metallic_roughness_texture),
+            occlusion: path(&m.occlusion_texture),
+            light: path(&q.lightmaps.get(mesh).ok().map(|l| l.image.clone())),
         },
     })
 }
@@ -475,14 +493,7 @@ mod tests {
         GzVisual(VisualDesc {
             proto_type: "box".into(),
             geometry: GeometryDesc::Box { size: [1.0; 3] },
-            material: MaterialDesc {
-                color: [1.0; 3],
-                diffuse_alpha: 1.0,
-                emissive: [0.0; 3],
-                pbr: None,
-                double_sided: false,
-                present: true,
-            },
+            material: MaterialDesc::absent(),
             cast_shadows: false,
             transparency: 0.0,
         })
