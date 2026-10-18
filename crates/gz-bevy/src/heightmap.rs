@@ -52,10 +52,13 @@ pub fn spawn(
 ) -> Vec<UntypedHandle> {
     // Only read on the CPU, never uploaded.
     let image: Option<Handle<Image>> = desc.image_uri.as_ref().map(|uri| {
-        asset_server.load_with_settings(assets::asset_path(uri), |s: &mut ImageLoaderSettings| {
-            s.is_srgb = false;
-            s.asset_usage = RenderAssetUsages::MAIN_WORLD;
-        })
+        asset_server
+            .load_builder()
+            .with_settings(|s: &mut ImageLoaderSettings| {
+                s.is_srgb = false;
+                s.asset_usage = RenderAssetUsages::MAIN_WORLD;
+            })
+            .load(assets::asset_path(uri))
     });
     let material = material(asset_server, desc);
     let loads: Vec<UntypedHandle> = image
@@ -96,10 +99,13 @@ fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMateria
     };
     let texture = |uri: &Option<String>, srgb: bool| {
         uri.as_ref().map(|uri| {
-            asset_server.load_with_settings(
-                assets::asset_path(uri),
-                mesh_file::image_settings(srgb, mesh_file::sampler([true; 2], 16)),
-            )
+            asset_server
+                .load_builder()
+                .with_settings(mesh_file::image_settings(
+                    srgb,
+                    mesh_file::sampler([true; 2], 16),
+                ))
+                .load(assets::asset_path(uri))
         })
     };
     let repeats = Vec2::new(

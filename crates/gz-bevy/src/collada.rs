@@ -1,5 +1,5 @@
 //! COLLADA (`.dae`) for [`SceneFileLoader`](crate::mesh_file::SceneFileLoader):
-//! [`gz_collada`]'s node tree becomes a [`Scene`], like the glTF loader's.
+//! [`gz_collada`]'s node tree becomes a [`WorldAsset`], like the glTF loader's.
 //!
 //! - The root entity (unnamed) scales by the document's `<unit>`;
 //!   `<up_axis>` is ignored, as in Gazebo and gzweb.
@@ -24,7 +24,7 @@ use crate::mesh_file::{self, MeshParts};
 use crate::render::units;
 
 /// Parses a `.dae` file into a scene.
-pub fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<Scene, gz_collada::Error> {
+pub fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<WorldAsset, gz_collada::Error> {
     let dae = gz_collada::parse(bytes)?;
     for warning in &dae.warnings {
         warn!("{}: {warning}", cx.path());
@@ -32,7 +32,7 @@ pub fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<Scene, gz_collada:
     Ok(build_scene(dae, cx))
 }
 
-fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
+fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> WorldAsset {
     // A primitive with a normal map needs tangents on its mesh.
     let mut needs_tangents = vec![false; dae.meshes.len()];
     for (_, p) in dae.instances() {
@@ -71,7 +71,7 @@ fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
         .collect();
     // Primitives without a material get COLLADA's default grey.
     let fallback = cx.add_labeled_asset(
-        "MaterialDefault".into(),
+        "MaterialDefault",
         material(&gz_collada::Material::default()),
     );
 
@@ -85,7 +85,7 @@ fn build_scene(dae: gz_collada::Scene, cx: &mut LoadContext<'_>) -> Scene {
     for node in &dae.roots {
         spawn_node(&mut world, node, root, &meshes, &materials, &fallback);
     }
-    Scene::new(world)
+    WorldAsset::new(world)
 }
 
 fn spawn_node(
@@ -233,9 +233,10 @@ pub fn drop_failed_textures(
             .into_iter()
             .any(is_failed)
         });
-        let Some(m) = materials.get_mut(id).filter(|_| any) else {
+        let Some(mut m) = materials.get_mut(id).filter(|_| any) else {
             continue;
         };
+        let m = &mut *m;
         for texture in [
             &mut m.base_color_texture,
             &mut m.normal_map_texture,
@@ -399,7 +400,7 @@ mod tests {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
-        .init_asset::<Scene>()
+        .init_asset::<WorldAsset>()
         .register_asset_loader(bevy::image::ImageLoader::new(
             bevy::image::CompressedImageFormats::NONE,
         ))
@@ -409,7 +410,9 @@ mod tests {
     }
 
     fn update_until(app: &mut App, done: impl Fn(&World) -> bool) {
-        for _ in 0..500 {
+        // Generous: parallel tests load the machine.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
             app.update();
             if done(app.world()) {
                 return;
@@ -443,7 +446,7 @@ mod tests {
         std::fs::write(dir.join("m.dae"), text).unwrap();
 
         let mut app = loader_app(&dir);
-        let scene: Handle<Scene> = app.world().resource::<AssetServer>().load("m.dae");
+        let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load("m.dae");
         update_until(&mut app, |w| {
             let server = w.resource::<AssetServer>();
             server.is_loaded_with_dependencies(&scene)
@@ -462,7 +465,13 @@ mod tests {
                 .unwrap()
                 .clone()
         };
-        update_until(&mut app, |w| textured(w).normal_map_texture.is_none());
+        // ...and the good image may still be loading.
+        update_until(&mut app, |w| {
+            let m = textured(w);
+            m.normal_map_texture.is_none()
+                && m.base_color_texture
+                    .is_some_and(|i| w.resource::<Assets<Image>>().contains(&i))
+        });
         let m = textured(app.world());
         let image = m.base_color_texture.unwrap();
         let images = app.world().resource::<Assets<Image>>();

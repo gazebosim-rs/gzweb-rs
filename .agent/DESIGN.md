@@ -59,7 +59,7 @@ GzWorldRoot
 ├── model (GzEntity kind=model, Transform = model pose)
 │   ├── link
 │   │   ├── visual (GzVisual, Transform = visual pose, scale = <mesh><scale>)
-│   │   │   └── geometry child (Mesh3d / SceneRoot; primitive-specific local transform)
+│   │   │   └── geometry child (Mesh3d / WorldAssetRoot; primitive-specific local transform)
 │   │   └── light (GzLight) └── emitter child (Bevy light, looks along direction)
 │   └── nested model …
 └── top-level light
@@ -185,13 +185,13 @@ server-side file. Both sources are registered by `GzAssetSourcesPlugin`, which
 |---|---|
 | glTF/GLB | Bevy, loaded as a `Gltf` and instanced by `spawn::instance_gltf` |
 | OBJ + MTL | `gz_bevy::mesh_file::SceneFileLoader` → `gz_bevy::obj` on `tobj` (below) |
-| STL | `bevy_stl` |
+| STL | `gz_bevy::stl::StlLoader`: ASCII and binary, told apart as three.js does (flat shaded; zero face normals come from the winding) |
 | Collada (`.dae`) | `gz_bevy::mesh_file::SceneFileLoader` → `gz_bevy::collada` on `gz-collada` (below) |
 
 Extensions match in any case, as in Gazebo (`.DAE`, `.Obj`, `.GLB`). Bevy
 picks a loader by extension case-sensitively when more than one loader
 makes the asset type, or when a label is asked for (`x.glb#Scene0`), so
-COLLADA and OBJ share one `Scene` loader that picks the parser from the
+COLLADA and OBJ share one `WorldAsset` loader that picks the parser from the
 lower-cased extension, and glTF loads by type. `mesh_file` also holds what
 the two loaders share: texture paths and loading (a path climbing out of
 its source is refused, since Bevy panics on it inside a loader), the Phong
@@ -211,7 +211,7 @@ primitive's sources, accessors and index counts. As in three.js, dangling
 geometry/material/effect/node references fail the load, unused geometry is
 not checked, and VERTEX always reads the mesh's own `<vertices>`.
 
-The loader emits a Bevy `Scene`: an unnamed root scaled by `<unit>` (no
+The loader emits a Bevy `WorldAsset`: an unnamed root scaled by `<unit>` (no
 `<up_axis>` rotation, like gz-common and gzweb), an entity per node with its
 `name` as its `Name` (never the `id`: gz-common names submeshes after
 `name`), and a child per primitive. Textures load through the `.dae`'s own source,
@@ -255,8 +255,8 @@ MTL → PBR as for COLLADA: `Kd` × `map_Kd`, alpha `d` or `1 - Tr`, roughness
 (three.js's MTLLoader default) and vertex colours are sRGB.
 
 **Submeshes.** A mesh file that loads as a scene (COLLADA, OBJ, glTF) with a
-`<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `SceneRoot`; an
-observer on `SceneInstanceReady` applies Gazebo's rules (gz-common's
+`<submesh>` gets `gz_bevy::submesh::GzSubmesh` on its `WorldAssetRoot`; an
+observer on `WorldInstanceReady` applies Gazebo's rules (gz-common's
 loaders, gz-rendering's `Ogre2MeshFactory`):
 - every primitive (a `Mesh3d` entity) is a submesh named after its nearest
   ancestor node with a name (an unnamed node's geometry joins its named
@@ -327,7 +327,10 @@ fails wgpu validation. An identical scene (a reconnect) changes nothing.
   above, darker below): a white ambient adds half of full sun.
 - `<sky>` without a cubemap, and a directional light: Bevy's physically based
   atmosphere, which also lights the scene. Without a sun it would be black,
-  so the studio is used.
+  so the studio is used. The atmosphere is a planet entity
+  (`render::GzAtmosphere`, replaced with each scene) with no `Transform`, so
+  Bevy puts its centre `inner_radius` below the origin; the camera carries
+  `AtmosphereSettings`. All planets share one `ScatteringMedium`.
 - `<sky>` with a cubemap (header `cubemap_uri` as gzweb reads it, or the
   field): loaded, then checked (six square power-of-two faces, ≤ 8192 px)
   and used as the skybox and the scene's light at its own brightness. A
@@ -416,3 +419,8 @@ changes.
   line.
 - When gzweb-rs deliberately differs from gzweb, list it in PORT_PLAN.md §2.5
   and in `tests/parity/allowlist.toml`, with a reason.
+- **On every Bevy upgrade:**
+  - bump `rust-toolchain.toml` and the `dtolnay/rust-toolchain@` versions in
+    `.github/workflows/ci.yml` if Bevy's MSRV changes;
+  - revisit the advisory ignores in `deny.toml`;
+  - update the Bevy and wgpu versions in CONTEXT.md and PORT_PLAN.md.

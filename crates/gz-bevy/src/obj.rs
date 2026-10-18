@@ -1,6 +1,6 @@
 //! Wavefront OBJ with MTL materials for
 //! [`SceneFileLoader`](crate::mesh_file::SceneFileLoader), parsed by `tobj`
-//! and built like the COLLADA loader's [`Scene`]:
+//! and built like the COLLADA loader's [`WorldAsset`]:
 //!
 //! - Every `o`/`g` object is an entity with its `Name` (for `<submesh>`),
 //!   with a child per material it uses (three.js builds one mesh per object
@@ -36,12 +36,12 @@ const OPTIONS: tobj::LoadOptions = tobj::LoadOptions {
 };
 
 /// Parses an `.obj` file and its material libraries into a scene.
-pub async fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<Scene, tobj::LoadError> {
+pub async fn load(bytes: &[u8], cx: &mut LoadContext<'_>) -> Result<WorldAsset, tobj::LoadError> {
     let obj_path = cx.path().clone_owned();
     // tobj's material callback is synchronous, so read the libraries first.
     let mut libraries = HashMap::new();
     for name in mtllibs(bytes) {
-        let Ok(path) = obj_path.resolve_embed(&name) else {
+        let Ok(path) = obj_path.resolve_embed_str(&name) else {
             continue;
         };
         match cx.read_asset_bytes(path.clone()).await {
@@ -106,7 +106,11 @@ fn normalize_mtl(text: &[u8]) -> Vec<u8> {
     out.into_bytes()
 }
 
-fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadContext<'_>) -> Scene {
+fn build_scene(
+    models: &[tobj::Model],
+    mtls: &[tobj::Material],
+    cx: &mut LoadContext<'_>,
+) -> WorldAsset {
     let obj_path = cx.path().clone_owned();
     let materials: Vec<Handle<StandardMaterial>> = mtls
         .iter()
@@ -137,10 +141,7 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
             cx.add_labeled_asset(format!("Material{i}"), mat)
         })
         .collect();
-    let fallback = cx.add_labeled_asset(
-        "MaterialDefault".into(),
-        material(&tobj::Material::default()),
-    );
+    let fallback = cx.add_labeled_asset("MaterialDefault", material(&tobj::Material::default()));
 
     let mut world = World::new();
     let root = world
@@ -186,7 +187,7 @@ fn build_scene(models: &[tobj::Model], mtls: &[tobj::Material], cx: &mut LoadCon
             ChildOf(parent),
         ));
     }
-    Scene::new(world)
+    WorldAsset::new(world)
 }
 
 fn normal_map(m: &tobj::Material) -> Option<&str> {
@@ -202,21 +203,15 @@ fn mesh(m: &tobj::Mesh, tangents: bool) -> Option<Mesh> {
         return None;
     }
     let parts = MeshParts {
-        positions: m
-            .positions
-            .chunks_exact(3)
-            .map(|p| [p[0], p[1], p[2]])
-            .collect(),
-        normals: m
-            .normals
-            .chunks_exact(3)
-            .map(|v| [v[0], v[1], v[2]])
-            .collect(),
-        uvs: m.texcoords.chunks_exact(2).map(|t| [t[0], t[1]]).collect(),
+        positions: m.positions.as_chunks::<3>().0.to_vec(),
+        normals: m.normals.as_chunks::<3>().0.to_vec(),
+        uvs: m.texcoords.as_chunks::<2>().0.to_vec(),
         colors: m
             .vertex_color
-            .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2], 1.0])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&[r, g, b]| [r, g, b, 1.0])
             .collect(),
         indices: Some(m.indices.clone()),
     };
@@ -353,7 +348,7 @@ pub fn texture_path(
             Some(models) => AssetPath::try_parse(&format!("{models}{rest}"))
                 .ok()
                 .map(AssetPath::into_owned),
-            None => obj.resolve_embed(rest).ok(),
+            None => obj.resolve_embed_str(rest).ok(),
         };
     }
     let absolute = file.contains("://") || file.starts_with('/');
@@ -365,7 +360,7 @@ pub fn texture_path(
                 .ok()
                 .map(AssetPath::into_owned),
             None => obj
-                .resolve_embed(&format!("materials/textures/{file}"))
+                .resolve_embed_str(&format!("materials/textures/{file}"))
                 .ok(),
         };
     }
