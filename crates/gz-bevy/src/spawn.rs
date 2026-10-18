@@ -300,8 +300,7 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
             return;
         }
         GeometryDesc::Heightmap(desc) => {
-            let loads =
-                heightmap::spawn(ctx.commands, ctx.asset_server, ctx.materials, desc, parent);
+            let loads = heightmap::spawn(ctx.commands, ctx.asset_server, desc, parent);
             ctx.loads.0.extend(loads);
             return;
         }

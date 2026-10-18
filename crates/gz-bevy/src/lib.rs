@@ -85,6 +85,7 @@ impl Plugin for GzWebPlugin {
             .init_resource::<camera::GzCameraTarget>()
             .init_asset_loader::<mesh_file::SceneFileLoader>()
             .init_asset_loader::<stl::StlLoader>()
+            .add_plugins(heightmap::TerrainMaterialPlugin)
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),
@@ -146,6 +147,7 @@ pub(crate) mod test_util {
         .init_asset::<Mesh>()
         .init_asset::<Image>()
         .init_asset::<StandardMaterial>()
+        .init_asset::<heightmap::TerrainMaterial>()
         .init_asset::<WorldAsset>()
         .init_asset::<bevy::light::atmosphere::ScatteringMedium>()
         .insert_resource(config)

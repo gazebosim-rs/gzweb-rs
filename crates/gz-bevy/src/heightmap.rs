@@ -7,14 +7,22 @@
 //! and lay it over `size.x` × `size.y` centred on `origin`, the image's top
 //! row at +Y. Heights in the message are used as they are.
 //!
-//! The first texture layer covers the terrain, repeating every `size`
-//! metres (as in gzweb). Height blending between layers is not done yet.
+//! Texture layers follow Gazebo's ogre2 terrain (gz-rendering
+//! `Ogre2Heightmap.cc` and its Terra shader pieces): layer 0 covers the
+//! terrain; layer `i > 0` is laid over the layers below it where the
+//! terrain is higher than `blends[i - 1]`'s `min_height` (metres above the
+//! terrain's lowest point, `origin.z`), fading in over `fade_dist` with a
+//! smoothstep. Each layer repeats every `size` metres. Up to
+//! [`MAX_LAYERS`] are drawn, by [`TerrainMaterial`] (`shaders/terrain*.wesl`).
 
-use bevy::asset::{LoadState, RenderAssetUsages};
+use bevy::asset::{embedded_asset, load_embedded_asset, LoadState, RenderAssetUsages};
 use bevy::image::ImageLoaderSettings;
 use bevy::math::Affine2;
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::shader::ShaderRef;
 use gz_core::scene::HeightmapDesc;
 
 use crate::{assets, mesh_file};
@@ -22,7 +30,13 @@ use crate::{assets, mesh_file};
 /// Vertices along a side are capped here (about a million in all).
 pub const MAX_VERTICES_PER_SIDE: usize = 1025;
 
-/// Waits for its image, then gets the terrain mesh and material.
+/// Texture layers drawn at most: Gazebo's ogre2 limit (4; it takes a 5th
+/// only when layer 0 has no normal map and one tile covers the terrain).
+/// Each layer past the first costs two sampled textures of WebGPU's 16 per
+/// shader stage, beside the StandardMaterial's six and the view's.
+pub const MAX_LAYERS: usize = 4;
+
+/// Waits for its image, then gets the terrain mesh.
 #[derive(Component, Debug)]
 pub struct GzHeightmap {
     pub desc: HeightmapDesc,
@@ -41,12 +55,140 @@ pub struct Grid {
     pub heights: Vec<f32>,
 }
 
+/// The terrain's material: layer 0 in the StandardMaterial (so it reports
+/// like any other), the blended layers in the extension.
+pub type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainExtension>;
+
+const SHADER: &str = "embedded://gz_bevy/shaders/terrain.wesl";
+const PREPASS_SHADER: &str = "embedded://gz_bevy/shaders/terrain_prepass.wesl";
+
+/// Registers [`TerrainMaterial`] and its shaders.
+pub struct TerrainMaterialPlugin;
+
+/// Keeps the shared shader module loaded, so the terrain shaders' imports
+/// of it resolve.
+#[derive(Resource)]
+struct TerrainShaderLibrary(#[allow(dead_code)] Handle<Shader>);
+
+impl Plugin for TerrainMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "shaders/terrain.wesl");
+        embedded_asset!(app, "shaders/terrain_prepass.wesl");
+        embedded_asset!(app, "shaders/terrain_layers.wesl");
+        // Without a renderer (unit tests) there are no shader assets.
+        if app.world().contains_resource::<Assets<Shader>>() {
+            let library: Handle<Shader> = load_embedded_asset!(app, "shaders/terrain_layers.wesl");
+            app.insert_resource(TerrainShaderLibrary(library));
+        }
+        app.add_plugins(MaterialPlugin::<TerrainMaterial>::default());
+    }
+}
+
+/// The layers over layer 0 (1 to 3), as `shaders/terrain_layers.wesl`
+/// reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, ShaderType)]
+pub struct TerrainLayers {
+    /// Per layer: xy repeats over the terrain, z 1 with a diffuse map, w 1
+    /// with a normal map.
+    pub tiling: [Vec4; 3],
+    /// Per layer: its blend's `min_height`, in metres above the base.
+    pub min_height: Vec3,
+    /// Layers in use (0 to 3).
+    pub count: u32,
+    /// Per layer: its blend's `fade_dist`.
+    pub fade: Vec3,
+    /// The terrain's lowest point (`origin.z`) in the mesh's frame.
+    pub base_height: f32,
+}
+
+/// Layers 1 to 3 of a terrain, over the StandardMaterial's layer 0.
+///
+/// The textures are bound one by one, so layers can differ in size. They
+/// share one sampler, `diffuse_1`'s: when layer 1 has no diffuse map that
+/// slot holds another layer texture (unused but for its sampler), since
+/// every layer texture repeats the same way.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct TerrainExtension {
+    #[uniform(100)]
+    pub layers: TerrainLayers,
+    #[texture(101)]
+    #[sampler(107)]
+    pub diffuse_1: Option<Handle<Image>>,
+    #[texture(102)]
+    pub normal_1: Option<Handle<Image>>,
+    #[texture(103)]
+    pub diffuse_2: Option<Handle<Image>>,
+    #[texture(104)]
+    pub normal_2: Option<Handle<Image>>,
+    #[texture(105)]
+    pub diffuse_3: Option<Handle<Image>>,
+    #[texture(106)]
+    pub normal_3: Option<Handle<Image>>,
+}
+
+impl MaterialExtension for TerrainExtension {
+    fn fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn deferred_fragment_shader() -> ShaderRef {
+        SHADER.into()
+    }
+
+    fn prepass_fragment_shader() -> ShaderRef {
+        PREPASS_SHADER.into()
+    }
+}
+
+/// How much of a layer covers the layers below it at `height` metres above
+/// the terrain's lowest point: Gazebo ogre2's `smoothstep(min_height,
+/// min_height + fade_dist, height)`. A fade of 0 is a hard step (ogre2
+/// would never show such a layer; ogre1 steps).
+///
+/// Mirrors `layer_weight` in `shaders/terrain_layers.wesl`; keep the two
+/// in sync.
+pub fn layer_weight(height: f32, min_height: f32, fade: f32) -> f32 {
+    if fade <= 1e-6 {
+        return if height >= min_height { 1.0 } else { 0.0 };
+    }
+    let t = ((height - min_height) / fade).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Each of layers 1 to 3's own weight at `height` (0 for those not in
+/// use). Mirrors `weights` in `shaders/terrain_layers.wesl`.
+pub fn layer_weights(height: f32, layers: &TerrainLayers) -> [f32; 3] {
+    let mut w = [0.0; 3];
+    for (i, w) in w.iter_mut().enumerate().take(layers.count.min(3) as usize) {
+        *w = layer_weight(height, layers.min_height[i], layers.fade[i]);
+    }
+    w
+}
+
+/// What share of the colour each layer (0 first) has at `height`, after
+/// the shader lays them over each other in order. Sums to 1.
+pub fn layer_shares(height: f32, layers: &TerrainLayers) -> [f32; MAX_LAYERS] {
+    let mut shares = [1.0, 0.0, 0.0, 0.0];
+    for (i, w) in layer_weights(height, layers).into_iter().enumerate() {
+        shares.iter_mut().take(i + 1).for_each(|s| *s *= 1.0 - w);
+        shares[i + 1] = w;
+    }
+    shares
+}
+
+/// The layers drawn: layer 0 and each later one with a blend, up to
+/// [`MAX_LAYERS`]. As in Gazebo, a layer without a blend never shows and
+/// blends past the last layer do nothing.
+pub fn drawn_layers(desc: &HeightmapDesc) -> usize {
+    let blended = desc.layers.len().saturating_sub(1).min(desc.blends.len());
+    (desc.layers.len().min(1) + blended).min(MAX_LAYERS)
+}
+
 /// Starts loading the heightmap and its textures for a visual; returns
 /// what it loads, for snapshots to wait on.
 pub fn spawn(
     commands: &mut Commands,
     asset_server: &AssetServer,
-    materials: &mut Assets<StandardMaterial>,
     desc: &HeightmapDesc,
     parent: Entity,
 ) -> Vec<UntypedHandle> {
@@ -60,18 +202,19 @@ pub fn spawn(
             })
             .load(assets::asset_path(uri))
     });
-    let material = material(asset_server, desc);
+    let textures = layer_textures(asset_server, desc);
     let loads: Vec<UntypedHandle> = image
         .iter()
         .map(|h| h.clone().untyped())
         .chain(
-            [&material.base_color_texture, &material.normal_map_texture]
-                .into_iter()
+            textures
+                .iter()
+                .flat_map(|[d, n]| [d, n])
                 .flatten()
                 .map(|h| h.clone().untyped()),
         )
         .collect();
-    let material = materials.add(material);
+    let material = asset_server.add(material(desc, &textures));
     commands.spawn((
         GzHeightmap {
             desc: desc.clone(),
@@ -87,16 +230,17 @@ pub fn spawn(
     loads
 }
 
-/// The first layer's textures, repeating every `size` metres.
-fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMaterial {
-    let Some(layer) = desc.layers.first() else {
-        // gzweb's untextured terrain colour.
-        return StandardMaterial {
-            base_color: Color::srgb_u8(0x55, 0x55, 0x55),
-            perceptual_roughness: 1.0,
-            ..default()
-        };
-    };
+/// Starts loading the drawn layers' diffuse and normal maps.
+fn layer_textures(
+    asset_server: &AssetServer,
+    desc: &HeightmapDesc,
+) -> Vec<[Option<Handle<Image>>; 2]> {
+    if desc.layers.len() > MAX_LAYERS {
+        warn!(
+            "heightmap: {} texture layers, only the first {MAX_LAYERS} are drawn",
+            desc.layers.len()
+        );
+    }
     let texture = |uri: &Option<String>, srgb: bool| {
         uri.as_ref().map(|uri| {
             asset_server
@@ -108,17 +252,64 @@ fn material(asset_server: &AssetServer, desc: &HeightmapDesc) -> StandardMateria
                 .load(assets::asset_path(uri))
         })
     };
-    let repeats = Vec2::new(
-        (desc.size[0] / layer.size) as f32,
-        (desc.size[1] / layer.size) as f32,
-    );
-    StandardMaterial {
-        base_color_texture: texture(&layer.diffuse, true),
-        normal_map_texture: texture(&layer.normal, false),
-        uv_transform: Affine2::from_scale(repeats),
-        perceptual_roughness: 1.0,
+    desc.layers
+        .iter()
+        .take(drawn_layers(desc))
+        .map(|l| [texture(&l.diffuse, true), texture(&l.normal, false)])
+        .collect()
+}
+
+/// Layer 0 in the StandardMaterial, the rest in the extension; each
+/// repeats every `size` metres.
+fn material(desc: &HeightmapDesc, textures: &[[Option<Handle<Image>>; 2]]) -> TerrainMaterial {
+    let repeats = |i: usize| {
+        let size = desc.layers[i].size;
+        Vec2::new((desc.size[0] / size) as f32, (desc.size[1] / size) as f32)
+    };
+    let base = match textures.first() {
+        // gzweb's untextured terrain colour.
+        None => StandardMaterial {
+            base_color: Color::srgb_u8(0x55, 0x55, 0x55),
+            perceptual_roughness: 1.0,
+            ..default()
+        },
+        Some([diffuse, normal]) => StandardMaterial {
+            base_color_texture: diffuse.clone(),
+            normal_map_texture: normal.clone(),
+            uv_transform: Affine2::from_scale(repeats(0)),
+            perceptual_roughness: 1.0,
+            ..default()
+        },
+    };
+    let mut extension = TerrainExtension {
+        layers: TerrainLayers {
+            count: textures.len().saturating_sub(1) as u32,
+            base_height: desc.origin[2] as f32,
+            ..default()
+        },
         ..default()
+    };
+    let slots = [
+        (&mut extension.diffuse_1, &mut extension.normal_1),
+        (&mut extension.diffuse_2, &mut extension.normal_2),
+        (&mut extension.diffuse_3, &mut extension.normal_3),
+    ];
+    for (i, ((diffuse, normal), [d, n])) in
+        slots.into_iter().zip(textures.iter().skip(1)).enumerate()
+    {
+        let flag = |h: &Option<Handle<Image>>| if h.is_some() { 1.0 } else { 0.0 };
+        extension.layers.tiling[i] = repeats(i + 1).extend(flag(d)).extend(flag(n));
+        let [min_height, fade] = desc.blends[i];
+        extension.layers.min_height[i] = min_height as f32;
+        extension.layers.fade[i] = fade as f32;
+        *diffuse = d.clone();
+        *normal = n.clone();
     }
+    // The shared sampler comes from `diffuse_1`.
+    if extension.diffuse_1.is_none() {
+        extension.diffuse_1 = textures.iter().skip(1).flatten().flatten().next().cloned();
+    }
+    TerrainMaterial { base, extension }
 }
 
 /// Builds terrains whose heights are ready.
@@ -162,8 +353,9 @@ pub fn build(
         let tangents = terrain
             .desc
             .layers
-            .first()
-            .is_some_and(|l| l.normal.is_some());
+            .iter()
+            .take(drawn_layers(&terrain.desc))
+            .any(|l| l.normal.is_some());
         let grid = grid.map(|g| resample(&g, terrain.desc.sampling as usize));
         // Without heights the terrain is an empty mesh, which still carries
         // its material (gzweb's terrain is always empty).
@@ -474,13 +666,9 @@ mod tests {
         let world = app.world_mut();
         let parent = world.spawn(Transform::IDENTITY).id();
         let loads = world
-            .run_system_once(
-                move |mut commands: Commands,
-                      server: Res<AssetServer>,
-                      mut materials: ResMut<Assets<StandardMaterial>>| {
-                    spawn(&mut commands, &server, &mut materials, &desc, parent)
-                },
-            )
+            .run_system_once(move |mut commands: Commands, server: Res<AssetServer>| {
+                spawn(&mut commands, &server, &desc, parent)
+            })
             .unwrap();
         for _ in 0..200 {
             app.update();
@@ -518,17 +706,21 @@ mod tests {
                 .unwrap()
         }
 
-        fn material(&self) -> &StandardMaterial {
+        fn terrain_material(&self) -> &TerrainMaterial {
             let mat = self
                 .app
                 .world()
-                .get::<MeshMaterial3d<StandardMaterial>>(self.entity)
+                .get::<MeshMaterial3d<TerrainMaterial>>(self.entity)
                 .unwrap();
             self.app
                 .world()
-                .resource::<Assets<StandardMaterial>>()
+                .resource::<Assets<TerrainMaterial>>()
                 .get(&mat.0)
                 .unwrap()
+        }
+
+        fn material(&self) -> &StandardMaterial {
+            &self.terrain_material().base
         }
 
         fn terrain(&self) -> &GzHeightmap {
@@ -600,6 +792,184 @@ mod tests {
                 "gzhttps://fuel.example/n.png"
             ]
         );
+    }
+
+    fn path(h: &Option<Handle<Image>>) -> Option<String> {
+        h.as_ref().and_then(|h| h.path()).map(|p| p.to_string())
+    }
+
+    fn named(name: &str, normal: bool, size: f64) -> gz_core::scene::HeightmapLayer {
+        gz_core::scene::HeightmapLayer {
+            diffuse: Some(format!("https://fuel.example/{name}.png")),
+            normal: normal.then(|| "https://fuel.example/flat.png".into()),
+            size,
+        }
+    }
+
+    fn missing_image(layers: Vec<gz_core::scene::HeightmapLayer>, blends: Vec<[f64; 2]>) -> Built {
+        built(
+            HeightmapDesc {
+                image_uri: Some("none.png".into()),
+                layers,
+                blends,
+                ..desc()
+            },
+            &[("none.png", Err("asset_not_found".into()))],
+        )
+    }
+
+    #[test]
+    fn layer_weights_follow_gazebos_smoothstep() {
+        // Gazebo's test world: dirt, grass above 1 m, fungus above 3 m,
+        // each fading in over 1 m.
+        let layers = TerrainLayers {
+            count: 2,
+            min_height: Vec3::new(1.0, 3.0, 0.0),
+            fade: Vec3::new(1.0, 1.0, 0.0),
+            ..default()
+        };
+        assert_eq!(layer_weights(0.0, &layers), [0.0, 0.0, 0.0]);
+        assert_eq!(layer_weights(1.5, &layers), [0.5, 0.0, 0.0]);
+        // smoothstep: 3t² − 2t³ at t = 0.25.
+        let w = layer_weights(1.25, &layers)[0];
+        assert!((w - 0.15625).abs() < 1e-6, "{w}");
+        assert_eq!(layer_weights(2.0, &layers), [1.0, 0.0, 0.0]);
+        assert_eq!(layer_weights(5.0, &layers), [1.0, 1.0, 0.0]);
+        assert_eq!(layer_shares(0.5, &layers), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(layer_shares(2.5, &layers), [0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(layer_shares(3.5, &layers), [0.0, 0.5, 0.5, 0.0]);
+        assert_eq!(layer_shares(4.0, &layers), [0.0, 0.0, 1.0, 0.0]);
+        for h in [0.3, 1.1, 1.9, 3.2, 3.9] {
+            let sum: f32 = layer_shares(h, &layers).iter().sum();
+            assert!((sum - 1.0).abs() < 1e-6, "{h}: {sum}");
+        }
+        // Unused layers never show, whatever their heights.
+        let one = TerrainLayers { count: 1, ..layers };
+        assert_eq!(layer_weights(5.0, &one), [1.0, 0.0, 0.0]);
+        // No fade: a hard step at min_height.
+        assert_eq!(layer_weight(0.99, 1.0, 0.0), 0.0);
+        assert_eq!(layer_weight(1.0, 1.0, 0.0), 1.0);
+        assert_eq!(layer_weight(7.0, 1.0, -1.0), 1.0);
+    }
+
+    #[test]
+    fn layers_drawn_need_a_blend_and_stop_at_the_limit() {
+        let with = |layers: usize, blends: usize| HeightmapDesc {
+            layers: vec![layer(); layers],
+            blends: vec![[1.0, 1.0]; blends],
+            ..desc()
+        };
+        assert_eq!(drawn_layers(&with(0, 0)), 0);
+        assert_eq!(drawn_layers(&with(0, 2)), 0);
+        assert_eq!(drawn_layers(&with(1, 0)), 1);
+        assert_eq!(drawn_layers(&with(3, 2)), 3);
+        // Layers without a blend never show (Gazebo's weight stays 0)…
+        assert_eq!(drawn_layers(&with(3, 1)), 2);
+        // …and blends past the last layer do nothing.
+        assert_eq!(drawn_layers(&with(2, 4)), 2);
+        assert_eq!(drawn_layers(&with(6, 5)), MAX_LAYERS);
+    }
+
+    #[test]
+    fn one_layer_is_a_plain_standard_material() {
+        let b = missing_image(vec![named("dirt", true, 2.0)], vec![[1.0, 1.0]]);
+        let m = b.terrain_material();
+        assert_eq!(
+            path(&m.base.base_color_texture).unwrap(),
+            "gzhttps://fuel.example/dirt.png"
+        );
+        assert_eq!(
+            path(&m.base.normal_map_texture).unwrap(),
+            "gzhttps://fuel.example/flat.png"
+        );
+        assert_eq!(m.extension.layers.count, 0);
+        assert_eq!(m.extension.layers.base_height, 0.5);
+        assert!(m.extension.diffuse_1.is_none() && m.extension.normal_1.is_none());
+    }
+
+    #[test]
+    fn two_and_three_layers_tile_and_blend_on_their_own() {
+        let b = missing_image(
+            vec![named("dirt", true, 2.0), named("grass", false, 4.0)],
+            vec![[1.0, 0.5]],
+        );
+        let e = &b.terrain_material().extension;
+        assert_eq!(e.layers.count, 1);
+        // 4 m × 2 m at 4 m a tile; a diffuse map but no normal map.
+        assert_eq!(e.layers.tiling[0], Vec4::new(1.0, 0.5, 1.0, 0.0));
+        assert_eq!((e.layers.min_height.x, e.layers.fade.x), (1.0, 0.5));
+        assert_eq!(
+            path(&e.diffuse_1).unwrap(),
+            "gzhttps://fuel.example/grass.png"
+        );
+        assert!(e.normal_1.is_none() && e.diffuse_2.is_none());
+        // The grass has no normal map, but the dirt's needs tangents.
+        assert_eq!(b.loads.len(), 4);
+
+        let b = missing_image(
+            vec![
+                named("dirt", true, 2.0),
+                named("grass", true, 3.0),
+                named("fungus", true, 5.0),
+                named("ignored", true, 1.0),
+            ],
+            vec![[1.0, 1.0], [3.0, 1.0]],
+        );
+        let e = &b.terrain_material().extension;
+        assert_eq!(e.layers.count, 2);
+        assert_eq!(e.layers.tiling[1], Vec4::new(0.8, 0.4, 1.0, 1.0));
+        assert_eq!(e.layers.min_height, Vec3::new(1.0, 3.0, 0.0));
+        assert_eq!(e.layers.fade, Vec3::new(1.0, 1.0, 0.0));
+        assert_eq!(
+            path(&e.diffuse_2).unwrap(),
+            "gzhttps://fuel.example/fungus.png"
+        );
+        assert_eq!(
+            path(&e.normal_2).unwrap(),
+            "gzhttps://fuel.example/flat.png"
+        );
+        assert!(e.diffuse_3.is_none());
+        // Snapshots wait for the image and every drawn layer's textures,
+        // not the layer without a blend.
+        let paths: Vec<String> = b
+            .loads
+            .iter()
+            .filter_map(|h| h.path().map(|p| p.to_string()))
+            .collect();
+        assert_eq!(paths.len(), 7);
+        assert!(!paths.iter().any(|p| p.contains("ignored")), "{paths:?}");
+    }
+
+    #[test]
+    fn the_shared_sampler_comes_from_another_layer_without_a_diffuse_map() {
+        let mut bare = named("bare", true, 1.0);
+        bare.diffuse = None;
+        let b = missing_image(vec![named("dirt", false, 2.0), bare], vec![[1.0, 1.0]]);
+        let e = &b.terrain_material().extension;
+        // Bound for its sampler only: the diffuse flag stays off.
+        assert_eq!(
+            path(&e.diffuse_1).unwrap(),
+            "gzhttps://fuel.example/flat.png"
+        );
+        assert_eq!(e.layers.tiling[0].z, 0.0);
+        assert_eq!(e.layers.tiling[0].w, 1.0);
+    }
+
+    #[test]
+    fn a_blended_layers_normal_map_needs_tangents() {
+        let png = include_bytes!("../../gzweb/tests/data/terrain.png").to_vec();
+        let mut base = named("dirt", false, 2.0);
+        base.normal = None;
+        let b = built(
+            HeightmapDesc {
+                image_uri: Some("t.png".into()),
+                layers: vec![base, named("grass", true, 2.0)],
+                blends: vec![[1.0, 1.0]],
+                ..desc()
+            },
+            &[("t.png", Ok(png))],
+        );
+        assert!(b.mesh().contains_attribute(Mesh::ATTRIBUTE_TANGENT));
     }
 
     #[test]
