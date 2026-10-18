@@ -141,7 +141,7 @@ pub fn connect(world: &mut World) {
     info!("Connecting to {}", config.url);
     let mut status = GzStatus::new(config.url.clone());
     match connector(&config) {
-        Ok(connector) => world.insert_non_send_resource(GzConnection {
+        Ok(connector) => world.insert_non_send(GzConnection {
             transport: Transport::new(config.key.clone()),
             driver: Some(connector()),
             connector,
@@ -477,7 +477,7 @@ mod tests {
                 driver
             });
             let mut world = World::new();
-            world.insert_non_send_resource(GzConnection {
+            world.insert_non_send(GzConnection {
                 transport: Transport::new(config.key.clone()),
                 driver: Some(connector()),
                 connector,
@@ -1008,7 +1008,7 @@ mod tests {
             ..Default::default()
         });
         world.run_system_once(connect).unwrap();
-        assert!(world.get_non_send_resource::<GzConnection>().is_none());
+        assert!(world.get_non_send::<GzConnection>().is_none());
         assert!(matches!(
             &world.resource::<GzStatus>().status,
             Status::Error(e) if e.contains("ca.pem")

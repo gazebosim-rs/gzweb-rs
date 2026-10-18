@@ -1,7 +1,7 @@
 # gzweb → gzweb-rs Port: Gap Analysis, Implementation Plan, Parity Test Plan
 
 Status as of 2026-10-16. Reference implementation: `../gzweb` (v3.0.1, three.js r141).
-Rust port: this repo (Bevy 0.18, wgpu 27). Bevy is the renderer **and** the UI toolkit
+Rust port: this repo (Bevy 0.20, wgpu 30). Bevy is the renderer **and** the UI toolkit
 (bevy_ui) — no three.js, no DOM-built UI beyond the bare canvas host page.
 
 Companion docs: [`CONTEXT.md`](./CONTEXT.md), [`DESIGN.md`](./DESIGN.md). There is no
@@ -171,6 +171,9 @@ Parity tests allow-list these with a reason string:
   `map_Kd`).
 - Click with no hit keeps the orbit target (gzweb resets to origin).
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
+- STL faces with a zero stored normal take their winding's normal (gzweb keeps
+  the zero normal, so they render unlit). ASCII STL starting `SOLID` loads
+  (three.js only looks for lowercase `solid`, then reads it as binary and fails).
 - An OBJ whose `.mtl` fails to load still shows, with the default material.
 - Heightmaps are built from the image Gazebo names (gzweb only uses message heights,
   which Gazebo never sends, so it draws nothing).
@@ -254,7 +257,7 @@ Bevy's best quality instead of matching gzweb's look; see DESIGN.md "Rendering".
   native-only, so use a line-mesh fallback on wasm), show collisions, toggle lights, joint
   visuals, grid toggle.
 - bevy_ui panels: connection status, play/pause/stop, entity tree, view toggles, loading
-  progress (WsLoadingManager equivalent). Evaluate `bevy_feathers` widgets if stable in 0.18.
+  progress (WsLoadingManager equivalent). Evaluate `bevy_feathers` widgets if stable in 0.20.
 - Screenshot (Bevy `Screenshot`), `GzWeb` embedding API (§2.3).
 
 **Phase 6: Extras**

@@ -13,7 +13,7 @@ Dated entries: what changed, and what was verified. Newest first.
   `unwrap`s were replaced; a poisoned asset-store lock is now recovered.
 - **cargo-deny:** path dependencies now carry versions. Three advisories are
   ignored with reasons in `deny.toml`:
-  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy 0.18 requires 0.8;
+  - ruzstd OOM: the fix needs ruzstd 0.9, but Bevy (0.18 and 0.20) requires 0.8;
   - paste, unmaintained;
   - ttf-parser, unmaintained.
 - **Testability refactors:**
@@ -352,6 +352,33 @@ These are findings for the plan, not changes:
   rules) or message heights; first layer textured. `heightmap` corpus:
   material matches gzweb, geometry allow-listed (`gzweb-heightmap-empty`).
 - Websocket fallback requests the unescaped URL (`source_url`), as gzweb.
+- JPEG and TGA textures enabled (glTF/COLLADA models with JPEGs loaded
+  untextured).
+
+## Bevy 0.20
+
+- Bevy 0.18 → 0.20; `rust-toolchain.toml` pins rustc 1.97.1 (Bevy's MSRV).
+- Renames: `Scene`/`SceneRoot`/`SceneInstanceReady` →
+  `WorldAsset`/`WorldAssetRoot`/`WorldInstanceReady` (`Scene` is now the
+  BSN trait), `load_with_settings` → `load_builder().with_settings()`,
+  `resolve_embed(&str)` → `resolve_embed_str`, `shadows_enabled` →
+  `shadow_maps_enabled`, `FontSize::Px`, `Hdr` in `bevy::camera`.
+- `Atmosphere` is now a planet entity (its transform is the planet's
+  centre), not a camera component: on the camera it put the camera at the
+  planet's centre (dark, orange, no shadows). `render::GzAtmosphere` spawns
+  it at Bevy's default (below the origin); the camera keeps
+  `AtmosphereSettings`.
+- `bevy_stl` has no 0.20 release: own `gz_bevy::stl` parser, after
+  `stl_io` proved too strict (binary files whose header starts `solid `
+  read as ASCII; bare `solid` lines failed). Binary vs ASCII as three.js
+  decides it; non-indexed, 3 vertices per face. Faces with zero normals
+  use their winding (they rendered unlit before).
+- One `ScatteringMedium` for every atmosphere; tests check the planet's
+  position.
+- `wgpu-types` dropped: Bevy doesn't re-export `wgpu::Backend`, so the HUD
+  matches the backend's `Debug` name.
+- CI names toolchain 1.97.1; cargo-deny runs on minimal stable.
+- Tests with `GizmoPlugin` need `MeshPlugin` (gizmos draw skinned bounds).
 
 ## 2026-10-18: Heightmap image in the lock
 
@@ -388,3 +415,10 @@ These are findings for the plan, not changes:
   `/materials/textures` rule matched; tobj's unused `async` feature off.
 - Assets: hosts that fail to connect or time out are skipped for 5 min;
   unanswered websocket `asset` requests fail after 60 s.
+
+## 2026-10-18: PR #22 review fixes on Bevy 0.20
+
+- Merged #22 (with #21's review fixes) into the 0.20 branch: the shared
+  `SceneFileLoader` and `GzSubmesh` work on `WorldAsset`/`WorldInstanceReady`,
+  `AssetMut` needs a mutable borrow to mark a change, and `#23`'s own STL
+  loader stays.

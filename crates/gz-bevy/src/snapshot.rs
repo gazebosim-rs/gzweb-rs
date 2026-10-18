@@ -45,8 +45,8 @@ pub fn snapshot_when_settled(
     index: Res<GzIndex>,
     loads: Res<GzLoads>,
     asset_server: Res<AssetServer>,
-    scene_roots: Query<(&SceneRoot, Option<&Children>, Option<&GzSubmesh>)>,
-    gltfs: Query<&GzGltf, Without<SceneRoot>>,
+    scene_roots: Query<(&WorldAssetRoot, Option<&Children>, Option<&GzSubmesh>)>,
+    gltfs: Query<&GzGltf, Without<WorldAssetRoot>>,
     terrains: Query<&GzHeightmap>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
@@ -82,7 +82,7 @@ pub fn snapshot_when_settled(
         )
     });
     // A loaded glTF/OBJ/COLLADA scene is instanced a frame later (a glTF
-    // gets its `SceneRoot` once loaded), and cut down to its submesh
+    // gets its `WorldAssetRoot` once loaded), and cut down to its submesh
     // (possibly to nothing) when it is.
     let failed = |id: bevy::asset::UntypedAssetId| {
         matches!(

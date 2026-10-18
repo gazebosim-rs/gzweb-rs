@@ -23,9 +23,9 @@
 
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use bevy::scene::SceneInstanceReady;
+use bevy::world_serialization::WorldInstanceReady;
 
-/// On a `SceneRoot`: keep only this submesh once the scene is instanced.
+/// On a `WorldAssetRoot`: keep only this submesh once the scene is instanced.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct GzSubmesh {
     pub name: String,
@@ -47,11 +47,11 @@ fn is_default_name(name: &str) -> bool {
             .is_some_and(|i| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Observer for [`SceneInstanceReady`] on an entity with [`GzSubmesh`].
+/// Observer for [`WorldInstanceReady`] on an entity with [`GzSubmesh`].
 /// Runs again on the fresh entities when Bevy respawns a modified scene.
 #[allow(clippy::too_many_arguments)]
 pub fn select(
-    ready: On<SceneInstanceReady>,
+    ready: On<WorldInstanceReady>,
     mut commands: Commands,
     mut roots: Query<&mut GzSubmesh>,
     children: Query<&Children>,
@@ -227,7 +227,7 @@ mod tests {
             MinimalPlugins,
             AssetPlugin::default(),
             TransformPlugin,
-            bevy::scene::ScenePlugin,
+            bevy::world_serialization::WorldSerializationPlugin,
         ))
         .init_asset::<Mesh>();
         let mut world = World::new();
@@ -237,12 +237,12 @@ mod tests {
         );
         let scene = app
             .world_mut()
-            .resource_mut::<Assets<Scene>>()
-            .add(Scene::new(world));
+            .resource_mut::<Assets<WorldAsset>>()
+            .add(WorldAsset::new(world));
         let e = app
             .world_mut()
             .spawn((
-                SceneRoot(scene),
+                WorldAssetRoot(scene),
                 Transform::IDENTITY,
                 GzSubmesh {
                     name: submesh.into(),
@@ -358,11 +358,13 @@ mod tests {
         let before = meshes(&mut app);
         // Modifying the scene makes Bevy respawn it: the new entities are
         // cut and centred from scratch.
-        let scene = app.world().get::<SceneRoot>(e).unwrap().0.clone();
-        app.world_mut()
-            .resource_mut::<Assets<Scene>>()
-            .get_mut(&scene)
-            .unwrap();
+        let scene = app.world().get::<WorldAssetRoot>(e).unwrap().0.clone();
+        {
+            let mut assets = app.world_mut().resource_mut::<Assets<WorldAsset>>();
+            // `AssetMut` marks the asset modified when borrowed mutably.
+            let mut asset = assets.get_mut(&scene).unwrap();
+            let _: &mut WorldAsset = &mut asset;
+        }
         for _ in 0..3 {
             app.update();
         }
