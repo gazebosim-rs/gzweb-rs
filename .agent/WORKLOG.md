@@ -326,3 +326,7 @@ These are findings for the plan, not changes:
   2-minute one in the mirror; CI saves the Fuel cache only when it changed.
 - Verified: the review's reproductions are tests in `gz-collada`; the
   probes match three.js (triangles and bounds) with `run.sh`'s reference.
+- Mirror: a Fuel file the lock pins falls back to Fuel's old domain,
+  fuel.ignitionrobotics.org (same service, verified byte-identical), when
+  fuel.gazebosim.org fails. CI's Fuel job passes during Fuel outages; the
+  lock still checks every body.
