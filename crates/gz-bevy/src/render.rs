@@ -88,6 +88,7 @@ impl Quality {
 /// as Gazebo intends and the tone mapper handles the highlights.
 pub mod units {
     use bevy::camera::Exposure;
+    use bevy::color::{Color, LinearRgba, Srgba};
     use std::f32::consts::{PI, SQRT_2};
 
     /// Illuminance of a directional light of intensity 1 (daylight).
@@ -107,6 +108,22 @@ pub mod units {
 
     /// The luminance (cd/m²) that renders as 1 under [`exposure`].
     pub const UNIT_LUMINANCE: f32 = 1.0 / EXPOSURE_FACTOR;
+
+    /// `StandardMaterial::emissive` for an emission colour (SDF `<emissive>`,
+    /// COLLADA `<emission>`; 0–1, sRGB like the other colours): Bevy
+    /// multiplies emission by the exposure, so 1 renders at full brightness.
+    pub fn emissive(color: Color) -> LinearRgba {
+        let c = LinearRgba::from(color);
+        let u = UNIT_LUMINANCE;
+        LinearRgba::rgb(c.red * u, c.green * u, c.blue * u)
+    }
+
+    /// The emission colour [`emissive`] was given (for snapshots).
+    pub fn emission_color(emissive: LinearRgba) -> Srgba {
+        let u = UNIT_LUMINANCE;
+        let e = emissive;
+        Srgba::from(LinearRgba::rgb(e.red / u, e.green / u, e.blue / u))
+    }
 
     /// Illuminance of a directional light of Gazebo intensity `intensity`.
     pub fn directional_lux(intensity: f32) -> f32 {
@@ -528,6 +545,14 @@ mod tests {
         // Ambient brightness × Bevy's 0.4524 × exposure = the share.
         let b = units::ambient_brightness(0.5);
         assert!((b * 0.4524 * units::EXPOSURE_FACTOR - 0.5).abs() < 1e-5);
+        // An emission colour of 1 renders at 1, and snapshots get it back.
+        let e = units::emissive(Color::srgb(1.0, 0.5, 0.0));
+        assert!((e.red * units::EXPOSURE_FACTOR - 1.0).abs() < 1e-5);
+        let back = units::emission_color(e);
+        assert!(
+            (back.green - 0.5).abs() < 1e-5 && back.blue == 0.0,
+            "{back:?}"
+        );
     }
 
     fn env(sky: Option<Option<&str>>, has_sun: bool) -> GzEnvironment {

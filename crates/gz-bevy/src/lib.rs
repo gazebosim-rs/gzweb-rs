@@ -94,7 +94,8 @@ impl Plugin for GzWebPlugin {
                     spawn::apply_poses,
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, collada::drop_failed_textures);
         render::configure(app, self.config.quality);
         app.add_systems(Startup, render::setup_gizmos)
             .add_systems(Update, render::draw_grid);
