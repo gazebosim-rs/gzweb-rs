@@ -202,21 +202,15 @@ fn mesh(m: &tobj::Mesh, tangents: bool) -> Option<Mesh> {
         return None;
     }
     let parts = MeshParts {
-        positions: m
-            .positions
-            .chunks_exact(3)
-            .map(|p| [p[0], p[1], p[2]])
-            .collect(),
-        normals: m
-            .normals
-            .chunks_exact(3)
-            .map(|v| [v[0], v[1], v[2]])
-            .collect(),
-        uvs: m.texcoords.chunks_exact(2).map(|t| [t[0], t[1]]).collect(),
+        positions: m.positions.as_chunks::<3>().0.to_vec(),
+        normals: m.normals.as_chunks::<3>().0.to_vec(),
+        uvs: m.texcoords.as_chunks::<2>().0.to_vec(),
         colors: m
             .vertex_color
-            .chunks_exact(3)
-            .map(|c| [c[0], c[1], c[2], 1.0])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|&[r, g, b]| [r, g, b, 1.0])
             .collect(),
         indices: Some(m.indices.clone()),
     };
