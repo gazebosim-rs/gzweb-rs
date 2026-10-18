@@ -237,11 +237,12 @@ pub fn pump(
         }
     }
 
-    for uri in store.take_requests() {
+    for uri in store.take_requests(now) {
         if let Err(e) = conn.transport.request_asset(&uri) {
             store.deliver(&uri, Err(e.to_string()));
         }
     }
+    store.expire(now, crate::assets::WS_ASSET_TIMEOUT);
 
     for cmd in commands.read() {
         if let Err(e) = send_command(&mut conn.transport, cmd) {

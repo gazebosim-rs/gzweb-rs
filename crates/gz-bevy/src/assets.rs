@@ -16,10 +16,19 @@
 //! Keeping the real directory structure in the Bevy path means relative
 //! references inside a mesh (glTF buffers, OBJ `.mtl`, textures) resolve to
 //! the right server-side file.
+//!
+//! A host that fails to connect or times out is skipped for
+//! [`HOST_DOWN_FOR`]: its other assets go straight to the server instead of
+//! each waiting up to 40 s (an HTTP error status doesn't count). A server
+//! that never answers an `asset` request fails it after
+//! [`WS_ASSET_TIMEOUT`].
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use bevy::platform::time::Instant;
 
 use bevy::asset::io::{
     AssetReader, AssetReaderError, AssetSourceBuilder, PathStream, Reader, VecReader,
@@ -78,6 +87,9 @@ fn source_url(path: &Path) -> String {
 
 pub type AssetResult = Result<Vec<u8>, String>;
 
+/// How long the server gets to answer an `asset` request.
+pub const WS_ASSET_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
 struct StoreInner {
     /// Responses that arrived before any reader asked for them.
@@ -86,6 +98,9 @@ struct StoreInner {
     waiters: HashMap<String, Vec<async_channel::Sender<AssetResult>>>,
     /// URIs to request from the server, drained by the connection system.
     to_request: Vec<String>,
+    /// When each request still waiting was sent (connection-system time,
+    /// in seconds).
+    sent: HashMap<String, f64>,
 }
 
 /// Shared between the websocket asset reader (on IO task threads) and the connection
@@ -105,6 +120,7 @@ impl WsAssetStore {
 
     pub fn deliver(&self, uri: &str, result: AssetResult) {
         let mut inner = self.lock();
+        inner.sent.remove(uri);
         match inner.waiters.remove(uri) {
             Some(waiters) => {
                 for tx in waiters {
@@ -117,9 +133,39 @@ impl WsAssetStore {
         }
     }
 
-    /// URIs that readers are waiting for and that have not been requested yet.
-    pub fn take_requests(&self) -> Vec<String> {
-        std::mem::take(&mut self.lock().to_request)
+    /// URIs that readers are waiting for and that have not been requested
+    /// yet; they count as sent at `now` (seconds, any clock that
+    /// [`expire`](Self::expire) is given too).
+    pub fn take_requests(&self, now: f64) -> Vec<String> {
+        let mut inner = self.lock();
+        let uris = std::mem::take(&mut inner.to_request);
+        for uri in &uris {
+            inner.sent.insert(uri.clone(), now);
+        }
+        uris
+    }
+
+    /// Fails requests sent more than `timeout` before `now` (the server
+    /// never answered).
+    pub fn expire(&self, now: f64, timeout: Duration) {
+        let stale: Vec<String> = self
+            .lock()
+            .sent
+            .iter()
+            .filter(|(_, &at)| now - at > timeout.as_secs_f64())
+            .map(|(uri, _)| uri.clone())
+            .collect();
+        for uri in stale {
+            warn!(
+                "websocket asset '{uri}': no reply in {} s",
+                timeout.as_secs()
+            );
+            let mut inner = self.lock();
+            inner.sent.remove(&uri);
+            for tx in inner.waiters.remove(&uri).unwrap_or_default() {
+                let _ = tx.try_send(Err(format!("no reply in {} s", timeout.as_secs())));
+            }
+        }
     }
 
     /// Fail every waiting reader (e.g. the connection closed).
@@ -131,6 +177,7 @@ impl WsAssetStore {
             }
         }
         inner.to_request.clear();
+        inner.sent.clear();
     }
 
     /// Number of readers currently waiting, over all URIs.
@@ -195,18 +242,70 @@ impl AssetReader for WsAssetReader {
 
 // ─── HTTP(S) assets (Fuel and other web URLs) ───────────────────────────────
 
+/// How long a host that failed to connect or timed out is skipped.
+pub const HOST_DOWN_FOR: Duration = Duration::from_secs(300);
+
+/// Hosts whose last fetch failed to connect or timed out, and when.
+#[derive(Clone, Default)]
+struct DownHosts(Arc<Mutex<HashMap<String, Instant>>>);
+
+impl DownHosts {
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Instant>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn is_down(&self, host: &str) -> bool {
+        let mut hosts = self.lock();
+        match hosts.get(host) {
+            Some(at) if at.elapsed() < HOST_DOWN_FOR => true,
+            Some(_) => {
+                hosts.remove(host);
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn mark(&self, host: &str, at: Instant) {
+        self.lock().insert(host.to_string(), at);
+    }
+}
+
+/// The `host[:port]` of a URL.
+fn host_of(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    rest.split(['/', '?', '#']).next().unwrap_or(rest)
+}
+
 struct HttpAssetReader {
     mirror: Option<String>,
     /// Where a failed fetch is retried.
     store: WsAssetStore,
+    down: DownHosts,
 }
 
 impl AssetReader for HttpAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let url = http_url(path, self.mirror.as_deref());
-        let http_error = match fetch_bytes(&url).await {
-            Ok(bytes) => return Ok(VecReader::new(bytes)),
-            Err(e) => e,
+        let host = host_of(&url);
+        let http_error = if self.down.is_down(host) {
+            format!("{host} unreachable earlier")
+        } else {
+            match fetch_bytes(&url).await {
+                Ok(bytes) => return Ok(VecReader::new(bytes)),
+                Err(e) => {
+                    if e.unreachable {
+                        warn!(
+                            "{host} unreachable ({}); using the server for {HOST_DOWN_FOR:?}",
+                            e.message
+                        );
+                        self.down.mark(host, Instant::now());
+                    }
+                    e.message
+                }
+            }
         };
         // The server knows the real URL, not the mirror's.
         let uri = source_url(path);
@@ -246,43 +345,78 @@ const MAX_BODY: u64 = 256 * 1024 * 1024;
 /// Longest one asset fetch may take, body included: generous, for large
 /// meshes on a slow link, but a server that stalls still fails the load
 /// instead of leaving it pending forever.
-const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+const FETCH_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Why a fetch failed.
+#[derive(Debug)]
+struct FetchError {
+    message: String,
+    /// The host couldn't be reached or didn't answer in time (not an error
+    /// status).
+    unreachable: bool,
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+impl From<ureq::Error> for FetchError {
+    fn from(e: ureq::Error) -> Self {
+        use ureq::Error as E;
+        let unreachable = matches!(
+            e,
+            E::Timeout(_) | E::ConnectionFailed | E::HostNotFound | E::Io(_)
+        );
+        FetchError {
+            message: e.to_string(),
+            unreachable,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
     fetch_within(url, FETCH_TIMEOUT)
 }
 
 /// ureq blocks, but asset readers run on the IO task pool. A server that
 /// never answers fails within 40 s; any fetch within `total`.
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch_within(url: &str, total: std::time::Duration) -> Result<Vec<u8>, String> {
-    use std::time::Duration;
-    ureq::get(url)
+fn fetch_within(url: &str, total: Duration) -> Result<Vec<u8>, FetchError> {
+    Ok(ureq::get(url)
         .config()
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .timeout_global(Some(total))
         .build()
-        .call()
-        .map_err(|e| e.to_string())?
+        .call()?
         .into_body()
         .with_config()
         .limit(MAX_BODY)
-        .read_to_vec()
-        .map_err(|e| e.to_string())
+        .read_to_vec()?)
 }
 
 /// `fetch`, aborted after [`FETCH_TIMEOUT`] (the browser has no timeout of
 /// its own for a stalled body).
 #[cfg(target_arch = "wasm32")]
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+    // `fetch` rejects (a network error or the abort) only when the host
+    // can't be reached or the timeout fires.
+    fetch_js(url)
+        .await
+        .map_err(|(message, unreachable)| FetchError {
+            message,
+            unreachable,
+        })
+}
+
+/// [`fetch_bytes`]'s errors with whether the host was unreachable.
+#[cfg(target_arch = "wasm32")]
+async fn fetch_js(url: &str) -> Result<Vec<u8>, (String, bool)> {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
-    let window = web_sys::window().ok_or("no window")?;
-    let abort = web_sys::AbortController::new().map_err(|e| format!("{e:?}"))?;
+    let js = |unreachable: bool| move |e: wasm_bindgen::JsValue| (format!("{e:?}"), unreachable);
+    let window = web_sys::window().ok_or(("no window".to_string(), false))?;
+    let abort = web_sys::AbortController::new().map_err(js(false))?;
     let init = web_sys::RequestInit::new();
     init.set_signal(Some(&abort.signal()));
     let on_timeout = {
@@ -294,18 +428,20 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
             on_timeout.unchecked_ref(),
             FETCH_TIMEOUT.as_millis() as i32,
         )
-        .map_err(|e| format!("{e:?}"))?;
+        .map_err(js(false))?;
     let result = async {
         let resp = JsFuture::from(window.fetch_with_str_and_init(url, &init))
             .await
-            .map_err(|e| format!("{e:?}"))?;
-        let resp: web_sys::Response = resp.dyn_into().map_err(|_| "not a Response")?;
+            .map_err(js(true))?;
+        let resp: web_sys::Response = resp
+            .dyn_into()
+            .map_err(|_| ("not a Response".to_string(), false))?;
         if !resp.ok() {
-            return Err(format!("HTTP {}", resp.status()));
+            return Err((format!("HTTP {}", resp.status()), false));
         }
-        let buf = JsFuture::from(resp.array_buffer().map_err(|e| format!("{e:?}"))?)
+        let buf = JsFuture::from(resp.array_buffer().map_err(js(false))?)
             .await
-            .map_err(|e| format!("{e:?}"))?;
+            .map_err(js(true))?;
         Ok(js_sys::Uint8Array::new(&buf).to_vec())
     }
     .await;
@@ -338,10 +474,13 @@ impl Plugin for GzAssetSourcesPlugin {
             AssetSourceBuilder::new({
                 let mirror = self.http_mirror.clone();
                 let store = store.clone();
+                // Shared by every reader the source builds.
+                let down = DownHosts::default();
                 move || {
                     Box::new(HttpAssetReader {
                         mirror: mirror.clone(),
                         store: store.clone(),
+                        down: down.clone(),
                     })
                 }
             }),
@@ -432,8 +571,8 @@ mod tests {
         let a = spawn_fetch(&store, "/x");
         let b = spawn_fetch(&store, "/x");
         wait_for_waiters(&store, 2);
-        assert_eq!(store.take_requests(), ["/x"]);
-        assert!(store.take_requests().is_empty());
+        assert_eq!(store.take_requests(0.0), ["/x"]);
+        assert!(store.take_requests(0.0).is_empty());
         store.deliver("/x", Ok(vec![1, 2]));
         assert_eq!(a.join().unwrap(), Ok(vec![1, 2]));
         assert_eq!(b.join().unwrap(), Ok(vec![1, 2]));
@@ -446,7 +585,7 @@ mod tests {
         assert_eq!(block_on(store.fetch("/early")), Ok(vec![9]));
         // Consumed: nothing left over, and nothing to request.
         assert_eq!(store.lock().ready.len(), 0);
-        assert!(store.take_requests().is_empty());
+        assert!(store.take_requests(0.0).is_empty());
     }
 
     #[test]
@@ -456,7 +595,7 @@ mod tests {
         wait_for_waiters(&store, 1);
         store.fail_all("gone");
         assert_eq!(a.join().unwrap(), Err("gone".into()));
-        assert!(store.take_requests().is_empty());
+        assert!(store.take_requests(0.0).is_empty());
     }
 
     #[test]
@@ -544,6 +683,7 @@ mod tests {
         let reader = HttpAssetReader {
             mirror: None,
             store: store.clone(),
+            down: DownHosts::default(),
         };
         let missing = format!("{base}/missing");
         let gone = format!("{base}/gone");
@@ -559,6 +699,10 @@ mod tests {
                 read_all(&reader, &gone).await,
                 Err(AssetReaderError::NotFound(_))
             ));
+            // A 404 is not a host that is down.
+            assert!(!reader
+                .down
+                .is_down(host_of(&http_url(Path::new(&base), None))));
             assert!(reader.read_meta(Path::new("x")).await.is_err());
             assert!(reader.read_directory(Path::new("x")).await.is_err());
             assert!(!reader.is_directory(Path::new("x")).await.unwrap());
@@ -581,16 +725,84 @@ mod tests {
             for mut s in listener.incoming().flatten() {
                 let _ = s.read(&mut [0u8; 2048]);
                 let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nhalf");
-                std::thread::sleep(std::time::Duration::from_secs(5));
+                std::thread::sleep(Duration::from_secs(5));
             }
         });
-        let started = std::time::Instant::now();
-        let stalled = fetch_within(
-            &format!("http://{addr}/x"),
-            std::time::Duration::from_millis(300),
+        let started = Instant::now();
+        let stalled = fetch_within(&format!("http://{addr}/x"), Duration::from_millis(300));
+        assert!(stalled.unwrap_err().unreachable);
+        assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[test]
+    fn an_unreachable_host_is_skipped_for_a_while() {
+        // Nothing listens on this port: connection refused.
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let base = format!("http:/127.0.0.1:{port}");
+        let store = WsAssetStore::default();
+        let reader = HttpAssetReader {
+            mirror: None,
+            store: store.clone(),
+            down: DownHosts::default(),
+        };
+        let (a, b) = (format!("{base}/a"), format!("{base}/b"));
+        store.deliver(&source_url(Path::new(&a)), Ok(b"a".to_vec()));
+        store.deliver(&source_url(Path::new(&b)), Ok(b"b".to_vec()));
+        block_on(async {
+            assert_eq!(read_all(&reader, &a).await.unwrap(), b"a");
+            assert!(reader.down.is_down(&format!("127.0.0.1:{port}")));
+            assert_eq!(read_all(&reader, &b).await.unwrap(), b"b");
+        });
+        // A host that is down skips HTTP even for files it would serve.
+        let up = http_server(b"mesh");
+        let ok = format!("{up}/ok");
+        let host = host_of(&http_url(Path::new(&ok), None)).to_string();
+        reader.down.mark(&host, Instant::now());
+        store.deliver(&source_url(Path::new(&ok)), Ok(b"server".to_vec()));
+        assert_eq!(block_on(read_all(&reader, &ok)).unwrap(), b"server");
+        // Until it expires.
+        let long_ago = Instant::now()
+            .checked_sub(HOST_DOWN_FOR + Duration::from_secs(1))
+            .unwrap();
+        reader.down.mark(&host, long_ago);
+        assert!(!reader.down.is_down(&host));
+        assert_eq!(block_on(read_all(&reader, &ok)).unwrap(), b"mesh");
+        assert_eq!(host_of("https://h:1/a?b"), "h:1");
+        assert_eq!(host_of("h/a"), "h");
+    }
+
+    #[test]
+    fn an_unanswered_request_times_out() {
+        let store = WsAssetStore::default();
+        let reader = WsAssetReader {
+            store: store.clone(),
+        };
+        let fetch = std::thread::spawn(move || block_on(read_all(&reader, "rel/slow.dae")));
+        wait_for_waiters(&store, 1);
+        assert_eq!(store.take_requests(10.0), ["slow.dae"]);
+        // Not yet.
+        store.expire(
+            10.0 + WS_ASSET_TIMEOUT.as_secs_f64() - 1.0,
+            WS_ASSET_TIMEOUT,
         );
-        assert!(stalled.is_err());
-        assert!(started.elapsed() < std::time::Duration::from_secs(4));
+        assert_eq!(store.waiting(), 1);
+        store.expire(
+            10.0 + WS_ASSET_TIMEOUT.as_secs_f64() + 1.0,
+            WS_ASSET_TIMEOUT,
+        );
+        assert!(matches!(
+            fetch.join().unwrap(),
+            Err(AssetReaderError::NotFound(_))
+        ));
+        assert_eq!(store.waiting(), 0);
+        // A reply clears the clock.
+        store.take_requests(0.0);
+        store.deliver("x", Ok(vec![]));
+        assert!(store.lock().sent.is_empty());
     }
 
     #[test]
