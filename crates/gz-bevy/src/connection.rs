@@ -133,7 +133,8 @@ pub fn backoff(attempt: u32) -> f64 {
 const STATS_RATE: u32 = 5;
 
 /// Seconds from the socket opening to the proto definitions arriving. A
-/// server without a key never answers `auth`, so this is the only way out.
+/// gz-launch server without a key never answers `auth`, so this is the only
+/// way out there (Jetty's answers `authorized`).
 pub const HANDSHAKE_TIMEOUT: f64 = 10.0;
 
 pub fn connect(world: &mut World) {
