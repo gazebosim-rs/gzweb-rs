@@ -11,7 +11,7 @@ use serde_json::Value;
 use crate::fonts::FONT_FILES;
 use crate::icons::IconId;
 use crate::theme::{
-    border, motion, radius, ColorRole, FontFamily, Palette, Sizes, TypeStyle, SPACE,
+    border, elevation, motion, radius, ColorRole, FontFamily, Palette, Sizes, TypeStyle, SPACE,
 };
 
 fn design() -> PathBuf {
@@ -73,18 +73,38 @@ fn generated_sizes_spacing_and_type_match_tokens_json() {
         assert_eq!(SPACE[i], v.as_f64().unwrap() as f32, "space.{k}");
     }
     assert_eq!(SPACE[0], 0.0);
-    let r = &t["radius"];
-    assert_eq!(radius::XS, r["xs"].as_f64().unwrap() as f32);
-    assert_eq!(radius::SM, r["sm"].as_f64().unwrap() as f32);
-    assert_eq!(radius::MD, r["md"].as_f64().unwrap() as f32);
-    assert_eq!(radius::LG, r["lg"].as_f64().unwrap() as f32);
-    assert_eq!(radius::XL, r["xl"].as_f64().unwrap() as f32);
-    assert_eq!(radius::PILL, r["pill"].as_f64().unwrap() as f32);
-    assert_eq!(border::HAIRLINE, 1.0);
-    assert_eq!(border::FOCUS_RING, 2.0);
-    assert_eq!(border::FOCUS_HALO, 3.0);
-    assert_eq!(motion::CAMERA_SNAP_MS, 250.0);
-    assert_eq!(motion::HOVER_MS, 80.0);
+    // Radii, borders and durations: every entry, by name (each module's
+    // `ALL` lists its constants).
+    for (group, all) in [("radius", &radius::ALL[..]), ("border", &border::ALL[..])] {
+        let want = t[group].as_object().unwrap();
+        assert_eq!(all.len(), want.len(), "{group}");
+        for (name, v) in want {
+            let got = all.iter().find(|(n, _)| n == name).map(|(_, v)| *v);
+            assert_eq!(got, Some(v.as_f64().unwrap() as f32), "{group}.{name}");
+        }
+    }
+    let motion_json = t["motion"].as_object().unwrap();
+    let durations: Vec<_> = motion_json.iter().filter(|(_, v)| v.is_number()).collect();
+    assert_eq!(motion::ALL.len(), durations.len());
+    for (name, v) in durations {
+        let got = motion::ALL.iter().find(|(n, _)| n == name).map(|(_, v)| *v);
+        assert_eq!(got, Some(v.as_f64().unwrap() as f32), "motion.{name}");
+    }
+    assert_eq!(motion::EASING, motion_json["easing"]);
+    assert_eq!(motion::REDUCE_MOTION, motion_json["reduce_motion"]);
+    // Elevation: blur, offset and colour.
+    let elevation_json = t["elevation"].as_object().unwrap();
+    assert_eq!(elevation::ALL.len(), elevation_json.len());
+    for (name, v) in elevation_json {
+        let (_, e) = elevation::ALL.iter().find(|(n, _)| n == name).unwrap();
+        assert_eq!(e.blur, v["blur"].as_f64().unwrap() as f32, "{name}");
+        assert_eq!(e.y, v["y"].as_f64().unwrap() as f32, "{name}");
+        assert_eq!(
+            e.color.and_then(ColorRole::token),
+            v.get("color").and_then(Value::as_str),
+            "elevation.{name}.color"
+        );
+    }
     let ty = |name: &str| {
         let v = &t["type"][name];
         TypeStyle {
@@ -162,7 +182,13 @@ fn contrast_pairs_pass_in_both_themes() {
     let t = json("tokens.json");
     let mut lowest = f64::MAX;
     for theme in ["light", "dark"] {
-        let c = |n: &str| parse_hex(t["color"][theme][n].as_str().unwrap());
+        let c = |n: &str| {
+            let c = parse_hex(t["color"][theme][n].as_str().unwrap());
+            // The formula is for opaque colours; a translucent token would
+            // need compositing over its background first.
+            assert_eq!(c[3], 1.0, "{theme}.{n} is translucent");
+            c
+        };
         for (fg, bg) in PAIRS {
             let r = contrast(c(fg), c(bg));
             assert!(r >= 4.5, "{theme}: {fg} on {bg} is {r:.2}:1");
@@ -186,7 +212,8 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// `#` then 6 or 8 hex digits, not followed by another word character.
+/// `#` then 3, 4, 6 or 8 hex digits, not followed by another word
+/// character.
 fn has_hex_literal(line: &str) -> bool {
     let b = line.as_bytes();
     (0..b.len()).any(|i| {
@@ -198,59 +225,159 @@ fn has_hex_literal(line: &str) -> bool {
             .take_while(|c| c.is_ascii_hexdigit())
             .count();
         let after = b.get(i + 1 + n);
-        (n == 6 || n == 8) && !after.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+        matches!(n, 3 | 4 | 6 | 8)
+            && !after.is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
     })
+}
+
+/// The text without `//` comments (a `//` inside a string literal stays).
+fn strip_comments(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let mut in_string = false;
+            let mut prev = ' ';
+            for (i, c) in line.char_indices() {
+                if c == '"' && prev != '\\' {
+                    in_string = !in_string;
+                }
+                if !in_string && c == '/' && prev == '/' {
+                    return &line[..i - 1];
+                }
+                prev = c;
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Identifiers and `::` in order, across lines.
+fn tokens(code: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let b = code.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        if word(b[i]) {
+            let start = i;
+            while i < b.len() && word(b[i]) {
+                i += 1;
+            }
+            out.push(&code[start..i]);
+        } else if b[i..].starts_with(b"::") {
+            out.push("::");
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Colour construction outside the theme: a colour-space type (`Srgba`,
+/// `Oklcha`, …, constructors, struct literals and constants alike), the
+/// palettes, any `Color::…` other than `Color::NONE`, a renamed `Color`,
+/// and the colour components' constants (`TextColor::WHITE`).
+fn colour_tokens(code: &str) -> Vec<String> {
+    // `$` keeps this file from matching itself.
+    let spaces: Vec<String> = [
+        "S$rgba",
+        "LinearR$gba",
+        "H$sla",
+        "H$sva",
+        "H$wba",
+        "L$aba",
+        "L$cha",
+        "Okl$aba",
+        "Okl$cha",
+        "X$yza",
+        "pal$ettes",
+    ]
+    .iter()
+    .map(|s| s.replace('$', ""))
+    .collect();
+    let t = tokens(code);
+    let mut found = Vec::new();
+    for (i, &tok) in t.iter().enumerate() {
+        let next = |k: usize| t.get(i + k).copied().unwrap_or("");
+        let hit = spaces.iter().any(|s| s == tok)
+            || (tok == "Color" && next(1) == "::" && next(2) != "NONE")
+            || (tok == "Color" && next(1) == "as")
+            || (matches!(tok, "TextColor" | "BackgroundColor" | "BorderColor")
+                && next(1) == "::"
+                && next(2).starts_with(|c: char| c.is_ascii_uppercase()));
+        if hit {
+            found.push(format!("{tok} {} {}", next(1), next(2)));
+        }
+    }
+    found
 }
 
 #[test]
 fn no_colour_literals_outside_theme_rs() {
-    // Built from pieces so this file doesn't match itself.
-    let calls: Vec<String> = [
-        "srgb(",
-        "srgba(",
-        "srgb_u8(",
-        "srgba_u8(",
-        "rgb(",
-        "rgba(",
-        "rgb_u8(",
-        "rgba_u8(",
-        "linear_rgb(",
-        "linear_rgba(",
-        "hsl(",
-        "hsla(",
-        "oklch(",
-        "oklab(",
-        "WHITE",
-        "BLACK",
-    ]
-    .iter()
-    .map(|c| format!("Color{}{c}", "::"))
-    .chain(
-        ["Srgba", "LinearRgba"]
-            .iter()
-            .map(|t| format!("{t}{}new(", "::")),
-    )
-    .chain([format!("{}{}", "palettes", "::")])
-    .collect();
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
     assert!(files.len() > 20);
     let mut found = Vec::new();
     for file in files.iter().filter(|f| !f.ends_with("src/theme.rs")) {
-        let text = std::fs::read_to_string(file).unwrap();
-        for (n, line) in text.lines().enumerate() {
-            if calls.iter().any(|c| line.contains(c.as_str())) || has_hex_literal(line) {
+        let code = strip_comments(&std::fs::read_to_string(file).unwrap());
+        for (n, line) in code.lines().enumerate() {
+            if has_hex_literal(line) {
                 found.push(format!("{}:{}: {}", file.display(), n + 1, line.trim()));
             }
         }
+        for hit in colour_tokens(&code) {
+            found.push(format!("{}: {hit}", file.display()));
+        }
     }
     assert!(found.is_empty(), "colour literals:\n{}", found.join("\n"));
-    // The detector itself.
-    assert!(has_hex_literal(&format!("\"{}1C64F2\"", '#')));
-    assert!(has_hex_literal(&format!("{}12151A1F)", '#')));
-    assert!(!has_hex_literal("#[derive(Debug)]"));
-    assert!(!has_hex_literal(&format!("{}1C64F2FF00", '#')));
+
+    // The detectors themselves (built from pieces so this file doesn't
+    // match itself).
+    let h = |s: &str| has_hex_literal(&s.replace('$', "#"));
+    assert!(h("\"$1C64F2\""));
+    assert!(h("$12151A1F)"));
+    assert!(h("\"$FFF\""));
+    assert!(h("$fff8,"));
+    assert!(!h("#[derive(Debug)]"));
+    assert!(!h("$1C64F2FF00"));
+    assert!(!h("$1C64F"));
+    let c = |s: &str| !colour_tokens(&s.replace('$', "")).is_empty();
+    for bad in [
+        "Col$or::srgb(1.0, 0.0, 0.0)",
+        "Col$or::\n    srgb(1.0, 0.0, 0.0)",
+        "Col$or::WHITE",
+        "Col$or::oklcha(0.5, 0.1, 30.0, 1.0)",
+        "Col$or::hsv(0.0, 1.0, 1.0)",
+        "S$rgba::hex(\"1C64F2\")",
+        "S$rgba::rgb(1.0, 0.0, 0.0)",
+        "S$rgba::rgb_u8(1, 2, 3)",
+        "S$rgba::WHITE",
+        "S$rgba { red: 1.0, green: 0.0, blue: 0.0, alpha: 1.0 }",
+        "LinearR$gba::rgb(1.0, 0.0, 0.0)",
+        "H$sla::new(0.0, 1.0, 0.5, 1.0)",
+        "Okl$cha::new(0.5, 0.1, 30.0, 1.0)",
+        "use bevy::color::pal$ettes::css::RED;",
+        "use bevy::prelude::Col$or as C;",
+        "TextCol$or::WHITE",
+        "BackgroundCol$or::DEFAULT",
+    ] {
+        assert!(c(bad), "{bad}");
+    }
+    for fine in [
+        "Outline::new(px(2), px(0), Color::$NONE)",
+        "let c = color.to_srgba();",
+        "fn hex(color: Color) -> String",
+        "BorderColor::all(c)",
+        "TextColor(c)",
+    ] {
+        assert!(!c(fine), "{fine}");
+    }
+    assert_eq!(
+        strip_comments("let a = 1; // Col$or::srgb\nlet b = \"http://x\";").replace('$', ""),
+        "let a = 1; \nlet b = \"http://x\";"
+    );
 }
 
 #[test]

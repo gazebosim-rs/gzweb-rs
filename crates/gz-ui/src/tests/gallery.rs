@@ -15,7 +15,7 @@ use crate::gallery::{
     hex, FocusExample, GalleryCapture, GalleryPlugin, GalleryRoot, ThemeText, ThemeToggle,
     TokenHex, TOKENS,
 };
-use crate::theme::{Fill, Ink, Opacity, Stroke, Theme, ThemeMode};
+use crate::theme::{Fill, Ink, Opacity, Ring, Shadow, Stroke, Theme, ThemeMode};
 use crate::widgets::number_field::NumberInput;
 
 fn gallery(theme: ThemeMode) -> App {
@@ -50,7 +50,41 @@ fn assert_all_resolved(app: &mut App) {
         assert_eq!(color.0, c.with_alpha(c.alpha() * alpha(o)), "{ink:?}");
         n += 1;
     }
+    let mut icons = w.query::<(&Ink, &ImageNode, Option<&Opacity>)>();
+    let mut tints = 0;
+    for (ink, image, o) in icons.iter(w) {
+        let c = theme.color(ink.0);
+        assert_eq!(image.color, c.with_alpha(c.alpha() * alpha(o)), "{ink:?}");
+        tints += 1;
+    }
+    let mut rings = w.query::<(&Ring, &Outline, Option<&Opacity>)>();
+    let mut outlines = 0;
+    for (ring, outline, o) in rings.iter(w) {
+        let c = theme.color(ring.0);
+        assert_eq!(
+            outline.color,
+            c.with_alpha(c.alpha() * alpha(o)),
+            "{ring:?}"
+        );
+        outlines += 1;
+    }
+    let mut shadows = w.query::<(&Shadow, &BoxShadow, Option<&Opacity>)>();
+    let mut layers = 0;
+    for (shadow, box_shadow, o) in shadows.iter(w) {
+        let c = theme.color(shadow.0);
+        for layer in &box_shadow.0 {
+            assert_eq!(
+                layer.color,
+                c.with_alpha(c.alpha() * alpha(o)),
+                "{shadow:?}"
+            );
+            layers += 1;
+        }
+    }
     assert!(n > 400, "{n} roles");
+    assert!(tints > 40, "{tints} icons");
+    assert!(outlines > 40, "{outlines} outlines");
+    assert!(layers > 0, "{layers} shadows");
 }
 
 #[test]
