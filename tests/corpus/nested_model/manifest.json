@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "nested_model_world",
   "source": {
+    "gazebo": "jetty",
     "world_file": "nested_model.sdf"
   },
   "protos": 0,

@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "lights",
   "source": {
+    "gazebo": "jetty",
     "world_file": "lights.sdf"
   },
   "protos": 0,

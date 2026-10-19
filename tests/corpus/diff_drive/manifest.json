@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "diff_drive",
   "source": {
+    "gazebo": "jetty",
     "world_file": "diff_drive.sdf"
   },
   "protos": 0,

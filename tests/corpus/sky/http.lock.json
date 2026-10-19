@@ -1,0 +1,8 @@
+{
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-negx.jpg": "dd5fee1d318e26c920802c2fcbe265bbca623168592a9af8560e2baa704c92dc",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-negy.jpg": "8c63ca532bdb811611a4216b34984feb4034acdca49e524b12e1bab6ce33f726",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-negz.jpg": "d33cbad5f888483d6d1ef38c3be77e32329540cd7b820432cfe7ac21ab731139",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-posx.jpg": "992600657ec92a9b73b5deaf5af49aad710993a0d47d54c2c5c4f2e05ca69b65",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-posy.jpg": "04facedef45edef22fea1e530638d1e582623d22a441baeb9494684a14c58c01",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/skybox/tip/files/materials/textures/skybox-posz.jpg": "d6978f6eaaa2a6c9bbc27127fa88cedede1d731e401e9101805cb5fcb0c29846"
+}

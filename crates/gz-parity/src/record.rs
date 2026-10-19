@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use gz_core::frame::Frame;
+use gz_core::topic::world_topic;
 use gz_core::{msgs, net, uri};
 use prost::Message as _;
 use tungstenite::Message;
@@ -17,6 +18,8 @@ pub struct RecordOptions {
     pub duration: Duration,
     pub max_stream_frames: usize,
     pub world_file: Option<String>,
+    /// The Gazebo release recorded from (`jetty`), kept as `source.gazebo`.
+    pub gazebo: Option<String>,
     /// How long to wait for each handshake reply and for asset replies.
     pub reply_timeout: Duration,
     /// Extra PEM CA certificates to trust for `wss://`.
@@ -37,11 +40,12 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
         },
         frames: Vec::new(),
     };
+    let source = &mut corpus.manifest.source;
     if let Some(w) = &opts.world_file {
-        corpus
-            .manifest
-            .source
-            .insert("world_file".into(), w.clone());
+        source.insert("world_file".into(), w.clone());
+    }
+    if let Some(g) = &opts.gazebo {
+        source.insert("gazebo".into(), g.clone());
     }
 
     let send = |ws: &mut net::Socket, s: &str| {
@@ -124,9 +128,10 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
 
     // 4. Streams, in gzweb's subscription order.
     let world = corpus.manifest.world.clone();
+    // Under the sanitized world name, as gz-sim publishes them.
     let topics = [
-        format!("/world/{world}/dynamic_pose/info"),
-        format!("/world/{world}/scene/info"),
+        world_topic(&world, "dynamic_pose/info"),
+        world_topic(&world, "scene/info"),
     ];
     for t in &topics {
         send(&mut ws, &format!("sub,{t},,"))?;
@@ -173,6 +178,61 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
     }
     let _ = ws.close(None);
     Ok(corpus)
+}
+
+/// A recorded position further than this from the origin on any axis, in
+/// metres, is reported by [`pose_report`].
+pub const POSE_WARN_M: f64 = 1e4;
+
+/// What the recorded `gz.msgs.Pose_V` streams cover.
+#[derive(Debug, Default, PartialEq)]
+pub struct PoseReport {
+    /// Sim time (s) of the first and last frame's header stamp.
+    pub sim_time: Option<(f64, f64)>,
+    /// One line per pose name whose position is non-finite or beyond
+    /// [`POSE_WARN_M`]: the world probably drifted before the recording (a
+    /// body falling off the terrain, say), which neither client can show.
+    pub warnings: Vec<String>,
+}
+
+/// Checks the recorded pose streams; see [`PoseReport`].
+pub fn pose_report(corpus: &Corpus) -> PoseReport {
+    let mut report = PoseReport::default();
+    let mut warned = BTreeSet::new();
+    for (topic, frames) in &corpus.manifest.streams {
+        for &i in frames {
+            let Some(f) = corpus.frame(i).and_then(Frame::parse) else {
+                continue;
+            };
+            if f.msg_type != "gz.msgs.Pose_V" {
+                continue;
+            }
+            let Ok(v) = msgs::PoseV::decode(f.payload) else {
+                continue;
+            };
+            let t = v
+                .header
+                .and_then(|h| h.stamp)
+                .map(|s| s.sec as f64 + f64::from(s.nsec) * 1e-9);
+            if let Some(t) = t {
+                let (lo, hi) = report.sim_time.get_or_insert((t, t));
+                *lo = lo.min(t);
+                *hi = hi.max(t);
+            }
+            for p in &v.pose {
+                let pos = p.position.clone().unwrap_or_default();
+                let xyz = [pos.x, pos.y, pos.z];
+                let bad = xyz.iter().any(|c| !c.is_finite() || c.abs() > POSE_WARN_M);
+                if bad && warned.insert((topic.clone(), p.name.clone())) {
+                    let at = t.map_or(String::new(), |t| format!(" at sim t={t:.1} s"));
+                    report
+                        .warnings
+                        .push(format!("{topic}: '{}' is at {xyz:?}{at}", p.name));
+                }
+            }
+        }
+    }
+    report
 }
 
 fn collect_uris(scene: &msgs::Scene, out: &mut BTreeSet<String>) {

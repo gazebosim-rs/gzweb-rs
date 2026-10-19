@@ -19,22 +19,27 @@
 //! Like gzweb's `sendMessage`, nothing but the handshake is sent before the
 //! proto definitions arrive, and nothing at all after an error.
 //!
-//! ## What gz-launch's server can carry
+//! ## What the server can carry
 //!
-//! gz-launch's `WebsocketServer` (7 to `main`) reads every frame as a C string
-//! and splits it with `strtok` on `,`, which merges empty fields. So:
+//! Jetty's websocket system (`gz-sim-websocket-server-system`, gz-sim 10) and
+//! the gz-launch `WebsocketServer` it was ported from (7 to `main`) read every
+//! frame as a C string and split it with `strtok` on `,`, which merges empty
+//! fields. So:
 //!
 //! - any field is cut at its first `0x00` byte, and a `,` (`0x2c`) in any
 //!   field makes the frame invalid (dropped without a reply);
 //! - an empty field the server indexes (the topic of `sub`/`image`/`unsub`/
 //!   `throttle`, the service, type or payload of `req`) is an out-of-bounds
-//!   read, which crashes it;
+//!   read, which crashes it (on Jetty, the whole simulation);
 //! - `throttle` with rate 0 divides by zero.
 //!
 //! [`Transport`] refuses all of these with [`SendError::Unsendable`]. The
 //! server also has no `adv` or `pub_in` handler, so [`Transport::advertise`]
 //! and [`Transport::publish`] (gzweb's API) are ignored by every released
 //! server.
+//!
+//! Jetty answers `auth` even without a key configured (`authorized`, for any
+//! key); gz-launch didn't answer it at all.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -260,8 +265,8 @@ impl Transport {
 
     /// Subscribes to `topic`. Topics that `topics-types` lists as
     /// `gz.msgs.Image` use the `image` op, which streams PNG data. (gzweb
-    /// checks for the `ignition.`/`gazebo.` names, which Harmonic never
-    /// reports, so it always sends `sub`.)
+    /// checks for the `ignition.`/`gazebo.` names, which neither Harmonic nor
+    /// Jetty reports, so it always sends `sub`.)
     pub fn subscribe(&mut self, topic: &str) -> Result<(), SendError> {
         let op = match self.topic_type(topic) {
             Some(t) if t.ends_with(".msgs.Image") => "image",
@@ -286,7 +291,7 @@ impl Transport {
     pub fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError> {
         if rate == 0 {
             return Err(SendError::Unsendable(
-                "rate 0 (divides by zero in gz-launch)",
+                "rate 0 (divides by zero in the server)",
             ));
         }
         self.send("throttle", topic, "na", rate.to_string().as_bytes())
@@ -301,12 +306,13 @@ impl Transport {
         self.send("asset", "", "", uri.as_bytes())
     }
 
-    /// gzweb `advertise`. No released gz-launch server handles `adv`.
+    /// gzweb `advertise`. No released server (gz-launch or Jetty) handles `adv`.
     pub fn advertise(&mut self, topic: &str, msg_type: &str) -> Result<(), SendError> {
         self.send("adv", topic, msg_type, b"")
     }
 
-    /// gzweb `publish` (`pub_in`). No released gz-launch server handles it.
+    /// gzweb `publish` (`pub_in`). No released server (gz-launch or Jetty)
+    /// handles it.
     pub fn publish(
         &mut self,
         topic: &str,
@@ -447,7 +453,7 @@ impl Transport {
     }
 }
 
-/// Refuses frames gz-launch would drop or crash on (see the module docs).
+/// Refuses frames the server would drop or crash on (see the module docs).
 fn check_frame(op: &str, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
     let bad = |b: &[u8]| b.iter().any(|&c| c == 0 || c == b',');
     if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || bad(payload) {
@@ -652,7 +658,7 @@ mod tests {
         assert_eq!(
             t.throttle("/a", 0),
             Err(SendError::Unsendable(
-                "rate 0 (divides by zero in gz-launch)"
+                "rate 0 (divides by zero in the server)"
             ))
         );
         assert_eq!(t.request_asset("/m,1.stl"), field);

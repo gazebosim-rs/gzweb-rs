@@ -134,7 +134,7 @@ jobs:
           GZ_HTTP_OFFLINE: "true"
         run: |
           status=0
-          for c in empty shapes lights nested_model diff_drive polylines; do
+          for c in empty shapes lights nested_model diff_drive polylines visibility; do
             echo "::group::$c"
             parity/run.sh "$c" || status=1
             echo "::endgroup::"

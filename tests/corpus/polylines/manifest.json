@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "polylines",
   "source": {
+    "gazebo": "jetty",
     "world_file": "polylines.sdf"
   },
   "protos": 0,

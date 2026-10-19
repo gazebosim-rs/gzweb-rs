@@ -337,6 +337,8 @@ fn record_writes_a_corpus() {
             "1",
             "--world-file",
             "w.sdf",
+            "--gazebo",
+            "jetty",
             "--timeout-ms",
             "5000",
         ]),
@@ -345,6 +347,7 @@ fn record_writes_a_corpus() {
     server.join().unwrap().unwrap();
     let c = Corpus::load(&out).unwrap();
     assert_eq!(c.manifest.world, "w");
+    assert_eq!(c.manifest.source["gazebo"], "jetty");
     assert_eq!(c.manifest.streams["/world/w/dynamic_pose/info"].len(), 1);
 
     // Recording fails when nothing is listening.

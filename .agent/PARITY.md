@@ -20,16 +20,55 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 
 ## 1. Corpus format: `tests/corpus/<name>/`
 
-Record one with `parity/record.sh <world.sdf> [name]` (needs the `gz-websocket`
-image from `Dockerfile.gazebo`). Status of the recorded worlds:
+Record one with `parity/record.sh <world.sdf> [name]` (needs the
+`gz-websocket-jetty` image from `Dockerfile.gazebo`; `RECORD_PORT` picks the
+host port, default 9010). It waits for a websocket upgrade, not just a TCP
+accept, because Jetty's websocket system only starts once the world, Fuel
+models included, has loaded, and gives up at once, printing the server's
+log, if the server exits first. Then it lets the world run for
+`RECORD_WARMUP_S` (30) seconds. That wait starts after the world has
+loaded, so recordings begin at sim time ≈ 33 s for an installed world and
+≈ 50 s for one with Fuel models. (The Harmonic script's 30 s started at the
+TCP accept, before the world loaded, so those recordings began at
+t ≈ 12 s.) Record dynamic worlds with a short warmup. `gz-parity record`
+prints the sim time the pose streams cover and warns about non-finite
+positions or positions beyond 10 km.
+
+Every corpus was recorded from **Gazebo Jetty** (gz-sim 10.5.0).
+`source.gazebo` is the image's release label and gz-sim version
+(`jetty 10.5.0`); corpora recorded before the script read them say
+`jetty`. Those were also recorded while the image ran as root, so their
+scenes name Fuel files under `/root/.gz/fuel/…`; later ones under
+`/home/gazebo/.gz/fuel/…`. Both clients map either to the same Fuel URL.
+Status:
 
 | Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
 |---|---|---|---|
-| empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
-| heightmap | committed | PASS with gaps (no heightmap geometry yet) | `--ignored` |
-| import_mesh | committed | PASS (Collada) | `--ignored` |
-| sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
-| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
+| empty, shapes, lights, nested_model, diff_drive, polylines, visibility | committed | PASS | yes |
+| heightmap | committed | PASS with allow-listed terrain | `--ignored` (Fuel) |
+| import_mesh | committed | PASS (Collada) | `--ignored` (Fuel) |
+| sky | committed | PASS (allow-listed sky and camera material) | yes (headless gzweb-rs never fetches the cubemap) |
+| fuel_textured_mesh | committed | PASS (allow-listed materials) | `--ignored` (Fuel) |
+| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no (no test uses it) |
+
+gzweb couldn't load `sky`, `visibility` and `fuel_textured_mesh` from the
+Harmonic recordings: gz-launch's `protos` text left out the top-level enums,
+and protobufjs threw on `PixelFormatType`. Jetty's server includes them, so
+these now have references.
+
+`heightmap` is dynamic: four spheres roll on the bowl's slopes. It was
+recorded with `RECORD_WARMUP_S=5`, so its pose stream covers sim
+t ≈ 9.3–11.0 s, with every sphere on the terrain (z ≈ 3–8 m), close to the
+Harmonic recording (t ≈ 12–13 s). The first Jetty recording (default
+warmup) began at t ≈ 50 s, the spheres still on the terrain but rolling
+outward. Left running, they roll off the edge of the 128 m terrain and fall,
+with the ode collision detector as with bullet, so they don't fall through
+it; after about 10 minutes of free fall they are at z ≈ −1.6 × 10⁶ m. This
+is server-side physics; both clients just show the poses they're sent.
+
+`particle_emitter`'s scene names the emitter's `color_range_image` by an
+absolute Fuel cache path (`/root/.gz/fuel/…/fog generator/2/materials/textures/fogcolors.png`),
+which only exists inside the container that recorded it.
 
 Optional files next to `manifest.json`:
 
@@ -46,6 +85,14 @@ the lock is added to it. `GZ_HTTP_OFFLINE=true` makes a miss a 404.
 `parity/run.sh` always runs the mirror: gzweb's HTTPS requests are rerouted
 by Playwright, gzweb-rs gets `--http-mirror`.
 
+`sky/http.lock.json` pins gzweb's hard-coded default skybox,
+`…/openrobotics/models/skybox/tip/files/…`. `tip` is mutable: if the model
+gets a new version, a cold-cache `parity/run.sh sky` fails with a SHA-256
+mismatch (502) until the lock is refreshed (delete the entries, rerun with
+Fuel up). Pinning a version would mean rewriting gzweb's URLs in the mirror
+or Playwright, so the lock stays on `tip` and only detects the change. The
+headless test is unaffected: gzweb-rs never fetches it.
+
 Fuel-world tests are `#[ignore]`d, so `cargo test` and the coverage gate stay
 offline. CI runs them in the `fuel` job (`cargo test -p gzweb --test headless
 -- --ignored`) with the cache restored from a key on the lock files, so Fuel
@@ -56,7 +103,7 @@ is contacted only on a cache miss, and only that job fails if Fuel is down.
   {
     "format": "gz-parity-corpus/1",
     "world": "shapes",
-    "source": {"gazebo": "harmonic", "world_file": "shapes.sdf", "recorded_at": "..."},
+    "source": {"gazebo": "jetty", "world_file": "shapes.sdf"},
     "protos": 0,
     "responses": {"topics-types": 1, "worlds": 2, "scene": 3},
     "assets": {"file:///…/mesh.dae": 7},
@@ -95,7 +142,7 @@ In tests, `gz_parity::replay::serve_on` serves on a listener bound to port 0.
   | `topics,,,` | Send the names of the recorded streams (`StringMsg_V`). |
   | `req,<service>,<type>,<payload>` | `/world/<world>/control` and `/server_control` answer `Boolean { data: true }`; anything else gets `StringMsg { data: "service_not_found" }`, as gz-launch does. |
   | `sub,<topic>,,` | Stream that topic's recorded frames in order, at most `N` of them (default: all), 1 ms apart. |
-  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs. |
+  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs, as a binary frame like every reply (both real servers do; gzweb reads it with `FileReader.readAsText`). |
   | anything else | Ignore. |
 
 - `--client-log` writes one line per client frame, in arrival order: the exact
@@ -226,5 +273,6 @@ graph. That keeps both sides' node sets identical by construction.
 4. Compares both snapshots and both client logs.
 5. Writes everything to `target/parity/<corpus>/`.
 
-CI's `parity` job runs it for every corpus against gzweb pinned at
-`519d4cf` (`.github/workflows/ci.yml`).
+CI's `parity` job runs it for every corpus without web assets against
+gzweb pinned at `519d4cf` (`.github/workflows/ci.yml`); the Fuel corpora
+are checked against their committed references in the `fuel` job.
