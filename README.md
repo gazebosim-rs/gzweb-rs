@@ -34,14 +34,28 @@ editing it:
 
 ```bash
 docker build -t gz-websocket-jetty -f Dockerfile.gazebo .
-docker run --rm -p 9002:9002 gz-websocket-jetty shapes.sdf     # default world: empty.sdf
+docker run --rm -p 127.0.0.1:9002:9002 -v gz-fuel:/home/gazebo/.gz/fuel \
+  gz-websocket-jetty shapes.sdf     # default world: empty.sdf
 ```
+
+The websocket server has no authentication unless the world configures a
+key, so bind the port to `127.0.0.1` unless others should reach it. The
+named volume `gz-fuel` keeps the Fuel model cache between containers, so
+Fuel worlds don't download their models on every start. The server runs as
+the unprivileged user `gazebo`.
 
 Arguments after the world go to `gz-sim-server` (e.g. `--iterations 100`);
 `GZ_VERBOSITY` (default 3) sets `-v`. The system is added through
 `GZ_SIM_SERVER_CONFIG_PATH` (`docker/websocket.config`). A world that sets
-`<policies><include_server_config_plugins>false` and has its own systems
+`<gz:policies><include_server_config_plugins>false` and has its own systems
 opts out of it, and needs the `<plugin>` itself.
+
+`GZ_SIM_SERVER_CONFIG_PATH` also replaces `playback_server.config`, so
+`--playback <log dir>` would load Physics and the websocket server instead
+of LogPlayback. For playback, point it at the installed playback config
+(`-e GZ_SIM_SERVER_CONFIG_PATH=/usr/share/gz/gz-sim/playback_server.config`,
+which has no websocket server) or at a copy that adds the websocket
+server's `<plugin>`. An empty value loads no systems at all.
 
 ## Native
 

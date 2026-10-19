@@ -1,32 +1,58 @@
 # Gazebo Jetty (gz-sim 10) with the websocket server on port 9002.
 #
 #   docker build -t gz-websocket-jetty -f Dockerfile.gazebo .
-#   docker run --rm -p 9002:9002 gz-websocket-jetty shapes.sdf
+#   docker run --rm -p 127.0.0.1:9002:9002 -v gz-fuel:/home/gazebo/.gz/fuel \
+#     gz-websocket-jetty shapes.sdf
 #
 # Jetty deprecates gz-launch; the websocket server is the gz-sim system
 # gz-sim-websocket-server-system. docker/websocket.config adds it to every
 # world through GZ_SIM_SERVER_CONFIG_PATH, so worlds don't need editing.
-FROM ubuntu:24.04
+#
+# Reproducibility: the base image is pinned by digest (ubuntu:24.04 as of
+# 2026-08-17; bump it deliberately). The Gazebo packages are not pinned:
+# packages.osrfoundation.org drops old versions when it publishes new ones,
+# so a pinned version would soon stop building. The image reports what it
+# got instead:
+#   docker run --rm --entrypoint sh gz-websocket-jetty -c '"$GZ_SIM_SERVER" --version'
+# prints the gz-sim version, and parity/record.sh writes it to the manifest.
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 LABEL maintainer="Gazebo-Web/Rs"
 LABEL description="Gazebo Jetty (gz-sim 10) server with the websocket server system"
+LABEL org.gazebosim.release="jetty"
 
-ENV DEBIAN_FRONTEND=noninteractive
+ARG DEBIAN_FRONTEND=noninteractive
 
 # gz-sim10-server is the server-only package: gz-sim-server, the systems
 # (including the websocket server), physics and the installed worlds, without
-# the GUI or the gz CLI.
+# the GUI or the gz CLI. It still depends on libgz-sensors10-dev, which pulls
+# in about 40 -dev packages (most of this layer's 1.49 GB); that is upstream
+# packaging. wget, gnupg and lsb-release only add the OSRF repository and are
+# purged once they have (apt verifies with gpgv, which stays).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release \
  && wget -q https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" > /etc/apt/sources.list.d/gazebo-stable.list \
+ && apt-get purge -y --auto-remove wget gnupg lsb-release \
  && apt-get update \
  && apt-get install -y --no-install-recommends gz-sim10-server \
  && rm -rf /var/lib/apt/lists/*
 
+# Run unprivileged: the websocket server has no authentication by default.
+# Fuel models are cached in the user's home, /home/gazebo/.gz/fuel (made
+# here, so a named volume mounted there is owned by the user), and the
+# server allows asset requests under the Fuel cache wherever it is.
+RUN useradd --create-home --user-group gazebo \
+ && mkdir -p /home/gazebo/.gz/fuel \
+ && chown -R gazebo:gazebo /home/gazebo/.gz
+
 COPY docker/websocket.config /opt/gz/websocket.config
-COPY docker/entrypoint.sh /opt/entrypoint.sh
+COPY --chmod=755 docker/entrypoint.sh /opt/entrypoint.sh
 ENV GZ_SIM_SERVER_CONFIG_PATH=/opt/gz/websocket.config
+ENV GZ_SIM_SERVER=/usr/libexec/gz/sim10/gz-sim-server
+
+USER gazebo
+WORKDIR /home/gazebo
 
 EXPOSE 9002
 
