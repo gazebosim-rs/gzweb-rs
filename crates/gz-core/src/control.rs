@@ -2,12 +2,13 @@
 //! `(service, msg_type, payload)` for [`crate::transport::Transport::request`].
 //!
 //! Every request carries a header stamped with 1 s. gz-sim ignores it, but it
-//! keeps the payload non-empty and free of `0x00` bytes, which gz-launch's
-//! server can't carry (see [`crate::transport`]): `WorldControl { pause:
-//! false }` alone encodes to nothing. Step counts whose varint contains a
-//! `0x00` or `,` byte are split into several requests. gzweb sends
-//! `ignition.msgs.*` type names, which Harmonic rejects; these use
-//! `gz.msgs.*`.
+//! keeps the payload non-empty and free of `0x00` bytes, which the Gazebo
+//! websocket server can't carry (see [`crate::transport`]):
+//! `WorldControl { pause: false }` alone encodes to nothing. Step counts
+//! whose varint contains a `0x00` or `,` byte are split into several
+//! requests. gzweb sends `ignition.msgs.*` type names, which Harmonic and
+//! Jetty reject; these use `gz.msgs.*`. The service name is built from the
+//! sanitized world name, as gz-sim does ([`crate::topic::world_topic`]).
 
 use prost::Message;
 
@@ -30,7 +31,7 @@ fn header() -> Option<msgs::Header> {
 
 fn world_control(world: &str, control: msgs::WorldControl) -> Request {
     Request {
-        service: format!("/world/{world}/control"),
+        service: crate::topic::world_topic(world, "control"),
         msg_type: "gz.msgs.WorldControl",
         payload: msgs::WorldControl {
             header: header(),
@@ -57,8 +58,9 @@ pub fn pause(world: &str) -> Request {
 }
 
 /// Advance a paused simulation by `steps` iterations (at least 1). Usually
-/// one request; more when a count would encode with a byte gz-launch can't
-/// carry (44, for instance, is `0x2c`), so the counts add up to `steps`.
+/// one request; more when a count would encode with a byte the Gazebo
+/// websocket server can't carry (44, for instance, is `0x2c`), so the counts
+/// add up to `steps`.
 pub fn step(world: &str, steps: u32) -> Vec<Request> {
     let one = |n: u32| {
         world_control(
@@ -139,6 +141,8 @@ mod tests {
     fn world_control_requests() {
         let p = play("shapes");
         assert_eq!(p.service, "/world/shapes/control");
+        // gz-sim serves the control service under the sanitized name.
+        assert_eq!(pause("my world").service, "/world/my_world/control");
         assert_eq!(p.msg_type, "gz.msgs.WorldControl");
         // The bytes probed against a live Harmonic server.
         assert_eq!(p.payload, [0x0a, 0x04, 0x0a, 0x02, 0x08, 0x01]);

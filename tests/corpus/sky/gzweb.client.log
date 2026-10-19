@@ -1,0 +1,6 @@
+protos,,,
+topics-types,,,
+worlds,,,
+scene,sky,,
+sub,/world/sky/dynamic_pose/info,,
+sub,/world/sky/scene/info,,

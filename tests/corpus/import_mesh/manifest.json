@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "fuel",
   "source": {
+    "gazebo": "jetty",
     "world_file": "import_mesh.sdf"
   },
   "protos": 0,

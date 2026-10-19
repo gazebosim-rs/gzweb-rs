@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "sky",
   "source": {
+    "gazebo": "jetty",
     "world_file": "sky.sdf"
   },
   "protos": 0,

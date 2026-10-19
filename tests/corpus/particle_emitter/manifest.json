@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "particle_emitters",
   "source": {
+    "gazebo": "jetty",
     "world_file": "particle_emitter.sdf"
   },
   "protos": 0,

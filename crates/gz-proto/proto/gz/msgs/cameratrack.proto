@@ -34,7 +34,7 @@ message CameraTrack
   {
     /// \brief Defaults to no tracking mode.
     NONE              = 0;
-    /// \brief TRACK observes a target from fixed x,y,z world 
+    /// \brief TRACK observes a target from fixed x,y,z world
     ///   camera point with pgain allowing only for orientation change.
     TRACK             = 1;
     /// \brief FOLLOW moves with a target with an offset x,y,z camera and pgain.

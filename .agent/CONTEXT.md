@@ -24,7 +24,7 @@ The application is designed to run **both in a web browser (WebAssembly/WASM) an
 | Language | Rust 1.97.1, pinned by `rust-toolchain.toml` (edition 2021) |
 | Engine, ECS, rendering, UI | [Bevy](https://bevyengine.org/) 0.20 (wgpu 30, rustc 1.97.1; WebGPU only in the browser for now; bevy_ui) |
 | Web target | `wasm32-unknown-unknown`, `wasm-bindgen`, `web-sys` |
-| Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs (Harmonic) |
+| Protobuf | `prost` 0.13, generated with `prost-build` + `protox` from vendored gz-msgs 12 (Jetty) |
 | Native websocket | `tungstenite` 0.26 |
 | Camera controls | `bevy_panorbit_camera` 0.34 |
 | Mesh loaders | Bevy glTF, own COLLADA (`gz-collada`), OBJ (`tobj`) and STL loaders |
@@ -49,7 +49,8 @@ gzweb-rs/
 ├── spikes/          standalone experiments (not in the workspace)
 ├── index.html       browser host page
 ├── build.sh         wasm build (release) + wasm-bindgen
-└── Dockerfile.gazebo  Gazebo Harmonic + websocket server
+├── docker/          the Gazebo image's server config + entrypoint
+└── Dockerfile.gazebo  Gazebo Jetty (gz-sim 10) + websocket server system
 ```
 
 ---
@@ -73,9 +74,13 @@ page's hostname.
 
 ### Gazebo for development
 
+The target release is **Jetty** (gz-sim 10). Its websocket server is the
+gz-sim system `gz-sim-websocket-server-system` (gz-launch is deprecated);
+the image adds it to every world through `GZ_SIM_SERVER_CONFIG_PATH`.
+
 ```bash
-docker build -t gz-websocket -f Dockerfile.gazebo .
-docker run --rm -p 9002:9002 gz-websocket shapes.sdf
+docker build -t gz-websocket-jetty -f Dockerfile.gazebo .
+docker run --rm -p 9002:9002 gz-websocket-jetty shapes.sdf
 ```
 
 ### Parity check against gzweb

@@ -193,6 +193,10 @@ Parity tests allow-list these with a reason string:
   its `requestService` refuses). See DESIGN.md "Server limits".
 - `image` op for topics `topics-types` lists as `gz.msgs.Image` (gzweb checks the
   old `ignition.`/`gazebo.` names, so it always sends `sub`).
+- World topics use the world name sanitized as gz-sim does
+  (`TopicUtils::AsValidTopic`: `my world` → `/world/my_world/…`); gzweb uses the
+  raw name, so it subscribes to topics that don't exist for such a world. See
+  DESIGN.md "World topics".
 - Reconnect with backoff (gzweb stays disconnected). Interactive mode also
   subscribes to `/world/<w>/stats`; snapshot mode keeps gzweb's exact frames.
 - A sky cubemap also comes from Harmonic's `Sky.cubemap_uri` field (gzweb reads only
