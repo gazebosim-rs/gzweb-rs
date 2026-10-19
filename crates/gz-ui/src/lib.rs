@@ -13,12 +13,14 @@
 //! - [`icons`]: the icon atlas generated from `icons.json`;
 //! - [`fonts`]: Geist and Geist Mono, embedded, and the type styles;
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
+//! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
 //!
 //! The shell (M2) and everything after it come later; until then the full
 //! mode adds this plugin but shows nothing of it.
 
 pub mod brand;
 pub mod fonts;
+pub mod gallery;
 pub mod icons;
 pub mod theme;
 pub mod visuals;

@@ -3,6 +3,7 @@
 
 mod app;
 mod assets;
+mod gallery;
 mod layout;
 mod menu;
 mod number;

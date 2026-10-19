@@ -3194,6 +3194,7 @@ dependencies = [
  "gz-bevy",
  "gz-core",
  "gz-parity",
+ "gz-ui",
  "prost",
  "serde_json",
  "web-sys",

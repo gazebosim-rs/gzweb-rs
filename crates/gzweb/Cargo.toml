@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [dependencies]
 gz-bevy.workspace = true
+gz-ui.workspace = true
 bevy = { version = "0.20", features = ["webgpu", "webgl2"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
