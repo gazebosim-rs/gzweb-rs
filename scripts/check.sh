@@ -25,7 +25,7 @@ COVERAGE_IGNORE='crates/gz-collada/src/vendor/'
 LOCKED=()
 [ "${CHECK_LOCKED:-0}" = 1 ] && LOCKED=(--locked)
 # Crates that build for the browser.
-WASM_CRATES=(-p gz-core -p gz-bevy -p gzweb)
+WASM_CRATES=(-p gz-core -p gz-bevy -p gz-ui -p gzweb)
 
 need_cargo() { # <subcommand> <how to install>
   cargo "$1" --version >/dev/null 2>&1 || {
