@@ -105,6 +105,51 @@ fn serves_a_full_session_and_logs_client_frames() {
     assert_eq!(lines.last(), Some(&"binary:ab01"));
 }
 
+/// Both real servers send every frame as binary, `auth` replies included;
+/// gzweb reads them with `FileReader.readAsText`.
+#[test]
+fn auth_replies_are_binary() {
+    let (url, server) = serve(corpus(), opts(None, Some("k")));
+    let mut ws = connect(&url);
+    for (key, reply) in [("wrong", "invalid"), ("k", "authorized")] {
+        send(&mut ws, &format!("auth,,,{key}"));
+        match ws.read().unwrap() {
+            Message::Binary(b) => assert_eq!(b.as_ref(), reply.as_bytes()),
+            other => panic!("auth reply {other:?} is not binary"),
+        }
+    }
+    ws.close(None).unwrap();
+    let _ = ws.flush();
+    server.join().unwrap().unwrap();
+}
+
+/// gz-sim serves world control under the sanitized world name.
+#[test]
+fn world_control_uses_the_sanitized_world_name() {
+    let corpus = Builder::new("my world")
+        .scene(&msgs::Scene {
+            name: "my world".into(),
+            ..Default::default()
+        })
+        .build();
+    let (url, server) = serve(corpus, opts(None, None));
+    let mut ws = connect(&url);
+    send(
+        &mut ws,
+        "req,/world/my_world/control,gz.msgs.WorldControl,\x10\x01",
+    );
+    let reply = recv(&mut ws);
+    let f = Frame::parse(&reply).unwrap();
+    assert_eq!(
+        (f.topic, f.msg_type),
+        ("/world/my_world/control", "gz.msgs.Boolean")
+    );
+    assert!(msgs::Boolean::decode(f.payload).unwrap().data);
+    ws.close(None).unwrap();
+    let _ = ws.flush();
+    server.join().unwrap().unwrap();
+}
+
 #[test]
 fn missing_replies_are_skipped_and_bad_frame_indices_end_the_connection() {
     let mut c = Corpus::default();

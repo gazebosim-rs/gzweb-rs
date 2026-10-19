@@ -8,7 +8,7 @@ Plan and parity rationale: [`PORT_PLAN.md`](./PORT_PLAN.md). Test harness:
 ```
 crates/
   gz-proto/   gz.msgs types generated at build time (prost-build + protox, no protoc)
-              from the vendored gz-msgs Harmonic .proto files in proto/.
+              from the vendored gz-msgs 12 (Jetty) .proto files in proto/.
   gz-core/    No Bevy. Builds for native and wasm.
                 frame      `op,topic,type,payload` codec
                 transport  sans-IO client state machine (handshake, subs, assets)
@@ -83,8 +83,10 @@ Primitive conventions follow gzweb `Scene.ts`:
 
 ## Websocket protocol
 
-Frames in both directions have the form `op,topic,type,payload` (gz-launch /
-gz-sim `WebsocketServer.cc`):
+Frames in both directions have the form `op,topic,type,payload`. The
+server is Gazebo Jetty's websocket system, `gz-sim-websocket-server-system`
+(gz-sim 10, `src/systems/websocket_server/WebsocketServer.cc`), a port of
+gz-launch's `WebsocketServer` plugin, which Jetty deprecates:
 
 ```
 open → auth,,,<key> (if key) → "authorized" → protos,,,
@@ -96,33 +98,78 @@ Ready → sub,/world/<w>/dynamic_pose/info,,   sub,/world/<w>/scene/info,,
 asset,,,<uri> → asset,<uri>,gz.msgs.Bytes,<Bytes>   (or gz.msgs.StringMsg error code)
 ```
 
-The proto definitions arrive as a *binary* frame. Asset payloads are
-serialized `gz.msgs.Bytes`, not raw file bytes.
+The server sends every frame as *binary*, the proto definitions and the
+`authorized`/`invalid` replies included. Asset payloads are serialized
+`gz.msgs.Bytes`, not raw file bytes.
 
 Frames go out as text when they are UTF-8 (every gzweb frame is), and as
 binary otherwise; the server accepts both.
 
-**Server limits (gz-launch 7 to `main`, probed against Harmonic).** The
-server reads each frame as a C string and splits it with `strtok` on `,`,
-which merges empty fields:
+**Jetty vs gz-launch.** Diffed against gz-launch 7 (Harmonic) at
+gz-sim10_10.5.0 and probed against the `gz-websocket-jetty` image. The ops,
+the framing, the `asset` resolution and allowed paths, `req`, `image`,
+`throttle`, the error codes (`service_not_found`, `asset_not_found`,
+`asset_uri_missing`, `asset_access_denied`) and the defaults (port 9002,
+60 Hz, no connection or queue limit) are unchanged. What changed:
+
+- `auth` is always answered. With no key configured every connection is
+  authorized, so any key gets `authorized`; gz-launch never answered a
+  server without a key, and the client waited for its handshake timeout.
+- The `protos` text now includes each file's top-level enums
+  (`PixelFormatType`, `SphericalCoordinatesType`). gz-launch left them out,
+  so gzweb's protobufjs parse failed on any message using them (the `sky`,
+  `visibility` and `fuel_textured_mesh` worlds; see PARITY.md).
+- `scene,<world>` and the particle-emitter request pass the world name
+  through `TopicUtils::AsValidTopic` (see "World topics" below).
+- It is a system loaded with the world: the port opens only once the world
+  (and every Fuel model it includes) has loaded, and a crash takes the
+  simulation down with it.
+- Its options come from the `<plugin>` element (SDF), not a launch file.
+
+**Server limits (gz-launch 7 to `main` and gz-sim 10, probed against
+Harmonic and Jetty).** The server reads each frame as a C string and splits
+it with `strtok` on `,` (`gz::common::split`), which merges empty fields:
 
 - every field is cut at its first `0x00` byte;
 - a `,` (`0x2c`) in any field makes the frame invalid (dropped, no reply);
 - an empty field the server indexes (topic of `sub`/`image`/`unsub`/
   `throttle`; service, type or payload of `req`) is an out-of-bounds read,
-  which can crash it (`std::length_error` in `OnRequest` for an empty `req`);
-- `throttle` with rate 0 divides by zero;
+  which can crash it (`std::length_error` in `OnRequest` for an empty `req`;
+  on Jetty `sub,,,` kills gz-sim itself);
+- `throttle` with rate 0 divides by zero (a `1.0 / 0` period cast to
+  nanoseconds, undefined behaviour);
 - there is no `adv` or `pub_in` handler, so publishing from the client does
   nothing;
 - `image` is only honoured for `gz.msgs.Image` topics;
-- `ignition.msgs.*` request types are rejected;
-- with no key configured, `auth` is never answered.
+- `ignition.msgs.*` request types are rejected (the reply is an empty
+  `gz.msgs.Boolean`);
+- with no key configured, `auth` is never answered (gz-launch only; see
+  above).
 
 `Transport` refuses frames that would hit the first four
 (`SendError::Unsendable`). `gz_core::control` (play, pause, step, reset,
 stop) stamps a header (1 s) on every request so `WorldControl { pause:
 false }` isn't empty and has no zero bytes, and splits step counts whose
 varint contains `0x00` or `,` (44 is `0x2c`) into several requests.
+
+**World topics.** Decided 2026-10-19: the client sanitizes the world name
+as gz-sim does. The `worlds` reply carries the raw SDF name, but gz-sim
+builds every world topic and service from it with gz-transport's
+`TopicUtils::AsValidTopic` (spaces become `_`; `@`, `~`, `:=` and `//` are
+dropped; an invalid result is empty), and Jetty's server does the same to
+the name in `scene,<world>`. `gz_core::topic` ports `AsValidTopic` and
+`IsValidTopic` from gz-transport 15 exactly (tested on upstream's cases), and
+`world_topic(world, leaf)` builds `/world/<world>/<leaf>` with it, as the
+server builds its `scene` service name. The pose, scene-info and stats
+subscriptions, the world control service, `WorldTopic` routing,
+`gz-parity record` and the replay server all use it. `scene,<world>` keeps
+the raw name, like gzweb (the server sanitizes it). gz-sim's own systems
+sanitize `/world/<world>` and append the leaf, SimulationRunner (control,
+stats) after sanitizing the bare name first; these agree with
+`world_topic` unless the name contains a `/`. gzweb uses the raw name, so on
+Jetty a world named `my world` gets its scene but no poses, scene updates or
+control (the server subscribes to `sub` topics as sent, and gz-transport
+refuses one with a space); PORT_PLAN §2.5 lists the divergence.
 
 **Sending.** As in gzweb's `sendMessage`, only handshake ops go out before
 `Connected`, and nothing after an error (`SendError`). As in gzweb, messages
@@ -134,7 +181,7 @@ rejected key or an invalid URL, and keeps that reason in the status. TCP
 connect and the websocket/TLS handshake time out after 10 s
 (`net::CONNECT_TIMEOUT`); the gz handshake (until the proto definitions
 arrive) times out after 10 s too (`connection::HANDSHAKE_TIMEOUT`), which
-covers a key sent to a server without one. The next `scene` reply replaces
+covers a key sent to a gz-launch server without one (Jetty answers it). The next `scene` reply replaces
 the whole scene. It is on by
 default, off in `--snapshot` mode (`--reconnect` / `--no-reconnect`). gzweb
 doesn't reconnect.

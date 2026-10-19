@@ -1,0 +1,368 @@
+{
+  "format": "gz-parity-snapshot/1",
+  "source": "gzweb",
+  "world": "fuel",
+  "scene": {
+    "ambient": [1, 1, 1],
+    "clear_color": [0.698039, 0.698039, 0.698039],
+    "camera": {
+      "position": [-6, 0, 6],
+      "target": [0, 0, 0],
+      "fov_deg": 60,
+      "near": 0.01,
+      "far": 1000
+    },
+    "grid_visible": false,
+    "sky": null
+  },
+  "nodes": [
+    {
+      "path": "camera",
+      "kind": "model",
+      "local": {
+        "pos": [3, 0, 1],
+        "quat": [0, 0, 1, 0.000796],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [3, 0, 1],
+        "quat": [0, 0, 1, 0.000796],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "camera/link",
+      "kind": "link",
+      "local": {
+        "pos": [0.05, 0.05, 0.05],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [2.94992, -0.04992, 1.05],
+        "quat": [0, 0, 1, 0.000796],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "camera/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [2.94992, -0.04992, 1.05],
+        "quat": [0, 0, 1, 0.000796],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "box",
+        "aabb_world": {
+          "min": [2.899841, -0.1, 1],
+          "max": [3, 0.000159, 1.1]
+        },
+        "mesh_count": 1,
+        "vertex_count": 24
+      },
+      "material": {
+        "color": [1, 1, 1],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "Rescue Randy",
+      "kind": "model",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0.706825, 0.707388],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0.706825, 0.707388],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Rescue Randy/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0.706825, 0.707388],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Rescue Randy/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0.706825, 0.707388],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "mesh",
+        "aabb_world": {
+          "min": [-0.178769, -0.68184, 0],
+          "max": [0.178608, 0.681775, 1.821126]
+        },
+        "mesh_count": 1,
+        "vertex_count": 15798
+      },
+      "material": {
+        "color": [0.6, 0.6, 0.6],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": 0,
+        "roughness": 1,
+        "maps": {
+          "albedo": "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_albedo.png",
+          "normal": "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_normal.png"
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "Tube Light",
+      "kind": "model",
+      "local": {
+        "pos": [1.5, 0, 3],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [1.5, 0, 3],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Tube Light/base_link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [1.5, 0, 3],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "Tube Light/base_link/TubeLight_visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [1.5, 0, 3],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "mesh",
+        "aabb_world": {
+          "min": [1.406803, -0.944663, 2.907268],
+          "max": [1.550443, 0.944661, 3.05014]
+        },
+        "mesh_count": 1,
+        "vertex_count": 5688
+      },
+      "material": {
+        "color": [0.6, 0.6, 0.6],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": 0,
+        "roughness": 1,
+        "maps": {
+          "albedo": "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Albedo.png",
+          "normal": "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Normal.png"
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "ground_plane",
+      "kind": "model",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "ground_plane/link",
+      "kind": "link",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": null
+    },
+    {
+      "path": "ground_plane/link/visual",
+      "kind": "visual",
+      "local": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 0],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": {
+        "type": "plane",
+        "aabb_world": {
+          "min": [-50, -50, 0],
+          "max": [50, 50, 0]
+        },
+        "mesh_count": 1,
+        "vertex_count": 4
+      },
+      "material": {
+        "color": [0.8, 0.8, 0.8],
+        "opacity": 1,
+        "transparent": false,
+        "emissive": [0, 0, 0],
+        "metalness": null,
+        "roughness": null,
+        "maps": {
+          "albedo": null,
+          "normal": null
+        }
+      },
+      "light": null
+    },
+    {
+      "path": "sun",
+      "kind": "light",
+      "local": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [0, 0, 10],
+        "quat": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": {
+        "type": "directional",
+        "color": [1, 1, 1],
+        "intensity": 0.98911,
+        "range": null,
+        "angle": null,
+        "penumbra": null,
+        "decay": null,
+        "cast_shadow": true,
+        "direction_world": [-0.483368, 0.096674, -0.870063]
+      }
+    },
+    {
+      "path": "tube_light",
+      "kind": "light",
+      "local": {
+        "pos": [1.48, 0, 2.96],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "world": {
+        "pos": [1.48, 0, 2.96],
+        "quat": [0, 0.380188, 0, 0.924909],
+        "scale": [1, 1, 1]
+      },
+      "visible": true,
+      "geometry": null,
+      "material": null,
+      "light": {
+        "type": "spot",
+        "color": [1, 1, 1],
+        "intensity": 0.99453,
+        "range": 50,
+        "angle": 1.1,
+        "penumbra": 1,
+        "decay": 1,
+        "cast_shadow": false,
+        "direction_world": [0.710914, 0, -0.703279]
+      }
+    }
+  ]
+}

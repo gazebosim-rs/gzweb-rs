@@ -27,7 +27,7 @@ node parity/js/snapshot.mjs --url ws://localhost:9012 --out shapes.json \
 To run it against real Gazebo:
 
 ```sh
-docker run --rm -d --name gz-parity-js -p 9012:9002 gz-websocket shapes.sdf
+docker run --rm -d --name gz-parity-js -p 127.0.0.1:9012:9002 gz-websocket-jetty shapes.sdf
 sleep 10
 node parity/js/snapshot.mjs --url ws://localhost:9012 --out shapes.json
 docker stop gz-parity-js

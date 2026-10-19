@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "shapes",
   "source": {
+    "gazebo": "jetty",
     "world_file": "shapes.sdf"
   },
   "protos": 0,

@@ -89,6 +89,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                 duration: Duration::from_millis(num(&flags, "duration-ms", 3000)?),
                 max_stream_frames: num(&flags, "max-stream-frames", 200)?,
                 world_file: flags.get("world-file").cloned(),
+                gazebo: flags.get("gazebo").cloned(),
                 reply_timeout: Duration::from_millis(num(&flags, "timeout-ms", 20000)?),
                 ca_cert: flags.get("ca-cert").map(PathBuf::from),
             };
@@ -106,6 +107,13 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+            let poses = record::pose_report(&corpus);
+            if let Some((a, b)) = poses.sim_time {
+                eprintln!("poses cover sim time {a:.1}-{b:.1} s");
+            }
+            for w in &poses.warnings {
+                eprintln!("warning: {w}");
+            }
             Ok(ExitCode::SUCCESS)
         }
         "replay" => {

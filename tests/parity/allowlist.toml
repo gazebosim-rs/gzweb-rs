@@ -25,14 +25,14 @@ id = "gzweb-hides-grid"
 path = "<scene>"
 field = "scene.grid_visible"
 reason = """gzweb always hides its grid. gzweb-rs shows Gazebo's grid when the scene's \
-`grid` flag is set (every Harmonic world sets it), as the Gazebo GUI does."""
+`grid` flag is set (every Harmonic and Jetty world sets it), as the Gazebo GUI does."""
 
 [[allow]]
 id = "gzweb-sky-header-only"
 path = "<scene>"
 field = "scene.sky"
 reason = """gzweb reads a sky cubemap only from the Sky header's `cubemap_uri`; gzweb-rs \
-falls back to the Sky.cubemap_uri field Harmonic sets. PORT_PLAN.md section 2.5."""
+falls back to the Sky.cubemap_uri field Harmonic and Jetty set. PORT_PLAN.md section 2.5."""
 
 [[allow]]
 id = "gzweb-heightmap-empty"
@@ -49,3 +49,62 @@ field = "material.color"
 reason = """A primitive visual without a material is Gazebo's `gz-grey` (diffuse 0.7, \
 metallic) in gzweb-rs, as gz-sim's SceneManager renders it; gzweb leaves three's white. \
 PORT_PLAN.md section 2.5."""
+
+[[allow]]
+id = "gazebo-default-material-cameras"
+path = "camera*/link/visual"
+field = "material.color"
+reason = """The camera sensors' box visuals have no material: Gazebo's `gz-grey` in \
+gzweb-rs, three's white in gzweb (see gazebo-default-material). Worlds sky, visibility \
+and fuel_textured_mesh, which gzweb can load since Jetty sends the top-level enums."""
+
+# Fuel PBR (metal workflow) materials in fuel_textured_mesh: gzweb-rs follows
+# Gazebo's ogre2 rules (DESIGN.md "Materials"), gzweb keeps its own defaults.
+# One entry per field that differs, so map, opacity and transparency diffs
+# still fail.
+
+[[allow]]
+id = "gazebo-pbr-color-randy"
+path = "Rescue Randy/link/visual"
+field = "material.color"
+reason = """Fuel PBR material: gzweb-rs uses the message's diffuse (white), as ogre2 \
+does; gzweb keeps its own 0.6 grey. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-metalness-randy"
+path = "Rescue Randy/link/visual"
+field = "material.metalness"
+reason = """Fuel PBR material: gzweb-rs uses the message's metalness (0.5); gzweb's \
+MeshStandardMaterial keeps three's 0. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-roughness-randy"
+path = "Rescue Randy/link/visual"
+field = "material.roughness"
+reason = """Fuel PBR material: gzweb-rs uses the message's roughness (0.5); gzweb's \
+MeshStandardMaterial keeps three's 1. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-color-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.color"
+reason = """Same as gazebo-pbr-color-randy, for the Tube Light model."""
+
+[[allow]]
+id = "gazebo-pbr-emissive-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.emissive"
+reason = """The Tube Light has an emissive map: gzweb-rs applies it at full strength \
+(emissive white), as ogre2 does; gzweb leaves the emissive black. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-metalness-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.metalness"
+reason = """Same as gazebo-pbr-metalness-randy, for the Tube Light model."""
+
+[[allow]]
+id = "gazebo-pbr-roughness-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.roughness"
+reason = """Same as gazebo-pbr-roughness-randy, for the Tube Light model."""

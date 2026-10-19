@@ -7,6 +7,7 @@
 use bevy::prelude::*;
 use gz_core::control;
 use gz_core::msgs;
+use gz_core::topic::world_topic;
 use gz_core::transport::{Event, SendError, Status, Transport};
 use prost::Message as _;
 
@@ -68,7 +69,8 @@ impl GzStatus {
 }
 
 /// Requests for the server. A command the connection can't send right now
-/// (not connected yet, or a frame gz-launch can't carry) is dropped and
+/// (not connected yet, or a frame the Gazebo websocket server can't carry)
+/// is dropped and
 /// logged, not queued.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub enum GzCommand {
@@ -133,7 +135,8 @@ pub fn backoff(attempt: u32) -> f64 {
 const STATS_RATE: u32 = 5;
 
 /// Seconds from the socket opening to the proto definitions arriving. A
-/// server without a key never answers `auth`, so this is the only way out.
+/// gz-launch server without a key never answers `auth`, so this is the only
+/// way out there (Jetty's answers `authorized`).
 pub const HANDSHAKE_TIMEOUT: f64 = 10.0;
 
 pub fn connect(world: &mut World) {
@@ -354,18 +357,24 @@ enum WorldTopic {
 }
 
 impl WorldTopic {
+    /// Matches the topics [`subscribe`] builds from the sanitized name.
     fn of(topic: &str, world: &str) -> Option<Self> {
-        match topic.strip_prefix("/world/")?.strip_prefix(world)? {
-            "/dynamic_pose/info" => Some(Self::Poses),
-            "/scene/info" => Some(Self::SceneInfo),
-            "/stats" => Some(Self::Stats),
-            _ => None,
+        [Self::Poses, Self::SceneInfo, Self::Stats]
+            .into_iter()
+            .find(|t| topic == world_topic(world, t.leaf()))
+    }
+
+    fn leaf(&self) -> &'static str {
+        match self {
+            Self::Poses => "dynamic_pose/info",
+            Self::SceneInfo => "scene/info",
+            Self::Stats => "stats",
         }
     }
 }
 
-/// Warns about failed calls: `Boolean { data: false }` or gz-launch's
-/// `StringMsg` errors such as `service_not_found`.
+/// Warns about failed calls: `Boolean { data: false }` or the Gazebo
+/// websocket server's `StringMsg` errors such as `service_not_found`.
 fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
     match control::reply_ok(msg_type, payload) {
         Some(false) => warn!("{service} returned false"),
@@ -381,12 +390,14 @@ fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
 
 /// Same subscriptions, in the same order, as gzweb
 /// `SceneManager.subscribeToTopics()`; interactive mode adds the stats.
+/// Unlike gzweb, the world name is sanitized as gz-sim does
+/// ([`world_topic`]).
 fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     let mut topics = vec![
-        format!("/world/{world}/dynamic_pose/info"),
-        format!("/world/{world}/scene/info"),
+        world_topic(world, WorldTopic::Poses.leaf()),
+        world_topic(world, WorldTopic::SceneInfo.leaf()),
     ];
-    let stats = format!("/world/{world}/stats");
+    let stats = world_topic(world, WorldTopic::Stats.leaf());
     if interactive {
         topics.push(stats.clone());
     }
@@ -552,19 +563,24 @@ mod tests {
         /// Runs the handshake up to `Ready` on world `w`; returns the
         /// subscriptions sent.
         fn ready(&mut self) -> Vec<String> {
+            self.ready_on("w")
+        }
+
+        /// [`Self::ready`] on world `world`.
+        fn ready_on(&mut self, world: &str) -> Vec<String> {
             self.feed(DriverEvent::Open);
             self.msg(b"protos".to_vec());
             self.msg(publish(
                 "worlds",
                 "gz.msgs.StringMsg_V",
                 &msgs::StringMsgV {
-                    data: vec!["w".into()],
+                    data: vec![world.into()],
                     ..Default::default()
                 }
                 .encode_to_vec(),
             ));
             let scene = msgs::Scene {
-                name: "w".into(),
+                name: world.into(),
                 ..Default::default()
             };
             self.msg(publish("scene", "gz.msgs.Scene", &scene.encode_to_vec()))
@@ -582,6 +598,36 @@ mod tests {
 
     fn publish(topic: &str, msg_type: &str, payload: &[u8]) -> Vec<u8> {
         build("pub", topic, msg_type, payload)
+    }
+
+    /// gz-sim publishes a world's topics under its sanitized name; the
+    /// `scene` request keeps the raw name (the server sanitizes it).
+    #[test]
+    fn world_topics_use_the_sanitized_name() {
+        let mut h = Harness::new();
+        assert_eq!(
+            h.ready_on("my world@2"),
+            [
+                "sub,/world/my_world2/dynamic_pose/info,,",
+                "sub,/world/my_world2/scene/info,,"
+            ]
+        );
+        h.msg(publish(
+            "/world/my_world2/dynamic_pose/info",
+            "gz.msgs.Pose_V",
+            &msgs::PoseV {
+                pose: vec![msgs::Pose::default()],
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        ));
+        assert_eq!(h.world.resource::<GzInbox>().poses.len(), 1);
+        assert!(h.take::<GzPublish>().is_empty());
+        let sent = h.command(GzCommand::Pause);
+        assert!(
+            sent[0].starts_with("req,/world/my_world2/control,"),
+            "{sent:?}"
+        );
     }
 
     #[test]
@@ -742,6 +788,11 @@ mod tests {
         );
         assert_eq!(WorldTopic::of("/world/w/other", "w"), None);
         assert_eq!(WorldTopic::of("/stats", "w"), None);
+        assert_eq!(
+            WorldTopic::of("/world/a_b/scene/info", "a b"),
+            Some(WorldTopic::SceneInfo)
+        );
+        assert_eq!(WorldTopic::of("/world/a b/scene/info", "a b"), None);
     }
 
     #[test]
@@ -766,7 +817,8 @@ mod tests {
                 msg_type: "gz.msgs.Empty".into(),
                 payload: vec![0x0a, 0x02, 0x08, 0x01],
             },
-            // Refused: an empty payload would crash gz-launch.
+            // Refused: an empty payload would crash the Gazebo websocket
+            // server.
             GzCommand::Request {
                 service: "/s".into(),
                 msg_type: "gz.msgs.Empty".into(),

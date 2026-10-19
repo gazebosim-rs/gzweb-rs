@@ -490,3 +490,96 @@ Branch `feature/phase-4-materials`. Materials follow Gazebo (gz-sim
   at Low and Ultra: same bands in both (forward-only and prepass paths).
 - Not checked in a browser (WebGPU): the extension adds 6 textures and a
   sampler per fragment stage.
+
+## 2026-10-19: Gazebo Jetty (UI_PLAN §3a, J1–J4)
+
+- **J1, image:** `Dockerfile.gazebo` is now Ubuntu 24.04 + `gz-sim10-server`
+  (server only: `/usr/libexec/gz/sim10/gz-sim-server`, no GUI, no `gz` CLI),
+  tag `gz-websocket-jetty`. `docker/websocket.config`, through
+  `GZ_SIM_SERVER_CONFIG_PATH`, adds `gz-sim-websocket-server-system` (port
+  9002) to every world: since Ionic (gz-sim 9) server-config systems load
+  alongside the world's own unless it sets
+  `<gz:policies><include_server_config_plugins>false` (gz-sim's
+  `tutorials/server_config.md`), de-duplicated by filename. The
+  file repeats the default server.config's three systems, since the
+  variable replaces it. Same interface: `docker run … gz-websocket-jetty
+  <world.sdf>`. No Harmonic image is kept: nothing replays against a live
+  server (the parity jobs use recordings). Harmless upstream warning: the
+  system logs "Partial SSL configuration" whenever `<ssl>` is absent.
+- **J2, protos:** vendored gz-msgs `gz-msgs12_12.0.2` (`703d291`). No wire
+  change to anything the client decodes (Scene, Visual, Material/PBR,
+  Light, Geometry/Heightmap, WorldStatistics, Pose_V, Publishers,
+  StringMsg_V, Bytes). Changes: `Sensor.navsat` (22), `GUICamera.duration`,
+  `WheelSlipParametersCmd` friction fields, the
+  `SerializedEntityMap.components` map key int64 → uint64
+  (`serialized_map.proto`), `SphericalCoordinates.LOCAL2` removed, GPS messages
+  deprecated.
+- **J3, protocol:** gz-sim10_10.5.0's `WebsocketServer.cc` diffed against
+  gz-launch 7's; DESIGN.md "Websocket protocol" lists the result. Same ops,
+  framing, `strtok` split, asset resolution and allowed paths, error codes,
+  `req`, `image`, `throttle`. Different: `auth` is answered without a key
+  (`authorized`), `protos` includes top-level enums, world names go
+  through `AsValidTopic`, and the server starts after the world loads.
+  Probed live: `auth,,,secret` on a keyless server → `authorized`; unknown
+  service → `service_not_found`; `ignition.msgs.*` → empty `Boolean`; a `,`
+  in the payload → dropped; `sub,,,` still crashes it, now taking gz-sim
+  down. Client and replay server needed no behaviour change (the replay
+  server already accepted any key without `--key`); docs updated.
+- **Live check** (`--release`, Jetty containers): `--snapshot` and
+  `--screenshot` on shapes, sky, heightmap and fuel_textured_mesh. All
+  load, meshes and Fuel textures included. The heightmap screenshot shows
+  no terrain: in that long-running container the spheres had rolled off the
+  edge of the 128 m terrain and fallen for about 10 minutes, to z ≈
+  −1.6 × 10⁶ m (corrected after review; see the PR #26 review entry and
+  PARITY.md); the same binary renders the Harmonic recording's
+  terrain. Two of four heightmap screenshot runs
+  crashed (a segfault after writing the image, with `NVVM compilation
+  failed` from the NVIDIA driver in the log, and an abort at `--quality
+  low`); the other two exited cleanly.
+- **J4, corpus:** all 12 corpora re-recorded from Jetty (`parity/record.sh`
+  now defaults to `gz-websocket-jetty` on port 9010, waits for a websocket
+  upgrade, and writes `source.gazebo`; `gz-parity record --gazebo`). gzweb
+  references regenerated with `parity/run.sh`; Fuel was up, so new lock
+  files (`sky`, `fuel_textured_mesh`) were fetched from fuel.gazebosim.org.
+  New references for `sky`, `visibility` and `fuel_textured_mesh`, which
+  gzweb couldn't load from Harmonic's protos. New allow-list entries:
+  material-less camera visuals (`gz-grey`) and the two Fuel PBR models.
+  `particle_emitter` still has no reference (gzweb throws on a null
+  `albedo_map`). Headless tests: `visibility` (default), `sky` and
+  `fuel_textured_mesh` (`--ignored`); CI parity job gains `visibility`.
+
+## 2026-10-19: PR #26 review fixes
+
+- **World topics:** `gz_core::topic` ports gz-transport 15's
+  `TopicUtils::AsValidTopic`/`IsValidTopic` (upstream's test cases), and
+  every `/world/<w>/…` topic or service the client, `gz-parity record` and
+  the replay server build goes through `world_topic`, as gz-sim's do.
+  Decision and divergence from gzweb: DESIGN.md "World topics", PORT_PLAN
+  §2.5.
+- **Replay:** `auth` replies are binary, like both real servers'.
+- **Parity:** `sky` runs in the default `cargo test` (headless gzweb-rs never
+  fetches the cubemap). The Fuel PBR allow-list entries name each differing
+  field (`material.*` also matched maps, opacity and transparency).
+- **`parity/record.sh`:** stops at once, with the server log, when the
+  container exits (it used `--rm` and polled for 5 minutes); writes
+  `source.gazebo` from the image (`jetty 10.5.0`); binds 127.0.0.1; caches
+  Fuel in a volume. `gz-parity record` prints the pose streams' sim time and
+  warns about non-finite or far-away poses.
+- **Heightmap, corrected:** the 0d61ae3 recording (sim t ≈ 50–52 s) has the
+  spheres on the terrain. The live z ≈ −1.6 × 10⁶ m was a container left
+  running about 10 minutes: the spheres roll off the 128 m terrain's edge
+  and fall (ode as well as bullet), not through it; checked live, by sim
+  t ≈ 118 s all four are past the ±64 m edge and 13–32 km down, and
+  `gz-parity record` warns about each. The Harmonic recording
+  was at t ≈ 12–13 s, not "at rest". The timing shift: the old 30 s warmup
+  began at the TCP accept, before the world loaded; the new one after the
+  websocket upgrade. Re-recorded with `RECORD_WARMUP_S=5` (t ≈ 9.3–11.0 s,
+  all spheres on the terrain); gzweb reference regenerated, lock unchanged.
+- **Image:** runs as `gazebo` (Fuel cache `/home/gazebo/.gz/fuel`; checked
+  with the heightmap recording, whose scene names that path), base pinned by
+  digest, apt tools purged, `COPY --chmod`, `Dockerfile.gazebo.dockerignore`.
+  `gz-sim10-server` depends on `libgz-sensors10-dev` (21 direct `-dev`
+  dependencies; 142 `-dev` packages end up installed, much of the 1.49 GB
+  layer); upstream packaging.
+  `include_server_config_plugins` defaults to true from Ionic (gz-sim 9),
+  not 10.
