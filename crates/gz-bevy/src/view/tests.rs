@@ -540,6 +540,40 @@ fn projection_toggle_keeps_the_framing() {
 }
 
 #[test]
+fn a_projection_switch_resets_temporal_anti_aliasing() {
+    use bevy::anti_alias::taa::TemporalAntiAliasing;
+    let mut r = rig(default_view());
+    let reset = |r: &Rig| {
+        r.app
+            .world()
+            .get::<TemporalAntiAliasing>(r.camera)
+            .unwrap()
+            .reset
+    };
+    let clear = |r: &mut Rig| {
+        r.app
+            .world_mut()
+            .entity_mut(r.camera)
+            .insert(TemporalAntiAliasing { reset: false });
+    };
+    clear(&mut r);
+    r.op(ViewOp::Orbit(Vec2::new(5.0, 0.0)));
+    assert!(!reset(&r));
+    r.op(ViewOp::ToggleProjection);
+    assert!(reset(&r));
+    clear(&mut r);
+    r.op(ViewOp::Pan(Vec2::new(5.0, 0.0)));
+    assert!(!reset(&r));
+    // A snap from perspective switches at the end of its animation.
+    r.op(ViewOp::ToggleProjection);
+    clear(&mut r);
+    r.op(ViewOp::Snap(SnapView::Top));
+    assert!(!reset(&r));
+    r.settle();
+    assert!(reset(&r));
+}
+
+#[test]
 fn each_snap_animates_into_its_orthographic_axis_view() {
     for face in SnapView::ALL {
         let mut r = rig(default_view());

@@ -17,6 +17,7 @@
 pub mod controls;
 pub mod input;
 
+use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::ScalingMode;
 use bevy::ecs::system::SystemParam;
@@ -208,6 +209,8 @@ pub struct ViewCamera {
     /// Fly keys travel this many pivot distances per second.
     pub fly_speed: f32,
     animation: Option<Animation>,
+    /// The projection last frame, to spot a switch.
+    was_ortho: bool,
 }
 
 impl ViewCamera {
@@ -222,6 +225,7 @@ impl ViewCamera {
             pan_speed: 1.0,
             fly_speed: 0.5,
             animation: None,
+            was_ortho: false,
         }
     }
 
@@ -502,21 +506,36 @@ impl ViewScene<'_, '_> {
 /// first view's pivot as [`GzCameraTarget`].
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
-    mut views: Query<(&mut ViewCamera, &mut Transform, &mut Projection, &Camera)>,
+    mut views: Query<(
+        &mut ViewCamera,
+        &mut Transform,
+        &mut Projection,
+        &Camera,
+        Option<&mut TemporalAntiAliasing>,
+    )>,
     mut scene: ViewScene,
     time: Res<Time<Real>>,
     mut target: ResMut<GzCameraTarget>,
 ) {
     for cmd in commands.read() {
-        let Ok((mut view, mut t, mut p, camera)) = views.get_mut(cmd.view) else {
+        let Ok((mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
             continue;
         };
         let size = camera.logical_viewport_size().unwrap_or(Vec2::ZERO);
         apply(cmd.op, &mut view, &mut t, &mut p, size, &mut scene);
     }
     let dt = time.delta_secs();
-    for (mut view, mut t, mut p, _) in &mut views {
+    for (mut view, mut t, mut p, _, taa) in &mut views {
         animate(&mut view, &mut t, &mut p, dt);
+        // A projection switch is a camera cut: TAA's history no longer
+        // matches the frame.
+        let ortho = ortho_height(&p).is_some();
+        if ortho != view.was_ortho {
+            view.was_ortho = ortho;
+            if let Some(mut taa) = taa {
+                taa.reset = true;
+            }
+        }
     }
     if let Some((view, ..)) = views.iter().next() {
         let gz = (gz_to_bevy().inverse() * view.pivot).to_array();
