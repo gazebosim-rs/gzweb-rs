@@ -180,6 +180,61 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
     Ok(corpus)
 }
 
+/// A recorded position further than this from the origin on any axis, in
+/// metres, is reported by [`pose_report`].
+pub const POSE_WARN_M: f64 = 1e4;
+
+/// What the recorded `gz.msgs.Pose_V` streams cover.
+#[derive(Debug, Default, PartialEq)]
+pub struct PoseReport {
+    /// Sim time (s) of the first and last frame's header stamp.
+    pub sim_time: Option<(f64, f64)>,
+    /// One line per pose name whose position is non-finite or beyond
+    /// [`POSE_WARN_M`]: the world probably drifted before the recording (a
+    /// body falling off the terrain, say), which neither client can show.
+    pub warnings: Vec<String>,
+}
+
+/// Checks the recorded pose streams; see [`PoseReport`].
+pub fn pose_report(corpus: &Corpus) -> PoseReport {
+    let mut report = PoseReport::default();
+    let mut warned = BTreeSet::new();
+    for (topic, frames) in &corpus.manifest.streams {
+        for &i in frames {
+            let Some(f) = corpus.frame(i).and_then(Frame::parse) else {
+                continue;
+            };
+            if f.msg_type != "gz.msgs.Pose_V" {
+                continue;
+            }
+            let Ok(v) = msgs::PoseV::decode(f.payload) else {
+                continue;
+            };
+            let t = v
+                .header
+                .and_then(|h| h.stamp)
+                .map(|s| s.sec as f64 + f64::from(s.nsec) * 1e-9);
+            if let Some(t) = t {
+                let (lo, hi) = report.sim_time.get_or_insert((t, t));
+                *lo = lo.min(t);
+                *hi = hi.max(t);
+            }
+            for p in &v.pose {
+                let pos = p.position.clone().unwrap_or_default();
+                let xyz = [pos.x, pos.y, pos.z];
+                let bad = xyz.iter().any(|c| !c.is_finite() || c.abs() > POSE_WARN_M);
+                if bad && warned.insert((topic.clone(), p.name.clone())) {
+                    let at = t.map_or(String::new(), |t| format!(" at sim t={t:.1} s"));
+                    report
+                        .warnings
+                        .push(format!("{topic}: '{}' is at {xyz:?}{at}", p.name));
+                }
+            }
+        }
+    }
+    report
+}
+
 fn collect_uris(scene: &msgs::Scene, out: &mut BTreeSet<String>) {
     fn visual(v: &msgs::Visual, out: &mut BTreeSet<String>) {
         if let Some(m) = v.geometry.as_ref().and_then(|g| g.mesh.as_ref()) {

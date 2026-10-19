@@ -107,6 +107,13 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                     .collect::<Vec<_>>()
                     .join(", ")
             );
+            let poses = record::pose_report(&corpus);
+            if let Some((a, b)) = poses.sim_time {
+                eprintln!("poses cover sim time {a:.1}-{b:.1} s");
+            }
+            for w in &poses.warnings {
+                eprintln!("warning: {w}");
+            }
             Ok(ExitCode::SUCCESS)
         }
         "replay" => {

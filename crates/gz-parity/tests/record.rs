@@ -109,6 +109,52 @@ fn records_what_the_replay_server_serves() {
     assert_eq!(m.streams[topic].len(), 2);
 }
 
+#[test]
+fn pose_report_flags_drifted_bodies() {
+    let topic = "/world/w/dynamic_pose/info";
+    let pose = |name: &str, z: f64| msgs::Pose {
+        name: name.into(),
+        position: Some(msgs::Vector3d {
+            z,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let frame = |sec: i64, poses: Vec<msgs::Pose>| msgs::PoseV {
+        header: Some(msgs::Header {
+            stamp: Some(msgs::Time {
+                sec,
+                nsec: 500_000_000,
+            }),
+            ..Default::default()
+        }),
+        pose: poses,
+    };
+    let corpus = Builder::new("w")
+        .publish(
+            topic,
+            "gz.msgs.Pose_V",
+            &frame(50, vec![pose("ok", 1.0), pose("fell", -2e4)]),
+        )
+        .publish(
+            topic,
+            "gz.msgs.Pose_V",
+            &frame(52, vec![pose("fell", -3e4), pose("nan", f64::NAN)]),
+        )
+        .publish("/other", "gz.msgs.Clock", &msgs::Clock::default())
+        .build();
+    let r = gz_parity::record::pose_report(&corpus);
+    assert_eq!(r.sim_time, Some((50.5, 52.5)));
+    assert_eq!(r.warnings.len(), 2, "{:?}", r.warnings);
+    assert!(r.warnings[0].contains("'fell'") && r.warnings[0].contains("50.5"));
+    assert!(r.warnings[1].contains("'nan'"));
+
+    let quiet = Builder::new("w")
+        .publish(topic, "gz.msgs.Pose_V", &frame(1, vec![pose("ok", 1.0)]))
+        .build();
+    assert!(gz_parity::record::pose_report(&quiet).warnings.is_empty());
+}
+
 /// Runs `script` as a websocket server for one connection; returns its URL.
 fn scripted(script: impl FnOnce(&mut WebSocket<TcpStream>) + Send + 'static) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
