@@ -1,0 +1,3 @@
+# Dockerfile.gazebo only needs docker/; keep target/ and the rest out of the context.
+*
+!docker/

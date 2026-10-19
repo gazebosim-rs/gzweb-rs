@@ -27,12 +27,21 @@ Architecture: [`.agent/DESIGN.md`](.agent/DESIGN.md).
 
 ## Running Gazebo (Docker)
 
-`Dockerfile.gazebo` builds Gazebo Harmonic with the websocket server on port 9002:
+The target release is Gazebo **Jetty** (gz-sim 10). `Dockerfile.gazebo`
+builds a server-only Jetty image whose websocket server
+(`gz-sim-websocket-server-system`) listens on port 9002 in any world, without
+editing it:
 
 ```bash
-docker build -t gz-websocket -f Dockerfile.gazebo .
-docker run --rm -p 9002:9002 gz-websocket shapes.sdf     # default world: empty.sdf
+docker build -t gz-websocket-jetty -f Dockerfile.gazebo .
+docker run --rm -p 9002:9002 gz-websocket-jetty shapes.sdf     # default world: empty.sdf
 ```
+
+Arguments after the world go to `gz-sim-server` (e.g. `--iterations 100`);
+`GZ_VERBOSITY` (default 3) sets `-v`. The system is added through
+`GZ_SIM_SERVER_CONFIG_PATH` (`docker/websocket.config`). A world that sets
+`<policies><include_server_config_plugins>false` and has its own systems
+opts out of it, and needs the `<plugin>` itself.
 
 ## Native
 

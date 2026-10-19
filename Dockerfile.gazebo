@@ -1,45 +1,33 @@
-# Use Ubuntu 22.04 as the base image
-FROM ubuntu:22.04
+# Gazebo Jetty (gz-sim 10) with the websocket server on port 9002.
+#
+#   docker build -t gz-websocket-jetty -f Dockerfile.gazebo .
+#   docker run --rm -p 9002:9002 gz-websocket-jetty shapes.sdf
+#
+# Jetty deprecates gz-launch; the websocket server is the gz-sim system
+# gz-sim-websocket-server-system. docker/websocket.config adds it to every
+# world through GZ_SIM_SERVER_CONFIG_PATH, so worlds don't need editing.
+FROM ubuntu:24.04
 
 LABEL maintainer="Gazebo-Web/Rs"
-LABEL description="Gazebo Harmonic with Websocket Server"
+LABEL description="Gazebo Jetty (gz-sim 10) server with the websocket server system"
 
-# Disable timezone prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Setup Gazebo repository and install Gazebo Harmonic
+# gz-sim10-server is the server-only package: gz-sim-server, the systems
+# (including the websocket server), physics and the installed worlds, without
+# the GUI or the gz CLI.
 RUN apt-get update \
- && apt-get install -y wget lsb-release gnupg \
- && wget https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null \
+ && apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release \
+ && wget -q https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" > /etc/apt/sources.list.d/gazebo-stable.list \
  && apt-get update \
- && apt-get install -y gz-harmonic \
- # Clean up to reduce image size \
+ && apt-get install -y --no-install-recommends gz-sim10-server \
  && rm -rf /var/lib/apt/lists/*
 
-# Expose port 9002 for the websocket
+COPY docker/websocket.config /opt/gz/websocket.config
+COPY docker/entrypoint.sh /opt/entrypoint.sh
+ENV GZ_SIM_SERVER_CONFIG_PATH=/opt/gz/websocket.config
+
 EXPOSE 9002
 
-# Write the start up script and launch file template
-RUN echo '<?xml version="1.0"?>\n\
-<gz version="1.0">\n\
-  <executable name="simulator">\n\
-    <command>gz sim -r -s __WORLD_NAME__</command>\n\
-  </executable>\n\
-  <plugin name="gz::launch::WebsocketServer"\n\
-          filename="gz-launch-websocket-server">\n\
-    <port>9002</port>\n\
-  </plugin>\n\
-</gz>' > /opt/run.gzlaunch.template \
- && echo '#!/bin/bash\n\
-WORLD=${1:-empty.sdf}\n\
-# Substitute the chosen world into the template\n\
-sed "s|__WORLD_NAME__|$WORLD|g" /opt/run.gzlaunch.template > /tmp/run.gzlaunch\n\
-echo "Starting Gazebo launch with world: $WORLD"\n\
-# Launch gazebo\n\
-exec gz launch /tmp/run.gzlaunch\n\
-' > /opt/entrypoint.sh \
- && chmod +x /opt/entrypoint.sh
-
-# Run the entrypoint script
 ENTRYPOINT ["/opt/entrypoint.sh"]
