@@ -98,7 +98,7 @@ pub fn select(
 /// Picking an option: updates the [`Select`], the current-choice look and
 /// the trigger label, and sends [`SelectChanged`].
 #[allow(clippy::too_many_arguments)]
-pub fn on_select_option(
+pub(crate) fn on_select_option(
     activate: On<Activate>,
     options: Query<(&SelectOption, &ChildOf)>,
     parents: Query<&ChildOf>,

@@ -11,7 +11,8 @@
 //! `elevation.menu`, min width `menu_min_w`. MenuItem: 30 tall, radius 6,
 //! padding 0 10, gap 10, Geist 13 `text`, leading icon 15 `text_2`,
 //! trailing shortcut mono 11 `text_3`; the current choice in `accent_soft`
-//! / `accent_text`.
+//! / `accent_text`. A disabled item dims all of it: the icon, shortcut and
+//! checkbox keep their colours ([`OwnInk`]) but take the 40% opacity.
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
@@ -32,9 +33,9 @@ use super::{a11y, rounded, spacer};
 use crate::fonts::text;
 use crate::icons::{icon, IconId};
 use crate::theme::{
-    border, elevation, radius, ColorRole, Fill, FontFamily, Shadow, Stroke, Theme, TypeStyle, SPACE,
+    border, elevation, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
 };
-use crate::visuals::{Content, HoverOnFocus, Visuals};
+use crate::visuals::{Content, HoverOnFocus, OwnInk, Visuals};
 
 /// Shortcut text type: mono 11/400.
 pub const SHORTCUT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
@@ -60,41 +61,42 @@ impl MenuSide {
             MenuSide::Above => (PopoverSide::Top, PopoverAlign::Start),
         };
         let gap = SPACE[2];
+        let at = |side: PopoverSide, align| PopoverPlacement { side, align, gap };
         Popover {
+            // Preferred, flipped, shifted, and both: a menu clipped below
+            // and to the right still fits above and to the left.
             positions: vec![
-                PopoverPlacement { side, align, gap },
-                PopoverPlacement {
-                    side: side.mirror(),
-                    align,
-                    gap,
-                },
-                PopoverPlacement {
-                    side,
-                    align: PopoverAlign::End,
-                    gap,
-                },
+                at(side, align),
+                at(side.mirror(), align),
+                at(side, PopoverAlign::End),
+                at(side.mirror(), PopoverAlign::End),
             ],
             window_margin: SPACE[4],
         }
     }
 }
 
+/// The menu card's box: min width `menu_min_w`, padding 6, a 1px border,
+/// radius 10.
+fn panel_node(theme: &Theme) -> Node {
+    Node {
+        flex_direction: FlexDirection::Column,
+        min_width: px(theme.s.menu_min_w),
+        padding: UiRect::all(px(SPACE[3])),
+        border: UiRect::all(px(border::HAIRLINE)),
+        border_radius: rounded(radius::LG),
+        flex_shrink: 0.0,
+        ..default()
+    }
+}
+
 /// The menu card: `surface`, 1px `line`, radius 10, padding 6, shadow.
 pub fn menu_panel(theme: &Theme) -> impl Bundle {
     (
-        Node {
-            flex_direction: FlexDirection::Column,
-            min_width: px(theme.s.menu_min_w),
-            padding: UiRect::all(px(SPACE[3])),
-            border: UiRect::all(px(border::HAIRLINE)),
-            border_radius: rounded(radius::LG),
-            flex_shrink: 0.0,
-            ..default()
-        },
+        panel_node(theme),
         Fill(ColorRole::Surface),
         Stroke(ColorRole::Line),
-        elevation::MENU.box_shadow(),
-        Shadow(ColorRole::Shadow),
+        elevation::MENU.shadow(),
     )
 }
 
@@ -104,11 +106,11 @@ pub struct Menu;
 
 /// The popup of a [`Menu`].
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct MenuPopupOf;
+pub(crate) struct MenuPopupOf;
 
 /// A menu's trigger (spawn it with [`menu`]).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct MenuTrigger;
+pub(crate) struct MenuTrigger;
 
 /// A menu: `trigger` (a bundle that looks like a button; it gets
 /// `MenuButton`) and a popup whose content `items` spawns. Popovers
@@ -118,16 +120,10 @@ where
     T: Bundle,
     F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
 {
-    let mut panel_node = Node {
+    let popup_node = Node {
         position_type: PositionType::Absolute,
-        flex_direction: FlexDirection::Column,
-        min_width: px(theme.s.menu_min_w),
-        padding: UiRect::all(px(SPACE[3])),
-        border: UiRect::all(px(border::HAIRLINE)),
-        border_radius: rounded(radius::LG),
-        ..default()
+        ..panel_node(theme)
     };
-    panel_node.flex_shrink = 0.0;
     (
         Menu,
         Node {
@@ -140,11 +136,10 @@ where
             (
                 MenuPopupOf,
                 MenuPopup::default(),
-                panel_node,
+                popup_node,
                 Fill(ColorRole::Surface),
                 Stroke(ColorRole::Line),
-                elevation::MENU.box_shadow(),
-                Shadow(ColorRole::Shadow),
+                elevation::MENU.shadow(),
                 side.popover(),
                 Visibility::Hidden,
                 GlobalZIndex(900),
@@ -157,7 +152,7 @@ where
 
 /// Opens, closes and refocuses a [`Menu`] (Bevy's headless menu sends the
 /// [`MenuEvent`]s; this owns the visibility, like `bevy_feathers`).
-pub fn on_menu_event(
+pub(crate) fn on_menu_event(
     mut ev: On<MenuEvent>,
     menus: Query<&Children, With<Menu>>,
     mut popups: Query<&mut Visibility, With<MenuPopupOf>>,
@@ -198,7 +193,7 @@ fn close_popup(popups: &mut Query<&mut Visibility, With<MenuPopupOf>>, popup: En
 
 /// An item's text, for type-to-search.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
-pub struct MenuLabel(pub String);
+pub(crate) struct MenuLabel(pub String);
 
 fn item_node(theme: &Theme) -> Node {
     Node {
@@ -246,20 +241,25 @@ pub fn menu_item(
         item_parts(&label, Role::MenuItem),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             if let Some(id) = leading {
-                p.spawn(icon(id, icon_px, ColorRole::Text2));
+                p.spawn((icon(id, icon_px, ColorRole::Text2), Content, OwnInk));
             }
             p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
             p.spawn(spacer());
             if let Some(keys) = shortcut {
-                p.spawn(text(SHORTCUT_TYPE, ColorRole::Text3, keys));
+                p.spawn(shortcut_text(keys));
             }
         })),
     )
 }
 
+/// An item's trailing shortcut: mono 11 `text_3`, dimmed with the item.
+fn shortcut_text(keys: String) -> impl Bundle {
+    (text(SHORTCUT_TYPE, ColorRole::Text3, keys), Content, OwnInk)
+}
+
 /// A menu checkbox's box.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct MenuCheckBox;
+pub(crate) struct MenuCheckBox;
 
 /// The 14 px box of a checkbox item (§5.14).
 pub const CHECK_BOX: f32 = 14.0;
@@ -293,11 +293,13 @@ pub fn menu_checkbox(
                 },
                 Fill(ColorRole::Clear),
                 Stroke(ColorRole::Text3),
+                Content,
+                OwnInk,
             ));
             p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
             p.spawn(spacer());
             if let Some(keys) = shortcut {
-                p.spawn(text(SHORTCUT_TYPE, ColorRole::Text3, keys));
+                p.spawn(shortcut_text(keys));
             }
         })),
     )
@@ -305,7 +307,7 @@ pub fn menu_checkbox(
 
 /// A checkbox menu item; its state is `Checked`, not the item's active look.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct CheckItem;
+pub(crate) struct CheckItem;
 
 /// A group label (`caps` type, padding 6 10 4, `text_3`).
 pub fn menu_group_label(label: impl Into<String>) -> impl Bundle {
@@ -337,7 +339,7 @@ pub fn menu_separator() -> impl Bundle {
 }
 
 /// Toggles a checkbox item on activation.
-pub fn on_check_item_activate(
+pub(crate) fn on_check_item_activate(
     activate: On<Activate>,
     items: Query<Has<Checked>, With<CheckItem>>,
     mut commands: Commands,
@@ -397,15 +399,25 @@ pub fn type_to_search(labels: &[&str], from: Option<usize>, c: char) -> Option<u
         .find(|&i| labels[i].to_lowercase().starts_with(&lower))
 }
 
-/// Type-to-search inside an open menu.
-pub fn on_menu_typing(
+/// Type-to-search inside an open menu: plain letters only, so a chord
+/// (Ctrl/Cmd/Alt+letter) is left to the shortcuts.
+pub(crate) fn on_menu_typing(
     mut ev: On<FocusedInput<KeyboardInput>>,
+    keys: Res<ButtonInput<KeyCode>>,
     items: Query<(&MenuLabel, &ChildOf), With<MenuItem>>,
     popups: Query<&Children, With<MenuPopup>>,
     mut focus: ResMut<InputFocus>,
 ) {
     let input = &ev.input;
-    if input.state != ButtonState::Pressed {
+    let chord = keys.any_pressed([
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ]);
+    if input.state != ButtonState::Pressed || chord || ev.event_target() != ev.focused_entity {
         return;
     }
     let Key::Character(ch) = &input.logical_key else {

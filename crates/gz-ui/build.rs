@@ -184,13 +184,15 @@ fn tokens_rs(t: &Value) -> String {
     }
     s += "];\n\n";
 
-    // Radii and borders.
+    // Radii and borders. Each module also lists its entries in `ALL`, so a
+    // test can walk tokens.json against them.
     for (key, module, doc) in [
         ("radius", "radius", "Corner radii"),
         ("border", "border", "Border widths"),
     ] {
         let _ = writeln!(s, "/// {doc} (`tokens.json` `{key}`).\npub mod {module} {{");
-        for (n, v) in obj(t, key) {
+        let entries = obj(t, key);
+        for (n, v) in entries {
             let _ = writeln!(
                 s,
                 "    /// `{n}`\n    pub const {}: f32 = {};",
@@ -198,34 +200,54 @@ fn tokens_rs(t: &Value) -> String {
                 float(num(v))
             );
         }
+        all(&mut s, "f32", entries.keys());
         s += "}\n\n";
     }
 
-    // Motion.
-    s += "/// Durations in milliseconds (`tokens.json` `motion`).\npub mod motion {\n";
-    for (n, v) in obj(t, "motion") {
-        if let Some(ms) = v.as_f64() {
-            let _ = writeln!(
-                s,
-                "    /// `{n}`\n    pub const {}: f32 = {};",
-                n.to_ascii_uppercase(),
-                float(ms)
-            );
+    // Motion: durations (numbers, `_ms`) and the easing and reduce-motion
+    // rules (strings); anything else is an error rather than skipped.
+    s += "/// Durations in milliseconds and the motion rules (`tokens.json` `motion`).\npub mod motion {\n";
+    let motion = obj(t, "motion");
+    let mut durations = Vec::new();
+    for (n, v) in motion {
+        let name = n.to_ascii_uppercase();
+        match (v.as_f64(), v.as_str()) {
+            (Some(ms), _) if n.ends_with("_ms") => {
+                let _ = writeln!(
+                    s,
+                    "    /// `{n}`\n    pub const {name}: f32 = {};",
+                    float(ms)
+                );
+                durations.push(n);
+            }
+            (None, Some(text)) if !n.ends_with("_ms") => {
+                let _ = writeln!(s, "    /// `{n}`\n    pub const {name}: &str = {text:?};");
+            }
+            _ => panic!("tokens.json: motion.{n} = {v}: durations end in _ms, rules are strings"),
         }
     }
+    all(&mut s, "f32", durations.into_iter());
     s += "}\n\n";
 
-    // Elevation.
-    s += "/// Shadows (`tokens.json` `elevation`).\npub mod elevation {\n    use super::Elevation;\n";
-    for (n, v) in obj(t, "elevation") {
+    // Elevation: a shadow `y` below, blurred by `blur`, in the `color`
+    // token (none: no shadow).
+    s += "/// Shadows (`tokens.json` `elevation`).\npub mod elevation {\n    use super::{ColorRole, Elevation};\n";
+    let elevations = obj(t, "elevation");
+    for (n, v) in elevations {
+        let color = match v.get("color").map(|c| c.as_str()) {
+            None => "None".to_string(),
+            Some(Some(c)) if light.contains_key(c) => format!("Some(ColorRole::{})", camel(c)),
+            Some(c) => panic!("tokens.json: elevation.{n}.color {c:?} is not a colour token"),
+        };
         let _ = writeln!(
             s,
-            "    /// `{n}`\n    pub const {}: Elevation = Elevation {{ blur: {}, y: {} }};",
+            "    /// `{n}`\n    pub const {}: Elevation = Elevation {{ blur: {}, y: {}, color: {color} }};",
             n.to_ascii_uppercase(),
             float(num(&v["blur"])),
             float(num(&v["y"]))
         );
     }
+    all(&mut s, "Elevation", elevations.keys());
     s += "}\n\n";
 
     // Type styles.
@@ -253,6 +275,20 @@ fn tokens_rs(t: &Value) -> String {
     }
     s += "}\n";
     s
+}
+
+/// `pub const ALL: [(&str, ty); N]`: every entry of a token module by its
+/// `tokens.json` name.
+fn all<'a>(s: &mut String, ty: &str, names: impl ExactSizeIterator<Item = &'a String>) {
+    let _ = writeln!(
+        s,
+        "    /// Every entry, by its `tokens.json` name.\n    pub const ALL: [(&str, {ty}); {}] = [",
+        names.len()
+    );
+    for n in names {
+        let _ = writeln!(s, "        (\"{n}\", {}),", n.to_ascii_uppercase());
+    }
+    s.push_str("    ];\n");
 }
 
 /// One icon from icons.json.

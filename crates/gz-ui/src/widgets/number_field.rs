@@ -184,21 +184,21 @@ pub struct NumberCommit {
 
 /// The editable text of a field.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct NumberInput;
+pub(crate) struct NumberInput;
 
 /// The text the field last showed. Text that still equals it wasn't edited,
 /// so Enter or blur commits nothing.
 #[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
-pub struct ShownText(pub String);
+pub(crate) struct ShownText(pub String);
 
 /// The scrub handle (the tag).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct NumberTag;
+pub(crate) struct NumberTag;
 
 /// A scrub in progress: its value so far. Each move adds to it with the
 /// modifiers held then, so pressing Shift mid-drag doesn't jump.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Scrub {
+pub(crate) struct Scrub {
     pub value: f64,
 }
 

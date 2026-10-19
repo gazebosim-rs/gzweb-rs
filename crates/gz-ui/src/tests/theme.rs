@@ -28,14 +28,16 @@ fn modes_resolve_to_a_palette() {
     let mut t = Theme::default();
     assert_eq!(t.mode, ThemeMode::Light);
     assert_eq!(t.scale, 1.0);
-    assert_eq!(t.logo_path(), "ui/brand/gazebo-icon.png");
     t.toggle();
     assert!(t.is_dark && t.mode == ThemeMode::Dark);
-    assert_eq!(t.logo_path(), "ui/brand/gazebo-icon-dark.png");
     assert_eq!(t.color(ColorRole::Bg), Palette::dark().bg);
     t.toggle();
     assert!(!t.is_dark && t.mode == ThemeMode::Light);
-    t.set_mode(ThemeMode::System, true);
+    // System follows the OS preference the theme tracks.
+    t.set_mode(ThemeMode::System);
+    assert!(!t.is_dark);
+    t.os_dark = true;
+    t.set_mode(ThemeMode::System);
     assert!(t.is_dark);
 }
 
@@ -152,10 +154,11 @@ fn system_mode_follows_the_os() {
     frames(&mut app, 2);
     assert!(!app.world().resource::<OsTheme>().dark);
     assert!(!app.world().resource::<Theme>().is_dark);
-    // A forced mode ignores the OS.
+    // A forced mode ignores the OS, but remembers it: going back to
+    // System picks it up without another change.
     app.world_mut()
         .resource_mut::<Theme>()
-        .set_mode(ThemeMode::Light, false);
+        .set_mode(ThemeMode::Light);
     app.world_mut().write_message(WindowThemeChanged {
         window,
         theme: WindowTheme::Dark,
@@ -163,6 +166,11 @@ fn system_mode_follows_the_os() {
     frames(&mut app, 2);
     assert!(app.world().resource::<OsTheme>().dark);
     assert!(!app.world().resource::<Theme>().is_dark);
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_mode(ThemeMode::System);
+    frames(&mut app, 1);
+    assert!(app.world().resource::<Theme>().is_dark);
 }
 
 #[test]

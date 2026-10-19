@@ -1,5 +1,8 @@
 //! Chips (§5.12): filter chips (24 tall, radius 12, 1px `line`, Geist
-//! 12/500 `text_2`; selected: fill `text`, label `surface`) and status chips
+//! 12/500 `text_2`; selected: fill `text`, label `surface`, and the border
+//! clear rather than `text`, which would leave an anti-aliasing seam where
+//! border and fill meet; the width stays, so the label doesn't move) and
+//! status chips
 //! (§3.6 item 5: 22 tall, radius 5, `warn_soft` / `danger_soft` /
 //! transparent, warning icon 13, message clipped at `message_chip_max_w`).
 
@@ -30,7 +33,7 @@ pub fn filter_chip(label: impl Into<String>, selected: bool) -> impl Bundle {
     let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text2).stroked(ColorRole::Line);
     visuals.active_fill = ColorRole::Text;
     visuals.active_ink = ColorRole::Surface;
-    visuals.active_stroke = Some(ColorRole::Text);
+    visuals.active_stroke = Some(ColorRole::Clear);
     (
         Node {
             height: px(FILTER_CHIP_H),

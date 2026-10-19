@@ -21,6 +21,15 @@ use crate::theme::{radius, ColorRole, Fill, Ink, Opacity, Theme, TypeStyle, SPAC
 use crate::visuals::{Active, Visuals};
 use crate::GzUiSystems;
 
+/// The caret column's width (§5.7: "caret 14 wide").
+pub const CARET_W: f32 = 14.0;
+/// The caret icon (chevron) size, the size of the spec's mono 10 caret.
+pub const CARET_ICON: f32 = 10.0;
+/// The visibility toggle's box (§5.7: 16×16).
+pub const EYE_BOX: f32 = 16.0;
+/// The eye icon inside it.
+pub const EYE_ICON: f32 = 14.0;
+
 /// Entity kinds and their badge letters (§5.7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityKind {
@@ -69,7 +78,7 @@ pub struct TreeRowSpec {
 
 /// The row's parts, found by `tree_row_system`.
 #[derive(Component, Clone, Copy, Debug)]
-pub enum TreeRowPart {
+pub(crate) enum TreeRowPart {
     Badge,
     Letter,
     Name,
@@ -120,8 +129,8 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
             });
             p.spawn((
                 Node {
-                    width: px(14),
-                    height: px(14),
+                    width: px(CARET_W),
+                    height: px(CARET_W),
                     flex_shrink: 0.0,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -129,7 +138,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                 },
                 Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
                     if let Some(caret) = caret {
-                        p.spawn(icon(caret, 10.0, ColorRole::Text3));
+                        p.spawn(icon(caret, CARET_ICON, ColorRole::Text3));
                     }
                 })),
             ));
@@ -158,8 +167,8 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
             p.spawn((
                 TreeRowPart::Eye,
                 Node {
-                    width: px(16),
-                    height: px(16),
+                    width: px(EYE_BOX),
+                    height: px(EYE_BOX),
                     flex_shrink: 0.0,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -169,7 +178,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                 Headless,
                 Hovered::default(),
                 a11y(Role::Button, if row.hidden { "Show" } else { "Hide" }),
-                children![icon(IconId::Eye, 14.0, ColorRole::Clear)],
+                children![icon(IconId::Eye, EYE_ICON, ColorRole::Clear)],
             ));
         })),
     )
@@ -266,7 +275,7 @@ pub(crate) fn tree_row_system(
 }
 
 /// Clicking the eye toggles the row's hidden state.
-pub fn on_eye_activate(
+pub(crate) fn on_eye_activate(
     activate: On<Activate>,
     parts: Query<(&TreeRowPart, &ChildOf)>,
     mut rows: Query<&mut TreeRowSpec>,

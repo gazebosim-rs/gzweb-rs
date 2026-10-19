@@ -48,13 +48,13 @@ pub struct Splitter {
 
 /// A drag in progress, from the pane size at its start.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct SplitterDrag {
+pub(crate) struct SplitterDrag {
     pub start: f32,
 }
 
 /// The line in the middle of a splitter.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SplitterLine;
+pub(crate) struct SplitterLine;
 
 impl Splitter {
     /// The pane size after dragging `delta` px (along the axis) from `start`.

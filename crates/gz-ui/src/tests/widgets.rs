@@ -151,6 +151,21 @@ fn tooltip_cards_show_on_hover_and_follow_the_theme() {
         .unwrap();
     // Below the trigger: the arrow sits on top.
     assert_eq!(w.get::<Node>(arrow).unwrap().top, px(-4));
+    // The shortcut is a Geist Mono span on the second line (D-26).
+    let lines: Vec<Entity> = w
+        .get::<Children>(card)
+        .unwrap()
+        .iter()
+        .filter(|c| w.get::<Text>(*c).is_some())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(w.get::<Text>(lines[1]).unwrap().0, "");
+    let keys = w.get::<Children>(lines[1]).unwrap()[0];
+    assert_eq!(w.get::<TextSpan>(keys).unwrap().0, "S");
+    assert_eq!(
+        w.get::<Type>(keys).unwrap().0.font,
+        crate::theme::FontFamily::Mono
+    );
     // Dark: a 1px line.
     app.world_mut().resource_mut::<Theme>().toggle();
     frames(&mut app, 1);
@@ -227,6 +242,39 @@ fn slider_steps_and_visuals() {
     let mut readout = w.query_filtered::<&Text, With<SliderReadout>>();
     assert_eq!(readout.single(w).unwrap().0, "1.50");
     assert!(w.get::<Children>(row).is_some());
+    assert_eq!(
+        w.get::<Node>(row).unwrap().height,
+        px(Theme::default().s.input_h)
+    );
+    // Up and Down step too (with the step the modifiers set: Alt, 0.01).
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use bevy::input_focus::{FocusCause, InputFocus};
+    use bevy::window::PrimaryWindow;
+    w.resource_mut::<InputFocus>()
+        .set(slider, FocusCause::Navigated);
+    let window = w
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(w)
+        .unwrap();
+    for (code, key, want) in [
+        (KeyCode::ArrowUp, Key::ArrowUp, 1.51),
+        (KeyCode::ArrowDown, Key::ArrowDown, 1.5),
+        (KeyCode::ArrowDown, Key::ArrowDown, 1.49),
+        (KeyCode::KeyA, Key::Character("a".into()), 1.49),
+    ] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: code,
+            logical_key: key,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window,
+        });
+        frames(&mut app, 2);
+        let v = app.world().get::<SliderValue>(slider).unwrap().0;
+        assert!((v - want).abs() < 1e-5, "{code:?}: {v}");
+    }
 }
 
 #[test]
@@ -674,6 +722,10 @@ fn chips_badges_and_buttons() {
     // A selected filter chip: `text` fill, `surface` label.
     assert!(w.get::<Checked>(chip).is_some());
     assert_eq!(w.get::<Fill>(chip).unwrap().0, ColorRole::Text);
+    // No `text` border on the `text` fill (it leaves a ragged seam); the
+    // border keeps its width, clear.
+    assert_eq!(w.get::<Stroke>(chip).unwrap().0, ColorRole::Clear);
+    assert_eq!(w.get::<Node>(chip).unwrap().border, UiRect::all(px(1)));
     assert_eq!(w.get::<Fill>(status).unwrap().0, ColorRole::WarnSoft);
     assert_eq!(w.get::<Children>(status).unwrap().len(), 3);
     assert_eq!(w.get::<Children>(info).unwrap().len(), 1);

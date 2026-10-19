@@ -91,17 +91,26 @@ impl TypeStyle {
 }
 
 /// A `tokens.json` `elevation` entry: a drop shadow `y` below, blurred by
-/// `blur`, in the `shadow` colour.
+/// `blur`, in the `color` token (`None`: no shadow).
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Elevation {
     pub blur: f32,
     pub y: f32,
+    pub color: Option<ColorRole>,
 }
 
 impl Elevation {
     /// The Bevy shadow for this elevation (colour set by [`Shadow`]).
     pub fn box_shadow(self) -> BoxShadow {
         BoxShadow::new(Color::NONE, px(0), px(self.y), px(0), px(self.blur))
+    }
+
+    /// The shadow and its colour role.
+    pub fn shadow(self) -> (BoxShadow, Shadow) {
+        (
+            self.box_shadow(),
+            Shadow(self.color.unwrap_or(ColorRole::Clear)),
+        )
     }
 }
 
@@ -117,6 +126,9 @@ pub struct Theme {
     /// UI scale; 1.0 is the designs as drawn. Synced to Bevy's `UiScale`
     /// (DECISIONS.md D-23).
     pub scale: f32,
+    /// The OS prefers dark: what [`ThemeMode::System`] resolves to. Kept
+    /// in step with [`OsTheme`] by `follow_os_theme`.
+    pub os_dark: bool,
 }
 
 impl Default for Theme {
@@ -133,18 +145,20 @@ impl Theme {
             c: Palette::light(),
             s: Sizes::default(),
             scale: 1.0,
+            os_dark: os_prefers_dark,
         };
-        theme.set_mode(mode, os_prefers_dark);
+        theme.set_mode(mode);
         theme
     }
 
-    /// Sets the mode and re-resolves the palette.
-    pub fn set_mode(&mut self, mode: ThemeMode, os_prefers_dark: bool) {
+    /// Sets the mode and re-resolves the palette; `System` follows the
+    /// OS preference the theme already tracks ([`Theme::os_dark`]).
+    pub fn set_mode(&mut self, mode: ThemeMode) {
         self.mode = mode;
         self.is_dark = match mode {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
-            ThemeMode::System => os_prefers_dark,
+            ThemeMode::System => self.os_dark,
         };
         self.c = if self.is_dark {
             Palette::dark()
@@ -160,21 +174,12 @@ impl Theme {
         } else {
             ThemeMode::Dark
         };
-        self.set_mode(next, false);
+        self.set_mode(next);
     }
 
     /// The colour of `role` in this theme.
     pub fn color(&self, role: ColorRole) -> Color {
         self.c.role(role)
-    }
-
-    /// Logo for the current mode (dark mode uses light strokes, §4.2).
-    pub fn logo_path(&self) -> &'static str {
-        if self.is_dark {
-            "ui/brand/gazebo-icon-dark.png"
-        } else {
-            "ui/brand/gazebo-icon.png"
-        }
     }
 }
 
@@ -329,7 +334,7 @@ fn resolve_roles(
 /// Keeps [`OsTheme`] in step with the primary window's theme: its initial
 /// value (winit fills `Window::window_theme` at creation) and
 /// [`WindowThemeChanged`] messages.
-pub fn read_os_theme(
+pub(crate) fn read_os_theme(
     windows: Query<&Window, Changed<Window>>,
     mut changes: MessageReader<WindowThemeChanged>,
     mut os: ResMut<OsTheme>,
@@ -351,16 +356,23 @@ pub fn read_os_theme(
     }
 }
 
-/// In [`ThemeMode::System`], follows [`OsTheme`].
-pub fn follow_os_theme(os: Res<OsTheme>, mut theme: ResMut<Theme>) {
-    if os.is_changed() && theme.mode == ThemeMode::System && theme.is_dark != os.dark {
-        let mode = theme.mode;
-        theme.set_mode(mode, os.dark);
+/// Hands [`OsTheme`] to the [`Theme`]; in [`ThemeMode::System`], the
+/// palette follows it.
+pub(crate) fn follow_os_theme(os: Res<OsTheme>, mut theme: ResMut<Theme>) {
+    if !os.is_changed() || theme.os_dark == os.dark {
+        return;
+    }
+    if theme.mode == ThemeMode::System {
+        theme.os_dark = os.dark;
+        theme.set_mode(ThemeMode::System);
+    } else {
+        // The palette doesn't change: don't re-resolve every role.
+        theme.bypass_change_detection().os_dark = os.dark;
     }
 }
 
 /// Mirrors [`Theme::scale`] into Bevy's `UiScale`.
-pub fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
+pub(crate) fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
     if theme.is_changed() && scale.0 != theme.scale {
         scale.0 = theme.scale;
     }
@@ -372,7 +384,7 @@ pub fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
 pub struct FocusRing;
 
 /// Draws or clears the [`FocusRing`]s.
-pub fn focus_ring_system(
+pub(crate) fn focus_ring_system(
     focus: Res<InputFocus>,
     visible: Res<InputFocusVisible>,
     mut q: Query<(Entity, Option<&mut Ring>), With<FocusRing>>,

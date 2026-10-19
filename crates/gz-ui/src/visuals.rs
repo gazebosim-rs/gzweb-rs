@@ -22,6 +22,12 @@ pub struct Active;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Content;
 
+/// [`Content`] that keeps its own colour and only takes the widget's
+/// opacity: a menu item's shortcut (`text_3`) and leading icon (`text_2`)
+/// and a checkbox item's box dim with the item when it's disabled.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OwnInk;
+
 /// The roles a clickable widget uses in each state. [`Visuals::new`] fills
 /// in the common table: hover → `hover` / `text`, pressed → `pressed` /
 /// `text`, active → `accent_soft` / `accent_text`.
@@ -216,7 +222,15 @@ pub(crate) fn button_visuals_system(
     children: Query<&Children>,
     mut fills: Query<&mut Fill>,
     mut strokes: Query<&mut Stroke>,
-    mut content: Query<(Option<&mut Ink>, Option<&mut Opacity>, Has<Visuals>), With<Content>>,
+    mut content: Query<
+        (
+            Option<&mut Ink>,
+            Option<&mut Opacity>,
+            Has<Visuals>,
+            Has<OwnInk>,
+        ),
+        With<Content>,
+    >,
     mut commands: Commands,
     mut dirty: Local<Vec<Entity>>,
     mut stack: Local<Vec<Entity>>,
@@ -263,7 +277,7 @@ pub(crate) fn button_visuals_system(
         stack.clear();
         stack.extend(children.get(entity).into_iter().flatten());
         while let Some(child) = stack.pop() {
-            let Ok((ink, opacity, nested)) = content.get_mut(child) else {
+            let Ok((ink, opacity, nested, own_ink)) = content.get_mut(child) else {
                 if !widgets.contains(child) {
                     stack.extend(children.get(child).into_iter().flatten());
                 }
@@ -272,11 +286,12 @@ pub(crate) fn button_visuals_system(
             if nested {
                 continue;
             }
-            match ink {
-                Some(mut ink) => {
+            match (ink, own_ink) {
+                (_, true) => {}
+                (Some(mut ink), false) => {
                     ink.set_if_neq(Ink(look.ink));
                 }
-                None => {
+                (None, false) => {
                     commands.entity(child).insert(Ink(look.ink));
                 }
             }

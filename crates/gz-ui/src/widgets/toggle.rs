@@ -20,7 +20,7 @@ pub const TOGGLE_ROW_H: f32 = 30.0;
 
 /// Marks a toggle's track and knob.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TogglePart {
+pub(crate) enum TogglePart {
     Track,
     Knob,
 }
