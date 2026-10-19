@@ -149,7 +149,8 @@ pub fn mouse_input(
                 MouseButton::Right => DragAction::Pan,
                 _ => DragAction::Zoom,
             };
-            send(&mut out, ViewOp::PivotAt(at));
+            let orbit = gesture == DragAction::Orbit;
+            send(&mut out, ViewOp::PivotAt { at, orbit });
             state.drag = Some(Drag {
                 button,
                 gesture,

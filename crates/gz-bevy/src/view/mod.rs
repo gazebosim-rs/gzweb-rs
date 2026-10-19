@@ -17,14 +17,13 @@
 pub mod controls;
 pub mod input;
 
-use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::primitives::Aabb;
 use bevy::camera::ScalingMode;
 use bevy::ecs::system::SystemParam;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
 use gz_core::scene::GeometryDesc;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use crate::camera::GzCameraTarget;
 use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
@@ -39,18 +38,29 @@ pub const ANIMATION_SECS: f32 = 0.25;
 pub const HOME_GZ: Vec3 = Vec3::new(-6.0, 0.0, 6.0);
 /// Zoom factor per wheel step (three.js `dollyIn`, zoom speed 1).
 pub const ZOOM_STEP: f32 = 0.95;
-/// How far an orthographic camera stays behind its pivot, at least, so the
-/// near plane doesn't cut through the scene when zoomed in.
-pub const ORTHO_STANDOFF: f32 = 50.0;
+/// How much closer than the nearest world point an orthographic camera's
+/// near plane stays, at least.
+pub const ORTHO_MARGIN: f32 = 1.0;
+/// How far the world reaches from the pivot when there is no world to
+/// measure (nothing under `GzWorldRoot`).
+pub const DEFAULT_EXTENT: f32 = 50.0;
+/// The distance that frames the whole world, when there is no world.
+pub const DEFAULT_WORLD_REACH: f32 = 100.0;
+/// Zooming out stops this many whole-world framings away.
+pub const ZOOM_OUT_LIMIT: f32 = 4.0;
+/// Zooming in stops this close to the pivot (the near plane is 0.01).
+pub const MIN_DISTANCE: f32 = 0.02;
+/// Half the size of Gazebo's 20 × 20 m grid, which views keep in range.
+const GRID_HALF: f32 = 10.0;
 /// Space around focused bounds.
 const FOCUS_MARGIN: f32 = 1.1;
 /// The smallest radius focus frames, so a point still gets a view.
 const MIN_FOCUS_RADIUS: f32 = 0.05;
-/// Fly speed floor, as a distance to the pivot.
+/// Fly speed floor, as a distance to what the view looks at.
 const MIN_FLY_REACH: f32 = 0.5;
 const MIN_ORTHO_HEIGHT: f32 = 1e-3;
-/// three.js `Spherical.makeSafe` epsilon.
-const POLAR_EPS: f32 = 1e-6;
+/// How close to straight up or down the camera may pitch (radians).
+const PITCH_EPS: f32 = 1e-4;
 
 /// What a plain left drag does in a view (the rail's Orbit/Pan/Zoom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -141,22 +151,31 @@ impl FlyDir {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ViewOp {
     /// A drag starts here: the pivot becomes the point under it (a mesh,
-    /// else the ground), falling back to the selection's centre, then the
-    /// world origin.
-    PivotAt(Vec2),
-    /// Rotate about the pivot: 2π per viewport height. Leaves a snapped
-    /// view, back to perspective.
+    /// else the ground). With nothing there, an `orbit` drag falls back to
+    /// the selection's centre, then the world origin (spec §6.2), if that
+    /// is in front of the camera; otherwise the pivot moves onto the
+    /// pointer's ray at its old depth.
+    PivotAt {
+        at: Vec2,
+        orbit: bool,
+    },
+    /// Rotate about the pivot: 2π per viewport height. The camera stays
+    /// upright, from straight down to straight up. Leaves a snapped view,
+    /// back to perspective.
     Orbit(Vec2),
-    /// Move camera and pivot in the view plane.
+    /// Move camera and pivot in the view plane; the plane through the pivot
+    /// follows the pointer.
     Pan(Vec2),
     /// Dolly towards the pivot (orthographic: shrink the view about it), by
     /// [`ZOOM_STEP`] per step. Positive steps zoom in.
     Zoom(f32),
-    /// Zoom about the point under `at`, which becomes the pivot.
+    /// Zoom about the point under `at`, which becomes the pivot (on a miss,
+    /// the point on the ray at the pivot's old depth).
     ZoomAt {
         at: Vec2,
         steps: f32,
     },
+    /// Orthographic re-centres the pivot on what is at the view centre.
     SetProjection(ProjectionKind),
     ToggleProjection,
     /// Animate to an axis view, then switch to orthographic.
@@ -170,7 +189,8 @@ pub enum ViewOp {
     Home,
     SetDragAction(DragAction),
     /// Move camera and pivot: `dir` is x right and z forward in the ground
-    /// plane, y world up; `secs` of travel at the view's fly speed.
+    /// plane, y world up (orthographic: the screen plane, and y zooms);
+    /// `secs` of travel at the view's fly speed.
     Fly {
         dir: Vec3,
         secs: f32,
@@ -184,8 +204,9 @@ pub struct ViewCommand {
     pub op: ViewOp,
 }
 
-/// The selected entities. Nothing selects yet; the full UI will (M5).
-/// Views use it for the pivot fallback, focus and snaps.
+/// The selected entities. Nothing selects yet: the full UI's selection
+/// (M5) fills it. Views already use it for the orbit pivot fallback, focus
+/// and snaps.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Selection {
     pub entities: Vec<Entity>,
@@ -201,16 +222,15 @@ pub struct ViewCamera {
     /// The axis view the camera sits in, until it orbits away.
     pub snapped: Option<SnapView>,
     /// What perspective mode looks like; orthographic framing is matched to
-    /// its field of view.
+    /// its field of view. Its `far` is a floor: views push the far plane out
+    /// to keep the world inside it.
     pub perspective: PerspectiveProjection,
     pub rotate_speed: f32,
     pub zoom_speed: f32,
     pub pan_speed: f32,
-    /// Fly keys travel this many pivot distances per second.
+    /// Fly keys travel this many view distances per second.
     pub fly_speed: f32,
     animation: Option<Animation>,
-    /// The projection last frame, to spot a switch.
-    was_ortho: bool,
 }
 
 impl ViewCamera {
@@ -225,7 +245,6 @@ impl ViewCamera {
             pan_speed: 1.0,
             fly_speed: 0.5,
             animation: None,
-            was_ortho: false,
         }
     }
 
@@ -254,15 +273,22 @@ pub fn ortho_height(projection: &Projection) -> Option<f32> {
     }
 }
 
-fn orthographic(view: &ViewCamera, height: f32) -> Projection {
-    Projection::Orthographic(OrthographicProjection {
-        near: 0.0,
-        far: view.perspective.far,
-        scaling_mode: ScalingMode::FixedVertical {
+/// Sets an orthographic projection's view height.
+fn set_ortho_height(p: &mut Projection, height: f32) {
+    if let Projection::Orthographic(o) = p {
+        o.scale = 1.0;
+        o.scaling_mode = ScalingMode::FixedVertical {
             viewport_height: height.max(MIN_ORTHO_HEIGHT),
-        },
-        ..OrthographicProjection::default_3d()
-    })
+        };
+    }
+}
+
+fn near(p: &Projection) -> f32 {
+    match p {
+        Projection::Perspective(p) => p.near,
+        Projection::Orthographic(o) => o.near,
+        Projection::Custom(_) => 0.0,
+    }
 }
 
 /// The pivot in the camera's own frame.
@@ -270,23 +296,45 @@ fn offset(view: &ViewCamera, t: &Transform) -> Vec3 {
     t.rotation.inverse() * (view.pivot - t.translation)
 }
 
+/// How far in front of the camera `point` is, along its view axis.
+fn depth_of(t: &Transform, point: Vec3) -> f32 {
+    (point - t.translation).dot(*t.forward())
+}
+
+/// The point on `ray` at view depth `depth`.
+fn on_ray_at_depth(ray: Ray3d, t: &Transform, depth: f32) -> Vec3 {
+    let along = ray.direction.dot(*t.forward()).max(f32::EPSILON);
+    ray.origin + *ray.direction * ((depth - depth_of(t, ray.origin)) / along)
+}
+
 /// Switches to orthographic, keeping the pivot where it is on screen and
-/// the scale in the plane through it. The camera backs off to
-/// [`ORTHO_STANDOFF`] if it was closer.
+/// the scale in the plane through it. A pivot at or behind the near plane
+/// has no such plane: the distance to it stands in.
 fn to_ortho(view: &ViewCamera, t: &mut Transform, p: &mut Projection) {
     if ortho_height(p).is_some() {
         return;
     }
     let mut off = offset(view, t);
-    let depth = (-off.z).max(MIN_ORTHO_HEIGHT);
-    *p = orthographic(view, 2.0 * depth * view.half_tan());
-    off.z = -depth.max(ORTHO_STANDOFF);
+    let depth = if -off.z > near(p) {
+        -off.z
+    } else {
+        off.length().max(MIN_DISTANCE)
+    };
+    *p = Projection::Orthographic(OrthographicProjection {
+        near: depth,
+        far: view.perspective.far,
+        ..OrthographicProjection::default_3d()
+    });
+    set_ortho_height(p, 2.0 * depth * view.half_tan());
+    off.z = -depth;
     t.translation = view.pivot - t.rotation * off;
 }
 
 /// Switches to perspective, keeping the pivot on screen and the scale in
-/// the plane through it: the camera moves to the matching depth.
-fn to_perspective(view: &ViewCamera, t: &mut Transform, p: &mut Projection) {
+/// the plane through it: the camera moves to the matching depth. The view
+/// is no longer snapped.
+fn to_perspective(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
+    view.snapped = None;
     let Some(height) = ortho_height(p) else {
         return;
     };
@@ -355,9 +403,7 @@ impl Pose {
         view.pivot = self.pivot;
         t.rotation = self.rotation;
         t.translation = self.pivot - self.rotation * self.offset;
-        if ortho_height(p).is_some() {
-            *p = orthographic(view, self.ortho_height);
-        }
+        set_ortho_height(p, self.ortho_height);
     }
 }
 
@@ -396,14 +442,67 @@ impl Bounds {
     pub fn radius(&self) -> f32 {
         (self.max - self.min).length() / 2.0
     }
+
+    /// The distance from `p` to the farthest point of the bounds, at most.
+    pub fn reach_from(&self, p: Vec3) -> f32 {
+        (self.center() - p).length() + self.radius()
+    }
 }
 
-/// A scene node's bounds, placement, children and visual, for framing.
+/// What an op needs besides the view: the viewport size and the world's
+/// bounds (ground planes and the grid included), for the view's limits.
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    size: Vec2,
+    world: Option<Bounds>,
+}
+
+impl Frame {
+    fn height(&self) -> f32 {
+        self.size.y.max(1.0)
+    }
+
+    fn aspect(&self) -> f32 {
+        if self.size.y > 0.0 {
+            self.size.x / self.size.y
+        } else {
+            1.0
+        }
+    }
+
+    /// How far the world reaches from `p`.
+    fn extent_from(&self, p: Vec3) -> f32 {
+        self.world.map_or(DEFAULT_EXTENT, |b| b.reach_from(p))
+    }
+
+    /// The distance that frames the whole world.
+    fn world_reach(&self, view: &ViewCamera) -> f32 {
+        self.world.map_or(DEFAULT_WORLD_REACH, |b| {
+            focus_distance(view, b.radius(), self.aspect())
+        })
+    }
+
+    /// How far zooming out may go.
+    fn max_distance(&self, view: &ViewCamera) -> f32 {
+        ZOOM_OUT_LIMIT * self.world_reach(view)
+    }
+}
+
+/// How far from a sphere of radius `r` the camera sits to frame it.
+fn focus_distance(view: &ViewCamera, r: f32, aspect: f32) -> f32 {
+    let half = view.half_tan();
+    let fit = half.atan().min((half * aspect).atan());
+    r.max(MIN_FOCUS_RADIUS) * FOCUS_MARGIN / fit.sin()
+}
+
+/// A scene node's bounds, placement, children, visual and visibility, for
+/// framing.
 type NodeData = (
     Option<&'static Aabb>,
     &'static GlobalTransform,
     Option<&'static Children>,
     Option<&'static GzVisual>,
+    Option<&'static Visibility>,
 );
 
 /// What views look at: ray casts against the scene, the selection and
@@ -426,20 +525,24 @@ impl ViewScene<'_, '_> {
             .map(|(e, hit)| (*e, hit.point))
     }
 
-    /// The nearest mesh on the ray, else where it meets the ground.
-    fn point(&mut self, ray: Ray3d) -> Option<Vec3> {
+    /// The nearest mesh on the ray, else where it meets the ground, within
+    /// `far` of its origin.
+    fn surface(&mut self, ray: Ray3d, far: f32) -> Option<Vec3> {
         if let Some((_, p)) = self.hit(ray) {
             return Some(p);
         }
         let t = -ray.origin.y / ray.direction.y;
-        (t.is_finite() && t > 0.0).then(|| ray.origin + ray.direction * t)
+        (t.is_finite() && t > 0.0 && t <= far).then(|| ray.origin + ray.direction * t)
     }
 
-    /// Bounds of every mesh in `entity`'s subtree. With `skip_planes`,
-    /// plane visuals are left out (a ground plane would swamp the world).
+    /// Bounds of every mesh in `entity`'s subtree. Hidden subtrees are left
+    /// out, and with `skip_planes` plane visuals too (a ground plane would
+    /// swamp the world).
     fn bounds_of(&self, entity: Entity, skip_planes: bool) -> Option<Bounds> {
-        let (aabb, global, children, visual) = self.nodes.get(entity).ok()?;
-        if skip_planes && visual.is_some_and(|v| matches!(v.0.geometry, GeometryDesc::Plane { .. }))
+        let (aabb, global, children, visual, visibility) = self.nodes.get(entity).ok()?;
+        if visibility == Some(&Visibility::Hidden)
+            || skip_planes
+                && visual.is_some_and(|v| matches!(v.0.geometry, GeometryDesc::Plane { .. }))
         {
             return None;
         }
@@ -481,6 +584,17 @@ impl ViewScene<'_, '_> {
             .or_else(|| self.bounds_of(root, false))
     }
 
+    /// Everything a view must keep in range: the world with its ground
+    /// planes, and the grid.
+    fn extent(&self) -> Option<Bounds> {
+        let root = self.roots.iter().next()?;
+        let grid = Bounds {
+            min: Vec3::new(-GRID_HALF, 0.0, -GRID_HALF),
+            max: Vec3::new(GRID_HALF, 0.0, GRID_HALF),
+        };
+        Some(self.bounds_of(root, false).map_or(grid, |b| b.union(grid)))
+    }
+
     /// The top-level model (child of the world root) that `entity` is part
     /// of; `entity` itself outside the Gazebo tree.
     fn model_of(&self, entity: Entity) -> Entity {
@@ -494,46 +608,89 @@ impl ViewScene<'_, '_> {
         entity
     }
 
-    /// The drag pivot under `ray`, with the spec's fallbacks.
-    fn pivot(&mut self, ray: Option<Ray3d>) -> Vec3 {
-        ray.and_then(|r| self.point(r))
-            .or_else(|| self.selection_bounds().map(|b| b.center()))
-            .unwrap_or(Vec3::ZERO)
+    /// The drag pivot under `ray` (spec §6.2). On a miss, an orbit falls
+    /// back to the selection's centre, then the origin, if in front of the
+    /// camera; otherwise the point on the ray at the pivot's depth.
+    fn pivot(
+        &mut self,
+        ray: Option<Ray3d>,
+        orbit: bool,
+        view: &ViewCamera,
+        t: &Transform,
+        p: &Projection,
+    ) -> Vec3 {
+        let far = p.far();
+        if let Some(hit) = ray.and_then(|r| self.surface(r, far)) {
+            return hit;
+        }
+        if orbit {
+            let fallback = self.selection_bounds().map_or(Vec3::ZERO, |b| b.center());
+            if ray.is_none() || depth_of(t, fallback) > near(p) {
+                return fallback;
+            }
+        }
+        match ray {
+            Some(r) => on_ray_at_depth(r, t, pivot_depth(view, t, p)),
+            None => view.pivot,
+        }
+    }
+
+    /// The depth of what is at the view centre (as a snap picks it), else
+    /// of the pivot, else the view's reach, kept between [`MIN_DISTANCE`]
+    /// and a framing of the whole world: what fly speed and the
+    /// orthographic framing scale with.
+    fn centre_depth(&mut self, view: &ViewCamera, t: &Transform, p: &Projection, f: &Frame) -> f32 {
+        let near = near(p);
+        let far = p.far();
+        let depth = viewport_ray(p, t, f.size, f.size / 2.0)
+            .and_then(|r| self.surface(r, far))
+            .map(|q| depth_of(t, q))
+            .filter(|d| *d > near)
+            .unwrap_or_else(|| pivot_depth(view, t, p));
+        depth.clamp(MIN_DISTANCE, f.world_reach(view).max(MIN_DISTANCE))
+    }
+}
+
+/// The pivot's depth in front of the camera, or the view's reach when the
+/// pivot is at or behind the near plane.
+fn pivot_depth(view: &ViewCamera, t: &Transform, p: &Projection) -> f32 {
+    let d = depth_of(t, view.pivot);
+    if d > near(p) {
+        d
+    } else {
+        reach(view, t, p).max(MIN_DISTANCE)
     }
 }
 
 /// Applies [`ViewCommand`]s, then advances animations, and publishes the
-/// first view's pivot as [`GzCameraTarget`].
+/// first view's pivot as [`GzCameraTarget`]. Idle frames change nothing.
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
-    mut views: Query<(
-        &mut ViewCamera,
-        &mut Transform,
-        &mut Projection,
-        &Camera,
-        Option<&mut TemporalAntiAliasing>,
-    )>,
+    mut views: Query<(&mut ViewCamera, &mut Transform, &mut Projection, &Camera)>,
     mut scene: ViewScene,
     time: Res<Time<Real>>,
     mut target: ResMut<GzCameraTarget>,
 ) {
-    for cmd in commands.read() {
-        let Ok((mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
-            continue;
+    let busy = !commands.is_empty() || views.iter().any(|(v, ..)| v.animating());
+    if busy {
+        let world = scene.extent();
+        let frame = |camera: &Camera| Frame {
+            size: camera.logical_viewport_size().unwrap_or(Vec2::ZERO),
+            world,
         };
-        let size = camera.logical_viewport_size().unwrap_or(Vec2::ZERO);
-        apply(cmd.op, &mut view, &mut t, &mut p, size, &mut scene);
-    }
-    let dt = time.delta_secs();
-    for (mut view, mut t, mut p, _, taa) in &mut views {
-        animate(&mut view, &mut t, &mut p, dt);
-        // A projection switch is a camera cut: TAA's history no longer
-        // matches the frame.
-        let ortho = ortho_height(&p).is_some();
-        if ortho != view.was_ortho {
-            view.was_ortho = ortho;
-            if let Some(mut taa) = taa {
-                taa.reset = true;
+        for cmd in commands.read() {
+            let Ok((mut view, mut t, mut p, camera)) = views.get_mut(cmd.view) else {
+                continue;
+            };
+            let f = frame(camera);
+            apply(cmd.op, &mut view, &mut t, &mut p, &f, &mut scene);
+            fit_clip(&mut view, &mut t, &mut p, &f);
+        }
+        let dt = time.delta_secs();
+        for (mut view, mut t, mut p, camera) in &mut views {
+            if view.animating() {
+                animate(&mut view, &mut t, &mut p, dt);
+                fit_clip(&mut view, &mut t, &mut p, &frame(camera));
             }
         }
     }
@@ -550,95 +707,162 @@ fn apply(
     view: &mut ViewCamera,
     t: &mut Transform,
     p: &mut Projection,
-    size: Vec2,
+    f: &Frame,
     scene: &mut ViewScene,
 ) {
-    let ray = |p: &Projection, t: &Transform, at: Vec2| viewport_ray(p, t, size, at);
-    let centre = size / 2.0;
-    match op {
-        ViewOp::Snap(face) => {
-            let pivot = scene
-                .selection_bounds()
-                .map(|b| b.center())
-                .or_else(|| ray(p, t, centre).and_then(|r| scene.point(r)))
-                .unwrap_or(view.pivot);
-            snap(view, t, p, face, pivot);
-            return;
-        }
-        ViewOp::Focus { at } => {
-            let bounds = scene.selection_bounds().or_else(|| {
-                let hit = at.and_then(|at| ray(p, t, at)).and_then(|r| scene.hit(r));
-                hit.and_then(|(e, _)| scene.bounds_of(scene.model_of(e), false))
-            });
-            match bounds.or_else(|| scene.world_bounds()) {
-                Some(b) => focus(view, t, p, b, size),
-                None => home(view, t, p),
-            }
-            return;
-        }
-        ViewOp::Home => {
-            home(view, t, p);
-            return;
-        }
-        ViewOp::SetDragAction(action) => {
-            view.drag_action = action;
-            return;
-        }
-        _ => {}
+    let ray = |p: &Projection, t: &Transform, at: Vec2| viewport_ray(p, t, f.size, at);
+    // An op that moves the view right away lands a running animation first,
+    // so a click mid-snap doesn't leave the view half-turned. Snap, focus
+    // and home start their own from where the view is.
+    if !matches!(
+        op,
+        ViewOp::Snap(_) | ViewOp::Focus { .. } | ViewOp::Home | ViewOp::SetDragAction(_)
+    ) {
+        finish(view, t, p);
     }
-    // Anything else stops an animation where it is.
-    view.animation = None;
     match op {
-        ViewOp::PivotAt(at) => view.pivot = scene.pivot(ray(p, t, at)),
+        ViewOp::SetDragAction(action) => view.drag_action = action,
+        ViewOp::PivotAt { at, orbit } => {
+            view.pivot = scene.pivot(ray(p, t, at), orbit, view, t, p);
+        }
         ViewOp::Orbit(delta) => {
-            if view.snapped.take().is_some() {
+            if view.snapped.is_some() {
                 to_perspective(view, t, p);
             }
-            orbit(view, t, delta, size.y.max(1.0));
+            orbit(view, t, delta, f.height());
         }
-        ViewOp::Pan(delta) => pan(view, t, p, delta, size.y.max(1.0)),
-        ViewOp::Zoom(steps) => zoom(view, t, p, steps),
+        ViewOp::Pan(delta) => pan(view, t, p, delta, f.height()),
+        ViewOp::Zoom(steps) => zoom(view, t, p, steps, f),
         ViewOp::ZoomAt { at, steps } => {
-            view.pivot = scene.pivot(ray(p, t, at));
-            zoom(view, t, p, steps);
+            view.pivot = scene.pivot(ray(p, t, at), false, view, t, p);
+            zoom(view, t, p, steps, f);
         }
-        ViewOp::SetProjection(ProjectionKind::Orthographic) => to_ortho(view, t, p),
+        ViewOp::SetProjection(ProjectionKind::Orthographic) => {
+            to_ortho_centred(view, t, p, f, scene);
+        }
         ViewOp::SetProjection(ProjectionKind::Perspective) => to_perspective(view, t, p),
         ViewOp::ToggleProjection => {
             if ortho_height(p).is_some() {
                 to_perspective(view, t, p);
             } else {
-                to_ortho(view, t, p);
+                to_ortho_centred(view, t, p, f, scene);
             }
         }
-        ViewOp::Fly { dir, secs } => fly(view, t, p, dir, secs),
-        ViewOp::Snap(_) | ViewOp::Focus { .. } | ViewOp::Home | ViewOp::SetDragAction(_) => {}
+        ViewOp::Snap(face) => {
+            let far = p.far();
+            let pivot = scene
+                .selection_bounds()
+                .map(|b| b.center())
+                .or_else(|| ray(p, t, f.size / 2.0).and_then(|r| scene.surface(r, far)))
+                .unwrap_or(view.pivot);
+            snap(view, t, p, face, pivot, f);
+        }
+        ViewOp::Focus { at } => {
+            // The selection, else the model under the cursor without its
+            // ground planes (a ground model has nothing else), else the world.
+            let bounds = scene
+                .selection_bounds()
+                .or_else(|| {
+                    let hit = at.and_then(|at| ray(p, t, at)).and_then(|r| scene.hit(r));
+                    hit.and_then(|(e, _)| scene.bounds_of(scene.model_of(e), true))
+                })
+                .or_else(|| scene.world_bounds());
+            match bounds {
+                Some(b) => focus(view, t, p, b, f),
+                None => home(view, t, p),
+            }
+        }
+        ViewOp::Home => home(view, t, p),
+        ViewOp::Fly { dir, secs } => {
+            let reach = match ortho_height(p) {
+                Some(_) => reach(view, t, p),
+                None => scene.centre_depth(view, t, p, f),
+            };
+            fly(view, t, p, dir, secs, reach.max(MIN_FLY_REACH));
+        }
+    }
+}
+
+/// Re-centres the pivot on what is at the view centre (at
+/// [`ViewScene::centre_depth`]), then switches to orthographic about it.
+fn to_ortho_centred(
+    view: &mut ViewCamera,
+    t: &mut Transform,
+    p: &mut Projection,
+    f: &Frame,
+    scene: &mut ViewScene,
+) {
+    if ortho_height(p).is_some() {
+        return;
+    }
+    let depth = scene.centre_depth(view, t, p, f);
+    view.pivot = match viewport_ray(p, t, f.size, f.size / 2.0) {
+        Some(r) => on_ray_at_depth(r, t, depth),
+        None => t.translation + *t.forward() * depth,
+    };
+    to_ortho(view, t, p);
+}
+
+/// Keeps the world in the view's clip range after every change. An
+/// orthographic camera backs off until the whole world is in front of its
+/// near plane, which sits at the view's reach, so rays the atmosphere
+/// traces through it spread like the matching perspective view's; its far
+/// plane is just behind the world. A perspective far plane grows past
+/// [`ViewCamera::perspective`]'s to the world's far side.
+fn fit_clip(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, f: &Frame) {
+    let floor = view.perspective.far;
+    match p {
+        Projection::Orthographic(_) => {
+            let extent = f.extent_from(view.pivot);
+            let reach = reach(view, t, p);
+            let mut off = offset(view, t);
+            let standoff = extent + reach.max(ORTHO_MARGIN);
+            if -off.z < standoff {
+                off.z = -standoff;
+                t.translation = view.pivot - t.rotation * off;
+            }
+            let (near, far) = (reach, -off.z + extent + ORTHO_MARGIN);
+            if let Projection::Orthographic(o) = p {
+                if (o.near, o.far) != (near, far) {
+                    (o.near, o.far) = (near, far);
+                }
+            }
+        }
+        Projection::Perspective(pp) => {
+            let far = f.world.map_or(floor, |b| {
+                (b.reach_from(t.translation) + ORTHO_MARGIN).max(floor)
+            });
+            if pp.far != far {
+                pp.far = far;
+            }
+        }
+        Projection::Custom(_) => {}
     }
 }
 
 /// gzweb's orbit: yaw about world up, then pitch about the camera's right
-/// axis, keeping the offset's polar angle in (0, π).
+/// axis. The pitch stops with the camera looking straight down or up, so
+/// it never turns upside down, wherever the pivot is on screen.
 fn orbit(view: &ViewCamera, t: &mut Transform, delta: Vec2, height: f32) {
     let d = delta * view.rotate_speed;
-    let d_theta = -TAU * d.x / height;
-    let d_phi = -TAU * d.y / height;
+    let d_yaw = -TAU * d.x / height;
+    let d_pitch = -TAU * d.y / height;
     let pivot = view.pivot;
-    let offset = t.translation - pivot;
-    let phi = (offset.y / offset.length().max(f32::EPSILON))
-        .clamp(-1.0, 1.0)
-        .acos();
-    let new_phi = (phi + d_phi).clamp(POLAR_EPS, PI - POLAR_EPS);
-    t.rotate_around(pivot, Quat::from_axis_angle(Vec3::Y, d_theta));
+    t.rotate_around(pivot, Quat::from_axis_angle(Vec3::Y, d_yaw));
+    let f = *t.forward();
+    let pitch = f.y.atan2(Vec2::new(f.x, f.z).length());
+    let limit = FRAC_PI_2 - PITCH_EPS;
+    let turn = (pitch + d_pitch).clamp(-limit, limit) - pitch;
     let right = t.rotation * Vec3::X;
-    t.rotate_around(pivot, Quat::from_axis_angle(right, new_phi - phi));
+    t.rotate_around(pivot, Quat::from_axis_angle(right, turn));
 }
 
-/// Screen-space pan: the plane through the pivot follows the pointer
-/// (perspective uses the distance to the pivot, as gzweb does).
+/// Screen-space pan: the plane through the pivot, facing the camera,
+/// follows the pointer.
 fn pan(view: &mut ViewCamera, t: &mut Transform, p: &Projection, delta: Vec2, height: f32) {
     let per_px = match ortho_height(p) {
         Some(h) => h / height,
-        None => 2.0 * (t.translation - view.pivot).length() * view.half_tan() / height,
+        None => 2.0 * pivot_depth(view, t, p) * view.half_tan() / height,
     };
     let d = delta * view.pan_speed * per_px;
     let pan = -(t.rotation * Vec3::X) * d.x + (t.rotation * Vec3::Y) * d.y;
@@ -647,26 +871,57 @@ fn pan(view: &mut ViewCamera, t: &mut Transform, p: &Projection, delta: Vec2, he
 }
 
 /// Dolly about the pivot; an orthographic view shrinks about it instead,
-/// keeping the pivot fixed on screen.
-fn zoom(view: &ViewCamera, t: &mut Transform, p: &mut Projection, steps: f32) {
+/// keeping the pivot fixed on screen. Between [`MIN_DISTANCE`] and
+/// [`ZOOM_OUT_LIMIT`] world framings (or wherever the view already is).
+fn zoom(view: &ViewCamera, t: &mut Transform, p: &mut Projection, steps: f32, f: &Frame) {
     let s = ZOOM_STEP.powf(steps * view.zoom_speed);
+    let max = f.max_distance(view);
+    let limit = |d: f32| (d * s).clamp(MIN_DISTANCE.min(d), max.max(d)) / d.max(f32::EPSILON);
     match ortho_height(p) {
         Some(h) => {
-            *p = orthographic(view, h * s);
+            let d = h / (2.0 * view.half_tan());
+            let s = limit(d).max(MIN_ORTHO_HEIGHT / h);
+            set_ortho_height(p, h * s);
             let mut off = offset(view, t);
             off.x *= s;
             off.y *= s;
             t.translation = view.pivot - t.rotation * off;
         }
-        None => t.translation = view.pivot + (t.translation - view.pivot) * s,
+        None => {
+            let s = limit((t.translation - view.pivot).length());
+            t.translation = view.pivot + (t.translation - view.pivot) * s;
+        }
     }
 }
 
-/// Moves camera and pivot together in the ground plane (W/S along the view
-/// direction flattened, A/D sideways) or straight up and down, at
-/// `fly_speed` pivot distances per second.
-fn fly(view: &mut ViewCamera, t: &mut Transform, p: &Projection, dir: Vec3, secs: f32) {
-    let step = view.fly_speed * reach(view, t, p).max(MIN_FLY_REACH) * secs;
+/// Moves camera and pivot at `fly_speed × reach` per second. Perspective:
+/// in the ground plane (W/S along the view direction flattened, A/D
+/// sideways) or straight up and down. Orthographic has no depth to fly
+/// along: W/S and A/D move in the screen plane, and Q/E zoom (E out, as
+/// rising does over a top view).
+fn fly(
+    view: &mut ViewCamera,
+    t: &mut Transform,
+    p: &mut Projection,
+    dir: Vec3,
+    secs: f32,
+    reach: f32,
+) {
+    let step = view.fly_speed * reach * secs;
+    if let Some(h) = ortho_height(p) {
+        let delta = (t.rotation * Vec3::X * dir.x + t.rotation * Vec3::Y * dir.z) * step;
+        t.translation += delta;
+        view.pivot += delta;
+        if dir.y != 0.0 {
+            let s = (view.fly_speed * dir.y * secs).exp();
+            set_ortho_height(p, h * s);
+            let mut off = offset(view, t);
+            off.x *= s;
+            off.y *= s;
+            t.translation = view.pivot - t.rotation * off;
+        }
+        return;
+    }
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).try_normalize();
     // Looking straight down or up, "forward" is up the screen.
     let forward = flat(t.rotation * Vec3::NEG_Z)
@@ -687,15 +942,20 @@ fn start(view: &mut ViewCamera, from: Pose, to: Pose, snap: Option<SnapView>) {
     });
 }
 
-/// Animates to `face` about `pivot`, keeping the distance; orthographic at
-/// the end, with the same framing.
-fn snap(view: &mut ViewCamera, t: &Transform, p: &Projection, face: SnapView, pivot: Vec3) {
+/// Animates to `face` about `pivot`, keeping the distance (the reach, if
+/// orthographic); orthographic at the end, with the same framing.
+fn snap(
+    view: &mut ViewCamera,
+    t: &Transform,
+    p: &Projection,
+    face: SnapView,
+    pivot: Vec3,
+    f: &Frame,
+) {
     let from = Pose::of(view, t, p);
-    let ortho = ortho_height(p).is_some();
-    let distance = if ortho {
-        reach(view, t, p)
-    } else {
-        (t.translation - pivot).length()
+    let distance = match ortho_height(p) {
+        Some(_) => reach(view, t, p),
+        None => (t.translation - pivot).length(),
     };
     let to = Pose {
         pivot,
@@ -703,11 +963,7 @@ fn snap(view: &mut ViewCamera, t: &Transform, p: &Projection, face: SnapView, pi
         offset: Vec3::new(
             0.0,
             0.0,
-            -if ortho {
-                distance.max(ORTHO_STANDOFF)
-            } else {
-                distance
-            },
+            -distance.clamp(MIN_DISTANCE, f.max_distance(view)),
         ),
         ortho_height: from.ortho_height,
     };
@@ -715,30 +971,16 @@ fn snap(view: &mut ViewCamera, t: &Transform, p: &Projection, face: SnapView, pi
 }
 
 /// Animates to frame `bounds` from the current direction.
-fn focus(view: &mut ViewCamera, t: &Transform, p: &Projection, bounds: Bounds, size: Vec2) {
+fn focus(view: &mut ViewCamera, t: &Transform, p: &Projection, bounds: Bounds, f: &Frame) {
     let from = Pose::of(view, t, p);
     let r = bounds.radius().max(MIN_FOCUS_RADIUS) * FOCUS_MARGIN;
-    let aspect = if size.y > 0.0 { size.x / size.y } else { 1.0 };
-    let half = view.half_tan();
-    let fit = half.atan().min((half * aspect).atan());
-    let ortho = ortho_height(p).is_some();
-    let distance = r / fit.sin();
     let to = Pose {
         pivot: bounds.center(),
         rotation: t.rotation,
-        offset: Vec3::new(
-            0.0,
-            0.0,
-            -if ortho {
-                distance.max(ORTHO_STANDOFF)
-            } else {
-                distance
-            },
-        ),
-        ortho_height: if ortho {
-            2.0 * r / aspect.min(1.0)
-        } else {
-            from.ortho_height
+        offset: Vec3::new(0.0, 0.0, -focus_distance(view, bounds.radius(), f.aspect())),
+        ortho_height: match ortho_height(p) {
+            Some(_) => 2.0 * r / f.aspect().min(1.0),
+            None => 0.0,
         },
     };
     start(view, from, to, None);
@@ -747,7 +989,6 @@ fn focus(view: &mut ViewCamera, t: &Transform, p: &Projection, bounds: Bounds, s
 /// Animates back to gzweb's default view, in perspective.
 fn home(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
     to_perspective(view, t, p);
-    view.snapped = None;
     let from = Pose::of(view, t, p);
     let home = home_transform();
     let to = Pose {
@@ -765,16 +1006,25 @@ fn animate(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, dt: f32
     };
     anim.elapsed += dt;
     let k = (anim.elapsed / ANIMATION_SECS).min(1.0);
+    if k >= 1.0 {
+        finish(view, t, p);
+        return;
+    }
     let eased = k * k * (3.0 - 2.0 * k);
     let pose = anim.from.lerp(&anim.to, eased);
-    let snap = anim.snap;
     pose.apply(view, t, p);
-    if k >= 1.0 {
-        view.animation = None;
-        if let Some(face) = snap {
-            to_ortho(view, t, p);
-            view.snapped = Some(face);
-        }
+}
+
+/// Jumps a running animation to its end: the final pose, and for a snap
+/// the orthographic axis view.
+fn finish(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
+    let Some(anim) = view.animation.take() else {
+        return;
+    };
+    anim.to.apply(view, t, p);
+    if let Some(face) = anim.snap {
+        to_ortho(view, t, p);
+        view.snapped = Some(face);
     }
 }
 

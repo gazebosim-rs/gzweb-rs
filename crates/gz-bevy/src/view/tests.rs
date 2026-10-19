@@ -315,11 +315,6 @@ fn view_dir(t: &Transform, pivot: Vec3) -> Vec3 {
     (t.rotation.inverse() * (pivot - t.translation)).normalize()
 }
 
-fn polar(t: &Transform, pivot: Vec3) -> f32 {
-    let o = t.translation - pivot;
-    (o.y / o.length()).clamp(-1.0, 1.0).acos()
-}
-
 fn half_tan() -> f32 {
     30f32.to_radians().tan()
 }
@@ -340,7 +335,10 @@ fn pivot_at_picks_the_point_under_the_cursor_without_moving_the_camera() {
     let mut r = rig(default_view());
     let before = r.transform();
     let cursor = Vec2::new(520.0, 380.0);
-    r.op(ViewOp::PivotAt(cursor));
+    r.op(ViewOp::PivotAt {
+        at: cursor,
+        orbit: true,
+    });
     assert_eq!(r.transform(), before);
     let pivot = r.pivot();
     assert!(pivot.y.abs() < 1e-4, "on the ground: {pivot}");
@@ -355,27 +353,121 @@ fn pivot_at_picks_the_point_under_the_cursor_without_moving_the_camera() {
     assert_near(Vec3::from_array(published), gz, 1e-5);
 }
 
-#[test]
-fn a_pivot_on_nothing_falls_back_to_the_selection_then_the_origin() {
-    // The top of the screen sees only sky.
-    let mut r = rig(horizon());
-    r.view_mut().pivot = Vec3::new(5.0, 5.0, 5.0);
-    r.op(ViewOp::PivotAt(Vec2::new(400.0, 10.0)));
-    assert_eq!(r.pivot(), Vec3::ZERO);
-    assert_eq!(r.transform(), horizon());
+/// A level camera at (0, 1, 5) looking along -Z: the origin is 5 m ahead.
+fn horizon_back() -> Transform {
+    Transform::from_xyz(0.0, 1.0, 5.0).looking_to(Vec3::NEG_Z, Vec3::Y)
+}
 
-    // Behind the camera, out of the ray's way.
-    let selected = r.cube(None, Vec3::new(3.0, 2.0, 8.0), 0.5);
+#[test]
+fn an_orbit_on_nothing_falls_back_to_the_selection_then_the_origin() {
+    // The top of the screen sees only sky.
+    let sky = Vec2::new(400.0, 10.0);
+    let mut r = rig(horizon_back());
+    r.view_mut().pivot = Vec3::new(5.0, 5.0, 5.0);
+    r.op(ViewOp::PivotAt {
+        at: sky,
+        orbit: true,
+    });
+    assert_eq!(r.pivot(), Vec3::ZERO);
+    assert_eq!(r.transform(), horizon_back());
+
+    // In front of the camera, out of the ray's way.
+    let selected = r.cube(None, Vec3::new(3.0, 2.0, -8.0), 0.5);
     r.app.world_mut().resource_mut::<Selection>().entities = vec![selected];
-    r.op(ViewOp::PivotAt(Vec2::new(400.0, 10.0)));
-    assert_near(r.pivot(), Vec3::new(3.0, 2.0, 8.0), 1e-4);
+    r.op(ViewOp::PivotAt {
+        at: sky,
+        orbit: true,
+    });
+    assert_near(r.pivot(), Vec3::new(3.0, 2.0, -8.0), 1e-4);
+}
+
+/// A fallback behind the camera, or a pan or zoom on nothing, keeps the
+/// pivot's depth along the pointer's ray instead.
+#[test]
+fn a_miss_keeps_the_pivot_depth_on_the_ray() {
+    let sky = Vec2::new(400.0, 10.0);
+    // The origin and the selection are behind (or level with) the camera.
+    let mut r = rig(horizon());
+    let behind = r.cube(None, Vec3::new(3.0, 2.0, 8.0), 0.5);
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![behind];
+    r.view_mut().pivot = Vec3::new(1.0, 1.0, -6.0);
+    r.op(ViewOp::PivotAt {
+        at: sky,
+        orbit: true,
+    });
+    let pivot = r.pivot();
+    assert!((depth_of(&horizon(), pivot) - 6.0).abs() < 1e-4, "{pivot}");
+    assert_near(
+        (pivot - horizon().translation).normalize(),
+        *r.ray(sky).direction,
+        1e-4,
+    );
+
+    // Pan and zoom never jump to the origin, even in front of the camera.
+    let mut r = rig(horizon_back());
+    r.view_mut().pivot = Vec3::new(0.0, 3.0, -2.0);
+    r.op(ViewOp::PivotAt {
+        at: sky,
+        orbit: false,
+    });
+    assert!((depth_of(&horizon_back(), r.pivot()) - 7.0).abs() < 1e-4);
+    // A pivot at or behind the camera: its distance stands in for depth.
+    r.view_mut().pivot = Vec3::new(0.0, 4.0, 5.0);
+    r.op(ViewOp::ZoomAt {
+        at: sky,
+        steps: 0.0,
+    });
+    assert!((depth_of(&horizon_back(), r.pivot()) - 3.0).abs() < 1e-4);
+}
+
+#[test]
+fn the_wheel_on_sky_zooms_forward_not_toward_the_origin() {
+    // Camera at (10, 5, 0) looking along -Z and a little up: the origin is
+    // off to the side and nothing is at the view centre.
+    let view = Transform::from_xyz(10.0, 5.0, 0.0).looking_to(Vec3::new(0.0, 0.3, -1.0), Vec3::Y);
+    let mut r = rig(view);
+    r.op(ViewOp::ZoomAt {
+        at: CENTER,
+        steps: 5.0,
+    });
+    let moved = r.transform().translation - view.translation;
+    assert!(moved.length() > 0.1);
+    assert_near(moved.normalize(), *view.forward(), 1e-4);
+
+    // With the pivot behind the camera, zooming in still goes forward.
+    let view = Transform::from_xyz(0.0, 1.0, 5.0).looking_at(Vec3::new(0.0, 1.0, 20.0), Vec3::Y);
+    let mut r = rig(view);
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(400.0, 10.0),
+        orbit: false,
+    });
+    r.op(ViewOp::Zoom(5.0));
+    let moved = r.transform().translation - view.translation;
+    assert!(moved.dot(*view.forward()) > 0.1, "{moved}");
+}
+
+#[test]
+fn orthographic_after_a_click_on_the_sky_keeps_a_sensible_scale() {
+    let mut r = rig(horizon());
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(400.0, 10.0),
+        orbit: true,
+    });
+    r.op(ViewOp::ToggleProjection);
+    // The view centre sees nothing, the pivot was level with the camera:
+    // its distance (1 m from the origin) frames the view.
+    let h = r.ortho().unwrap();
+    assert!((h - 2.0 * half_tan()).abs() < 1e-3, "{h}");
 }
 
 #[test]
 fn meshes_are_picked_before_the_ground() {
     let mut r = rig(default_view());
     r.cube(None, Vec3::new(0.0, 1.0, 0.0), 1.0);
-    r.op(ViewOp::PivotAt(CENTER));
+    r.op(ViewOp::PivotAt {
+        at: CENTER,
+        orbit: true,
+    });
     // The centre ray from (-6, 6, 0) towards the origin meets the cube's
     // -X face at (-1, 1, 0).
     assert_near(r.pivot(), Vec3::new(-1.0, 1.0, 0.0), 1e-3);
@@ -384,7 +476,10 @@ fn meshes_are_picked_before_the_ground() {
 #[test]
 fn orbit_rotates_about_the_pivot_keeping_it_fixed_on_screen() {
     let mut r = rig(default_view());
-    r.op(ViewOp::PivotAt(Vec2::new(520.0, 380.0)));
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(520.0, 380.0),
+        orbit: true,
+    });
     let pivot = r.pivot();
     let before = r.transform();
     r.op(ViewOp::Orbit(Vec2::new(40.0, 25.0)));
@@ -404,24 +499,55 @@ fn orbit_rotates_about_the_pivot_keeping_it_fixed_on_screen() {
 
 #[test]
 fn orbiting_stops_at_the_poles_instead_of_flipping() {
-    // 300 px is a half turn (2π per viewport height), past either pole.
+    // 300 px is a half turn (2π per viewport height), past either pole. The
+    // pivot is above the screen centre, so the camera passes straight down
+    // before it would be over the pivot.
     let mut r = rig(default_view());
-    r.op(ViewOp::PivotAt(Vec2::new(400.0, 100.0)));
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(400.0, 100.0),
+        orbit: true,
+    });
     let pivot = r.pivot();
+    let start = view_dir(&r.transform(), pivot);
     r.op(ViewOp::Orbit(Vec2::new(0.0, 300.0)));
-    assert!(polar(&r.transform(), pivot) < 1e-2);
+    let t = r.transform();
+    assert!(t.up().y >= 0.0, "upright: {}", t.up());
+    assert!(t.forward().y < -0.9999, "straight down: {}", t.forward());
     let top = r.transform();
     r.op(ViewOp::Orbit(Vec2::new(0.0, 190.0)));
     assert_near(r.transform().translation, top.translation, 1e-3);
     r.op(ViewOp::Orbit(Vec2::new(0.0, -580.0)));
-    assert!(polar(&r.transform(), pivot) > PI - 1e-2);
-    assert_near(view_dir(&r.transform(), pivot), view_dir(&top, pivot), 1e-3);
+    let t = r.transform();
+    assert!(t.up().y >= 0.0, "upright: {}", t.up());
+    assert!(t.forward().y > 0.9999, "straight up: {}", t.forward());
+    // The pivot kept its place on screen throughout.
+    assert_near(view_dir(&t, pivot), start, 1e-3);
+}
+
+#[test]
+fn a_pivot_low_on_screen_can_still_look_straight_down() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(400.0, 550.0),
+        orbit: true,
+    });
+    r.op(ViewOp::Orbit(Vec2::new(0.0, 300.0)));
+    let t = r.transform();
+    assert!(t.forward().y < -0.9999, "{}", t.forward());
+    assert!(t.up().y >= 0.0);
+    // Yawing while looking straight down stays upright.
+    r.op(ViewOp::Orbit(Vec2::new(50.0, 0.0)));
+    assert!(r.transform().up().y >= 0.0);
+    assert!(r.transform().forward().y < -0.9999);
 }
 
 #[test]
 fn pan_moves_camera_and_pivot_together() {
     let mut r = rig(default_view());
-    r.op(ViewOp::PivotAt(CENTER));
+    r.op(ViewOp::PivotAt {
+        at: CENTER,
+        orbit: true,
+    });
     let pivot = r.pivot();
     let before = r.transform();
     r.op(ViewOp::Pan(Vec2::new(60.0, -30.0)));
@@ -435,10 +561,29 @@ fn pan_moves_camera_and_pivot_together() {
     assert_eq!(after.rotation, before.rotation);
 }
 
+/// The plane through an off-centre pivot follows the pointer exactly.
+#[test]
+fn pan_keeps_an_off_centre_pivot_under_the_pointer() {
+    let mut r = rig(default_view());
+    let at = Vec2::new(750.0, 560.0);
+    r.op(ViewOp::PivotAt { at, orbit: false });
+    let pivot = r.pivot();
+    for (delta, total) in [
+        (Vec2::new(40.0, 0.0), Vec2::new(40.0, 0.0)),
+        (Vec2::new(-15.0, 25.0), Vec2::new(25.0, 25.0)),
+    ] {
+        r.op(ViewOp::Pan(delta));
+        assert_near2(r.screen(pivot), at + total, 1e-2);
+    }
+}
+
 #[test]
 fn orthographic_pan_follows_the_view_height() {
     let mut r = rig(default_view());
-    r.op(ViewOp::PivotAt(CENTER));
+    r.op(ViewOp::PivotAt {
+        at: CENTER,
+        orbit: true,
+    });
     r.op(ViewOp::SetProjection(ProjectionKind::Orthographic));
     let h = r.ortho().unwrap();
     let before = r.transform();
@@ -509,23 +654,32 @@ fn orthographic_zoom_scales_the_view_about_the_pivot() {
 #[test]
 fn projection_toggle_keeps_the_framing() {
     let mut r = rig(default_view());
-    let at = Vec2::new(520.0, 380.0);
-    r.op(ViewOp::PivotAt(at));
-    let pivot = r.pivot();
+    // Wherever the last click was, orthographic frames what is at the view
+    // centre (the origin here), keeping the scale in the plane through it.
+    r.op(ViewOp::PivotAt {
+        at: Vec2::new(520.0, 380.0),
+        orbit: true,
+    });
     let before = r.transform();
-    // A point beside the pivot, in the plane facing the camera.
+    let pivot = Vec3::ZERO;
     let beside = pivot + before.rotation * Vec3::X;
     let span = r.screen(beside) - r.screen(pivot);
 
     r.op(ViewOp::ToggleProjection);
-    let depth = -(before.rotation.inverse() * (pivot - before.translation)).z;
-    assert!((r.ortho().unwrap() - 2.0 * depth * half_tan()).abs() < 1e-4);
-    assert_near2(r.screen(pivot), at, 1e-2);
+    assert_near(r.pivot(), pivot, 1e-3);
+    let depth = home_distance();
+    assert!((r.ortho().unwrap() - 2.0 * depth * half_tan()).abs() < 1e-3);
+    assert_near2(r.screen(pivot), CENTER, 1e-2);
     assert_near2(r.screen(beside) - r.screen(pivot), span, 1e-2);
-    // Backed off so the near plane doesn't clip the scene.
+    // Backed off so the near plane doesn't clip the scene: with no world
+    // to measure, DEFAULT_EXTENT beyond the reach.
     let off = r.transform().rotation.inverse() * (pivot - r.transform().translation);
-    assert!((off.z + ORTHO_STANDOFF).abs() < 1e-3);
+    assert!((off.z + DEFAULT_EXTENT + depth).abs() < 1e-3, "{off}");
     assert!((reach(&r.view(), &r.transform(), &r.projection()) - depth).abs() < 1e-3);
+    let Projection::Orthographic(o) = r.projection() else {
+        unreachable!()
+    };
+    assert!((o.near - depth).abs() < 1e-3 && o.far >= -off.z + DEFAULT_EXTENT);
 
     // Setting the current projection changes nothing.
     let ortho = r.transform();
@@ -537,40 +691,6 @@ fn projection_toggle_keeps_the_framing() {
     assert_near(r.transform().translation, before.translation, 1e-3);
     r.op(ViewOp::SetProjection(ProjectionKind::Perspective));
     assert_near(r.transform().translation, before.translation, 1e-3);
-}
-
-#[test]
-fn a_projection_switch_resets_temporal_anti_aliasing() {
-    use bevy::anti_alias::taa::TemporalAntiAliasing;
-    let mut r = rig(default_view());
-    let reset = |r: &Rig| {
-        r.app
-            .world()
-            .get::<TemporalAntiAliasing>(r.camera)
-            .unwrap()
-            .reset
-    };
-    let clear = |r: &mut Rig| {
-        r.app
-            .world_mut()
-            .entity_mut(r.camera)
-            .insert(TemporalAntiAliasing { reset: false });
-    };
-    clear(&mut r);
-    r.op(ViewOp::Orbit(Vec2::new(5.0, 0.0)));
-    assert!(!reset(&r));
-    r.op(ViewOp::ToggleProjection);
-    assert!(reset(&r));
-    clear(&mut r);
-    r.op(ViewOp::Pan(Vec2::new(5.0, 0.0)));
-    assert!(!reset(&r));
-    // A snap from perspective switches at the end of its animation.
-    r.op(ViewOp::ToggleProjection);
-    clear(&mut r);
-    r.op(ViewOp::Snap(SnapView::Top));
-    assert!(!reset(&r));
-    r.settle();
-    assert!(reset(&r));
 }
 
 #[test]
@@ -646,7 +766,7 @@ fn a_snap_looking_at_the_sky_keeps_the_pivot() {
 }
 
 #[test]
-fn other_ops_stop_an_animation_where_it_is() {
+fn other_ops_land_an_animation_first() {
     let mut r = rig(default_view());
     r.op(ViewOp::Snap(SnapView::Top));
     r.frames(5);
@@ -654,13 +774,23 @@ fn other_ops_stop_an_animation_where_it_is() {
     r.op(ViewOp::SetDragAction(DragAction::Pan));
     assert!(r.view().animating());
     assert_eq!(r.view().drag_action, DragAction::Pan);
-    r.op(ViewOp::Pan(Vec2::new(5.0, 0.0)));
+    // A bare click mid-snap lands it in its orthographic axis view rather
+    // than freezing it half-turned.
+    r.op(ViewOp::PivotAt {
+        at: CENTER,
+        orbit: true,
+    });
     assert!(!r.view().animating());
-    let stopped = r.transform();
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
+    assert!(r.ortho().is_some());
+    let landed = r.transform();
     r.settle();
-    assert_eq!(r.transform(), stopped);
-    assert_eq!(r.view().snapped, None);
-    assert!(r.ortho().is_none());
+    assert_eq!(r.transform(), landed);
+    assert_near(
+        gz_to_bevy().inverse() * *landed.forward(),
+        Vec3::NEG_Z,
+        1e-4,
+    );
 }
 
 #[test]
@@ -800,14 +930,19 @@ fn fly_moves_in_the_ground_plane_at_a_frame_rate_independent_speed() {
         Vec3::new(0.0, step, step),
         1e-4,
     );
-    // Closer means slower, down to a floor.
-    let here = r.transform().translation;
-    r.view_mut().pivot = here;
+    // Closer means slower, down to a floor: looking at the sky with the
+    // pivot at the camera.
+    let mut r = rig(horizon());
+    r.view_mut().pivot = horizon().translation;
     r.op(ViewOp::Fly {
         dir: Vec3::Y,
         secs: 1.0,
     });
-    assert_near(r.transform().translation - here, Vec3::Y * 0.25, 1e-4);
+    assert_near(
+        r.transform().translation - horizon().translation,
+        Vec3::Y * 0.25,
+        1e-4,
+    );
 }
 
 #[test]
@@ -847,7 +982,10 @@ fn commands_for_other_entities_and_empty_viewports_are_harmless() {
         .computed
         .target_info = None;
     r.view_mut().pivot = Vec3::ONE;
-    r.op(ViewOp::PivotAt(CENTER));
+    r.op(ViewOp::PivotAt {
+        at: CENTER,
+        orbit: true,
+    });
     assert_eq!(r.pivot(), Vec3::ZERO);
 }
 
@@ -1136,4 +1274,254 @@ fn controls_wait_for_a_window_and_a_camera() {
         .press(KeyCode::KeyH);
     app.update();
     assert!(app.world().resource::<Messages<ViewCommand>>().is_empty());
+}
+
+// ------------------------------------------------ review regression tests
+
+fn depth(r: &Rig) -> f32 {
+    depth_of(&r.transform(), r.pivot())
+}
+
+fn ortho_near_far(r: &Rig) -> (f32, f32) {
+    match r.projection() {
+        Projection::Orthographic(o) => (o.near, o.far),
+        _ => panic!("not orthographic"),
+    }
+}
+
+/// After every op an orthographic view keeps the whole world in front of
+/// its near plane, with the near plane at the view's reach.
+fn assert_world_in_front(r: &Rig, extent: f32) {
+    let (near, far) = ortho_near_far(r);
+    let reach = reach(&r.view(), &r.transform(), &r.projection());
+    assert!((near - reach).abs() < 1e-3, "near {near} reach {reach}");
+    assert!(near > 0.0);
+    let d = depth(r);
+    assert!(
+        d - extent >= near - 1e-3,
+        "depth {d} extent {extent} near {near}"
+    );
+    assert!(far >= d + extent, "far {far}");
+}
+
+#[test]
+fn orthographic_views_keep_the_world_in_front_after_every_op() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(0.0, 0.0, 0.5), 0.5);
+    r.op(ViewOp::Snap(SnapView::Front));
+    r.settle();
+    let extent = |r: &Rig| {
+        // The world (one cube) and the 20 m grid, from the pivot.
+        let b = Bounds {
+            min: Vec3::new(-10.0, -0.0, -10.0),
+            max: Vec3::new(10.0, 1.0, 10.0),
+        };
+        b.reach_from(r.pivot())
+    };
+    assert_world_in_front(&r, extent(&r));
+    // Fly forward in a front view moves up the screen, not into the scene.
+    let probe = Vec3::new(0.0, 0.5, 0.0);
+    let s0 = r.screen(probe);
+    r.op(ViewOp::Fly {
+        dir: Vec3::Z,
+        secs: 0.2,
+    });
+    let s1 = r.screen(probe);
+    assert!(s1.y > s0.y + 1.0 && (s1.x - s0.x).abs() < 1e-3, "{s0} {s1}");
+    assert_world_in_front(&r, extent(&r));
+    // E zooms out, Q in.
+    let h = r.ortho().unwrap();
+    r.op(ViewOp::Fly {
+        dir: Vec3::Y,
+        secs: 0.2,
+    });
+    assert!(r.ortho().unwrap() > h);
+    r.op(ViewOp::Fly {
+        dir: Vec3::NEG_Y,
+        secs: 0.4,
+    });
+    assert!(r.ortho().unwrap() < h);
+    assert_world_in_front(&r, extent(&r));
+    // Picks and zooms can put the pivot at any depth; the camera backs off.
+    r.op(ViewOp::PivotAt {
+        at: r.screen(probe),
+        orbit: true,
+    });
+    assert_world_in_front(&r, extent(&r));
+    r.op(ViewOp::ZoomAt {
+        at: Vec2::new(100.0, 500.0),
+        steps: 3.0,
+    });
+    assert_world_in_front(&r, extent(&r));
+    r.op(ViewOp::Pan(Vec2::new(-200.0, 80.0)));
+    assert_world_in_front(&r, extent(&r));
+}
+
+#[test]
+fn the_orthographic_standoff_follows_the_world_size() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    // A model 300 m away along gz +X.
+    r.cube(Some(model), Vec3::new(300.0, 0.0, 0.5), 0.5);
+    r.op(ViewOp::ToggleProjection);
+    let far_corner = Vec3::new(300.5, 1.0, 10.0);
+    let extent = far_corner.length();
+    assert!(depth(&r) > extent, "{} vs {extent}", depth(&r));
+    let (_, far) = ortho_near_far(&r);
+    assert!(far > depth(&r) + extent - 1.0);
+}
+
+#[test]
+fn f_over_the_ground_frames_the_world_not_the_ground() {
+    let mut r = rig(default_view());
+    let (root, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(2.0, 0.0, 1.0), 1.0);
+    // A ground model holding a 100 m plane visual.
+    let ground_model = r
+        .app
+        .world_mut()
+        .spawn((Transform::default(), Visibility::default(), ChildOf(root)))
+        .id();
+    let plane = r.cube(Some(ground_model), Vec3::new(0.0, 0.0, -0.05), 50.0);
+    r.app.world_mut().entity_mut(plane).insert(plane_visual());
+    r.make_visible();
+    let at = r.screen(Vec3::new(-3.0, 0.0, 3.0));
+    r.op(ViewOp::Focus { at: Some(at) });
+    r.settle();
+    // gz (2, 0, 1) is Bevy (2, 1, 0): the model, not the 100 m plane.
+    assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
+}
+
+#[test]
+fn hidden_nodes_are_left_out_of_the_bounds() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(2.0, 0.0, 1.0), 1.0);
+    let hidden = r.cube(Some(model), Vec3::new(-40.0, 0.0, 1.0), 1.0);
+    r.app
+        .world_mut()
+        .entity_mut(hidden)
+        .insert(Visibility::Hidden);
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
+}
+
+#[test]
+fn idle_frames_leave_the_camera_unchanged() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Zoom(1.0));
+    r.frames(2);
+    let ticks = |r: &mut Rig| {
+        let e = r.app.world().entity(r.camera);
+        (
+            e.get_ref::<Transform>().unwrap().last_changed(),
+            e.get_ref::<Projection>().unwrap().last_changed(),
+            e.get_ref::<ViewCamera>().unwrap().last_changed(),
+        )
+    };
+    let before = ticks(&mut r);
+    r.frames(3);
+    assert_eq!(ticks(&mut r), before);
+}
+
+#[test]
+fn fly_speed_and_orthographic_scale_ignore_a_far_last_click() {
+    // A click near the horizon put the pivot 900 m away.
+    let far_pivot = Vec3::new(900.0, 0.0, 0.0);
+    let mut r = rig(default_view());
+    r.view_mut().pivot = far_pivot;
+    let start = r.transform().translation;
+    r.op(ViewOp::Fly {
+        dir: Vec3::Z,
+        secs: 0.1,
+    });
+    // Half the distance to what the view centre sees (the origin).
+    let step = 0.5 * home_distance() * 0.1;
+    assert!(((r.transform().translation - start).length() - step).abs() < 1e-3);
+
+    let mut r = rig(default_view());
+    r.view_mut().pivot = far_pivot;
+    r.op(ViewOp::ToggleProjection);
+    assert!((r.ortho().unwrap() - 2.0 * home_distance() * half_tan()).abs() < 1e-3);
+
+    // The view centre on the ground far away: clamped to the world's size
+    // (no world here: DEFAULT_WORLD_REACH).
+    let low = Transform::from_xyz(0.0, 1.0, 0.0).looking_to(Vec3::new(0.0, -0.001, -1.0), Vec3::Y);
+    let mut r = rig(low);
+    r.op(ViewOp::ToggleProjection);
+    let h = r.ortho().unwrap();
+    assert!(
+        (h - 2.0 * DEFAULT_WORLD_REACH * half_tan()).abs() < 1e-2,
+        "{h}"
+    );
+}
+
+#[test]
+fn far_grows_to_hold_a_focused_world_and_zoom_has_limits() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::ZERO, 400.0);
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    let d = (r.transform().translation - r.pivot()).length();
+    assert!(d > 1000.0, "{d}");
+    let Projection::Perspective(p) = r.projection() else {
+        unreachable!()
+    };
+    // The far side of the world is inside the far plane.
+    assert!(p.far >= d + 400.0 * 3f32.sqrt(), "{}", p.far);
+
+    // Zooming out stops at a few world framings, zooming in short of the
+    // pivot.
+    let mut r = rig(default_view());
+    for _ in 0..200 {
+        r.op(ViewOp::Zoom(-5.0));
+    }
+    let d = (r.transform().translation - r.pivot()).length();
+    assert!(
+        (d - ZOOM_OUT_LIMIT * DEFAULT_WORLD_REACH).abs() < 1e-2,
+        "{d}"
+    );
+    let Projection::Perspective(p) = r.projection() else {
+        unreachable!()
+    };
+    assert_eq!(p.far, 1000.0);
+    for _ in 0..200 {
+        r.op(ViewOp::Zoom(5.0));
+    }
+    let d = (r.transform().translation - r.pivot()).length();
+    assert!((d - MIN_DISTANCE).abs() < 1e-4, "{d}");
+}
+
+#[test]
+fn orthographic_zoom_at_its_limit_does_not_drift() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::ToggleProjection);
+    r.op(ViewOp::ZoomAt {
+        at: Vec2::new(300.0, 350.0),
+        steps: 1e4,
+    });
+    let pivot = r.pivot();
+    let at = r.screen(pivot);
+    let off = r.transform().rotation.inverse() * (pivot - r.transform().translation);
+    let h = r.ortho().unwrap();
+    r.op(ViewOp::Zoom(50.0));
+    assert_eq!(r.ortho().unwrap(), h);
+    // Within f32 noise at this scale (the view is 2 cm tall, 60 m away).
+    assert_near2(r.screen(pivot), at, 0.5);
+    let off2 = r.transform().rotation.inverse() * (pivot - r.transform().translation);
+    assert!((off2.truncate() - off.truncate()).length() < 1e-4);
+}
+
+#[test]
+fn leaving_orthographic_clears_the_snap() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Snap(SnapView::Right));
+    r.settle();
+    assert_eq!(r.view().snapped, Some(SnapView::Right));
+    r.op(ViewOp::ToggleProjection);
+    assert!(r.ortho().is_none());
+    assert_eq!(r.view().snapped, None);
 }
