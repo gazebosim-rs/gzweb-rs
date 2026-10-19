@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use gz_core::frame::{self, Frame};
 use gz_core::msgs;
+use gz_core::topic::world_topic;
 use prost::Message as _;
 use tungstenite::Message;
 
@@ -20,8 +21,8 @@ pub struct ReplayOptions {
     pub stream_limit: Option<usize>,
     /// Exit after this many connections (0 = serve forever).
     pub connections: usize,
-    /// When set, `auth` must carry this key (gz-launch `authorization_key`);
-    /// otherwise every key is accepted.
+    /// When set, `auth` must carry this key (the Gazebo websocket server's
+    /// `authorization_key`); otherwise every key is accepted.
     pub key: Option<String>,
     /// Close the first connection as soon as the client subscribes (that is,
     /// once it has the scene), to exercise its reconnect.
@@ -190,7 +191,7 @@ fn handle(
             // Like gz-sim: world control and server control answer
             // `Boolean { data: true }`; nothing else exists.
             "req" => {
-                let world_control = format!("/world/{}/control", m.world);
+                let world_control = world_topic(&m.world, "control");
                 let data = if fr.topic == world_control || fr.topic == "/server_control" {
                     let ok = msgs::Boolean {
                         data: true,

@@ -7,6 +7,7 @@
 //! - [`scene`]: gzweb's rules for turning a `gz.msgs.Scene` into a node tree.
 //! - [`uri`]: resource URI resolution (Fuel, `file://`, `model://`).
 //! - [`snapshot`]: the parity-test snapshot format.
+//! - [`topic`]: gz-transport topic-name sanitization and world topics.
 
 pub mod control;
 pub mod frame;
@@ -14,6 +15,7 @@ pub mod frame;
 pub mod net;
 pub mod scene;
 pub mod snapshot;
+pub mod topic;
 pub mod transport;
 pub mod uri;
 

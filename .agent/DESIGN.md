@@ -120,7 +120,7 @@ the framing, the `asset` resolution and allowed paths, `req`, `image`,
   so gzweb's protobufjs parse failed on any message using them (the `sky`,
   `visibility` and `fuel_textured_mesh` worlds; see PARITY.md).
 - `scene,<world>` and the particle-emitter request pass the world name
-  through `TopicUtils::AsValidTopic`.
+  through `TopicUtils::AsValidTopic` (see "World topics" below).
 - It is a system loaded with the world: the port opens only once the world
   (and every Fuel model it includes) has loaded, and a crash takes the
   simulation down with it.
@@ -151,6 +151,25 @@ it with `strtok` on `,` (`gz::common::split`), which merges empty fields:
 stop) stamps a header (1 s) on every request so `WorldControl { pause:
 false }` isn't empty and has no zero bytes, and splits step counts whose
 varint contains `0x00` or `,` (44 is `0x2c`) into several requests.
+
+**World topics.** Decided 2026-10-19: the client sanitizes the world name
+as gz-sim does. The `worlds` reply carries the raw SDF name, but gz-sim
+builds every world topic and service from it with gz-transport's
+`TopicUtils::AsValidTopic` (spaces become `_`; `@`, `~`, `:=` and `//` are
+dropped; an invalid result is empty), and Jetty's server does the same to
+the name in `scene,<world>`. `gz_core::topic` ports `AsValidTopic` and
+`IsValidTopic` from gz-transport 15 exactly (tested on upstream's cases), and
+`world_topic(world, leaf)` builds `/world/<world>/<leaf>` with it, as the
+server builds its `scene` service name. The pose, scene-info and stats
+subscriptions, the world control service, `WorldTopic` routing,
+`gz-parity record` and the replay server all use it. `scene,<world>` keeps
+the raw name, like gzweb (the server sanitizes it). gz-sim's own systems
+sanitize `/world/<world>` and append the leaf, SimulationRunner (control,
+stats) after sanitizing the bare name first; these agree with
+`world_topic` unless the name contains a `/`. gzweb uses the raw name, so on
+Jetty a world named `my world` gets its scene but no poses, scene updates or
+control (the server subscribes to `sub` topics as sent, and gz-transport
+refuses one with a space); PORT_PLAN §2.5 lists the divergence.
 
 **Sending.** As in gzweb's `sendMessage`, only handshake ops go out before
 `Connected`, and nothing after an error (`SendError`). As in gzweb, messages

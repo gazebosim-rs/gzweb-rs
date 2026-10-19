@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use gz_core::frame::Frame;
+use gz_core::topic::world_topic;
 use gz_core::{msgs, net, uri};
 use prost::Message as _;
 use tungstenite::Message;
@@ -127,9 +128,10 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
 
     // 4. Streams, in gzweb's subscription order.
     let world = corpus.manifest.world.clone();
+    // Under the sanitized world name, as gz-sim publishes them.
     let topics = [
-        format!("/world/{world}/dynamic_pose/info"),
-        format!("/world/{world}/scene/info"),
+        world_topic(&world, "dynamic_pose/info"),
+        world_topic(&world, "scene/info"),
     ];
     for t in &topics {
         send(&mut ws, &format!("sub,{t},,"))?;
