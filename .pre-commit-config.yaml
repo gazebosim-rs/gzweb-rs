@@ -12,8 +12,9 @@
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
 
-# Vendored upstream sources and recorded binary fixtures are left as they are.
-exclude: ^(crates/gz-proto/proto/|tests/corpus/.*\.bin$|spikes/collada/synthetic/)
+# Vendored upstream sources (protos, the Geist fonts and their licence) and
+# recorded binary fixtures are left as they are.
+exclude: ^(crates/gz-proto/proto/|crates/gz-ui/assets/fonts/|tests/corpus/.*\.bin$|spikes/collada/synthetic/)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
