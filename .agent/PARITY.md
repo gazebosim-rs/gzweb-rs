@@ -110,7 +110,7 @@ In tests, `gz_parity::replay::serve_on` serves on a listener bound to port 0.
   | `topics,,,` | Send the names of the recorded streams (`StringMsg_V`). |
   | `req,<service>,<type>,<payload>` | `/world/<world>/control` and `/server_control` answer `Boolean { data: true }`; anything else gets `StringMsg { data: "service_not_found" }`, as gz-launch does. |
   | `sub,<topic>,,` | Stream that topic's recorded frames in order, at most `N` of them (default: all), 1 ms apart. |
-  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs. |
+  | `auth,,,<key>` | Reply `authorized`, or `invalid` if `--key` is set and differs, as a binary frame like every reply (both real servers do; gzweb reads it with `FileReader.readAsText`). |
   | anything else | Ignore. |
 
 - `--client-log` writes one line per client frame, in arrival order: the exact

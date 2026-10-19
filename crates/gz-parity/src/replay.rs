@@ -139,8 +139,10 @@ fn handle(
                     .key
                     .as_deref()
                     .is_none_or(|k| k.as_bytes() == fr.payload);
-                let reply = if ok { "authorized" } else { "invalid" };
-                ws.send(Message::Text(reply.into()))
+                // Binary, as both servers send it (gzweb reads it with
+                // `FileReader.readAsText`).
+                let reply: &[u8] = if ok { b"authorized" } else { b"invalid" };
+                ws.send(Message::Binary(reply.to_vec().into()))
                     .map_err(crate::message)?;
             }
             "protos" => {

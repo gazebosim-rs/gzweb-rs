@@ -105,6 +105,24 @@ fn serves_a_full_session_and_logs_client_frames() {
     assert_eq!(lines.last(), Some(&"binary:ab01"));
 }
 
+/// Both real servers send every frame as binary, `auth` replies included;
+/// gzweb reads them with `FileReader.readAsText`.
+#[test]
+fn auth_replies_are_binary() {
+    let (url, server) = serve(corpus(), opts(None, Some("k")));
+    let mut ws = connect(&url);
+    for (key, reply) in [("wrong", "invalid"), ("k", "authorized")] {
+        send(&mut ws, &format!("auth,,,{key}"));
+        match ws.read().unwrap() {
+            Message::Binary(b) => assert_eq!(b.as_ref(), reply.as_bytes()),
+            other => panic!("auth reply {other:?} is not binary"),
+        }
+    }
+    ws.close(None).unwrap();
+    let _ = ws.flush();
+    server.join().unwrap().unwrap();
+}
+
 /// gz-sim serves world control under the sanitized world name.
 #[test]
 fn world_control_uses_the_sanitized_world_name() {
