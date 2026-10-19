@@ -9,18 +9,18 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::light::CascadeShadowConfigBuilder;
+use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster};
 use bevy::prelude::*;
-use bevy::render::render_resource::Face;
 use gz_core::scene::{
-    BuildOptions, GeometryDesc, LightDesc, LightType, MaterialDesc, Node, NodeKind, PathAllocator,
-    Pose, SceneDesc, VisualDesc,
+    BuildOptions, GeometryDesc, LightDesc, LightType, Node, NodeKind, PathAllocator, Pose,
+    SceneDesc, VisualDesc,
 };
 use gz_core::uri;
 
 use crate::assets;
 use crate::connection::GzInbox;
 use crate::heightmap;
+use crate::material::{self, Fallback, GzMaterials, GzMeshMaterial};
 use crate::render::{self, GzEnvironment, GzGrid};
 use crate::submesh;
 use crate::GzConfig;
@@ -125,6 +125,7 @@ pub fn apply_scene(
     mut loads: ResMut<GzLoads>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut gz_materials: ResMut<GzMaterials>,
     asset_server: Res<AssetServer>,
     config: Res<GzConfig>,
     mut environment: ResMut<GzEnvironment>,
@@ -170,6 +171,7 @@ pub fn apply_scene(
         loads: &mut loads,
         meshes: &mut meshes,
         materials: &mut materials,
+        gz_materials: &mut gz_materials,
         asset_server: &asset_server,
     };
     for node in &new_nodes {
@@ -186,7 +188,25 @@ struct SpawnCtx<'a, 'w, 's> {
     loads: &'a mut GzLoads,
     meshes: &'a mut Assets<Mesh>,
     materials: &'a mut Assets<StandardMaterial>,
+    gz_materials: &'a mut GzMaterials,
     asset_server: &'a AssetServer,
+}
+
+impl SpawnCtx<'_, '_, '_> {
+    /// The visual's material ([`material::build`]); snapshots wait for its
+    /// textures.
+    fn material(&mut self, visual: &VisualDesc, fallback: Fallback) -> material::VisualMaterial {
+        let m = material::build(
+            self.asset_server,
+            self.materials,
+            self.gz_materials,
+            &visual.material,
+            visual.transparency,
+            fallback,
+        );
+        self.loads.0.extend(m.loads.iter().cloned());
+        m
+    }
 }
 
 pub fn pose_transform(pose: &Pose, scale: [f64; 3]) -> Transform {
@@ -300,8 +320,7 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
             return;
         }
         GeometryDesc::Heightmap(desc) => {
-            let loads =
-                heightmap::spawn(ctx.commands, ctx.asset_server, ctx.materials, desc, parent);
+            let loads = heightmap::spawn(ctx.commands, ctx.asset_server, desc, parent);
             ctx.loads.0.extend(loads);
             return;
         }
@@ -311,16 +330,22 @@ fn spawn_geometry(ctx: &mut SpawnCtx, visual: &VisualDesc, parent: Entity, name:
         }
     };
 
-    let material = ctx
-        .materials
-        .add(standard_material(&visual.material, visual.transparency));
+    let mut mesh = mesh;
+    let m = ctx.material(visual, Fallback::GzGrey);
+    material::prepare_mesh(&mut mesh, m.tangents, m.lightmap.as_ref().map(|l| l.1));
     let mesh = ctx.meshes.add(mesh);
-    ctx.commands.spawn((
+    let mut e = ctx.commands.spawn((
         Mesh3d(mesh),
-        MeshMaterial3d(material),
+        MeshMaterial3d(m.material),
         local,
         ChildOf(parent),
     ));
+    if let Some((image, _)) = &m.lightmap {
+        e.insert(material::lightmap(image));
+    }
+    if !visual.cast_shadows {
+        e.insert(NotShadowCaster);
+    }
 }
 
 /// three.js `SphereGeometry(radius, width, height)`, vertex for vertex, so
@@ -397,19 +422,22 @@ fn spawn_mesh_file(
                 .spawn((GzGltf(gltf), Transform::IDENTITY, ChildOf(parent)))
                 .id();
             add_submesh(ctx, visual, entity);
+            add_mesh_material(ctx, visual, entity);
         }
         "stl" => {
             let mesh: Handle<Mesh> = ctx.asset_server.load(path);
             ctx.loads.0.push(mesh.clone().untyped());
-            let material = ctx
-                .materials
-                .add(standard_material(&visual.material, visual.transparency));
-            ctx.commands.spawn((
+            // STL has no UVs, so no tangents or light map either.
+            let m = ctx.material(visual, Fallback::Mesh);
+            let mut e = ctx.commands.spawn((
                 Mesh3d(mesh),
-                MeshMaterial3d(material),
+                MeshMaterial3d(m.material),
                 Transform::IDENTITY,
                 ChildOf(parent),
             ));
+            if !visual.cast_shadows {
+                e.insert(NotShadowCaster);
+            }
         }
         // `SceneFileLoader` reads both, in any case.
         "obj" | "dae" => {
@@ -420,6 +448,7 @@ fn spawn_mesh_file(
                 .spawn((WorldAssetRoot(scene), Transform::IDENTITY, ChildOf(parent)))
                 .id();
             add_submesh(ctx, visual, entity);
+            add_mesh_material(ctx, visual, entity);
         }
         ext => warn!("visual '{name}': unsupported mesh extension '{ext}' ({load_uri})"),
     }
@@ -445,44 +474,30 @@ fn add_submesh(ctx: &mut SpawnCtx, visual: &VisualDesc, entity: Entity) {
     }
 }
 
-pub fn standard_material(mat: &MaterialDesc, transparency: f64) -> StandardMaterial {
-    let [r, g, b] = mat.color;
-    let alpha = if transparency > 0.0 {
-        (1.0 - transparency as f32).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    let [er, eg, eb] = mat.emissive;
-    let (metallic, perceptual_roughness) = mat
-        .pbr
-        .as_ref()
-        .map(|p| (p.metalness as f32, p.roughness as f32))
-        .unwrap_or((0.0, 0.5));
-    StandardMaterial {
-        base_color: Color::srgba(r, g, b, alpha),
-        emissive: render::units::emissive(Color::srgb(er, eg, eb)),
-        metallic,
-        perceptual_roughness,
-        double_sided: mat.double_sided,
-        cull_mode: if mat.double_sided {
-            None
-        } else {
-            Some(Face::Back)
-        },
-        alpha_mode: if alpha < 1.0 {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
-        ..default()
-    }
+/// Applies the visual's material rules to a mesh file's scene on `entity`
+/// once it is instanced ([`material::apply_to_scene`]): its SDF material
+/// replaces every submesh's, as in Gazebo.
+fn add_mesh_material(ctx: &mut SpawnCtx, visual: &VisualDesc, entity: Entity) {
+    let replace = visual
+        .material
+        .present
+        .then(|| ctx.material(visual, Fallback::Mesh));
+    ctx.commands
+        .entity(entity)
+        .insert(GzMeshMaterial {
+            replace,
+            transparency: visual.transparency as f32,
+            cast_shadows: visual.cast_shadows,
+        })
+        .observe(material::apply_to_scene);
 }
 
 /// The Bevy light sits on a child entity that looks along the Gazebo
 /// direction (Bevy lights shine along local -Z).
 fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
     let [r, g, b] = light.color;
-    let color = Color::srgb(r, g, b);
+    // Linear, as ogre2 uses it (like material colours).
+    let color = Color::linear_rgb(r, g, b);
     let mut local = Transform::IDENTITY;
     if let Some([x, y, z]) = light.direction {
         let dir = Vec3::new(x as f32, y as f32, z as f32);
@@ -765,6 +780,97 @@ mod tests {
         // Unsupported geometry spawns the node but no mesh.
         let polyline = entity(&mut app, "polyline");
         assert!(app.world().get::<Children>(polyline).is_none());
+    }
+
+    #[test]
+    fn primitives_get_gazebo_materials_tangents_and_light_maps() {
+        let mut app = scene_app(GzConfig::default());
+        let pbr = msgs::Material {
+            diffuse: Some(msgs::Color {
+                r: 0.5,
+                g: 0.5,
+                b: 0.5,
+                a: 1.0,
+                ..Default::default()
+            }),
+            pbr: Some(msgs::material::Pbr {
+                normal_map: "model://m/n.png".into(),
+                light_map: "model://m/l.png".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut lit = box_visual("lit", pbr);
+        lit.cast_shadows = true;
+        let bare = msgs::Visual {
+            material: None,
+            ..box_visual("bare", Default::default())
+        };
+        let mut mesh = box_visual("dae", Default::default());
+        mesh.geometry = Some(msgs::Geometry {
+            mesh: Some(msgs::MeshGeom {
+                filename: "/m/a.dae".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let link = msgs::Link {
+            name: "l".into(),
+            visual: vec![lit, bare, mesh],
+            ..Default::default()
+        };
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(msgs::Scene {
+            model: vec![msgs::Model {
+                name: "m".into(),
+                link: vec![link],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }));
+        app.update();
+        let child = |app: &mut App, name: &str| {
+            let e = entity(app, name);
+            app.world().get::<Children>(e).unwrap()[0]
+        };
+        let material = |app: &mut App, e: Entity| {
+            let h = app
+                .world()
+                .get::<MeshMaterial3d<StandardMaterial>>(e)
+                .unwrap()
+                .0
+                .clone();
+            app.world()
+                .resource::<Assets<StandardMaterial>>()
+                .get(&h)
+                .unwrap()
+                .clone()
+        };
+
+        let lit = child(&mut app, "lit");
+        let m = material(&mut app, lit);
+        assert_eq!(m.base_color, Color::linear_rgba(0.5, 0.5, 0.5, 1.0));
+        assert!(m.normal_map_texture.is_some());
+        assert!(app.world().get::<bevy::pbr::Lightmap>(lit).is_some());
+        assert!(app.world().get::<NotShadowCaster>(lit).is_none());
+        let h = app.world().get::<Mesh3d>(lit).unwrap().0.clone();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let mesh = meshes.get(&h).unwrap();
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_TANGENT));
+        assert!(mesh.contains_attribute(Mesh::ATTRIBUTE_UV_1));
+        // Snapshots wait for the two maps.
+        assert_eq!(app.world().resource::<GzLoads>().0.len(), 3);
+
+        // No material: gz-grey; `cast_shadows` unset: no shadow.
+        let bare = child(&mut app, "bare");
+        let m = material(&mut app, bare);
+        assert_eq!(m.base_color, Color::linear_rgba(0.7, 0.7, 0.7, 1.0));
+        assert_eq!(m.metallic, 1.0);
+        assert!(app.world().get::<NotShadowCaster>(bare).is_some());
+
+        // A mesh visual's material waits for the instanced scene.
+        let dae = child(&mut app, "dae");
+        let rule = app.world().get::<GzMeshMaterial>(dae).unwrap();
+        assert!(rule.replace.is_some() && !rule.cast_shadows);
     }
 
     #[test]

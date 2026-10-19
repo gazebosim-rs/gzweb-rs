@@ -97,6 +97,17 @@ pub struct MaterialInfo {
 pub struct Maps {
     pub albedo: Option<String>,
     pub normal: Option<String>,
+    /// gzweb-rs only (gzweb's exporter doesn't report these; not compared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emissive: Option<String>,
+    /// The combined glTF-layout image: `generated` when gzweb-rs built it
+    /// from separate metalness and roughness maps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metallic_roughness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occlusion: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

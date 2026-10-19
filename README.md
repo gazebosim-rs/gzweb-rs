@@ -5,8 +5,9 @@ live [Gazebo](https://gazebosim.org/) simulation from the Gazebo websocket
 server. The same code runs as a native desktop app (Vulkan, Metal or DX12) and
 in the browser (WebAssembly with WebGPU; a WebGL2 build is planned).
 
-Status: early. Primitive shapes, lights, basic materials and live pose updates
-work, and match gzweb on the recorded test worlds. Collada meshes load with their
+Status: early. Primitive shapes, lights, Gazebo's materials (PBR maps,
+transparency, SDF materials on meshes) and live pose updates work, and match
+gzweb's scene structure on the recorded test worlds. Collada meshes load with their
 textures and match gzweb's loader on Fuel models; glTF/OBJ/STL loading is wired
 up but not yet checked against a mesh world. Most of gzweb's UI is still to
 come. See [`.agent/PORT_PLAN.md`](.agent/PORT_PLAN.md).

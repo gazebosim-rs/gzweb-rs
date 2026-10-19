@@ -159,14 +159,15 @@ pub struct MeshParts {
     pub normals: Vec<[f32; 3]>,
     /// V pointing up, as in COLLADA, OBJ and three.js.
     pub uvs: Vec<[f32; 2]>,
-    /// sRGB, as three.js reads COLLADA and OBJ vertex colours.
+    /// Linear, like every Gazebo material colour (gz-common drops vertex
+    /// colours; three.js r141 uses them raw).
     pub colors: Vec<[f32; 4]>,
     /// `None` for a triangle soup.
     pub indices: Option<Vec<u32>>,
 }
 
 impl MeshParts {
-    /// The Bevy mesh: V flipped (Bevy's points down), colours linear, flat
+    /// The Bevy mesh: V flipped (Bevy's points down), flat
     /// normals when there are none (three.js computes them on unindexed
     /// triangles, so they are flat too), and tangents when `tangents` and
     /// there are UVs. `what` names the mesh in warnings.
@@ -186,12 +187,7 @@ impl MeshParts {
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
         }
         if self.colors.len() == n {
-            let linear: Vec<[f32; 4]> = self
-                .colors
-                .into_iter()
-                .map(|[r, g, b, a]| LinearRgba::from(Color::srgba(r, g, b, a)).to_f32_array())
-                .collect();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, linear);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         }
         if self.normals.len() == n {
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals);
@@ -225,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn meshes_flip_v_linearise_colours_and_fill_in_normals() {
+    fn meshes_flip_v_keep_colours_and_fill_in_normals() {
         for indices in [None, Some(vec![0, 1, 2])] {
             let m = MeshParts {
                 indices: indices.clone(),
@@ -238,9 +234,8 @@ mod tests {
             else {
                 panic!("no colours");
             };
-            // sRGB 0.5 is linear 0.214.
-            assert!((colors[0][0] - 0.214).abs() < 1e-3, "{:?}", colors[0]);
-            assert_eq!(colors[0][1..], [1.0, 0.0, 1.0]);
+            // Linear: as given.
+            assert_eq!(colors[0], [0.5, 1.0, 0.0, 1.0]);
             let Some(VertexAttributeValues::Float32x2(uv)) = m.attribute(Mesh::ATTRIBUTE_UV_0)
             else {
                 panic!("no UVs");

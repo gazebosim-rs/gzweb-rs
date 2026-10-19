@@ -237,7 +237,7 @@ pub fn material(m: &tobj::Material) -> StandardMaterial {
     };
     let [er, eg, eb] = m.emissive.unwrap_or_default();
     StandardMaterial {
-        base_color: Color::srgba(r, g, b, alpha),
+        base_color: Color::linear_rgba(r, g, b, alpha),
         alpha_mode: if alpha < 1.0 {
             AlphaMode::Blend
         } else {
@@ -245,7 +245,7 @@ pub fn material(m: &tobj::Material) -> StandardMaterial {
         },
         perceptual_roughness: roughness,
         metallic: param("Pm").unwrap_or(0.0).clamp(0.0, 1.0),
-        emissive: units::emissive(Color::srgb(er, eg, eb)),
+        emissive: units::emissive(Color::linear_rgb(er, eg, eb)),
         cull_mode: Some(Face::Back),
         ..default()
     }
@@ -481,22 +481,25 @@ mod tests {
             newmtl t\nTr 0.25\nPr 0.6\n";
         let (mats, _) = tobj::load_mtl_buf(&mut BufReader::new(&mtl[..])).unwrap();
         let m = material(&mats[0]);
-        assert_eq!(m.base_color, Color::srgba(1.0, 0.0, 0.0, 0.5));
+        assert_eq!(m.base_color, Color::linear_rgba(1.0, 0.0, 0.0, 0.5));
         assert_eq!(m.alpha_mode, AlphaMode::Blend);
         assert_eq!(m.perceptual_roughness, mesh_file::phong_roughness(20.0));
         assert_eq!(m.metallic, 0.25);
-        assert_eq!(m.emissive, units::emissive(Color::srgb(0.0, 1.0, 0.0)));
+        assert_eq!(
+            m.emissive,
+            units::emissive(Color::linear_rgb(0.0, 1.0, 0.0))
+        );
         let t = material(&mats[1]);
         assert_eq!(t.base_color.alpha(), 0.75);
         assert_eq!(t.perceptual_roughness, 0.6);
         // No MTL at all: opaque white.
         let d = material(&tobj::Material::default());
-        assert_eq!(d.base_color, Color::srgb(1.0, 1.0, 1.0));
+        assert_eq!(d.base_color, Color::linear_rgb(1.0, 1.0, 1.0));
         assert_eq!(d.alpha_mode, AlphaMode::Opaque);
     }
 
     #[test]
-    fn meshes_keep_their_index_buffer_and_srgb_colours() {
+    fn meshes_keep_their_index_buffer_and_linear_colours() {
         let tri = tobj::Mesh {
             positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
             texcoords: vec![0.0, 0.25, 1.0, 0.0, 0.0, 1.0],
@@ -513,9 +516,8 @@ mod tests {
         else {
             panic!("no colours");
         };
-        // sRGB 0.5 is linear 0.214, as three.js reads OBJ colours.
-        assert!((colors[0][0] - 0.214).abs() < 1e-3, "{:?}", colors[0]);
-        assert_eq!(colors[0][3], 1.0);
+        // Linear, as given.
+        assert_eq!(colors[0], [0.5, 0.5, 0.5, 1.0]);
         assert!(mesh(&tobj::Mesh::default(), false).is_none());
     }
 }

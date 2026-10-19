@@ -17,7 +17,8 @@ use gz_core::transport::Status;
 
 use crate::camera::{GzCameraTarget, MainCamera};
 use crate::connection::{GzInbox, GzStatus};
-use crate::heightmap::GzHeightmap;
+use crate::heightmap::{GzHeightmap, TerrainMaterial};
+use crate::material::GzMaterials;
 use crate::render::{GzEnvironment, GzGrid};
 use crate::spawn::{
     GzEntity, GzGltf, GzIndex, GzLight, GzLightEmitter, GzLoads, GzVisual, GzWorldRoot,
@@ -48,6 +49,7 @@ pub fn snapshot_when_settled(
     scene_roots: Query<(&WorldAssetRoot, Option<&Children>, Option<&GzSubmesh>)>,
     gltfs: Query<&GzGltf, Without<WorldAssetRoot>>,
     terrains: Query<&GzHeightmap>,
+    gz_materials: Res<GzMaterials>,
     world_q: SnapshotQueries,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
@@ -99,6 +101,7 @@ pub fn snapshot_when_settled(
         && loads_done
         && scenes_instanced
         && terrains.iter().all(|t| t.built)
+        && gz_materials.settled()
         && now - inbox.last_activity_secs >= req.settle_secs;
 
     if !settled && !timed_out {
@@ -202,6 +205,8 @@ pub struct SnapshotQueries<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     meshes_q: Query<'w, 's, MeshData>,
     terrains: Query<'w, 's, &'static GzHeightmap>,
+    lightmaps: Query<'w, 's, &'static bevy::pbr::Lightmap>,
+    terrain_materials: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
     emitters: Query<'w, 's, &'static GlobalTransform, With<GzLightEmitter>>,
     camera: Query<
         'w,
@@ -218,6 +223,7 @@ pub struct SnapshotQueries<'w, 's> {
     clear: Res<'w, ClearColor>,
     meshes: Res<'w, Assets<Mesh>>,
     materials: Res<'w, Assets<StandardMaterial>>,
+    terrain_assets: Res<'w, Assets<TerrainMaterial>>,
     grid: Res<'w, GzGrid>,
     environment: Res<'w, GzEnvironment>,
 }
@@ -407,17 +413,31 @@ fn geometry_info(
 fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
     let mut mesh_entities = Vec::new();
     descendant_meshes(entity, q, &mut mesh_entities);
-    let handle = mesh_entities
-        .iter()
-        .find_map(|e| q.meshes_q.get(*e).ok().and_then(|(_, _, m)| m))?;
-    let m = q.materials.get(&handle.0)?;
-    let base = m.base_color.to_srgba();
+    let (mesh, m) = mesh_entities.iter().find_map(|e| {
+        let (_, _, m) = q.meshes_q.get(*e).ok()?;
+        let m = match m {
+            Some(handle) => q.materials.get(&handle.0),
+            // A terrain reports layer 0, its StandardMaterial.
+            None => q
+                .terrain_assets
+                .get(&q.terrain_materials.get(*e).ok()?.0)
+                .map(|t| &t.base),
+        }?;
+        Some((*e, m))
+    })?;
+    // Linear, as the message's (and gzweb's) floats are.
+    let [r, g, b, opacity] = crate::material::reported_color(m);
     let emissive = crate::render::units::emission_color(m.emissive);
-    let path = |h: &Option<Handle<Image>>| h.as_ref().and_then(|h| h.path()).map(|p| p.to_string());
+    let path = |h: &Option<Handle<Image>>| {
+        h.as_ref().map(|h| {
+            h.path()
+                .map_or_else(|| "generated".into(), |p| p.to_string())
+        })
+    };
     Some(MaterialInfo {
-        color: [base.red as f64, base.green as f64, base.blue as f64],
-        opacity: base.alpha as f64,
-        transparent: matches!(m.alpha_mode, AlphaMode::Blend),
+        color: [r as f64, g as f64, b as f64],
+        opacity: opacity as f64,
+        transparent: matches!(m.alpha_mode, AlphaMode::Blend | AlphaMode::Premultiplied),
         emissive: [
             emissive.red as f64,
             emissive.green as f64,
@@ -428,6 +448,10 @@ fn material_info(entity: Entity, q: &SnapshotQueries) -> Option<MaterialInfo> {
         maps: Maps {
             albedo: path(&m.base_color_texture),
             normal: path(&m.normal_map_texture),
+            emissive: path(&m.emissive_texture),
+            metallic_roughness: path(&m.metallic_roughness_texture),
+            occlusion: path(&m.occlusion_texture),
+            light: path(&q.lightmaps.get(mesh).ok().map(|l| l.image.clone())),
         },
     })
 }
@@ -438,6 +462,7 @@ mod tests {
     use crate::test_util::scene_app;
     use crate::GzConfig;
     use bevy::asset::RenderAssetUsages;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::mesh::PrimitiveTopology;
     use gz_core::scene::{GeometryDesc, LightDesc, LightType, MaterialDesc, VisualDesc};
 
@@ -475,14 +500,7 @@ mod tests {
         GzVisual(VisualDesc {
             proto_type: "box".into(),
             geometry: GeometryDesc::Box { size: [1.0; 3] },
-            material: MaterialDesc {
-                color: [1.0; 3],
-                diffuse_alpha: 1.0,
-                emissive: [0.0; 3],
-                pbr: None,
-                double_sided: false,
-                present: true,
-            },
+            material: MaterialDesc::absent(),
             cast_shadows: false,
             transparency: 0.0,
         })
@@ -584,6 +602,73 @@ mod tests {
         app.update();
         assert!(!out.exists());
         assert_eq!(exit_code(&mut app), None);
+    }
+
+    #[test]
+    fn a_terrain_reports_its_base_layer() {
+        let out = out_path("terrain");
+        let mut app = app_with(SnapshotRequest {
+            out: Some(out.clone()),
+            screenshot: None,
+            settle_secs: 0.0,
+            timeout_secs: 1e9,
+        });
+        app.update();
+        let layer = |name: &str| gz_core::scene::HeightmapLayer {
+            diffuse: Some(format!("https://fuel.example/{name}.png")),
+            normal: Some("https://fuel.example/flat.png".into()),
+            size: 1.0,
+        };
+        let desc = gz_core::scene::HeightmapDesc {
+            image_uri: None,
+            heights: vec![0.0, 1.0, 2.0, 3.0],
+            width: 2,
+            height: 2,
+            size: [2.0, 2.0, 3.0],
+            origin: [0.0; 3],
+            sampling: 1,
+            layers: vec![layer("dirt"), layer("grass"), layer("fungus")],
+            blends: vec![[1.0, 1.0], [2.0, 1.0]],
+        };
+        let world = app.world_mut();
+        let vis = world
+            .spawn((
+                gz("ground", NodeKind::Visual),
+                Transform::default(),
+                Visibility::default(),
+                visual(),
+            ))
+            .id();
+        world
+            .run_system_once(move |mut commands: Commands, server: Res<AssetServer>| {
+                crate::heightmap::spawn(&mut commands, &server, &desc, vis)
+            })
+            .unwrap();
+        let mut index = world.resource_mut::<GzIndex>();
+        index.order = vec![vis];
+        index.scene = Some(gz_core::scene::SceneDesc::from_msg(
+            &Default::default(),
+            Default::default(),
+        ));
+        for _ in 0..50 {
+            app.update();
+            if out.exists() {
+                break;
+            }
+        }
+        let snap: Snapshot = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        std::fs::remove_file(&out).unwrap();
+        let m = snap.nodes[0].material.as_ref().unwrap();
+        assert_eq!(
+            m.maps.albedo.as_deref(),
+            Some("gzhttps://fuel.example/dirt.png")
+        );
+        assert_eq!(
+            m.maps.normal.as_deref(),
+            Some("gzhttps://fuel.example/flat.png")
+        );
+        assert_eq!(m.roughness, Some(1.0));
+        assert_eq!(snap.nodes[0].geometry.as_ref().unwrap().vertex_count, 4);
     }
 
     #[test]
