@@ -257,6 +257,9 @@ fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
             title: "gzweb".into(),
             canvas: Some("#bevy-canvas".into()),
             fit_canvas_to_parent: true,
+            // Off: winit would cancel every key and wheel event on the
+            // canvas. `gz_bevy::view::web` cancels only what the spec lists
+            // (context menu, Ctrl+wheel and pinch, the canvas chords).
             prevent_default_event_handling: false,
             ..default()
         }),

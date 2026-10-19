@@ -221,6 +221,24 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
     }
 }
 
+/// The host page's status elements (`index.html`): the WebGPU check and
+/// the line [`update_fps`] writes.
+pub const DOM_STATUS_IDS: [&str; 2] = ["webgpu-status", "bevy-status"];
+
+/// Removes the host page's status elements, for a page without the HUD
+/// (`?hud=0`): nothing would update them.
+#[cfg(target_arch = "wasm32")]
+pub fn remove_dom_status() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    for id in DOM_STATUS_IDS {
+        if let Some(el) = document.get_element_by_id(id) {
+            el.remove();
+        }
+    }
+}
+
 /// Writes to the `#bevy-status` element in `index.html`.
 #[cfg(target_arch = "wasm32")]
 pub fn set_dom_status(msg: &str) {

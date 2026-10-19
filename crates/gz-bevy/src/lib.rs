@@ -177,6 +177,11 @@ impl Plugin for GzWebPlugin {
                 mode: self.config.ui,
             });
         }
+        // The host page's own status lines go with the HUD.
+        #[cfg(target_arch = "wasm32")]
+        if !(self.config.interactive() && self.config.hud) {
+            hud::remove_dom_status();
+        }
         if self.config.interactive() && self.config.hud {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
                 .add_systems(Startup, hud::spawn_hud)

@@ -1525,3 +1525,212 @@ fn leaving_orthographic_clears_the_snap() {
     assert!(r.ortho().is_none());
     assert_eq!(r.view().snapped, None);
 }
+
+// ------------------------------------------- review regression: input
+
+#[test]
+fn a_space_tap_within_one_frame_toggles_once_and_leaves_nothing_behind() {
+    let mut r = rig(default_view());
+    r.set_sim(Some(true));
+    r.key(KeyCode::Space, ButtonState::Pressed);
+    r.key(KeyCode::Space, ButtonState::Released);
+    r.frames(3);
+    assert_eq!(r.sent(), [GzCommand::Play]);
+    // A later ordinary tap, long after, still works.
+    r.frames((TAP_SECS * 1000.0) as usize / FRAME_MS as usize + 5);
+    r.chord(&[KeyCode::Space]);
+    assert_eq!(r.sent(), [GzCommand::Play]);
+}
+
+#[test]
+fn losing_focus_is_no_tap() {
+    use bevy::input::keyboard::KeyboardFocusLost;
+    let mut r = rig(default_view());
+    r.set_sim(Some(true));
+    r.key(KeyCode::Space, ButtonState::Pressed);
+    r.app.update();
+    // Alt-tab: the window loses focus, and Bevy releases every key.
+    r.app.world_mut().write_message(KeyboardFocusLost);
+    r.app.update();
+    r.frames(2);
+    assert!(r.sent().is_empty());
+}
+
+#[test]
+fn releasing_cmd_releases_the_keys_pressed_under_it() {
+    let mut r = rig(default_view());
+    r.set_sim(Some(true));
+    // Cmd+Right on a Mac browser: Right's key-up never arrives.
+    r.key(KeyCode::SuperLeft, ButtonState::Pressed);
+    r.key(KeyCode::ArrowRight, ButtonState::Pressed);
+    r.app.update();
+    r.key(KeyCode::SuperLeft, ButtonState::Released);
+    r.app.update();
+    assert!(!r
+        .app
+        .world()
+        .resource::<ButtonInput<KeyCode>>()
+        .pressed(KeyCode::ArrowRight));
+    let t = r.transform();
+    r.frames(5);
+    assert_eq!(r.transform(), t, "the camera doesn't fly on");
+    // Plain keys are left alone.
+    r.key(KeyCode::KeyW, ButtonState::Pressed);
+    r.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    r.app.update();
+    assert!(r
+        .app
+        .world()
+        .resource::<ButtonInput<KeyCode>>()
+        .pressed(KeyCode::KeyW));
+}
+
+#[test]
+fn a_stalled_frame_flies_at_most_a_tenth_of_a_second() {
+    let mut r = rig(default_view());
+    r.key(KeyCode::KeyW, ButtonState::Pressed);
+    r.app.update();
+    let before = r.transform().translation;
+    r.app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(2)));
+    r.app.update();
+    let moved = (r.transform().translation - before).length();
+    assert!(
+        (moved - 0.5 * home_distance() * 0.1).abs() < 1e-3,
+        "{moved}"
+    );
+}
+
+fn wheel_px(r: &mut Rig, x: f32, y: f32, phase: bevy::input::touch::TouchPhase) {
+    let window = r.window;
+    r.app.world_mut().write_message(MouseWheel {
+        unit: MouseScrollUnit::Pixel,
+        x,
+        y,
+        window,
+        phase,
+    });
+}
+
+fn distance(r: &Rig) -> f32 {
+    (r.transform().translation - r.pivot()).length()
+}
+
+#[test]
+fn wheel_events_in_a_frame_make_one_bounded_zoom() {
+    let mut r = rig(default_view());
+    r.cursor(Some(CENTER));
+    for _ in 0..3 {
+        r.wheel(1.0, MouseScrollUnit::Line);
+    }
+    r.app.update();
+    let zooms = |r: &Rig| r.app.world().resource::<Messages<ViewCommand>>().len();
+    assert!(zooms(&r) <= 1, "one ZoomAt for the frame");
+    assert!((distance(&r) - home_distance() * ZOOM_STEP.powi(3)).abs() < 1e-3);
+    // A momentum flick is clamped.
+    let mut r = rig(default_view());
+    r.cursor(Some(CENTER));
+    r.wheel(40.0, MouseScrollUnit::Line);
+    r.app.update();
+    let want = home_distance() * ZOOM_STEP.powf(controls::MAX_WHEEL_STEPS);
+    assert!((distance(&r) - want).abs() < 1e-3);
+}
+
+#[test]
+fn browser_wheel_deltas_are_normalised_to_a_step_a_notch() {
+    use super::input::Platform;
+    let web = |r: &mut Rig| r.app.world_mut().resource_mut::<InputMap>().platform = Platform::Web;
+    // Chrome: 100 px a notch, in physical pixels at scale 2.
+    let mut r = rig(default_view());
+    web(&mut r);
+    r.app
+        .world_mut()
+        .get_mut::<Window>(r.window)
+        .unwrap()
+        .resolution
+        .set_scale_factor_and_apply_to_physical_size(2.0);
+    r.cursor(Some(CENTER));
+    wheel_px(&mut r, 0.0, 200.0, bevy::input::touch::TouchPhase::Moved);
+    r.app.update();
+    assert!((distance(&r) - home_distance() * ZOOM_STEP).abs() < 1e-3);
+    // Firefox: three lines a notch.
+    let mut r = rig(default_view());
+    web(&mut r);
+    r.cursor(Some(CENTER));
+    r.wheel(3.0, MouseScrollUnit::Line);
+    r.app.update();
+    assert!((distance(&r) - home_distance() * ZOOM_STEP).abs() < 1e-3);
+}
+
+#[test]
+fn a_pinch_zooms_to_the_cursor() {
+    use super::controls::{BrowserWheel, PINCH_PX_PER_E};
+    use super::input::Platform;
+    let cursor = Vec2::new(300.0, 350.0);
+    // The browser: a ctrlKey wheel without a Control key down.
+    let mut r = rig(default_view());
+    r.app.world_mut().resource_mut::<InputMap>().platform = Platform::Web;
+    r.cursor(Some(cursor));
+    r.app.world_mut().resource_mut::<BrowserWheel>().ctrl = true;
+    // Fingers apart to 1.2× the scale.
+    wheel_px(
+        &mut r,
+        0.0,
+        PINCH_PX_PER_E * 1.2f32.ln(),
+        bevy::input::touch::TouchPhase::Moved,
+    );
+    r.app.update();
+    let under = r.pivot();
+    assert_near2(r.screen(under), cursor, 1e-2);
+    let d0 = (default_view().translation - under).length();
+    assert!((distance(&r) - d0 / 1.2).abs() < 1e-3, "{}", distance(&r));
+    // Safari's gesture: the same.
+    let mut r = rig(default_view());
+    r.cursor(Some(cursor));
+    r.app.world_mut().resource_mut::<BrowserWheel>().pinch = 1.2f32.ln();
+    r.app.update();
+    assert!((distance(&r) - d0 / 1.2).abs() < 1e-3);
+    // macOS: PinchGesture.
+    let mut r = rig(default_view());
+    r.cursor(Some(cursor));
+    r.app
+        .world_mut()
+        .write_message(bevy::input::gestures::PinchGesture(0.2));
+    r.app.update();
+    assert!((distance(&r) - d0 / 1.2).abs() < 1e-3);
+    // Ctrl held with a real key is Ctrl+wheel, one step a notch.
+    let mut r = rig(default_view());
+    r.app.world_mut().resource_mut::<InputMap>().platform = Platform::Web;
+    r.cursor(Some(cursor));
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.app.update();
+    r.app.world_mut().resource_mut::<BrowserWheel>().ctrl = true;
+    wheel_px(
+        &mut r,
+        0.0,
+        WHEEL_PX_PER_STEP,
+        bevy::input::touch::TouchPhase::Moved,
+    );
+    r.app.update();
+    assert!((distance(&r) - d0 * ZOOM_STEP).abs() < 1e-3);
+}
+
+#[test]
+fn a_native_two_finger_scroll_pans() {
+    let mut r = rig(default_view());
+    let at = Vec2::new(500.0, 400.0);
+    r.cursor(Some(at));
+    let ray = r.ray(at);
+    let pivot = ray.origin + *ray.direction * (-ray.origin.y / ray.direction.y);
+    wheel_px(&mut r, 30.0, -20.0, bevy::input::touch::TouchPhase::Started);
+    r.app.update();
+    // The point under the cursor at the start follows the fingers.
+    assert_near2(r.screen(pivot), at + Vec2::new(30.0, -20.0), 1e-2);
+    assert_eq!(r.transform().rotation, default_view().rotation);
+    // iOS PanGesture, in physical pixels.
+    r.app
+        .world_mut()
+        .write_message(bevy::input::gestures::PanGesture(Vec2::new(10.0, 0.0)));
+    r.app.update();
+    assert_near2(r.screen(pivot), at + Vec2::new(40.0, -20.0), 1e-2);
+}

@@ -16,6 +16,8 @@
 
 pub mod controls;
 pub mod input;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 
 use bevy::camera::primitives::Aabb;
 use bevy::camera::ScalingMode;

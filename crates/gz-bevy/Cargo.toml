@@ -45,6 +45,12 @@ features = [
     "Response",
     "AbortController",
     "AbortSignal",
+    "AddEventListenerOptions",
+    "EventTarget",
+    "KeyboardEvent",
+    "MouseEvent",
+    "UiEvent",
+    "WheelEvent",
 ]
 
 [lints]
