@@ -274,18 +274,45 @@ fn visual(name: &str, geometry: msgs::Geometry) -> msgs::Visual {
     }
 }
 
+/// A mesh visual without an SDF material: the file's own materials stay.
 fn mesh(name: &str, filename: &str) -> msgs::Visual {
-    visual(
-        name,
-        msgs::Geometry {
-            mesh: Some(msgs::MeshGeom {
-                filename: filename.into(),
-                scale: v3(2.0, 2.0, 2.0),
+    msgs::Visual {
+        material: None,
+        ..visual(
+            name,
+            msgs::Geometry {
+                mesh: Some(msgs::MeshGeom {
+                    filename: filename.into(),
+                    scale: v3(2.0, 2.0, 2.0),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
+            },
+        )
+    }
+}
+
+/// A PBR material with every map, each from a different kind of URI.
+fn pbr_material(http: &str) -> msgs::Material {
+    msgs::Material {
+        diffuse: color(0.5, 0.5, 0.5, 1.0),
+        specular: color(1.0, 1.0, 1.0, 1.0),
+        pbr: Some(msgs::material::Pbr {
+            r#type: msgs::material::pbr::WorkflowType::Metal as i32,
+            metalness: 0.9,
+            roughness: 0.4,
+            albedo_map: "model://pkg/materials/textures/t.png".into(),
+            // A Fuel-style URL, fetched over HTTP.
+            normal_map: format!("{http}/web/n.png"),
+            metalness_map: "file:///data/m.png".into(),
+            roughness_map: "/data/r.png".into(),
+            emissive_map: "model://pkg/materials/textures/t.png".into(),
+            ambient_occlusion_map: "/data/r.png".into(),
+            light_map: "/data/m.png".into(),
             ..Default::default()
-        },
-    )
+        }),
+        ..Default::default()
+    }
 }
 
 /// The probe `.dae` cut down to one node, centred.
@@ -357,6 +384,11 @@ const GLTF: &str = r#"{"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0
 "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",
 "min":[0,0,0],"max":[1,1,0]}]}"#;
 
+/// A 3×3 greyscale PNG.
+fn terrain_png() -> Vec<u8> {
+    std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap()
+}
+
 fn tri_bin() -> Vec<u8> {
     [0f32, 0., 0., 1., 0., 0., 0., 1., 0.]
         .iter()
@@ -396,6 +428,10 @@ fn start_http(files: Vec<(&'static str, &'static [u8])>) -> String {
 
 fn synthetic_world(http: &str) -> Corpus {
     use msgs::light::LightType;
+    let box_geom = || msgs::Geometry {
+        r#box: Some(msgs::BoxGeom::default()),
+        ..Default::default()
+    };
     let shapes = vec![
         visual(
             "box",
@@ -484,13 +520,25 @@ fn synthetic_world(http: &str) -> Corpus {
         ),
         msgs::Visual {
             transparency: 0.5,
-            ..visual(
-                "glass",
-                msgs::Geometry {
-                    r#box: Some(msgs::BoxGeom::default()),
-                    ..Default::default()
-                },
-            )
+            ..visual("glass", box_geom())
+        },
+        // Diffuse alpha and transparency multiply.
+        msgs::Visual {
+            transparency: 0.5,
+            material: Some(msgs::Material {
+                diffuse: color(0.2, 0.4, 0.6, 0.5),
+                ..Default::default()
+            }),
+            ..visual("tinted", box_geom())
+        },
+        msgs::Visual {
+            material: Some(pbr_material(http)),
+            ..visual("pbr", box_geom())
+        },
+        // No material: Gazebo's gz-grey.
+        msgs::Visual {
+            material: None,
+            ..visual("plain", box_geom())
         },
     ];
     let meshes = vec![
@@ -505,6 +553,16 @@ fn synthetic_world(http: &str) -> Corpus {
         mesh("obj_upper", "model://pkg/meshes/TRI.Obj"),
         mesh("stl_upper", "/data/TRI.STL"),
         mesh("dae", "/data/robot.dae"),
+        // The visual's SDF material replaces every submesh's.
+        msgs::Visual {
+            material: Some(pbr_material(http)),
+            ..mesh("dae_sdf", "/data/robot.dae")
+        },
+        // Without one, the visual's transparency fades the file's.
+        msgs::Visual {
+            transparency: 0.75,
+            ..mesh("dae_faded", "/data/robot.dae")
+        },
         submesh("dae_child", "ChildNode"),
         submesh_of("gltf_sub", "/data/tri.gltf", "tri"),
         submesh("dae_nosuch", "NoSuchNode"),
@@ -623,10 +681,7 @@ fn synthetic_world(http: &str) -> Corpus {
         .asset("pkg/meshes/two.obj", OBJ_MTL)
         .asset("pkg/meshes/two.mtl", MTL)
         // The bare `map_Kd t.png`, where gzweb's rule looks for it.
-        .asset(
-            "pkg/materials/textures/t.png",
-            &std::fs::read(repo().join("crates/gzweb/tests/data/terrain.png")).unwrap(),
-        )
+        .asset("pkg/materials/textures/t.png", &terrain_png())
         .asset("/data/tri.stl", STL)
         .asset("/data/tri.gltf", GLTF.as_bytes())
         .asset("/data/TRI.GLTF", GLTF.as_bytes())
@@ -635,6 +690,8 @@ fn synthetic_world(http: &str) -> Corpus {
         .asset("/data/TRI.STL", STL)
         .asset("/data/tri.bin", &tri_bin())
         .asset("/data/robot.dae", &probe_dae())
+        .asset("/data/m.png", &terrain_png())
+        .asset("/data/r.png", &terrain_png())
         .publish(pose_topic, "gz.msgs.Pose_V", &poses)
         // Not a Pose_V / Scene, and a frame without a header: all tolerated.
         .publish_raw(
@@ -652,7 +709,8 @@ fn synthetic_world(http: &str) -> Corpus {
 
 #[test]
 fn synthetic_world_spawns_every_feature() {
-    let http = start_http(vec![("/web/tri.obj", OBJ)]);
+    let png: &'static [u8] = Box::leak(terrain_png().into_boxed_slice());
+    let http = start_http(vec![("/web/tri.obj", OBJ), ("/web/n.png", png)]);
     let tmp = scratch("synthetic");
     let url = start_replay(synthetic_world(&http), None, None);
     let (output, snap) = snapshot(&url, &tmp.join("rs.json"), &[]);
@@ -680,9 +738,51 @@ fn synthetic_world_spawns_every_feature() {
         assert!(g.vertex_count > 0, "{path}");
         assert!(g.aabb_world.is_some(), "{path}");
     }
-    let glass = node(&snap, "shapes/l/glass").material.as_ref().unwrap();
+    // Materials, by Gazebo's rules: diffuse (linear; ambient unused),
+    // opacity = diffuse alpha × (1 - transparency).
+    let mat = |path: &str| node(&snap, path).material.clone().unwrap();
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-5;
+    let box_ = mat("shapes/l/box");
+    assert!(
+        close(box_.color[0], 0.8) && close(box_.color[1], 0.1),
+        "{box_:?}"
+    );
+    assert!(close(box_.emissive[1], 0.1), "{box_:?}");
+    let glass = mat("shapes/l/glass");
     assert!(glass.transparent);
-    assert!((glass.opacity - 0.5).abs() < 1e-6);
+    assert!(close(glass.opacity, 0.5));
+    assert!(close(glass.color[0], 0.8), "{glass:?}");
+    let tinted = mat("shapes/l/tinted");
+    assert!(
+        tinted.transparent && close(tinted.opacity, 0.25),
+        "{tinted:?}"
+    );
+    assert!(close(tinted.color[2], 0.6), "{tinted:?}");
+    let plain = mat("shapes/l/plain");
+    assert!(close(plain.color[0], 0.7) && plain.metalness == Some(1.0));
+    // Every PBR map, through every kind of URI; metalness and roughness
+    // combined into one image.
+    let pbr = mat("shapes/l/pbr");
+    assert_eq!(
+        pbr.maps.albedo.as_deref(),
+        Some("wsasset://rel/pkg/materials/textures/t.png")
+    );
+    assert_eq!(
+        pbr.maps.normal.as_deref(),
+        Some(format!("gzhttps://http:/{}/web/n.png", &http["http://".len()..]).as_str())
+    );
+    assert_eq!(
+        pbr.maps.emissive.as_deref(),
+        Some("wsasset://rel/pkg/materials/textures/t.png")
+    );
+    assert_eq!(pbr.maps.metallic_roughness.as_deref(), Some("generated"));
+    assert_eq!(
+        pbr.maps.occlusion.as_deref(),
+        Some("wsasset://abs/data/r.png")
+    );
+    assert_eq!(pbr.maps.light.as_deref(), Some("wsasset://abs/data/m.png"));
+    assert!(close(pbr.metalness.unwrap(), 0.9) && close(pbr.roughness.unwrap(), 0.4));
+    assert!(!pbr.transparent);
 
     // Mesh files over the websocket (relative, absolute, glTF with an
     // external buffer), over HTTP and from the server after HTTP fails all
@@ -728,6 +828,19 @@ fn synthetic_world_spawns_every_feature() {
             "{path}: {dae:?}"
         );
     }
+    // The SDF material on every submesh (probe.dae's are red and blue);
+    // without one, the file's materials, faded by the visual's transparency.
+    let sdf = mat("meshes/l/dae_sdf");
+    assert!(
+        close(sdf.color[0], 0.5) && close(sdf.color[2], 0.5),
+        "{sdf:?}"
+    );
+    assert_eq!(sdf.maps.metallic_roughness.as_deref(), Some("generated"));
+    let own = mat("meshes/l/dae");
+    let faded = mat("meshes/l/dae_faded");
+    assert_eq!(own.color, faded.color);
+    assert!(!own.transparent && faded.transparent, "{faded:?}");
+    assert!(close(faded.opacity, own.opacity * 0.25), "{faded:?}");
     // <submesh> keeps one node's triangle (1 cm, scaled by 2) and centres it.
     let sub = node(&snap, "meshes/l/dae_child").geometry.as_ref().unwrap();
     assert_eq!((sub.mesh_count, sub.vertex_count), (1, 3), "{sub:?}");
