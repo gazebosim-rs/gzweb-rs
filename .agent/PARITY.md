@@ -33,7 +33,8 @@ Jetty** (gz-sim 10.5.0, `source.gazebo = "jetty"` in the manifest). Status:
 | empty, shapes, lights, nested_model, diff_drive, polylines, visibility | committed | PASS | yes |
 | heightmap | committed | PASS with allow-listed terrain | `--ignored` (Fuel) |
 | import_mesh | committed | PASS (Collada) | `--ignored` (Fuel) |
-| sky, fuel_textured_mesh | committed | PASS (allow-listed materials) | `--ignored` (Fuel) |
+| sky | committed | PASS (allow-listed sky and camera material) | yes (headless gzweb-rs never fetches the cubemap) |
+| fuel_textured_mesh | committed | PASS (allow-listed materials) | `--ignored` (Fuel) |
 | particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
 
 gzweb couldn't load `sky`, `visibility` and `fuel_textured_mesh` from the
@@ -60,6 +61,14 @@ the real host on a miss. Each body is checked against the lock; a URL not in
 the lock is added to it. `GZ_HTTP_OFFLINE=true` makes a miss a 404.
 `parity/run.sh` always runs the mirror: gzweb's HTTPS requests are rerouted
 by Playwright, gzweb-rs gets `--http-mirror`.
+
+`sky/http.lock.json` pins gzweb's hard-coded default skybox,
+`…/openrobotics/models/skybox/tip/files/…`. `tip` is mutable: if the model
+gets a new version, a cold-cache `parity/run.sh sky` fails with a SHA-256
+mismatch (502) until the lock is refreshed (delete the entries, rerun with
+Fuel up). Pinning a version would mean rewriting gzweb's URLs in the mirror
+or Playwright, so the lock stays on `tip` and only detects the change. The
+headless test is unaffected: gzweb-rs never fetches it.
 
 Fuel-world tests are `#[ignore]`d, so `cargo test` and the coverage gate stay
 offline. CI runs them in the `fuel` job (`cargo test -p gzweb --test headless
