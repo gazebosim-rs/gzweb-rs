@@ -22,6 +22,25 @@ pub(crate) fn ui_app(theme: ThemeMode) -> App {
 
 /// The app with a window `scale` physical pixels per logical pixel.
 pub(crate) fn ui_app_at(theme: ThemeMode, scale: f32) -> App {
+    ui_app_sized(theme, (1440, 900), scale)
+}
+
+/// The app with a window `size` logical pixels at `scale`.
+pub(crate) fn ui_app_sized(theme: ThemeMode, size: (u32, u32), scale: f32) -> App {
+    ui_app_with(theme, size, scale, |app| {
+        app.add_plugins(GzUiPlugin { theme });
+    })
+}
+
+/// The app with a window `size` at `scale`, and `plugins` added before the
+/// UI camera spawns.
+pub(crate) fn ui_app_with(
+    theme: ThemeMode,
+    size: (u32, u32),
+    scale: f32,
+    plugins: impl FnOnce(&mut App),
+) -> App {
+    let _ = theme;
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -29,7 +48,11 @@ pub(crate) fn ui_app_at(theme: ThemeMode, scale: f32) -> App {
         InputPlugin,
         WindowPlugin {
             primary_window: Some(Window {
-                resolution: WindowResolution::new(1440, 900).with_scale_factor_override(scale),
+                resolution: WindowResolution::new(
+                    (size.0 as f32 * scale) as u32,
+                    (size.1 as f32 * scale) as u32,
+                )
+                .with_scale_factor_override(scale),
                 ..default()
             }),
             exit_condition: ExitCondition::DontExit,
@@ -56,11 +79,11 @@ pub(crate) fn ui_app_at(theme: ThemeMode, scale: f32) -> App {
     .insert_resource(PickingSettings {
         is_hover_enabled: false,
         ..default()
-    })
-    .add_plugins(GzUiPlugin { theme });
+    });
+    plugins(&mut app);
     // Without a renderer nothing computes the camera's target, so give it
     // one, as bevy_ui's own layout tests do.
-    let (w, h) = (1440, 900);
+    let (w, h) = size;
     app.world_mut().spawn((
         Camera2d,
         IsDefaultUiCamera,

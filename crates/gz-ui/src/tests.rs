@@ -7,6 +7,7 @@ mod gallery;
 mod layout;
 mod menu;
 mod number;
+mod shell;
 mod spec;
 mod theme;
 mod visuals;

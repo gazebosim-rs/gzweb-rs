@@ -16,14 +16,16 @@
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
 //!
-//! The shell (M2) and everything after it come later; until then the full
-//! mode adds this plugin but shows nothing of it.
+//! Milestone M2 adds [`shell`]: the workbench's regions, their layout
+//! rules, the 3D view's placement, and the connect card and banner
+//! ([`shell::ShellPlugin`], added with this plugin in the full mode).
 
 pub mod brand;
 pub mod focus;
 pub mod fonts;
 pub mod gallery;
 pub mod icons;
+pub mod shell;
 pub mod theme;
 pub mod visuals;
 pub mod widgets;

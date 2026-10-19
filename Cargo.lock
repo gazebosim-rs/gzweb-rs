@@ -3179,6 +3179,7 @@ dependencies = [
  "accesskit",
  "bevy",
  "gz-bevy",
+ "gz-core",
  "resvg",
  "serde_json",
  "tiny-skia 0.12.0",
