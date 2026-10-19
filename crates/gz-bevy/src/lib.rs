@@ -19,10 +19,47 @@ pub mod snapshot;
 pub mod spawn;
 pub mod stl;
 pub mod submesh;
+pub mod view;
 
 use bevy::prelude::*;
 
 pub use assets::GzAssetSourcesPlugin;
+
+/// How much UI runs (`.agent/UI_PLAN.md` §2.1, DECISIONS.md D-10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiMode {
+    /// Scene, rendering and connection only: no input, no HUD
+    /// (`--snapshot`, `--screenshot`).
+    None,
+    /// The 3D view with [`view::ViewerControls`]: camera, viewport and sim
+    /// keys, and the status text.
+    Minimal,
+    /// The whole workbench. TODO(M1): add the `gz-ui` plugin; until then
+    /// this is [`UiMode::Minimal`].
+    #[default]
+    Full,
+}
+
+impl UiMode {
+    /// Takes input and shows status: anything but [`UiMode::None`].
+    pub fn interactive(self) -> bool {
+        self != UiMode::None
+    }
+}
+
+impl std::str::FromStr for UiMode {
+    type Err = String;
+
+    /// `full` or `minimal`, as `--ui` and `?ui=` take them. [`UiMode::None`]
+    /// comes only from the capture modes.
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "full" => Ok(UiMode::Full),
+            "minimal" => Ok(UiMode::Minimal),
+            _ => Err(format!("unknown UI mode '{s}' (full or minimal)")),
+        }
+    }
+}
 
 /// Connection and behaviour options.
 #[derive(Resource, Clone, Debug)]
@@ -33,9 +70,12 @@ pub struct GzConfig {
     pub key: Option<String>,
     /// gzweb `enableLights`: whether lights attached to links start visible.
     pub enable_lights: bool,
-    /// Camera controls, HUD and sim stats (false for `--snapshot` and
-    /// `--screenshot`, which don't take input).
-    pub interactive: bool,
+    /// How much UI runs. [`UiMode::None`] for `--snapshot` and
+    /// `--screenshot`, which don't take input: no controls, HUD or sim
+    /// stats.
+    pub ui: UiMode,
+    /// The status text overlay, when [`GzConfig::interactive`].
+    pub hud: bool,
     /// A GPU renders the scene (false for `--snapshot`); without one, GPU-only
     /// work such as environment maps is skipped.
     pub gpu: bool,
@@ -53,12 +93,21 @@ impl Default for GzConfig {
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,
-            interactive: true,
+            ui: UiMode::default(),
+            hud: true,
             gpu: true,
             reconnect: true,
             ca_cert: None,
             quality: render::Quality::default(),
         }
+    }
+}
+
+impl GzConfig {
+    /// Camera controls, HUD and sim stats: the UI mode isn't
+    /// [`UiMode::None`] (what the old `interactive` flag meant).
+    pub fn interactive(&self) -> bool {
+        self.ui.interactive()
     }
 }
 
@@ -117,19 +166,22 @@ impl Plugin for GzWebPlugin {
         app.add_systems(Startup, render::setup_gizmos)
             .add_systems(Update, render::draw_grid);
 
-        if self.config.interactive {
+        if self.config.interactive() {
+            // TODO(M1): `UiMode::Full` adds `gz_ui::GzUiPlugin` on top.
+            app.add_plugins(view::ViewerControls {
+                mode: self.config.ui,
+            });
+        }
+        if self.config.interactive() && self.config.hud {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
                 .add_systems(Startup, hud::spawn_hud)
                 .add_systems(
                     Update,
                     (
-                        camera::orbit_controls,
                         hud::update_fps,
                         hud::update_adapter,
                         hud::update_status,
                         hud::update_sim,
-                        hud::sim_keys,
-                        render::grid_key,
                     ),
                 );
         }
@@ -201,9 +253,9 @@ pub(crate) mod test_util {
 mod tests {
     use super::*;
 
-    #[test]
-    fn windowed_plugin_adds_controls_hud_and_diagnostics() {
-        // Nothing listens on the port; the connection just fails.
+    /// Runs one frame of the plugin with `ui` and `hud`; nothing listens
+    /// on the port, so the connection just fails.
+    fn plugin_app(ui: UiMode, hud: bool) -> App {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -227,60 +279,74 @@ mod tests {
         .add_plugins(GzWebPlugin {
             config: GzConfig {
                 url: format!("ws://127.0.0.1:{port}"),
-                interactive: true,
+                ui,
+                hud,
                 ..Default::default()
             },
         });
         app.update();
-        let world = app.world_mut();
         assert_eq!(
-            world
-                .query::<&camera::GzOrbitControls>()
-                .iter(world)
-                .count(),
-            1
-        );
-        assert_eq!(world.query::<&hud::StatusText>().iter(world).count(), 1);
-        assert!(world.contains_resource::<bevy::diagnostic::DiagnosticsStore>());
-        assert_eq!(
-            world.resource::<GzConfig>().url,
+            app.world().resource::<GzConfig>().url,
             format!("ws://127.0.0.1:{port}")
         );
+        app
+    }
+
+    fn count<C: Component>(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world.query::<&C>().iter(world).count()
+    }
+
+    #[test]
+    fn windowed_plugin_adds_controls_hud_and_diagnostics() {
+        for ui in [UiMode::Minimal, UiMode::Full] {
+            let mut app = plugin_app(ui, true);
+            assert_eq!(count::<view::ViewCamera>(&mut app), 1);
+            assert_eq!(count::<hud::StatusText>(&mut app), 1);
+            assert!(app
+                .world()
+                .contains_resource::<bevy::diagnostic::DiagnosticsStore>());
+            assert_eq!(
+                app.world().resource::<view::controls::ActiveScopes>().0,
+                view::ViewerControls::scopes(ui)
+            );
+        }
+    }
+
+    #[test]
+    fn the_hud_can_be_turned_off() {
+        let mut app = plugin_app(UiMode::Minimal, false);
+        assert_eq!(count::<view::ViewCamera>(&mut app), 1);
+        assert_eq!(count::<hud::StatusText>(&mut app), 0);
     }
 
     #[test]
     fn headless_plugin_has_no_controls_or_hud() {
-        let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            GzAssetSourcesPlugin::default(),
-            AssetPlugin::default(),
-            TransformPlugin,
-            bevy::mesh::MeshPlugin,
-            bevy::gizmos::GizmoPlugin,
-        ))
-        .init_asset::<Mesh>()
-        .init_asset::<Image>()
-        .init_asset::<StandardMaterial>()
-        .init_asset::<WorldAsset>()
-        .init_asset::<bevy::light::atmosphere::ScatteringMedium>()
-        .add_plugins(GzWebPlugin {
-            config: GzConfig {
-                url: "ws://127.0.0.1:1".into(),
-                interactive: false,
-                ..Default::default()
-            },
-        });
-        app.update();
-        let world = app.world_mut();
+        let mut app = plugin_app(UiMode::None, true);
+        assert_eq!(count::<view::ViewCamera>(&mut app), 0);
+        assert_eq!(count::<hud::StatusText>(&mut app), 0);
+        assert_eq!(count::<camera::MainCamera>(&mut app), 1);
+        assert!(!app.world().contains_resource::<view::InputMap>());
+    }
+
+    #[test]
+    fn ui_modes() {
+        assert_eq!("full".parse(), Ok(UiMode::Full));
+        assert_eq!("Minimal".parse(), Ok(UiMode::Minimal));
         assert_eq!(
-            world
-                .query::<&camera::GzOrbitControls>()
-                .iter(world)
-                .count(),
-            0
+            "none".parse::<UiMode>(),
+            Err("unknown UI mode 'none' (full or minimal)".into())
         );
-        assert_eq!(world.query::<&hud::StatusText>().iter(world).count(), 0);
-        assert_eq!(world.query::<&camera::MainCamera>().iter(world).count(), 1);
+        assert_eq!(UiMode::default(), UiMode::Full);
+        assert!(UiMode::Full.interactive() && UiMode::Minimal.interactive());
+        assert!(!UiMode::None.interactive());
+        let config = GzConfig::default();
+        assert!(config.interactive() && config.hud);
+        assert!(!GzConfig {
+            ui: UiMode::None,
+            ..config
+        }
+        .interactive());
+        assert!(view::ViewerControls::scopes(UiMode::None).is_empty());
     }
 }

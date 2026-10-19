@@ -1,12 +1,12 @@
-//! On-screen status overlay (bevy_ui), the DOM status line on wasm, and the
-//! simulation-control keys.
+//! On-screen status overlay (bevy_ui) and the DOM status line on wasm.
+//! The keys it lists are handled by [`crate::view::controls`].
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapter;
 use gz_core::transport::Status;
 
-use crate::connection::{GzCommand, GzStatus};
+use crate::connection::GzStatus;
 
 #[derive(Component)]
 pub struct FpsText;
@@ -20,8 +20,16 @@ pub struct StatusText;
 #[derive(Component)]
 pub struct SimText;
 
-const HINT: &str = "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point \
-                        | Space: play/pause | N: step";
+/// The controls, as minimal mode binds them.
+pub const HINT: &str = if cfg!(target_os = "macos") {
+    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl: to cursor) \
+     | F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid \
+     | WASD QE: move | Space: play/pause | Cmd+Right: step"
+} else {
+    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl: to cursor) \
+     | F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid \
+     | WASD QE: move | Space: play/pause | Ctrl+Right: step"
+};
 
 pub fn spawn_hud(mut commands: Commands) {
     let line = |top: f32| Node {
@@ -174,26 +182,6 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
     }
 }
 
-/// Space toggles play/pause; N steps a paused simulation. Needs the stats
-/// to know which way to toggle.
-pub fn sim_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    status: Res<GzStatus>,
-    mut out: MessageWriter<GzCommand>,
-) {
-    let Some(sim) = status.sim else { return };
-    if keys.just_pressed(KeyCode::Space) {
-        out.write(if sim.paused {
-            GzCommand::Play
-        } else {
-            GzCommand::Pause
-        });
-    }
-    if keys.just_pressed(KeyCode::KeyN) && sim.paused {
-        out.write(GzCommand::Step(1));
-    }
-}
-
 /// Writes to the `#bevy-status` element in `index.html`.
 #[cfg(target_arch = "wasm32")]
 pub fn set_dom_status(msg: &str) {
@@ -330,35 +318,6 @@ mod tests {
         world.resource_mut::<GzStatus>().sim = Some(sim(false));
         world.run_system_once(update_sim).unwrap();
         assert!(text_of::<SimText>(&mut world).0.starts_with("Sim: running"));
-    }
-
-    #[test]
-    fn keys_send_sim_commands() {
-        let mut app = App::new();
-        app.init_resource::<ButtonInput<KeyCode>>()
-            .insert_resource(GzStatus::new(""))
-            .add_message::<GzCommand>()
-            .add_systems(Update, (sim_keys, update_sim));
-        let press = |app: &mut App, keys: &[KeyCode], sim: Option<SimStats>| {
-            app.world_mut().resource_mut::<GzStatus>().sim = sim;
-            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            input.reset_all();
-            for k in keys {
-                input.press(*k);
-            }
-            app.update();
-            let msgs = app.world().resource::<Messages<GzCommand>>();
-            msgs.iter_current_update_messages()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let both = [KeyCode::Space, KeyCode::KeyN];
-        assert!(press(&mut app, &both, None).is_empty());
-        assert_eq!(press(&mut app, &both, Some(sim(false))), [GzCommand::Pause]);
-        assert_eq!(
-            press(&mut app, &both, Some(sim(true))),
-            [GzCommand::Play, GzCommand::Step(1)]
-        );
     }
 
     #[test]

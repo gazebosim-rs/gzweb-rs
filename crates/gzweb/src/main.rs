@@ -6,11 +6,15 @@
 //! - `--screenshot out.png` opens a fixed 1280x720 window, saves a frame once
 //!   the scene has settled, and exits (needs a GPU).
 //! - `--quality low|high|ultra` picks the rendering level (`render::Quality`).
+//! - `--ui full|minimal` picks the UI mode (`gz_bevy::UiMode`, default
+//!   full); the capture modes run without UI. `--no-hud` hides the status
+//!   text.
 //!
-//! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`).
+//! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
+//! plus `ui=full|minimal` (default minimal) and `hud=0`.
 
 use bevy::prelude::*;
-use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin};
+use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode};
 
 const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
     Some(p) => p,
@@ -28,8 +32,27 @@ struct Args {
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
+                     [--ui full|minimal] [--no-hud] \
                      [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] [--timeout-ms MS]\n\
+                     --ui: full (default) is the workbench, minimal the 3D view with camera and \
+                     sim keys only; --snapshot/--screenshot run with no UI.\n\
                      Reconnecting is on by default, except in --snapshot/--screenshot mode.";
+
+/// The browser's UI mode from `?ui=`: minimal unless it says otherwise
+/// (DECISIONS.md D-10).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn web_ui(value: Option<&str>) -> Result<UiMode, String> {
+    value.map_or(Ok(UiMode::Minimal), str::parse)
+}
+
+/// `?hud=0` (or `false`, `off`, `no`) hides the status text.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn web_hud(value: Option<&str>) -> bool {
+    !matches!(
+        value.map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
 
 /// What kind of window the app runs with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +91,8 @@ fn parse_args(
     let mut ca_cert = None;
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
+    let mut ui = UiMode::Full;
+    let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut timeout_ms = 60000.0;
 
@@ -88,6 +113,8 @@ fn parse_args(
             "--reconnect" => reconnect = Some(true),
             "--no-reconnect" => reconnect = Some(false),
             "--quality" => quality = value()?.parse()?,
+            "--ui" => ui = value()?.parse().map_err(|e| format!("--ui: {e}"))?,
+            "--no-hud" => hud = false,
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
             "--screenshot" => {
                 let path = std::path::PathBuf::from(value()?);
@@ -111,7 +138,8 @@ fn parse_args(
         config: GzConfig {
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
-            interactive: !capture,
+            ui: if capture { UiMode::None } else { ui },
+            hud,
             gpu: screenshot.is_some() || snapshot.is_none(),
             reconnect: reconnect.unwrap_or(!capture),
             ca_cert,
@@ -170,6 +198,11 @@ fn command() -> Result<Command, String> {
                         .ok()
                 })
                 .unwrap_or_default(),
+            ui: web_ui(get("ui").as_deref()).unwrap_or_else(|e| {
+                bevy::log::warn!("?ui: {e}");
+                UiMode::Minimal
+            }),
+            hud: web_hud(get("hud").as_deref()),
             ..Default::default()
         },
         mode: Mode::Interactive,
@@ -300,7 +333,8 @@ mod tests {
         let a = run_args(&[], None);
         assert_eq!(a.config.url, format!("ws://localhost:{DEFAULT_PORT}"));
         assert_eq!(a.config.key, None);
-        assert!(a.config.interactive);
+        assert_eq!(a.config.ui, UiMode::Full);
+        assert!(a.config.interactive() && a.config.hud);
         assert!(a.snapshot.is_none());
     }
 
@@ -358,12 +392,13 @@ mod tests {
             ],
             None,
         );
-        assert!(!a.config.interactive && !a.config.gpu);
+        assert!(!a.config.interactive() && !a.config.gpu);
+        assert_eq!(a.config.ui, UiMode::None);
         assert_eq!(a.mode, Mode::Headless);
         assert!(!a.config.reconnect);
         let shot = run_args(&["--screenshot", "o.png"], None);
         assert_eq!(shot.mode, Mode::Capture);
-        assert!(!shot.config.interactive && shot.config.gpu && !shot.config.reconnect);
+        assert!(!shot.config.interactive() && shot.config.gpu && !shot.config.reconnect);
         let req = shot.snapshot.unwrap();
         assert_eq!(req.out, None);
         assert_eq!(
@@ -377,6 +412,39 @@ mod tests {
         assert_eq!(s.out, Some(std::path::PathBuf::from("out.json")));
         assert_eq!(s.settle_secs, 0.25);
         assert_eq!(s.timeout_secs, 5.0);
+    }
+
+    #[test]
+    fn ui_mode_flag() {
+        assert_eq!(
+            run_args(&["--ui", "minimal"], None).config.ui,
+            UiMode::Minimal
+        );
+        assert_eq!(run_args(&["--ui", "full"], None).config.ui, UiMode::Full);
+        assert!(!run_args(&["--no-hud"], None).config.hud);
+        // The capture modes force no UI.
+        for capture in [["--snapshot", "o.json"], ["--screenshot", "o.png"]] {
+            let a = run_args(&[&["--ui", "minimal"], &capture[..]].concat(), None);
+            assert_eq!(a.config.ui, UiMode::None);
+        }
+        assert_eq!(
+            parse(&["--ui", "none"], None).unwrap_err(),
+            "--ui: unknown UI mode 'none' (full or minimal)"
+        );
+        assert_eq!(parse(&["--ui"], None).unwrap_err(), "--ui needs a value");
+        assert!(USAGE.contains("[--ui full|minimal] [--no-hud]"));
+    }
+
+    #[test]
+    fn web_query_defaults_to_minimal() {
+        assert_eq!(web_ui(None), Ok(UiMode::Minimal));
+        assert_eq!(web_ui(Some("full")), Ok(UiMode::Full));
+        assert_eq!(web_ui(Some("minimal")), Ok(UiMode::Minimal));
+        assert!(web_ui(Some("kiosk")).is_err());
+        assert!(web_hud(None) && web_hud(Some("1")));
+        for off in ["0", "false", "OFF", "no"] {
+            assert!(!web_hud(Some(off)), "{off}");
+        }
     }
 
     #[test]

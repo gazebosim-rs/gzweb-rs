@@ -3103,6 +3103,7 @@ dependencies = [
  "gz-core",
  "js-sys",
  "prost",
+ "serde",
  "serde_json",
  "tobj",
  "tungstenite",

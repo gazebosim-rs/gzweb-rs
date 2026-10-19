@@ -31,8 +31,9 @@ use bevy::render::view::Msaa;
 use gz_core::scene::{FogDesc, SceneDesc};
 
 use crate::assets;
-use crate::camera::{self, GzOrbitControls, MainCamera, CLEAR_COLOR};
+use crate::camera::{self, MainCamera, CLEAR_COLOR};
 use crate::spawn::GzLoads;
+use crate::view::ViewCamera;
 use crate::GzConfig;
 
 /// How much rendering work to spend.
@@ -288,7 +289,7 @@ pub fn apply_environment(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
-    cameras: Query<(Entity, &Transform, Option<&GzOrbitControls>), With<MainCamera>>,
+    cameras: Query<(Entity, &Transform, &Projection, Option<&ViewCamera>), With<MainCamera>>,
     planets: Query<Entity, With<GzAtmosphere>>,
 ) {
     if !env.is_changed() || !env.loaded {
@@ -315,12 +316,18 @@ pub fn apply_environment(
     });
     pending.0 = None;
 
-    for (old, transform, controls) in &cameras {
-        let focus = controls.map(|c| c.target);
+    for (old, transform, projection, view) in &cameras {
         commands.entity(old).despawn();
-        let id =
-            camera::spawn_main_camera(&mut commands, &config, *transform, focus, clear_color(&env));
+        // Keep the view: pose, projection and controller state.
+        let id = camera::spawn_main_camera(
+            &mut commands,
+            &config,
+            *transform,
+            view.cloned(),
+            clear_color(&env),
+        );
         let mut cam = commands.entity(id);
+        cam.insert(projection.clone());
         if let Some(fog) = &env.fog {
             cam.insert(distance_fog(fog));
         }
@@ -491,13 +498,6 @@ pub fn cube_direction(face: usize, s: f32, t: f32) -> Vec3 {
         3 => Vec3::new(s, -1.0, -t),
         4 => Vec3::new(s, -t, 1.0),
         _ => Vec3::new(-s, -t, -1.0),
-    }
-}
-
-/// G toggles the grid.
-pub fn grid_key(keys: Res<ButtonInput<KeyCode>>, mut grid: ResMut<GzGrid>) {
-    if keys.just_pressed(KeyCode::KeyG) {
-        grid.visible = !grid.visible;
     }
 }
 
@@ -765,6 +765,34 @@ mod tests {
     }
 
     #[test]
+    fn a_respawned_camera_keeps_its_view() {
+        let mut app = scene_app(GzConfig::default());
+        app.update();
+        let world = app.world_mut();
+        let (mut t, mut p, mut v) = world
+            .query_filtered::<(&mut Transform, &mut Projection, &mut ViewCamera), With<MainCamera>>(
+            )
+            .single_mut(world)
+            .unwrap();
+        t.translation = Vec3::new(1.0, 2.0, 3.0);
+        *p = Projection::Orthographic(OrthographicProjection::default_3d());
+        v.pivot = Vec3::new(4.0, 5.0, 6.0);
+        v.snapped = Some(crate::view::SnapView::Top);
+        let first = cameras(&mut app);
+        show(&mut app, msgs::Scene::default());
+        assert_ne!(cameras(&mut app), first);
+        let world = app.world_mut();
+        let (t, p, v) = world
+            .query_filtered::<(&Transform, &Projection, &ViewCamera), With<MainCamera>>()
+            .single(world)
+            .unwrap();
+        assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert!(matches!(p, Projection::Orthographic(_)));
+        assert_eq!(v.pivot, Vec3::new(4.0, 5.0, 6.0));
+        assert_eq!(v.snapped, Some(crate::view::SnapView::Top));
+    }
+
+    #[test]
     fn each_scene_gets_a_fresh_camera_with_its_environment() {
         let mut app = scene_app(GzConfig::default());
         app.update();
@@ -931,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn g_toggles_the_grid_and_it_draws() {
+    fn a_visible_grid_draws() {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -939,22 +967,18 @@ mod tests {
             bevy::mesh::MeshPlugin,
             bevy::gizmos::GizmoPlugin,
         ))
-        .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<GzGrid>()
         .init_gizmo_group::<GridGizmos>()
         .add_systems(Startup, setup_gizmos)
-        .add_systems(Update, (grid_key, draw_grid).chain());
+        .add_systems(Update, draw_grid);
         app.update();
         let (config, _) = app
             .world()
             .resource::<GizmoConfigStore>()
             .config::<GridGizmos>();
         assert!(config.depth_bias < 0.0);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyG);
-        app.update();
-        assert!(app.world().resource::<GzGrid>().visible);
+        // G is the `overlay.grid` binding (view::controls).
+        app.world_mut().resource_mut::<GzGrid>().visible = true;
         // Drawing a visible grid runs (gizmo buffers aren't inspectable).
         app.update();
     }
