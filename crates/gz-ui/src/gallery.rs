@@ -19,6 +19,7 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use crate::brand::logo;
+use crate::focus::TextFocus;
 use crate::fonts::{span, text};
 use crate::icons::{icon, IconId};
 use crate::theme::{
@@ -968,12 +969,10 @@ fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
 /// T switches light ↔ dark (not while typing in a field).
 pub fn toggle_theme_key(
     keys: Res<ButtonInput<KeyCode>>,
-    focus: Res<InputFocus>,
-    inputs: Query<(), With<NumberInput>>,
+    typing: Res<TextFocus>,
     mut theme: ResMut<Theme>,
 ) {
-    let typing = focus.get().is_some_and(|f| inputs.contains(f));
-    if keys.just_pressed(KeyCode::KeyT) && !typing {
+    if keys.just_pressed(KeyCode::KeyT) && !typing.0 {
         theme.toggle();
     }
 }

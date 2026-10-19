@@ -12,7 +12,8 @@
 //!   `prevent_default_when_canvas_focused` ([`InputMap::prevents_default`]).
 //!   The listener is on the canvas, so it only sees keys while the canvas
 //!   has focus; text fields elsewhere on the page keep every browser
-//!   shortcut.
+//!   shortcut, and so do the UI's own text fields inside the canvas while
+//!   one has focus ([`set_text_focus`]).
 //!
 //! Listeners live as long as the page.
 
@@ -32,6 +33,15 @@ thread_local! {
     static SEEN: Cell<(bool, f32)> = const { Cell::new((false, 0.0)) };
     /// Safari's gesture scale at the last `gesturechange`.
     static GESTURE_SCALE: Cell<f64> = const { Cell::new(1.0) };
+    /// A UI text field in the canvas has keyboard focus.
+    static TEXT_FOCUS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Tells the canvas listener that a UI text field has (or lost) keyboard
+/// focus. While one has, no key's default is prevented: the viewport
+/// doesn't have focus (spec §9.6).
+pub fn set_text_focus(focused: bool) {
+    TEXT_FOCUS.with(|f| f.set(focused));
 }
 
 /// Adds the listeners right away (they don't wait for the renderer, which
@@ -141,9 +151,10 @@ fn listen(selector: &str, map: &InputMap) {
                 super_key: k.meta_key(),
             };
             let code = k.code();
-            if swallow
-                .iter()
-                .any(|(c, key)| *c == code && map.prevents_default(*key, held))
+            if !TEXT_FOCUS.with(Cell::get)
+                && swallow
+                    .iter()
+                    .any(|(c, key)| *c == code && map.prevents_default(*key, held))
             {
                 e.prevent_default();
             }

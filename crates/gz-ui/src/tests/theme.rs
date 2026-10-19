@@ -201,3 +201,40 @@ fn focus_ring_shows_only_for_visible_keyboard_focus() {
 fn the_plugin_follows_the_system_by_default() {
     assert_eq!(crate::GzUiPlugin::default().theme, ThemeMode::System);
 }
+
+#[test]
+fn text_fields_take_the_keys_from_the_viewer() {
+    use crate::focus::TextFocus;
+    use gz_bevy::view::controls::ActiveScopes;
+    use gz_bevy::view::input::Scope;
+
+    let mut app = ui_app(ThemeMode::Light);
+    app.insert_resource(ActiveScopes(vec![Scope::Global, Scope::Viewport]));
+    let field = app
+        .world_mut()
+        .spawn(crate::widgets::number_field(
+            &Theme::default(),
+            crate::widgets::AxisTag::X,
+            crate::widgets::NumberField::new(0.0),
+            false,
+        ))
+        .id();
+    let other = app.world_mut().spawn(Node::default()).id();
+    frames(&mut app, 2);
+    let input = app.world().get::<Children>(field).unwrap()[1];
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(input, FocusCause::Navigated);
+    frames(&mut app, 1);
+    assert!(app.world().resource::<TextFocus>().0);
+    assert!(app.world().resource::<ActiveScopes>().0.is_empty());
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(other, FocusCause::Navigated);
+    frames(&mut app, 1);
+    assert!(!app.world().resource::<TextFocus>().0);
+    assert_eq!(
+        app.world().resource::<ActiveScopes>().0,
+        vec![Scope::Global, Scope::Viewport]
+    );
+}

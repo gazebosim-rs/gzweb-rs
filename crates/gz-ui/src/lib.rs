@@ -11,6 +11,7 @@
 //! - [`visuals`]: hover, pressed, active and disabled looks for every
 //!   clickable widget;
 //! - [`icons`]: the icon atlas generated from `icons.json`;
+//! - [`focus`]: shortcuts stand down while a text field has focus;
 //! - [`fonts`]: Geist and Geist Mono, embedded, and the type styles;
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
@@ -19,6 +20,7 @@
 //! mode adds this plugin but shows nothing of it.
 
 pub mod brand;
+pub mod focus;
 pub mod fonts;
 pub mod gallery;
 pub mod icons;
@@ -70,6 +72,7 @@ impl Plugin for GzUiPlugin {
             .init_resource::<fonts::UiFonts>()
             .init_resource::<icons::IconAtlas>()
             .init_resource::<brand::Logos>()
+            .init_resource::<focus::TextFocus>()
             .configure_sets(
                 Update,
                 (GzUiSystems::Behaviour, GzUiSystems::Visuals).chain(),
@@ -81,6 +84,10 @@ impl Plugin for GzUiPlugin {
                     .before(InputFocusSystems::Dispatch),
             )
             .configure_sets(PostUpdate, GzUiSystems::Resolve.before(UiSystems::Prepare))
+            .add_systems(
+                PreUpdate,
+                focus::text_focus_system.after(InputFocusSystems::Dispatch),
+            )
             .add_systems(
                 Update,
                 (theme::read_os_theme, theme::follow_os_theme)
