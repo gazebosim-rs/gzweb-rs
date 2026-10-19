@@ -628,3 +628,56 @@ UI modes".
 - **Left:** pointer routing around UI nodes and `preventDefault` for
   browser chords (M2/M3, M10); layout-aware letter keys (M10); browser
   build not run.
+
+## 2026-10-19: Phase 5 M1, theme, icons, fonts and widgets
+
+Branch `feature/phase-5-m1` (from `feature/phase-5-ui`). Plan:
+`.agent/UI_PLAN.md` §4 M1; spec `design/ui/DESIGN.md` §4, §5, §9.5, §10,
+§12 item 1, §13. See DESIGN.md "UI crate (gz-ui)"; decisions D-21 to D-29.
+
+- **New crate `gz-ui`** (`GzUiPlugin`, added by gzweb in `--ui full`; no
+  shell yet). `build.rs` generates the token tables from `tokens.json` and
+  the icon atlases (89 icons × 15/17/18/20 px, 1× 53 KB and 2× 114 KB PNG)
+  from `icons.json` with resvg; `IconId` is generated. Theme resource,
+  role components, `apply_theme_system`, `button_visuals_system`, OS theme
+  from the window, focus ring.
+- **Fonts:** Geist and Geist Mono v1.8.1 from the vercel/geist-font GitHub
+  release (`geist-font-v1.8.1.zip`, sha256 matches the release digest; name
+  tables carry the Geist Project copyright and the OFL notice; the files
+  are newer builds (1.801) than the ones committed in the repo's `fonts/`
+  at the tag (1.800)). The five files `tokens.json` lists plus `OFL.txt`,
+  embedded (680 KB, 316 KB gzipped). The pre-commit text fixers skip them.
+- **Widgets** §5.1–5.16 + splitter on `bevy_ui_widgets`, with AccessKit
+  names; NumberField's expression parser; menus with keyboard navigation,
+  type-to-search and on-screen flipping; tooltip timing; slider Shift/Alt
+  steps.
+- **Gallery:** `--ui gallery` / `?ui=gallery`, `--theme`, T to switch;
+  `--screenshot` works with it (1440×900).
+- **Text fields** stand the viewer's keys down; in the browser the canvas
+  listener (`view::web::set_text_focus`) keeps browser shortcuts while one
+  has focus.
+- **Wasm payload** (release, after wasm-bindgen, not wasm-opt'd):
+  `gzweb_bg.wasm` 71.5 → 74.2 MB raw (+2.7 MB, debug names included),
+  12.75 → 13.64 MB gzipped (+0.88 MB): fonts ≈ 0.32 MB, atlases and logos
+  ≈ 0.2 MB, the rest code.
+- **Tests** (50 in gz-ui, 98% line coverage): generated tables match
+  `tokens.json`; §13 contrast pairs ≥ 4.5:1 in both themes, computed from
+  `tokens.json` (lowest: dark `text_3` on `hover`, 4.53); no colour literals
+  in `crates/gz-ui/src` outside `theme.rs`; fonts and icons as listed; every
+  atlas cell has white ink; state table and system; number parsing,
+  commit/revert/blur/scrub; slider steps; menu keyboard navigation, Esc,
+  outside click, selection, checkbox items, select; tooltip timing and cards;
+  splitter maths and drags; toggles, tree rows; headless layout heights
+  (section header 36, menu item 30, tree row 28, button 30, input 32, icon
+  buttons 32/28/rail 32); the whole gallery re-colours on a theme switch.
+- **Visual check:** release build, `--ui gallery --theme light|dark
+  --screenshot target/shots/gallery-{light,dark}.png`, compared with board
+  06 (and, in a throwaway run, open menus, the select, the Snap popover and
+  live tooltips). Colours match the tokens exactly and the component strip
+  matches the board's sizes and layout. Differences: Bevy's text is thinner
+  and lighter than the board's (dark-on-light glyphs blend in linear space);
+  one theme per screenshot instead of side by side; menu shadow lighter;
+  status chip has the spec's warning icon (the board's has none); the logo is
+  the spec's 28 px.
+- **Merged** `origin/feature/phase-5-ui` (PR #27 fixes, then main with
+  Jetty) before pushing.

@@ -42,6 +42,7 @@ gzweb-rs/
 │   ├── gz-core/     protocol, scene rules, URIs, snapshot types (no Bevy)
 │   ├── gz-collada/  COLLADA parsing into a node tree (no Bevy)
 │   ├── gz-bevy/     Bevy plugin
+│   ├── gz-ui/       the full UI: theme, icons, fonts, widgets, gallery
 │   ├── gzweb/       the app (native + wasm)
 │   └── gz-parity/   record / replay / compare tool
 ├── parity/          run.sh + js/ (gzweb reference exporter)

@@ -20,6 +20,8 @@ crates/
   gz-bevy/    Bevy plugin: drivers, asset sources, spawning, poses, camera, HUD,
               snapshot exporter, COLLADA loader; `view`: camera controller,
               key map and minimal-mode controls.
+  gz-ui/      The full UI (design/ui): theme, icons, fonts, widgets, gallery
+              (see "UI crate"). Reads gz-bevy state; never touches rendering.
   gzweb/      The app: native binary (+ headless --snapshot mode) and wasm entry.
   gz-parity/  Native tool: record / replay / compare / compare-protocol.
 parity/       run.sh driver + js/ (gzweb reference exporter, Playwright).
@@ -27,7 +29,7 @@ tests/corpus/ Recorded websocket sessions. tests/parity/allowlist.toml.
 spikes/       Standalone experiments, not in the workspace (spikes/collada).
 ```
 
-Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gzweb`,
+Dependency direction: `gz-proto ← gz-core ← gz-bevy ← gz-ui ← gzweb`,
 `gz-collada ← gz-bevy`, and `gz-core ← gz-parity`. Protocol and scene rules belong in `gz-core`, where they
 can be tested without a GPU. `gz-bevy` only instantiates them.
 
@@ -534,7 +536,7 @@ its meaning (`ui != None`).
 |---|---|---|
 | `None` | scene, rendering, connection; no input, HUD or stats subscription | `--snapshot`, `--screenshot` |
 | `Minimal` | + `view::ViewerControls` and the status text (`--no-hud` / `?hud=0` hide it) | `--ui minimal`; the browser's default (`?ui=`) |
-| `Full` | for now the same as `Minimal` (`TODO(M1)`: `gz-ui`'s `GzUiPlugin`) | `--ui full`, the native default |
+| `Full` | `Minimal` + `gz_ui::GzUiPlugin` (added by gzweb; no shell until M2) | `--ui full`, the native default |
 
 **`view::ViewCamera`** sits on the main camera next to its `Transform` and
 `Projection`: pivot, plain left-drag action (`DragAction`, Orbit by
@@ -704,6 +706,95 @@ headless Chromium against the replay server: the cancellations above, the
 chords left alone (Ctrl+R, ⌘W, plain →, Shift+Space, keys in a text
 field), a CDP ctrlKey wheel zooming to the cursor without page zoom, and
 the status lines with and without `?hud=0`.
+
+## UI crate (gz-ui)
+
+`gz_ui::GzUiPlugin` is the full mode's plugin (`.agent/UI_PLAN.md` §2.2);
+gzweb adds it for `UiMode::Full` and for the gallery. It depends on
+gz-bevy for state and the key map (`view::input::InputMap`, read through its
+public API) and never reaches into rendering. M1 has the foundation; the
+shell is M2.
+
+**Generated from the spec** (`build.rs`, DECISIONS.md D-21): `tokens.json`
+becomes `Palette` (light and dark), `ColorRole` (every colour token plus
+`Clear`), `Sizes`, `SPACE`, `radius`, `border`, `motion`, `elevation` and the
+`TypeStyle` constants, included by `src/theme.rs`; `icons.json` becomes the
+`IconId` enum and two atlas PNGs (1× and 2×, every icon at 15/17/18/20 px,
+white on transparent, rasterized with resvg/usvg/tiny-skia, which are build
+dependencies only). The layout maths (`src/icons/layout.rs`) is shared by the
+build script and the runtime. Fonts (Geist 400/500/600, Geist Mono 400/500,
+v1.8.1 from the vercel/geist-font release, OFL-1.1 with `OFL.txt`), the
+atlases and the logos are `include_bytes!`, so the browser build needs no
+asset paths.
+
+**Theme** (spec §4): `Theme { mode, is_dark, c: Palette, s: Sizes, scale }`
+is a resource. Widgets carry roles, never colours: `Fill` →
+`BackgroundColor`, `Stroke` → `BorderColor`, `Ink` → `TextColor` or the
+`ImageNode` tint, `Ring` → `Outline`, `Shadow` → `BoxShadow`, with `Opacity`
+multiplying alpha and `CaretRoles` colouring a text input's caret and
+selection. `apply_theme_system` (PostUpdate, before UI layout) re-resolves
+every role when the theme changes and otherwise only changed ones.
+`ThemeMode::System` follows `OsTheme`, read from the window's
+`window_theme` (filled by winit at creation) and `WindowThemeChanged`; winit
+asks the platform on the desktop and the `prefers-color-scheme` media query
+in the browser. `Theme::scale` drives Bevy's `UiScale` (D-23). A test
+greps `src/` for colour literals outside `theme.rs`.
+
+**Visuals** (§4.3, §5 state table): `Visuals` holds a widget's roles per
+state; `button_visuals_system` computes fill, border, content ink and content
+opacity every frame from `Hovered`, `Pressed`, `Active`, `Checked`,
+`InteractionDisabled`, `HoverOnFocus` (menu items) and `ForceState` (the
+gallery), writing only real changes. Bevy 0.20 has no `Interaction`
+component; `Hovered`/`Pressed` replace it (D-22). Content children are
+marked `Content`. `FocusRing` widgets get a 2px `accent` outline, offset 2,
+while they have visible keyboard focus.
+
+**Text**: `Type(TypeStyle)` on a text entity becomes its `TextFont` (the
+file for the weight; Geist Mono 600 falls back to 500, D-25) and
+`LetterSpacing`. `text()`/`span()` build text nodes; uppercase styles are
+capitalized there.
+
+**Widgets** (`src/widgets/`, §5.1–5.16 and §5.18): builder functions
+returning bundles, on `bevy_ui_widgets` where one exists (button, checkbox,
+radio, slider, menu, popover placement, text input), so keyboard, focus and
+AccessKit roles come from Bevy; every control gets an AccessKit name (its
+tooltip title or label). Containers (section header, segmented group, menu
+panels) take their children from the caller.
+
+- Menus (and popovers, which are menus with arbitrary content): a root with
+  the trigger (`MenuButton`) and a hidden `MenuPopup`; `on_menu_event` opens
+  and closes it. Bevy's `Popover` places it (preferred side, the mirror, then
+  end-aligned) so it flips to stay on screen; Bevy's menu closes it when
+  focus leaves (outside click), on Esc and on activation; arrows, Home and
+  End move; `on_menu_typing` adds type-to-search. Shortcut text comes from
+  `InputMap` (`shortcut_label`, D-26).
+- Tooltips: `TooltipTimer` (500 ms, at once within 300 ms of the last one
+  closing, hidden by a press) spawns a floating card on the trigger with an
+  8 px arrow that `orient_tooltip_arrows` points back at it after placement.
+- NumberField: a wrapper around Bevy's `TextInput` (D-27). Enter and blur
+  evaluate `widgets::expr` (`+ - * /`, parentheses, `pi`, `%`, units into
+  the field's unit), Esc reverts, an invalid value turns the border `danger`;
+  dragging the tag scrubs (Shift ×10, Alt ÷10). `NumberCommit` events report
+  values (`is_final` false while scrubbing).
+- Slider: Bevy's slider; `modifier_steps` (PreUpdate, before focus
+  dispatch) scales `SliderStep` while Shift or Alt is held.
+- Splitter: drags set the pane's width or height within min/max.
+- `focus::text_focus_system`: while a text field has focus the viewer's
+  `ActiveScopes` are emptied (single-letter keys do nothing, §13), and in the
+  browser `view::web::set_text_focus` stops the canvas preventing any key's
+  default.
+
+**Gallery** (`gzweb --ui gallery`, `?ui=gallery`; D-28): every widget and,
+in a states grid, every state of the clickable ones, laid out after board
+06 in one theme; T or the header button switches theme. No connection.
+`--screenshot` captures it in a 1440×900 window after 30 frames.
+
+**Tests** run a headless app (no renderer or winit; a window entity, a UI
+camera with a fixed render target, picking with hover updates off so tests
+set `Hovered`) in which bevy_ui lays out: widget heights against the spec,
+theme switching across the whole gallery, menus driven by `KeyboardInput`,
+number fields, tooltips, splitters, plus the spec checks from the data files
+(tokens, §13 contrast pairs, fonts, icons).
 
 ## Headless snapshot mode
 
