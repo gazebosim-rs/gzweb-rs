@@ -34,9 +34,9 @@ pub enum UiMode {
     /// The 3D view with [`view::ViewerControls`]: camera, viewport and sim
     /// keys, and the status text.
     Minimal,
-    /// The whole workbench: the app adds `gz_ui::GzUiPlugin` on top of
+    /// The whole workbench: the app adds `gz_ui`'s plugins on top of
     /// [`UiMode::Minimal`] (gz-ui depends on this crate, not the other way
-    /// round). Until its shell lands (M2) it shows nothing more.
+    /// round). Its status bar replaces the status text.
     #[default]
     Full,
 }
@@ -75,7 +75,8 @@ pub struct GzConfig {
     /// `--screenshot`, which don't take input: no controls, HUD or sim
     /// stats.
     pub ui: UiMode,
-    /// The status text overlay, when [`GzConfig::interactive`].
+    /// The status text overlay in [`UiMode::Minimal`] (the full UI has its
+    /// status bar instead).
     pub hud: bool,
     /// A GPU renders the scene (false for `--snapshot`); without one, GPU-only
     /// work such as environment maps is skipped.
@@ -128,6 +129,7 @@ impl Plugin for GzWebPlugin {
                 affects_lightmapped_meshes: true,
             })
             .add_message::<connection::GzCommand>()
+            .add_message::<connection::GzReconnect>()
             .add_message::<connection::GzPublish>()
             .add_message::<connection::GzServiceReply>()
             .init_resource::<connection::GzInbox>()
@@ -178,23 +180,26 @@ impl Plugin for GzWebPlugin {
                 mode: self.config.ui,
             });
         }
+        let hud = self.config.ui == UiMode::Minimal && self.config.hud;
         // The host page's own status lines go with the HUD.
         #[cfg(target_arch = "wasm32")]
-        if !(self.config.interactive() && self.config.hud) {
+        if !hud {
             hud::remove_dom_status();
         }
-        if self.config.interactive() && self.config.hud {
-            app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
-                .add_systems(Startup, hud::spawn_hud)
-                .add_systems(
-                    Update,
-                    (
-                        hud::update_fps,
-                        hud::update_adapter,
-                        hud::update_status,
-                        hud::update_sim,
-                    ),
-                );
+        // The frame rate: the HUD's and the full UI's status bar.
+        if self.config.interactive() {
+            app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
+        }
+        if hud {
+            app.add_systems(Startup, hud::spawn_hud).add_systems(
+                Update,
+                (
+                    hud::update_fps,
+                    hud::update_adapter,
+                    hud::update_status,
+                    hud::update_sim,
+                ),
+            );
         }
     }
 }
@@ -313,7 +318,9 @@ mod tests {
         for ui in [UiMode::Minimal, UiMode::Full] {
             let mut app = plugin_app(ui, true);
             assert_eq!(count::<view::ViewCamera>(&mut app), 1);
-            assert_eq!(count::<hud::StatusText>(&mut app), 1);
+            // The full UI's status bar replaces the status text.
+            let hud = usize::from(ui == UiMode::Minimal);
+            assert_eq!(count::<hud::StatusText>(&mut app), hud);
             assert!(app
                 .world()
                 .contains_resource::<bevy::diagnostic::DiagnosticsStore>());

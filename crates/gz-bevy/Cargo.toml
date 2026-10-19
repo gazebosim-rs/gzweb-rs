@@ -51,6 +51,7 @@ features = [
     "MouseEvent",
     "UiEvent",
     "WheelEvent",
+    "Storage",
 ]
 
 [lints]

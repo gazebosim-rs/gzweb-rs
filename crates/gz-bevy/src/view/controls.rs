@@ -5,7 +5,9 @@
 //! pans, wheel or middle drag zooms, Ctrl+wheel and pinch zoom to the
 //! cursor, and Space held with a left drag pans. Keys come from the
 //! [`InputMap`] in the scopes the mode enables. In minimal mode there are
-//! no UI nodes, so the whole window is the view.
+//! no UI nodes, so the whole window is the view. In the full UI,
+//! [`ViewRouting`] (written by the shell) says whether the pointer is over
+//! the view and whether the view has the keys.
 //!
 //! Trackpads (DECISIONS.md D-18): a native pinch (`PinchGesture`, macOS)
 //! zooms to the cursor, and a native two-finger scroll, which arrives as
@@ -23,7 +25,8 @@ use bevy::prelude::*;
 
 use super::input::{Action, InputMap, KeyMods, Platform, Scope};
 use super::{
-    apply_view_commands, DragAction, Selection, ViewCamera, ViewCommand, ViewOp, ZOOM_STEP,
+    apply_view_commands, apply_view_placement, view_rect, DragAction, Selection, ViewCamera,
+    ViewCommand, ViewOp, ViewOrigin, ViewPlacement, ZOOM_STEP,
 };
 use crate::connection::{GzCommand, GzStatus};
 use crate::render::GzGrid;
@@ -69,17 +72,57 @@ impl ViewerControls {
     pub fn scopes(mode: UiMode) -> Vec<Scope> {
         match mode {
             UiMode::None => Vec::new(),
-            // TODO(M1): the full UI enables every scope, routes keys by focus
-            // and hover, and gives W A S D to an armed Teleop panel. Until
-            // then it is the minimal mode.
+            // The full UI routes viewport keys by hover and focus
+            // (`ViewRouting`); W A S D stay the fly keys until Teleop (M7)
+            // can take them while armed.
             UiMode::Minimal | UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
         }
     }
 }
 
+/// Where [`apply_view_placement`] runs: after UI layout, before culling.
+/// The full UI writes [`ViewPlacement`] before it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ViewPlacementSystems;
+
 /// The key scopes live right now.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct ActiveScopes(pub Vec<Scope>);
+
+/// Where the camera's input may come from (spec §3.4, `.agent/UI_PLAN.md`
+/// §2.2 pointer routing). Minimal mode has no UI, so both stay true; the
+/// full UI's shell sets them every frame.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ViewRouting {
+    /// The pointer is over the view and not over any UI node: presses,
+    /// the wheel and gestures reach the camera. A drag that started in the
+    /// view keeps going over the UI.
+    pub pointer: bool,
+    /// Viewport-scope keys (and the minimal fly keys) apply: the pointer is
+    /// over the view, or the view has focus.
+    pub keys: bool,
+}
+
+impl Default for ViewRouting {
+    fn default() -> Self {
+        Self {
+            pointer: true,
+            keys: true,
+        }
+    }
+}
+
+impl ViewRouting {
+    /// The scopes that apply to keys right now: `active` without the
+    /// view's own scopes when the view doesn't have the keys.
+    pub fn key_scopes(&self, active: &[Scope]) -> Vec<Scope> {
+        active
+            .iter()
+            .copied()
+            .filter(|s| self.keys || !matches!(s, Scope::Viewport | Scope::Minimal))
+            .collect()
+    }
+}
 
 /// What the page saw of this frame's wheel and gesture events that Bevy's
 /// don't carry. Filled by `view::web` in the browser.
@@ -125,6 +168,8 @@ impl Plugin for ViewerControls {
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
             .init_resource::<BrowserWheel>()
+            .init_resource::<ViewRouting>()
+            .init_resource::<ViewPlacement>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
             .insert_resource(ActiveScopes(Self::scopes(self.mode)))
@@ -142,6 +187,16 @@ impl Plugin for ViewerControls {
                     // this frame's commands go in first.
                     .before(crate::render::apply_environment),
             );
+        app.configure_sets(
+            PostUpdate,
+            ViewPlacementSystems
+                .after(bevy::ui::UiSystems::Layout)
+                .before(bevy::camera::visibility::VisibilitySystems::UpdateFrusta),
+        )
+        .add_systems(
+            PostUpdate,
+            apply_view_placement.in_set(ViewPlacementSystems),
+        );
         #[cfg(target_arch = "wasm32")]
         super::web::install(app);
     }
@@ -158,16 +213,24 @@ struct Target<'a> {
     scale: f32,
 }
 
-fn target<'a>(
-    windows: &Query<&Window>,
-    views: &'a Query<(Entity, &ViewCamera, &Camera)>,
-) -> Option<Target<'a>> {
+/// The views the controls drive.
+pub type Views<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static ViewCamera,
+        &'static Camera,
+        Option<&'static ViewOrigin>,
+    ),
+>;
+
+fn target<'a>(windows: &Query<&Window>, views: &'a Views) -> Option<Target<'a>> {
     let window = windows.single().ok()?;
-    let (view, camera, cam) = views.single().ok()?;
-    let origin = cam.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min);
-    let size = cam
-        .logical_viewport_size()
-        .unwrap_or(Vec2::new(window.width(), window.height()));
+    let (view, camera, cam, placed) = views.single().ok()?;
+    let rect = view_rect(cam, placed);
+    let origin = rect.map_or(Vec2::ZERO, |r| r.min);
+    let size = rect.map_or(Vec2::new(window.width(), window.height()), |r| r.size());
     Some(Target {
         view,
         camera,
@@ -301,11 +364,12 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
 #[allow(clippy::too_many_arguments)]
 pub fn mouse_input(
     windows: Query<&Window>,
-    views: Query<(Entity, &ViewCamera, &Camera)>,
+    views: Views,
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
+    routing: Res<ViewRouting>,
     mut wheel: WheelInput,
     mut state: ResMut<ControlState>,
     mut out: MessageWriter<ViewCommand>,
@@ -315,6 +379,7 @@ pub fn mouse_input(
         state.drag = None;
         return;
     };
+    let scopes = routing.key_scopes(&scopes.0);
     let view = target.view;
     let cursor = target.cursor;
     let send = |out: &mut MessageWriter<ViewCommand>, op| {
@@ -324,13 +389,13 @@ pub fn mouse_input(
     if state.drag.is_some_and(|d| !buttons.pressed(d.button)) {
         state.drag = None;
     }
-    if state.drag.is_none() {
+    if state.drag.is_none() && routing.pointer {
         let pressed = [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
             .into_iter()
             .find(|b| buttons.just_pressed(*b));
         if let (Some(button), Some(at)) = (pressed, cursor) {
             let gesture = match button {
-                MouseButton::Left if map.holding(&keys, &scopes.0, Action::PanHold) => {
+                MouseButton::Left if map.holding(&keys, &scopes, Action::PanHold) => {
                     DragAction::Pan
                 }
                 MouseButton::Left => target.camera.drag_action,
@@ -361,6 +426,11 @@ pub fn mouse_input(
         drag.last = cursor;
     }
 
+    if !routing.pointer {
+        // The wheel and gestures belong to the UI under the pointer.
+        wheel.clear();
+        return;
+    }
     let ctrl = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
     let input = read_wheel(
         &mut wheel,
@@ -395,11 +465,12 @@ pub fn mouse_input(
 #[allow(clippy::too_many_arguments)]
 pub fn key_input(
     windows: Query<&Window>,
-    views: Query<(Entity, &ViewCamera, &Camera)>,
+    views: Views,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
+    routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
     status: Option<Res<GzStatus>>,
     mut focus_lost: MessageReader<KeyboardFocusLost>,
@@ -409,8 +480,9 @@ pub fn key_input(
     mut sim_out: MessageWriter<GzCommand>,
 ) {
     let now = time.elapsed_secs_f64();
+    let scopes = routing.key_scopes(&scopes.0);
     let mut fired: Vec<Action> = map
-        .just_pressed(&keys, &scopes.0)
+        .just_pressed(&keys, &scopes)
         .filter_map(|b| b.action)
         .collect();
 
@@ -420,9 +492,7 @@ pub fn key_input(
         state.tap = None;
         state.under_command.clear();
     } else {
-        tap(
-            &keys, &buttons, &map, &scopes.0, now, &mut state, &mut fired,
-        );
+        tap(&keys, &buttons, &map, &scopes, now, &mut state, &mut fired);
     }
 
     let target = target(&windows, &views);
@@ -511,17 +581,20 @@ fn tap(
 
 /// Held fly keys → one [`ViewOp::Fly`] per frame, for the frame's duration
 /// (at most [`MAX_FLY_SECS`]).
+#[allow(clippy::too_many_arguments)]
 pub fn fly_input(
     windows: Query<&Window>,
-    views: Query<(Entity, &ViewCamera, &Camera)>,
+    views: Views,
     keys: Res<ButtonInput<KeyCode>>,
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
+    routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
+    let scopes = routing.key_scopes(&scopes.0);
     let dir: Vec3 = map
-        .held(&keys, &scopes.0)
+        .held(&keys, &scopes)
         .filter_map(|b| match b.action {
             Some(Action::Fly(d)) => Some(d.vector()),
             _ => None,

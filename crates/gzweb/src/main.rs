@@ -184,6 +184,7 @@ fn parse_args(
             screenshot,
             settle_secs: settle_ms / 1000.0,
             timeout_secs: timeout_ms / 1000.0,
+            capture_at_secs: None,
         }),
         http_mirror,
         gallery,

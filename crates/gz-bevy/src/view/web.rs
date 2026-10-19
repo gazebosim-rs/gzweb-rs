@@ -37,6 +37,27 @@ thread_local! {
     static TEXT_FOCUS: Cell<bool> = const { Cell::new(false) };
 }
 
+/// The `localStorage` key of the last server the page connected to
+/// (spec §7.10: the connect card's address is prefilled from it).
+pub const LAST_URL_KEY: &str = "gzweb.last_url";
+
+/// The last server the page connected to, if the browser kept it.
+pub fn last_url() -> Option<String> {
+    web_sys::window()?
+        .local_storage()
+        .ok()??
+        .get_item(LAST_URL_KEY)
+        .ok()?
+        .filter(|u| !u.is_empty())
+}
+
+/// Remembers `url` as the last server connected to.
+pub fn remember_url(url: &str) {
+    if let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) {
+        let _ = storage.set_item(LAST_URL_KEY, url);
+    }
+}
+
 /// Tells the canvas listener that a UI text field has (or lost) keyboard
 /// focus. While one has, no key's default is prevented: the viewport
 /// doesn't have focus (spec §9.6).

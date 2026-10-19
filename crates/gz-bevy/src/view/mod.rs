@@ -20,7 +20,7 @@ pub mod input;
 pub mod web;
 
 use bevy::camera::primitives::Aabb;
-use bevy::camera::ScalingMode;
+use bevy::camera::{RenderTarget, ScalingMode};
 use bevy::ecs::system::SystemParam;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
 use bevy::prelude::*;
@@ -372,6 +372,178 @@ pub fn viewport_ray(projection: &Projection, t: &Transform, size: Vec2, at: Vec2
     Some(Ray3d::new(t.transform_point(near), dir))
 }
 
+/// Where `ray` meets the ground (Gazebo z = 0, Bevy y = 0) in front of
+/// its origin and within `far` of it.
+pub fn ground_point(ray: Ray3d, far: f32) -> Option<Vec3> {
+    let t = -ray.origin.y / ray.direction.y;
+    (t.is_finite() && t > 0.0 && t <= far).then(|| ray.origin + ray.direction * t)
+}
+
+/// The Gazebo x, y on the ground plane under `cursor` (logical pixels in
+/// the window), as the view picks it: the status bar's cursor readout.
+pub fn cursor_on_ground(
+    camera: &Camera,
+    origin: Option<&ViewOrigin>,
+    projection: &Projection,
+    t: &Transform,
+    cursor: Vec2,
+) -> Option<Vec2> {
+    let rect = view_rect(camera, origin)?;
+    let at = cursor - rect.min;
+    if at.x < 0.0 || at.y < 0.0 || at.x > rect.width() || at.y > rect.height() {
+        return None;
+    }
+    let far = match projection {
+        Projection::Perspective(p) => p.far,
+        Projection::Orthographic(o) => o.far,
+        Projection::Custom(_) => f32::MAX,
+    };
+    let p = ground_point(viewport_ray(projection, t, rect.size(), at)?, far)?;
+    let gz = gz_to_bevy().inverse() * p;
+    Some(Vec2::new(gz.x, gz.y))
+}
+
+/// Where the full UI shows the 3D view (spec §9.3). The shell writes
+/// `rect` after UI layout; [`apply_view_placement`] then renders the main
+/// camera into [`ViewPlacement::image`], sized to the rect in physical
+/// pixels, which the shell shows in the view's node. Without a rect (the
+/// minimal mode) the camera renders to the window as before.
+///
+/// Rendering to a texture rather than to a `Camera::viewport` of the
+/// window: Bevy 0.20's TAA samples the whole window-sized main texture and
+/// draws it into the viewport, squeezing the scene (DECISIONS.md D-31).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct ViewPlacement {
+    /// The view in the window, in logical pixels.
+    pub rect: Option<Rect>,
+    /// The window's physical pixels per logical pixel.
+    pub scale: f32,
+    /// The texture the main camera renders into while placed.
+    pub image: Option<Handle<Image>>,
+}
+
+impl ViewPlacement {
+    /// The texture size for the rect: its physical size, at least 1×1.
+    pub fn physical_size(&self) -> Option<UVec2> {
+        let r = self.rect?;
+        Some(
+            (r.size() * self.scale.max(f32::EPSILON))
+                .round()
+                .as_uvec2()
+                .max(UVec2::ONE),
+        )
+    }
+}
+
+/// Where a placed camera's image sits in the window (logical pixels), for
+/// pointer maths ([`view_rect`]).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ViewOrigin(pub Vec2);
+
+/// A camera's view in window logical pixels: its image's place when it is
+/// placed, else its viewport (or the whole target).
+pub fn view_rect(camera: &Camera, origin: Option<&ViewOrigin>) -> Option<Rect> {
+    let size = camera.logical_viewport_size()?;
+    let min = origin.map_or_else(
+        || camera.logical_viewport_rect().map_or(Vec2::ZERO, |r| r.min),
+        |o| o.0,
+    );
+    Some(Rect::from_corners(min, min + size))
+}
+
+/// A render-target texture of `size` (no CPU copy: it is only drawn into).
+pub fn view_texture(size: UVec2) -> Image {
+    let mut image = Image::new_target_texture(
+        size.x,
+        size.y,
+        bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    image.data = None;
+    // Bevy's target textures copy their old contents into the resized
+    // texture, which needs COPY_SRC; a view redraws every frame anyway.
+    image.copy_on_resize = false;
+    image
+}
+
+/// Renders the main camera into the placed rect's texture: creates or
+/// resizes it, points the camera at it, and updates the camera's target
+/// size and projection in the same frame, so nothing renders at the old
+/// size after a resize or a splitter drag (spec §9.3). Runs after UI
+/// layout and before frustum culling.
+#[allow(clippy::type_complexity)]
+pub fn apply_view_placement(
+    mut placement: ResMut<ViewPlacement>,
+    images: Option<ResMut<Assets<Image>>>,
+    mut cameras: Query<
+        (
+            Entity,
+            &mut Camera,
+            &mut Projection,
+            &mut RenderTarget,
+            Option<&ViewOrigin>,
+        ),
+        With<crate::camera::MainCamera>,
+    >,
+    mut commands: Commands,
+) {
+    let (Some(rect), Some(size), Some(mut images)) =
+        (placement.rect, placement.physical_size(), images)
+    else {
+        return;
+    };
+    let scale = placement.scale.max(f32::EPSILON);
+    let handle = match &placement.image {
+        Some(h) => {
+            if let Some(image) = images.get(h) {
+                if image.size() != size {
+                    if let Some(mut image) = images.get_mut(h) {
+                        image.resize(bevy::render::render_resource::Extent3d {
+                            width: size.x,
+                            height: size.y,
+                            depth_or_array_layers: 1,
+                        });
+                    }
+                }
+            }
+            h.clone()
+        }
+        None => {
+            let h = images.add(view_texture(size));
+            placement.image = Some(h.clone());
+            h
+        }
+    };
+    for (e, mut camera, mut projection, mut target, origin) in &mut cameras {
+        let placed = matches!(&*target, RenderTarget::Image(t) if t.handle == handle && t.scale_factor == scale);
+        if !placed {
+            *target = RenderTarget::Image(bevy::camera::ImageRenderTarget {
+                handle: handle.clone(),
+                scale_factor: scale,
+            });
+        }
+        let info = bevy::camera::RenderTargetInfo {
+            physical_size: size,
+            scale_factor: scale,
+        };
+        let stale = camera
+            .computed
+            .target_info
+            .as_ref()
+            .is_none_or(|t| t.physical_size != size || t.scale_factor != scale);
+        if stale || camera.viewport.is_some() {
+            camera.viewport = None;
+            camera.computed.target_info = Some(info);
+            let logical = size.as_vec2() / scale;
+            projection.update(logical.x, logical.y);
+            camera.computed.clip_from_view = projection.get_clip_from_view();
+        }
+        if origin.map(|o| o.0) != Some(rect.min) {
+            commands.entity(e).insert(ViewOrigin(rect.min));
+        }
+    }
+}
+
 /// A camera pose that animates well: the pivot, the rotation, and the
 /// pivot's position in the camera's frame, plus the orthographic height.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -533,8 +705,7 @@ impl ViewScene<'_, '_> {
         if let Some((_, p)) = self.hit(ray) {
             return Some(p);
         }
-        let t = -ray.origin.y / ray.direction.y;
-        (t.is_finite() && t > 0.0 && t <= far).then(|| ray.origin + ray.direction * t)
+        ground_point(ray, far)
     }
 
     /// Bounds of every mesh in `entity`'s subtree. Hidden subtrees are left

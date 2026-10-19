@@ -1,8 +1,8 @@
 //! Drives the websocket: driver bytes → [`Transport`] → Bevy resources.
 //!
 //! Also owns reconnecting (with backoff, unless the key or URL was rejected)
-//! and the message API: [`GzCommand`] in, [`GzPublish`] and
-//! [`GzServiceReply`] out.
+//! and the message API: [`GzCommand`] and [`GzReconnect`] in, [`GzPublish`]
+//! and [`GzServiceReply`] out.
 
 use bevy::prelude::*;
 use gz_core::control;
@@ -15,8 +15,8 @@ use crate::assets::WsAssetStore;
 use crate::driver::{self, Driver, DriverEvent};
 use crate::GzConfig;
 
-/// Opens a new driver to the configured server.
-type Connector = Box<dyn Fn() -> Driver>;
+/// Opens a new driver to a server URL.
+type Connector = Box<dyn Fn(&str) -> Driver>;
 
 /// The live connection. Non-`Send` because the wasm socket is a JS object.
 pub struct GzConnection {
@@ -24,6 +24,8 @@ pub struct GzConnection {
     /// `None` after a handshake timeout dropped it.
     driver: Option<Driver>,
     connector: Connector,
+    /// The server it connects to (changed by [`GzReconnect`]).
+    url: String,
     /// Why retrying would fail the same way (rejected key or URL).
     fatal: Option<String>,
     /// When the socket opened, for the handshake timeout.
@@ -35,8 +37,12 @@ pub struct GzConnection {
 pub struct SimStats {
     pub paused: bool,
     pub sim_time: f64,
+    /// Seconds of real time the simulation has run.
+    pub real_time: f64,
     pub real_time_factor: f64,
     pub iterations: u64,
+    /// Seconds per iteration; Gazebo reports 0 while paused.
+    pub step_size: f64,
 }
 
 /// Connection state visible to the rest of the app.
@@ -52,6 +58,9 @@ pub struct GzStatus {
     /// Reconnect attempts since the last time the scene was ready.
     pub attempts: u32,
     pub sim: Option<SimStats>,
+    /// A socket is open or opening (false once it closes, until the next
+    /// attempt).
+    pub attempting: bool,
 }
 
 impl GzStatus {
@@ -64,6 +73,7 @@ impl GzStatus {
             reconnect_at: None,
             attempts: 0,
             sim: None,
+            attempting: false,
         }
     }
 }
@@ -101,6 +111,14 @@ pub struct GzPublish {
     pub topic: String,
     pub msg_type: String,
     pub payload: Vec<u8>,
+}
+
+/// Connect again now: to `url`, or to the current server when `None` (the
+/// UI's "Retry now" and "Connect"). Cancels a pending backoff and clears a
+/// rejection, so a corrected key or URL can be tried.
+#[derive(Message, Debug, Clone, PartialEq, Eq, Default)]
+pub struct GzReconnect {
+    pub url: Option<String>,
 }
 
 /// The reply to a service call (including sim control).
@@ -144,13 +162,17 @@ pub fn connect(world: &mut World) {
     info!("Connecting to {}", config.url);
     let mut status = GzStatus::new(config.url.clone());
     match connector(&config) {
-        Ok(connector) => world.insert_non_send(GzConnection {
-            transport: Transport::new(config.key.clone()),
-            driver: Some(connector()),
-            connector,
-            fatal: None,
-            opened_at: None,
-        }),
+        Ok(connector) => {
+            status.attempting = true;
+            world.insert_non_send(GzConnection {
+                transport: Transport::new(config.key.clone()),
+                driver: Some(connector(&config.url)),
+                connector,
+                url: config.url.clone(),
+                fatal: None,
+                opened_at: None,
+            });
+        }
         Err(e) => {
             error!("{e}");
             status.status = Status::Error(e);
@@ -163,14 +185,12 @@ pub fn connect(world: &mut World) {
 fn connector(config: &GzConfig) -> Result<Connector, String> {
     // Built once, not on every reconnect.
     let tls = gz_core::net::tls_config(config.ca_cert.as_deref())?;
-    let url = config.url.clone();
-    Ok(Box::new(move || driver::connect(&url, Some(tls.clone()))))
+    Ok(Box::new(move |url| driver::connect(url, Some(tls.clone()))))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn connector(config: &GzConfig) -> Result<Connector, String> {
-    let url = config.url.clone();
-    Ok(Box::new(move || driver::connect(&url)))
+fn connector(_config: &GzConfig) -> Result<Connector, String> {
+    Ok(Box::new(driver::connect))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -180,6 +200,7 @@ pub fn pump(
     store: Res<WsAssetStore>,
     time: Res<Time<Real>>,
     mut commands: MessageReader<GzCommand>,
+    mut reconnects: MessageReader<GzReconnect>,
     mut publishes: MessageWriter<GzPublish>,
     mut replies: MessageWriter<GzServiceReply>,
     mut status: ResMut<GzStatus>,
@@ -189,14 +210,40 @@ pub fn pump(
     let conn = &mut *conn;
     let now = time.elapsed_secs_f64();
 
-    if status.reconnect_at.is_some_and(|at| now >= at) {
+    let mut asked = false;
+    for r in reconnects.read() {
+        asked = true;
+        match &r.url {
+            Some(url) if *url != conn.url => {
+                conn.url.clone_from(url);
+                status.url.clone_from(url);
+                status.attempts = 0;
+            }
+            _ => status.attempts += 1,
+        }
+    }
+    if asked {
+        // Dropping the old driver closes its socket; its close isn't
+        // reported, so the transport is closed here.
+        conn.driver = None;
+        conn.fatal = None;
+        conn.opened_at = None;
+        conn.transport.on_close(None);
+        store.fail_all("reconnecting");
+        status.sim = None;
+        status.reconnect_at = None;
+        info!("Connecting to {}", conn.url);
+        conn.driver = Some((conn.connector)(&conn.url));
+        status.attempting = true;
+    } else if status.reconnect_at.is_some_and(|at| now >= at) {
         status.reconnect_at = None;
         status.attempts += 1;
         info!(
             "Reconnecting to {} (attempt {})",
             status.url, status.attempts
         );
-        conn.driver = Some((conn.connector)());
+        conn.driver = Some((conn.connector)(&conn.url));
+        status.attempting = true;
     }
 
     let mut closed = None;
@@ -233,6 +280,7 @@ pub fn pump(
         conn.transport.on_close(err);
         store.fail_all("connection closed");
         status.sim = None;
+        status.attempting = false;
         if config.reconnect && conn.fatal.is_none() {
             let wait = backoff(status.attempts);
             info!("Reconnecting in {wait:.1} s");
@@ -440,8 +488,10 @@ fn sim_stats(s: &msgs::WorldStatistics) -> SimStats {
     SimStats {
         paused: s.paused,
         sim_time: secs(&s.sim_time),
+        real_time: secs(&s.real_time),
         real_time_factor: s.real_time_factor,
         iterations: s.iterations,
+        step_size: secs(&s.step_size),
     }
 }
 
@@ -482,7 +532,7 @@ mod tests {
                 .try_init();
             let drivers = Rc::new(RefCell::new(Vec::new()));
             let made = drivers.clone();
-            let connector: Connector = Box::new(move || {
+            let connector: Connector = Box::new(move |_url| {
                 let (driver, events, sent) = driver::fake();
                 made.borrow_mut().push((events, sent));
                 driver
@@ -490,8 +540,9 @@ mod tests {
             let mut world = World::new();
             world.insert_non_send(GzConnection {
                 transport: Transport::new(config.key.clone()),
-                driver: Some(connector()),
+                driver: Some(connector("ws://test")),
                 connector,
+                url: "ws://test".into(),
                 fatal: None,
                 opened_at: None,
             });
@@ -500,6 +551,7 @@ mod tests {
             world.insert_resource(Time::<Real>::default());
             world.insert_resource(GzInbox::default());
             world.init_resource::<Messages<GzCommand>>();
+            world.init_resource::<Messages<GzReconnect>>();
             world.init_resource::<Messages<GzPublish>>();
             world.init_resource::<Messages<GzServiceReply>>();
             world.insert_resource(GzStatus::new("ws://test"));
@@ -730,6 +782,11 @@ mod tests {
                 sec: 3,
                 nsec: 500_000_000,
             }),
+            real_time: Some(msgs::Time { sec: 7, nsec: 0 }),
+            step_size: Some(msgs::Time {
+                sec: 0,
+                nsec: 500_000_000,
+            }),
             ..Default::default()
         };
         h.msg(publish(
@@ -742,8 +799,10 @@ mod tests {
             Some(SimStats {
                 paused: true,
                 sim_time: 3.5,
+                real_time: 7.0,
                 real_time_factor: 0.5,
                 iterations: 42,
+                step_size: 0.5,
             })
         );
         h.msg(publish(
@@ -997,6 +1056,46 @@ mod tests {
     }
 
     #[test]
+    fn reconnect_now_to_the_same_or_another_server() {
+        let mut h = Harness::with(GzConfig {
+            ui: crate::UiMode::None,
+            reconnect: true,
+            ..Default::default()
+        });
+        assert_eq!(h.drivers.borrow().len(), 1);
+        h.feed(DriverEvent::Rejected("invalid URL: x".into()));
+        let status = h.world.resource::<GzStatus>();
+        assert!(!status.attempting && status.reconnect_at.is_none());
+        // Retry now: same server, a new driver, the rejection forgotten.
+        h.world.write_message(GzReconnect::default());
+        h.run();
+        assert_eq!(h.drivers.borrow().len(), 2);
+        let status = h.world.resource::<GzStatus>();
+        assert!(status.attempting);
+        assert_eq!((status.attempts, status.url.as_str()), (1, "ws://test"));
+        h.world.resource_mut::<Messages<GzReconnect>>().clear();
+        // A failure now schedules a retry again.
+        h.feed(DriverEvent::Closed(Some("refused".into())));
+        assert!(h.world.resource::<GzStatus>().reconnect_at.is_some());
+        // Another server: the count restarts and the backoff is cancelled.
+        h.world.write_message(GzReconnect {
+            url: Some("ws://other:9002".into()),
+        });
+        h.run();
+        assert_eq!(h.drivers.borrow().len(), 3);
+        let status = h.world.resource::<GzStatus>();
+        assert_eq!(
+            (status.attempts, status.url.as_str()),
+            (0, "ws://other:9002")
+        );
+        assert_eq!(status.reconnect_at, None);
+        assert_eq!(h.status(), Status::Disconnected);
+        h.world.resource_mut::<Messages<GzReconnect>>().clear();
+        h.ready();
+        assert_eq!(h.status(), Status::Ready);
+    }
+
+    #[test]
     fn a_rejected_key_is_not_retried() {
         let mut h = Harness::with(GzConfig {
             key: Some("k".into()),
@@ -1075,9 +1174,11 @@ mod tests {
         world.insert_resource(Time::<Real>::default());
         world.insert_resource(GzInbox::default());
         world.init_resource::<Messages<GzCommand>>();
+        world.init_resource::<Messages<GzReconnect>>();
         world.init_resource::<Messages<GzPublish>>();
         world.init_resource::<Messages<GzServiceReply>>();
         world.insert_resource(GzStatus::new(""));
+        world.write_message(GzReconnect::default());
         world.run_system_once(pump).unwrap();
     }
 }

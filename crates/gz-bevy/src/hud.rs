@@ -375,8 +375,10 @@ mod tests {
         SimStats {
             paused,
             sim_time: 1.234,
+            real_time: 1.25,
             real_time_factor: 0.987,
             iterations: 1234,
+            step_size: 0.001,
         }
     }
 
