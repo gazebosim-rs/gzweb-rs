@@ -719,15 +719,15 @@ shell is M2.
 becomes `Palette` (light and dark), `ColorRole` (every colour token plus
 `Clear`), `Sizes`, `SPACE`, `radius`, `border`, `motion`, `elevation` and the
 `TypeStyle` constants, included by `src/theme.rs`; `icons.json` becomes the
-`IconId` enum and two atlas PNGs (1× and 2×, every icon at 15/17/18/20 px,
-white on transparent, rasterized with resvg/usvg/tiny-skia, which are build
+`IconId` enum and two atlas PNGs (1× and 2×, every icon at 10/12/13/14/15/
+17/18/20/24 px, white glyphs on white transparent texels, D-44, rasterized with resvg/usvg/tiny-skia, which are build
 dependencies only). The layout maths (`src/icons/layout.rs`) is shared by the
 build script and the runtime. Fonts (Geist 400/500/600, Geist Mono 400/500,
 v1.8.1 from the vercel/geist-font release, OFL-1.1 with `OFL.txt`), the
 atlases and the logos are `include_bytes!`, so the browser build needs no
 asset paths.
 
-**Theme** (spec §4): `Theme { mode, is_dark, c: Palette, s: Sizes, scale }`
+**Theme** (spec §4): `Theme { mode, is_dark, c: Palette, s: Sizes, scale, os_dark }`
 is a resource. Widgets carry roles, never colours: `Fill` →
 `BackgroundColor`, `Stroke` → `BorderColor`, `Ink` → `TextColor` or the
 `ImageNode` tint, `Ring` → `Outline`, `Shadow` → `BoxShadow`, with `Opacity`
@@ -737,17 +737,25 @@ every role when the theme changes and otherwise only changed ones.
 `ThemeMode::System` follows `OsTheme`, read from the window's
 `window_theme` (filled by winit at creation) and `WindowThemeChanged`; winit
 asks the platform on the desktop and the `prefers-color-scheme` media query
-in the browser. `Theme::scale` drives Bevy's `UiScale` (D-23). A test
-greps `src/` for colour literals outside `theme.rs`.
+in the browser; the theme keeps the last OS value, so `set_mode(System)`
+needs no argument. `Theme::scale` drives Bevy's `UiScale` (D-23). A test
+tokenizes `src/` for colour literals outside `theme.rs` (colour-space types,
+`Color::` other than `NONE`, palettes, hex).
 
 **Visuals** (§4.3, §5 state table): `Visuals` holds a widget's roles per
 state; `button_visuals_system` computes fill, border, content ink and content
-opacity every frame from `Hovered`, `Pressed`, `Active`, `Checked`,
+opacity from `Hovered`, `Pressed`, `Active`, `Checked`,
 `InteractionDisabled`, `HoverOnFocus` (menu items) and `ForceState` (the
-gallery), writing only real changes. Bevy 0.20 has no `Interaction`
+gallery), for the widgets whose state changed that frame (change detection,
+D-45), writing only real changes. `OwnInk` content keeps its colour and only
+takes the disabled opacity (menu shortcuts, icons, checkboxes). Bevy 0.20 has no `Interaction`
 component; `Hovered`/`Pressed` replace it (D-22). Content children are
 marked `Content`. `FocusRing` widgets get a 2px `accent` outline, offset 2,
 while they have visible keyboard focus.
+
+**Cursors** (D-41): `GzUiPlugin` adds Bevy's `CursorIconPlugin`, which
+shows each widget's `EntityCursor`; a mouse drag holds the cursor it started
+with (`OverrideCursor`) until it ends.
 
 **Text**: `Type(TypeStyle)` on a text entity becomes its `TextFont` (the
 file for the weight; Geist Mono 600 falls back to 500, D-25) and
@@ -764,30 +772,34 @@ panels) take their children from the caller.
 - Menus (and popovers, which are menus with arbitrary content): a root with
   the trigger (`MenuButton`) and a hidden `MenuPopup`; `on_menu_event` opens
   and closes it. Bevy's `Popover` places it (preferred side, the mirror, then
-  end-aligned) so it flips to stay on screen; Bevy's menu closes it when
+  end-aligned on each) so it flips to stay on screen; Bevy's menu closes it when
   focus leaves (outside click), on Esc and on activation; arrows, Home and
   End move; `on_menu_typing` adds type-to-search. Shortcut text comes from
   `InputMap` (`shortcut_label`, D-26).
 - Tooltips: `TooltipTimer` (500 ms, at once within 300 ms of the last one
   closing, hidden by a press) spawns a floating card on the trigger with an
   8 px arrow that `orient_tooltip_arrows` points back at it after placement.
+  The shortcut is a Geist Mono span (D-46).
 - NumberField: a wrapper around Bevy's `TextInput` (D-27). Enter and blur
-  evaluate `widgets::expr` (`+ - * /`, parentheses, `pi`, `%`, units into
-  the field's unit), Esc reverts, an invalid value turns the border `danger`;
-  dragging the tag scrubs (Shift ×10, Alt ÷10). `NumberCommit` events report
+  evaluate `widgets::expr` (`+ - * /`, parentheses up to 64 deep, `pi`, `%`,
+  a unit per term into the field's unit, D-40) when the text was edited
+  (D-39), Esc reverts, an invalid value turns the border `danger`;
+  dragging the tag scrubs (each move's delta, Shift ×10, Alt ÷10). `NumberCommit` events report
   values (`is_final` false while scrubbing).
-- Slider: Bevy's slider; `modifier_steps` (PreUpdate, before focus
-  dispatch) scales `SliderStep` while Shift or Alt is held.
-- Splitter: drags set the pane's width or height within min/max.
+- Slider: Bevy's slider, plus Up/Down; `modifier_steps` (PreUpdate, before
+  focus dispatch) scales `SliderStep` while Shift or Alt is held.
+- Splitter: drags (divided by `UiScale`) set the pane's width or height
+  within min/max; arrow keys, Home and End move it (D-41).
 - `focus::text_focus_system`: while a text field has focus the viewer's
   `ActiveScopes` are emptied (single-letter keys do nothing, §13), and in the
   browser `view::web::set_text_focus` stops the canvas preventing any key's
-  default.
+  default but Tab's (D-42). The scopes come back a frame after blur (D-43).
 
 **Gallery** (`gzweb --ui gallery`, `?ui=gallery`; D-28): every widget and,
 in a states grid, every state of the clickable ones, laid out after board
 06 in one theme; T or the header button switches theme. No connection.
-`--screenshot` captures it in a 1440×900 window after 30 frames.
+`--screenshot` captures it in a 1440×900 window after 30 frames, with the
+example number field focused (only then, D-47).
 
 **Tests** run a headless app (no renderer or winit; a window entity, a UI
 camera with a fixed render target, picking with hover updates off so tests

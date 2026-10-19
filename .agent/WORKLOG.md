@@ -681,3 +681,41 @@ Branch `feature/phase-5-m1` (from `feature/phase-5-ui`). Plan:
   the spec's 28 px.
 - **Merged** `origin/feature/phase-5-ui` (PR #27 fixes, then main with
   Jetty) before pushing.
+
+## 2026-10-19: PR #28 review fixes
+
+- **NumberField:** unedited text commits nothing on Enter or blur and shows
+  the current value again (D-39; tabbing through fields truncated them). A
+  unit applies to its whole term, so `pi/2 rad` is 90° (D-40); nesting is
+  capped at 64 and signs don't recurse (5 000 `(` overflowed the stack). A
+  scrub adds each move's delta, so Shift mid-drag doesn't jump. The input's
+  AccessKit node has a spelled-out name and the numeric value.
+- **Cursors:** `CursorIconPlugin` was never added, so no hover cursor showed;
+  drags hold theirs (D-41). Splitter drags divide by `UiScale`; splitters
+  take arrow keys, Home and End and a caller-given name.
+- **Keys:** the viewer's scopes come back a frame after a field blurs, so its
+  Esc can't fire a viewport binding (D-43); in the browser Tab stays in the
+  canvas while a field has focus (D-42), and the web gallery installs the
+  canvas key listener. The gallery focuses its example field only in a
+  capture (D-47), so T switches theme after launch.
+- **Icons:** cells at 10/12/13/14/24 px too, and white transparent texels
+  (D-44); a changed `Icon::px` resizes the node.
+- **Change detection** for every widget system (D-45).
+- **Looks:** disabled menu items dim their shortcut, icon and box; the
+  selected filter chip has no seam; tooltips set the shortcut in Geist Mono
+  (D-46). Menus gain the mirrored end-aligned placement; type-to-search
+  ignores chords; sliders take Up/Down.
+- **Spec checks:** the colour-literal check tokenizes (types, constructors,
+  constants, aliases, 3–8 digit hex, across lines); the tokens test walks
+  every radius, border, motion and elevation entry; build.rs rejects unknown
+  motion and elevation entries and generates elevation colours; the gallery
+  check covers icon tints, outlines and shadows.
+- **Housekeeping:** `Theme::logo_path` removed; `Theme::set_mode` reads the
+  tracked OS preference; systems, observers and internal markers are
+  `pub(crate)`; pre-commit excludes the fonts from the text fixers only.
+- **Not changed:** `modifier_steps` re-inserts `SliderStep` because Bevy
+  makes it immutable; tooltip cards are trigger children, but neither the
+  card nor its text has an AccessKit node, so nothing joins the trigger's
+  subtree. Disabled content at 40% reads lighter in dark than a browser's
+  40% because Bevy blends in linear space; matching it needs the
+  background, so it's left as the spec's 40% for now.
