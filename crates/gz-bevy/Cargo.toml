@@ -9,6 +9,7 @@ license = "Apache-2.0"
 gz-core.workspace = true
 gz-collada.workspace = true
 prost.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 bevy = { version = "0.20", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
 async-channel = "2"
@@ -44,6 +45,12 @@ features = [
     "Response",
     "AbortController",
     "AbortSignal",
+    "AddEventListenerOptions",
+    "EventTarget",
+    "KeyboardEvent",
+    "MouseEvent",
+    "UiEvent",
+    "WheelEvent",
 ]
 
 [lints]

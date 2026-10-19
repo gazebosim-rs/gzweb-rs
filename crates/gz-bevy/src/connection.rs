@@ -260,7 +260,7 @@ pub fn pump(
                 info!("gz status: {s:?}");
                 if s == Status::Ready {
                     status.attempts = 0;
-                    subscribe(&mut conn.transport, &world, config.interactive);
+                    subscribe(&mut conn.transport, &world, config.interactive());
                 }
                 status.status = s;
             }
@@ -468,7 +468,7 @@ mod tests {
     impl Harness {
         fn new() -> Harness {
             Self::with(GzConfig {
-                interactive: false,
+                ui: crate::UiMode::None,
                 reconnect: false,
                 ..Default::default()
             })
@@ -709,7 +709,7 @@ mod tests {
     #[test]
     fn interactive_mode_follows_the_sim_stats() {
         let mut h = Harness::with(GzConfig {
-            interactive: true,
+            ui: crate::UiMode::Minimal,
             reconnect: false,
             ..Default::default()
         });
@@ -960,7 +960,7 @@ mod tests {
     #[test]
     fn reconnects_with_backoff_and_replaces_the_scene() {
         let mut h = Harness::with(GzConfig {
-            interactive: false,
+            ui: crate::UiMode::None,
             reconnect: true,
             ..Default::default()
         });
@@ -1000,7 +1000,7 @@ mod tests {
     fn a_rejected_key_is_not_retried() {
         let mut h = Harness::with(GzConfig {
             key: Some("k".into()),
-            interactive: false,
+            ui: crate::UiMode::None,
             reconnect: true,
             ..Default::default()
         });
@@ -1016,7 +1016,7 @@ mod tests {
     #[test]
     fn a_rejected_url_is_not_retried() {
         let mut h = Harness::with(GzConfig {
-            interactive: false,
+            ui: crate::UiMode::None,
             reconnect: true,
             ..Default::default()
         });
@@ -1029,7 +1029,7 @@ mod tests {
     fn a_silent_handshake_times_out_and_retries() {
         let mut h = Harness::with(GzConfig {
             key: Some("k".into()),
-            interactive: false,
+            ui: crate::UiMode::None,
             reconnect: true,
             ..Default::default()
         });

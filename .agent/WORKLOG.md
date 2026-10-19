@@ -583,3 +583,48 @@ Branch `feature/phase-4-materials`. Materials follow Gazebo (gz-sim
   layer); upstream packaging.
   `include_server_config_plugins` defaults to true from Ionic (gz-sim 9),
   not 10.
+
+## 2026-10-19: Phase 5 M0, views and UI modes
+
+Branch `feature/phase-5-ui`. Plan: `.agent/UI_PLAN.md` §2 and §4 (M0); spec
+`design/ui/DESIGN.md` §3.4, §6.2, §6.3, §13. See DESIGN.md "Views, input and
+UI modes".
+
+- **`gz-bevy::view`:** `camera.rs` keeps only spawning; the controller is
+  now `ViewCamera` + `ViewCommand { view, op }`: pivot at the point under
+  the cursor at drag start (then selection centre, then origin), orbit, pan,
+  zoom, zoom at a point, perspective ↔ orthographic keeping the framing
+  (orthographic stands off ≥ 50 m), six axis snaps (Gazebo GUI axes, 250 ms
+  smoothstep, orthographic at the end, perspective again on orbit), focus,
+  home, drag action, fly. `Selection` exists, empty until M5.
+- **Key map:** `shortcuts.json` embedded and parsed with serde into
+  `InputMap` (scopes, `mod` per platform, `web_alt`, tap vs hold), plus a
+  `minimal`-scope fly table. The §13 test runs on macOS, Linux, Windows and
+  web: no conflicts once `constrain_x`/`teleop.stop` (Q5) and the Space
+  tap/hold pair are allowed; every reserved chord has a `web_alt`.
+- **`ViewerControls`:** mouse, keys and fly to `ViewCommand`s; Space tap
+  (< 200 ms, no button) play/pause, ⌘→ step, G grid. HUD keys removed (N is
+  gone), hint updated, `--no-hud` / `?hud=0`.
+- **`UiMode`** replaces `GzConfig.interactive` (`interactive()` keeps the
+  meaning; stats subscription follows it). `--ui full|minimal` (default
+  full), `?ui=` (default minimal); capture modes force `None`. `Full` =
+  `Minimal` until M1.
+- **Decisions:** DECISIONS.md D-11 to D-16 (wheel vs Ctrl+wheel, fly keys,
+  snap axes, focus order, how the conflict rule reads the file, no reset in
+  minimal).
+- **Tests:** every `ViewOp`, snap end states and animation, focus/home, fly
+  speed, input map parse and conflict/web rules, headless minimal app driven
+  by `KeyboardInput`/`MouseButtonInput`/`MouseWheel` messages (drags, wheel,
+  Ctrl+wheel, Space tap/hold, keys, fly), CLI and `?ui`/`?hud` parsing,
+  plugin wiring per mode, camera respawn keeping the view. Headless and
+  `--ignored` Fuel tests pass (HTTP cache copied in).
+- **Visual check** (allmesh world, ws://localhost:9004): release gzweb
+  windowed in `--ui minimal` and `--ui full` (both reach Ready, no errors);
+  `--screenshot` at High and Low unchanged; a throwaway example (not
+  committed) captured top/front snaps, ortho toggle, ortho zoom and
+  near-vertical views at High and Low. One early top-snap capture at High was
+  flat sky colour; removing TAA, SSAO or the atmosphere light fixed it and it
+  never came back; projection switches now reset TAA history.
+- **Left:** pointer routing around UI nodes and `preventDefault` for
+  browser chords (M2/M3, M10); layout-aware letter keys (M10); browser
+  build not run.

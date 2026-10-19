@@ -1,12 +1,13 @@
-//! On-screen status overlay (bevy_ui), the DOM status line on wasm, and the
-//! simulation-control keys.
+//! On-screen status overlay (bevy_ui) and the DOM status line on wasm.
+//! The keys it lists are handled by [`crate::view::controls`].
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapter;
 use gz_core::transport::Status;
 
-use crate::connection::{GzCommand, GzStatus};
+use crate::connection::GzStatus;
+use crate::view::InputMap;
 
 #[derive(Component)]
 pub struct FpsText;
@@ -20,10 +21,56 @@ pub struct StatusText;
 #[derive(Component)]
 pub struct SimText;
 
-const HINT: &str = "Left drag: orbit point | Right drag: pan | Scroll/middle drag: zoom to point \
-                        | Space: play/pause | N: step";
+/// The mouse part of the controls hint (the mouse isn't in the key map).
+pub const MOUSE_HINT: &str =
+    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl/pinch: to cursor)";
 
-pub fn spawn_hud(mut commands: Commands) {
+/// The key part of the hint: binding ids, and what they do in a word.
+/// The keys themselves come from the [`InputMap`].
+const KEY_HINTS: &[(&[&str], &str)] = &[
+    (&["view.focus"], "focus"),
+    (&["view.home"], "home"),
+    (&["view.projection"], "ortho"),
+    (
+        &["view.top", "view.front", "view.right"],
+        "views (Shift: opposite)",
+    ),
+    (&["overlay.grid"], "grid"),
+    (
+        &[
+            "view.fly_forward",
+            "view.fly_left",
+            "view.fly_back",
+            "view.fly_right",
+            "view.fly_down",
+            "view.fly_up",
+        ],
+        "move",
+    ),
+    (&["sim.play_pause"], "play/pause"),
+    (&["sim.step"], "step"),
+];
+
+/// The controls, as `map` binds them on its platform: each binding's first
+/// chord, so the hint follows `shortcuts.json`.
+pub fn hint(map: &InputMap) -> String {
+    let mut parts = vec![MOUSE_HINT.to_string()];
+    for (ids, what) in KEY_HINTS {
+        let keys: Vec<String> = ids
+            .iter()
+            .filter_map(|id| map.binding(id))
+            .filter_map(|b| b.chords(map.platform).first())
+            .map(|c| c.label(map.platform))
+            .collect();
+        if !keys.is_empty() {
+            parts.push(format!("{} {what}", keys.join(" ")));
+        }
+    }
+    parts.join(" | ")
+}
+
+pub fn spawn_hud(mut commands: Commands, map: Option<Res<InputMap>>) {
+    let hint = map.map_or_else(|| hint(&InputMap::builtin()), |m| hint(&m));
     let line = |top: f32| Node {
         position_type: PositionType::Absolute,
         top: Val::Px(top),
@@ -63,7 +110,7 @@ pub fn spawn_hud(mut commands: Commands) {
         SimText,
     ));
     commands.spawn((
-        Text::new(HINT),
+        Text::new(hint),
         TextFont {
             font_size: FontSize::Px(16.0),
             ..default()
@@ -174,23 +221,21 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
     }
 }
 
-/// Space toggles play/pause; N steps a paused simulation. Needs the stats
-/// to know which way to toggle.
-pub fn sim_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    status: Res<GzStatus>,
-    mut out: MessageWriter<GzCommand>,
-) {
-    let Some(sim) = status.sim else { return };
-    if keys.just_pressed(KeyCode::Space) {
-        out.write(if sim.paused {
-            GzCommand::Play
-        } else {
-            GzCommand::Pause
-        });
-    }
-    if keys.just_pressed(KeyCode::KeyN) && sim.paused {
-        out.write(GzCommand::Step(1));
+/// The host page's status elements (`index.html`): the WebGPU check and
+/// the line [`update_fps`] writes.
+pub const DOM_STATUS_IDS: [&str; 2] = ["webgpu-status", "bevy-status"];
+
+/// Removes the host page's status elements, for a page without the HUD
+/// (`?hud=0`): nothing would update them.
+#[cfg(target_arch = "wasm32")]
+pub fn remove_dom_status() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    for id in DOM_STATUS_IDS {
+        if let Some(el) = document.get_element_by_id(id) {
+            el.remove();
+        }
     }
 }
 
@@ -229,6 +274,26 @@ mod tests {
         let mut world = hud_world();
         assert_eq!(world.query::<&Text>().iter(&world).count(), 5);
         assert_eq!(text_of::<FpsText>(&mut world).0, "FPS: N/A");
+    }
+
+    #[test]
+    fn the_hint_reads_its_keys_from_the_map() {
+        use crate::view::input::Platform;
+        let mut map = InputMap::builtin();
+        map.platform = Platform::Mac;
+        let mac = hint(&map);
+        assert!(mac.starts_with(MOUSE_HINT));
+        assert!(
+            mac.contains("| F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid")
+        );
+        assert!(mac.contains("| W A S D Q E move | Space play/pause | Cmd+Right step"));
+        map.platform = Platform::Linux;
+        assert!(hint(&map).ends_with("Ctrl+Right step"));
+        map.platform = Platform::Web;
+        assert!(hint(&map).ends_with("Ctrl/Cmd+Right step"));
+        // A binding the map lacks drops out.
+        map.bindings.retain(|b| b.id != "sim.step");
+        assert!(hint(&map).ends_with("Space play/pause"));
     }
 
     #[test]
@@ -330,35 +395,6 @@ mod tests {
         world.resource_mut::<GzStatus>().sim = Some(sim(false));
         world.run_system_once(update_sim).unwrap();
         assert!(text_of::<SimText>(&mut world).0.starts_with("Sim: running"));
-    }
-
-    #[test]
-    fn keys_send_sim_commands() {
-        let mut app = App::new();
-        app.init_resource::<ButtonInput<KeyCode>>()
-            .insert_resource(GzStatus::new(""))
-            .add_message::<GzCommand>()
-            .add_systems(Update, (sim_keys, update_sim));
-        let press = |app: &mut App, keys: &[KeyCode], sim: Option<SimStats>| {
-            app.world_mut().resource_mut::<GzStatus>().sim = sim;
-            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
-            input.reset_all();
-            for k in keys {
-                input.press(*k);
-            }
-            app.update();
-            let msgs = app.world().resource::<Messages<GzCommand>>();
-            msgs.iter_current_update_messages()
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let both = [KeyCode::Space, KeyCode::KeyN];
-        assert!(press(&mut app, &both, None).is_empty());
-        assert_eq!(press(&mut app, &both, Some(sim(false))), [GzCommand::Pause]);
-        assert_eq!(
-            press(&mut app, &both, Some(sim(true))),
-            [GzCommand::Play, GzCommand::Step(1)]
-        );
     }
 
     #[test]

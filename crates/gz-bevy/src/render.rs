@@ -15,8 +15,9 @@ use bevy::core_pipeline::Skybox;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::Atmosphere;
 use bevy::light::{
-    AtmosphereEnvironmentMapLight, DirectionalLightShadowMap, GeneratedEnvironmentMapLight,
-    PointLightShadowMap, ShadowFilteringMethod,
+    AtmosphereEnvironmentMapLight, CascadeShadowConfig, CascadeShadowConfigBuilder,
+    DirectionalLightShadowMap, GeneratedEnvironmentMapLight, PointLightShadowMap,
+    ShadowFilteringMethod,
 };
 use bevy::pbr::{
     AtmosphereSettings, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
@@ -24,6 +25,7 @@ use bevy::pbr::{
 };
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::camera::{MipBias, TemporalJitter};
 use bevy::render::render_resource::{
     Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
@@ -31,8 +33,9 @@ use bevy::render::view::Msaa;
 use gz_core::scene::{FogDesc, SceneDesc};
 
 use crate::assets;
-use crate::camera::{self, GzOrbitControls, MainCamera, CLEAR_COLOR};
+use crate::camera::{self, MainCamera, CLEAR_COLOR};
 use crate::spawn::GzLoads;
+use crate::view::ViewCamera;
 use crate::GzConfig;
 
 /// How much rendering work to spend.
@@ -245,16 +248,201 @@ pub fn camera_components(camera: &mut EntityCommands, quality: Quality) {
         quality.msaa(),
     ));
     if quality != Quality::Low {
-        camera.insert((
-            TemporalAntiAliasing::default(),
-            ShadowFilteringMethod::Temporal,
-            ScreenSpaceAmbientOcclusion {
-                quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
-                ..default()
-            },
-            Bloom::NATURAL,
-        ));
+        camera.insert(Bloom::NATURAL);
+        perspective_effects(camera, false);
     }
+}
+
+/// The depth-dependent screen-space effects of `High` and `Ultra`: TAA
+/// (with temporal shadow filtering) and SSAO, which need MSAA off.
+fn perspective_effects(camera: &mut EntityCommands, reset: bool) {
+    camera.insert((
+        TemporalAntiAliasing { reset },
+        ShadowFilteringMethod::Temporal,
+        ScreenSpaceAmbientOcclusion {
+            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
+            ..default()
+        },
+        Msaa::Off,
+    ));
+}
+
+/// Marks a main camera whose effects are set for an orthographic
+/// projection (see [`projection_effects`]).
+#[derive(Component, Debug)]
+pub struct OrthoEffects;
+
+/// How the camera's fog is shifted from the scene's: distances grow by
+/// `offset` (linear fog) or densities scale by `scale` (exponential).
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct FogAdjust {
+    pub offset: f32,
+    pub scale: f32,
+}
+
+impl Default for FogAdjust {
+    fn default() -> Self {
+        FogAdjust {
+            offset: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
+/// The sun's shadow cascades for a perspective view: sharp near the
+/// camera, out to a typical Gazebo world's size.
+pub fn sun_cascades() -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        minimum_distance: 0.1,
+        first_cascade_far_bound: 5.0,
+        maximum_distance: 150.0,
+        overlap_proportion: 0.2,
+    }
+    .build()
+}
+
+/// Cascades for an orthographic view whose world lies between view depths
+/// `near` and `far`: every depth is drawn at the same scale, so they span
+/// just that slab.
+pub fn ortho_cascades(near: f32, far: f32) -> CascadeShadowConfig {
+    let near = near.max(0.1);
+    let far = far.max(near * 1.01);
+    CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        minimum_distance: near,
+        first_cascade_far_bound: near + (far - near) / 4.0,
+        maximum_distance: far,
+        overlap_proportion: 0.2,
+    }
+    .build()
+}
+
+/// The orthographic quality policy (DECISIONS.md D-19). Bevy 0.20's
+/// effects assume a perspective camera, and an orthographic one stands
+/// well back from its scene, so in orthographic views:
+///
+/// - TAA and SSAO are off, with 4× MSAA and Gaussian shadow filtering
+///   instead. TAA's jitter is added to the projection's z column
+///   (`TemporalJitter::jitter_projection`), which in orthographic shifts
+///   each point by its view depth / view width pixels instead of under one;
+///   SSAO's sample radius is divided by view depth and its view vector
+///   assumes a perspective eye.
+/// - Shadow cascades span the world's depth slab instead of 0.1–150 m from
+///   the camera, where an orthographic camera has nothing.
+/// - Distance fog is measured from where the matching perspective camera
+///   would be: linear fog moves out by the extra distance, exponential fog
+///   thins to match at the pivot.
+/// - The atmosphere's sky rays come from the near plane, which the view
+///   puts at its reach (`view::fit_clip`), so the sky spreads like the
+///   matching perspective view's.
+///
+/// Switching back restores the perspective effects, with TAA's history
+/// reset. The cascades are per light, so the first view decides them.
+#[allow(clippy::type_complexity)]
+pub fn projection_effects(
+    config: Res<GzConfig>,
+    env: Res<GzEnvironment>,
+    mut commands: Commands,
+    cameras: Query<
+        (
+            Entity,
+            &Projection,
+            &Transform,
+            Option<&ViewCamera>,
+            Has<OrthoEffects>,
+            Option<&FogAdjust>,
+        ),
+        With<MainCamera>,
+    >,
+    mut suns: Query<&mut CascadeShadowConfig>,
+) {
+    for (i, (entity, projection, t, view, marked, fog)) in cameras.iter().enumerate() {
+        let ortho = match projection {
+            Projection::Orthographic(o) => Some((o.near, o.far)),
+            _ => None,
+        };
+        let mut camera = commands.entity(entity);
+        if ortho.is_some() != marked {
+            match (ortho.is_some(), config.quality) {
+                (true, Quality::Low) => {
+                    camera.insert(OrthoEffects);
+                }
+                (true, _) => {
+                    camera
+                        .remove::<(
+                            TemporalAntiAliasing,
+                            TemporalJitter,
+                            MipBias,
+                            ScreenSpaceAmbientOcclusion,
+                        )>()
+                        .insert((OrthoEffects, Msaa::Sample4, ShadowFilteringMethod::Gaussian));
+                }
+                (false, Quality::Low) => {
+                    camera.remove::<OrthoEffects>();
+                }
+                (false, _) => {
+                    camera.remove::<OrthoEffects>();
+                    perspective_effects(&mut camera, true);
+                }
+            }
+        }
+        // The pivot's depth, and how far the matching perspective camera
+        // would be from it.
+        let (depth, reach) = view.map_or((0.0, 0.0), |v| {
+            (
+                (v.pivot - t.translation).dot(*t.forward()),
+                crate::view::reach(v, t, projection),
+            )
+        });
+        let adjust = match ortho {
+            Some(_) if depth > 0.0 && reach > 0.0 => FogAdjust {
+                offset: depth - reach,
+                scale: reach / depth,
+            },
+            _ => FogAdjust::default(),
+        };
+        if let Some(base) = &env.fog {
+            if fog.copied().unwrap_or_default() != adjust {
+                camera.insert((adjusted_fog(base, adjust), adjust));
+            }
+        }
+        if i == 0 {
+            let want = match ortho {
+                Some((near, far)) => {
+                    // The view's far plane is the world's far side plus a
+                    // margin; the world is as deep in front of the pivot.
+                    let extent = far - depth - crate::view::ORTHO_MARGIN;
+                    ortho_cascades(near.max(depth - extent), far)
+                }
+                None => sun_cascades(),
+            };
+            for mut c in &mut suns {
+                if c.bounds != want.bounds || c.minimum_distance != want.minimum_distance {
+                    *c = want.clone();
+                }
+            }
+        }
+    }
+}
+
+/// The scene's fog, shifted by `adjust`.
+pub fn adjusted_fog(fog: &FogDesc, adjust: FogAdjust) -> DistanceFog {
+    let mut out = distance_fog(fog);
+    out.falloff = match out.falloff {
+        FogFalloff::Linear { start, end } => FogFalloff::Linear {
+            start: start + adjust.offset,
+            end: end + adjust.offset,
+        },
+        FogFalloff::Exponential { density } => FogFalloff::Exponential {
+            density: density * adjust.scale,
+        },
+        FogFalloff::ExponentialSquared { density } => FogFalloff::ExponentialSquared {
+            density: density * adjust.scale,
+        },
+        other => other,
+    };
+    out
 }
 
 /// Clear colour of the scene's background (alpha > 0 means it was set). It
@@ -288,7 +476,7 @@ pub fn apply_environment(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
-    cameras: Query<(Entity, &Transform, Option<&GzOrbitControls>), With<MainCamera>>,
+    cameras: Query<(Entity, &Transform, &Projection, Option<&ViewCamera>), With<MainCamera>>,
     planets: Query<Entity, With<GzAtmosphere>>,
 ) {
     if !env.is_changed() || !env.loaded {
@@ -315,12 +503,18 @@ pub fn apply_environment(
     });
     pending.0 = None;
 
-    for (old, transform, controls) in &cameras {
-        let focus = controls.map(|c| c.target);
+    for (old, transform, projection, view) in &cameras {
         commands.entity(old).despawn();
-        let id =
-            camera::spawn_main_camera(&mut commands, &config, *transform, focus, clear_color(&env));
+        // Keep the view: pose, projection and controller state.
+        let id = camera::spawn_main_camera(
+            &mut commands,
+            &config,
+            *transform,
+            view.cloned(),
+            clear_color(&env),
+        );
         let mut cam = commands.entity(id);
+        cam.insert(projection.clone());
         if let Some(fog) = &env.fog {
             cam.insert(distance_fog(fog));
         }
@@ -494,13 +688,6 @@ pub fn cube_direction(face: usize, s: f32, t: f32) -> Vec3 {
     }
 }
 
-/// G toggles the grid.
-pub fn grid_key(keys: Res<ButtonInput<KeyCode>>, mut grid: ResMut<GzGrid>) {
-    if keys.just_pressed(KeyCode::KeyG) {
-        grid.visible = !grid.visible;
-    }
-}
-
 /// Gizmo settings for the grid alone.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct GridGizmos;
@@ -532,6 +719,7 @@ mod tests {
     use super::*;
     use crate::connection::GzInbox;
     use crate::test_util::scene_app;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::light::EnvironmentMapLight;
     use gz_core::msgs;
 
@@ -704,6 +892,179 @@ mod tests {
         assert_eq!(sq.color, Color::srgb(0.5, 0.5, 0.5));
     }
 
+    /// A main camera with view controls about the origin, a sun, and
+    /// `fog`, running [`projection_effects`].
+    fn effects_app(quality: Quality, fog: Option<FogDesc>) -> (App, Entity) {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(GzConfig {
+                quality,
+                ..default()
+            })
+            .insert_resource(GzEnvironment { fog, ..default() })
+            .add_systems(Update, projection_effects);
+        app.world_mut().spawn(sun_cascades());
+        let config = GzConfig {
+            quality,
+            ..default()
+        };
+        let camera = app
+            .world_mut()
+            .run_system_once(move |mut commands: Commands| {
+                let view = ViewCamera::new(Vec3::ZERO, camera::perspective());
+                camera::spawn_main_camera(
+                    &mut commands,
+                    &config,
+                    crate::view::home_transform(),
+                    Some(view),
+                    CLEAR_COLOR,
+                )
+            })
+            .unwrap();
+        if let Some(fog) = &app.world().resource::<GzEnvironment>().fog {
+            let fog = distance_fog(fog);
+            app.world_mut().entity_mut(camera).insert(fog);
+        }
+        app.update();
+        (app, camera)
+    }
+
+    /// Puts the camera `depth` behind the origin, orthographic with a
+    /// view as tall as the home view's.
+    fn go_ortho(app: &mut App, camera: Entity, depth: f32) -> (f32, f32) {
+        let reach = 6.0 * 2f32.sqrt();
+        let height = 2.0 * reach * 30f32.to_radians().tan();
+        let far = 2.0 * depth;
+        let mut e = app.world_mut().entity_mut(camera);
+        let mut t = e.get_mut::<Transform>().unwrap();
+        let back = *t.back();
+        t.translation = back * depth;
+        e.insert(Projection::Orthographic(OrthographicProjection {
+            near: reach,
+            far,
+            scaling_mode: bevy::camera::ScalingMode::FixedVertical {
+                viewport_height: height,
+            },
+            ..OrthographicProjection::default_3d()
+        }));
+        app.update();
+        (reach, far)
+    }
+
+    #[test]
+    fn orthographic_views_trade_taa_and_ssao_for_msaa() {
+        let (mut app, camera) = effects_app(Quality::High, None);
+        let e = app.world().entity(camera);
+        assert!(e.contains::<TemporalAntiAliasing>() && e.contains::<TemporalJitter>());
+        assert_eq!(*e.get::<Msaa>().unwrap(), Msaa::Off);
+        let (reach, far) = go_ortho(&mut app, camera, 60.0);
+        let e = app.world().entity(camera);
+        assert!(e.contains::<OrthoEffects>());
+        assert!(!e.contains::<TemporalAntiAliasing>());
+        // The jitter TAA required would still shift the projection.
+        assert!(!e.contains::<TemporalJitter>() && !e.contains::<MipBias>());
+        assert!(!e.contains::<ScreenSpaceAmbientOcclusion>());
+        assert_eq!(*e.get::<Msaa>().unwrap(), Msaa::Sample4);
+        assert_eq!(
+            *e.get::<ShadowFilteringMethod>().unwrap(),
+            ShadowFilteringMethod::Gaussian
+        );
+        // The sun's cascades span the world's slab: out to the far plane,
+        // and in to the near plane (the world reaches 59 m either side of
+        // the pivot, 60 m away, but nothing is drawn nearer than `near`).
+        let mut q = app.world_mut().query::<&CascadeShadowConfig>();
+        let c = q.single(app.world()).unwrap();
+        assert!((c.bounds[3] - far).abs() < 1e-3, "{:?}", c.bounds);
+        assert!((c.minimum_distance - reach).abs() < 1e-3);
+
+        // Back to perspective: the effects return, TAA from a fresh history.
+        let mut e = app.world_mut().entity_mut(camera);
+        e.insert(Projection::Perspective(camera::perspective()));
+        app.update();
+        let e = app.world().entity(camera);
+        assert!(!e.contains::<OrthoEffects>());
+        assert!(e.get::<TemporalAntiAliasing>().unwrap().reset);
+        assert!(e.contains::<TemporalJitter>() && e.contains::<ScreenSpaceAmbientOcclusion>());
+        assert_eq!(*e.get::<Msaa>().unwrap(), Msaa::Off);
+        assert_eq!(
+            *e.get::<ShadowFilteringMethod>().unwrap(),
+            ShadowFilteringMethod::Temporal
+        );
+        let mut q = app.world_mut().query::<&CascadeShadowConfig>();
+        assert_eq!(q.single(app.world()).unwrap().bounds, sun_cascades().bounds);
+    }
+
+    #[test]
+    fn orthographic_cascades_cover_the_depth_slab() {
+        let c = ortho_cascades(40.0, 80.0);
+        assert_eq!(c.minimum_distance, 40.0);
+        assert_eq!(c.bounds.len(), 4);
+        assert!((c.bounds[0] - 50.0).abs() < 1e-3);
+        assert!((c.bounds[3] - 80.0).abs() < 1e-3);
+        // Degenerate slabs still build.
+        let c = ortho_cascades(0.0, 0.0);
+        assert!(c.minimum_distance > 0.0 && c.bounds[3] > c.minimum_distance);
+    }
+
+    #[test]
+    fn orthographic_fog_is_measured_from_the_matching_perspective_eye() {
+        use gz_core::scene::FogFalloff as Gz;
+        let linear = FogDesc {
+            color: [0.5, 0.5, 0.5],
+            falloff: Gz::Linear {
+                start: 10.0,
+                end: 50.0,
+            },
+        };
+        let (mut app, camera) = effects_app(Quality::Low, Some(linear));
+        let (reach, _) = go_ortho(&mut app, camera, 60.0);
+        let e = app.world().entity(camera);
+        assert!(e.contains::<OrthoEffects>());
+        // Low keeps its MSAA and has no TAA to remove.
+        assert_eq!(*e.get::<Msaa>().unwrap(), Msaa::Sample4);
+        let offset = 60.0 - reach;
+        assert!(matches!(
+            e.get::<DistanceFog>().unwrap().falloff,
+            FogFalloff::Linear { start, end }
+                if (start - 10.0 - offset).abs() < 1e-3 && (end - 50.0 - offset).abs() < 1e-3
+        ));
+        let mut e = app.world_mut().entity_mut(camera);
+        e.insert(Projection::Perspective(camera::perspective()));
+        app.update();
+        let e = app.world().entity(camera);
+        assert!(!e.contains::<OrthoEffects>());
+        assert!(matches!(
+            e.get::<DistanceFog>().unwrap().falloff,
+            FogFalloff::Linear {
+                start: 10.0,
+                end: 50.0
+            }
+        ));
+
+        for (falloff, density) in [
+            (Gz::Exponential { density: 0.2 }, 0.2),
+            (Gz::ExponentialSquared { density: 0.3 }, 0.3),
+        ] {
+            let adjust = FogAdjust {
+                offset: 50.0,
+                scale: 0.25,
+            };
+            let fog = adjusted_fog(
+                &FogDesc {
+                    color: [0.5; 3],
+                    falloff,
+                },
+                adjust,
+            );
+            let (FogFalloff::Exponential { density: got }
+            | FogFalloff::ExponentialSquared { density: got }) = fog.falloff
+            else {
+                unreachable!()
+            };
+            assert!((got - density * 0.25).abs() < 1e-6);
+        }
+    }
+
     #[test]
     fn clear_colour_needs_an_explicit_background() {
         let env = |background| GzEnvironment {
@@ -762,6 +1123,34 @@ mod tests {
             r#type: msgs::light::LightType::Directional as i32,
             ..default()
         }
+    }
+
+    #[test]
+    fn a_respawned_camera_keeps_its_view() {
+        let mut app = scene_app(GzConfig::default());
+        app.update();
+        let world = app.world_mut();
+        let (mut t, mut p, mut v) = world
+            .query_filtered::<(&mut Transform, &mut Projection, &mut ViewCamera), With<MainCamera>>(
+            )
+            .single_mut(world)
+            .unwrap();
+        t.translation = Vec3::new(1.0, 2.0, 3.0);
+        *p = Projection::Orthographic(OrthographicProjection::default_3d());
+        v.pivot = Vec3::new(4.0, 5.0, 6.0);
+        v.snapped = Some(crate::view::SnapView::Top);
+        let first = cameras(&mut app);
+        show(&mut app, msgs::Scene::default());
+        assert_ne!(cameras(&mut app), first);
+        let world = app.world_mut();
+        let (t, p, v) = world
+            .query_filtered::<(&Transform, &Projection, &ViewCamera), With<MainCamera>>()
+            .single(world)
+            .unwrap();
+        assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert!(matches!(p, Projection::Orthographic(_)));
+        assert_eq!(v.pivot, Vec3::new(4.0, 5.0, 6.0));
+        assert_eq!(v.snapped, Some(crate::view::SnapView::Top));
     }
 
     #[test]
@@ -931,7 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn g_toggles_the_grid_and_it_draws() {
+    fn a_visible_grid_draws() {
         let mut app = App::new();
         app.add_plugins((
             MinimalPlugins,
@@ -939,22 +1328,18 @@ mod tests {
             bevy::mesh::MeshPlugin,
             bevy::gizmos::GizmoPlugin,
         ))
-        .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<GzGrid>()
         .init_gizmo_group::<GridGizmos>()
         .add_systems(Startup, setup_gizmos)
-        .add_systems(Update, (grid_key, draw_grid).chain());
+        .add_systems(Update, draw_grid);
         app.update();
         let (config, _) = app
             .world()
             .resource::<GizmoConfigStore>()
             .config::<GridGizmos>();
         assert!(config.depth_bias < 0.0);
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyG);
-        app.update();
-        assert!(app.world().resource::<GzGrid>().visible);
+        // G is the `overlay.grid` binding (view::controls).
+        app.world_mut().resource_mut::<GzGrid>().visible = true;
         // Drawing a visible grid runs (gizmo buffers aren't inspectable).
         app.update();
     }
