@@ -24,9 +24,23 @@ Record one with `parity/record.sh <world.sdf> [name]` (needs the
 `gz-websocket-jetty` image from `Dockerfile.gazebo`; `RECORD_PORT` picks the
 host port, default 9010). It waits for a websocket upgrade, not just a TCP
 accept, because Jetty's websocket system only starts once the world, Fuel
-models included, has loaded; then it lets the world run for
-`RECORD_WARMUP_S` (30) seconds. Every corpus was recorded from **Gazebo
-Jetty** (gz-sim 10.5.0, `source.gazebo = "jetty"` in the manifest). Status:
+models included, has loaded, and gives up at once, printing the server's
+log, if the server exits first. Then it lets the world run for
+`RECORD_WARMUP_S` (30) seconds. That wait starts after the world has
+loaded, so recordings begin at sim time ≈ 33 s for an installed world and
+≈ 50 s for one with Fuel models. (The Harmonic script's 30 s started at the
+TCP accept, before the world loaded, so those recordings began at
+t ≈ 12 s.) Record dynamic worlds with a short warmup. `gz-parity record`
+prints the sim time the pose streams cover and warns about non-finite
+positions or positions beyond 10 km.
+
+Every corpus was recorded from **Gazebo Jetty** (gz-sim 10.5.0).
+`source.gazebo` is the image's release label and gz-sim version
+(`jetty 10.5.0`); corpora recorded before the script read them say
+`jetty`. Those were also recorded while the image ran as root, so their
+scenes name Fuel files under `/root/.gz/fuel/…`; later ones under
+`/home/gazebo/.gz/fuel/…`. Both clients map either to the same Fuel URL.
+Status:
 
 | Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
 |---|---|---|---|
@@ -35,17 +49,26 @@ Jetty** (gz-sim 10.5.0, `source.gazebo = "jetty"` in the manifest). Status:
 | import_mesh | committed | PASS (Collada) | `--ignored` (Fuel) |
 | sky | committed | PASS (allow-listed sky and camera material) | yes (headless gzweb-rs never fetches the cubemap) |
 | fuel_textured_mesh | committed | PASS (allow-listed materials) | `--ignored` (Fuel) |
-| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
+| particle_emitter | none: gzweb throws on a null `albedo_map` | — | no (no test uses it) |
 
 gzweb couldn't load `sky`, `visibility` and `fuel_textured_mesh` from the
 Harmonic recordings: gz-launch's `protos` text left out the top-level enums,
 and protobufjs threw on `PixelFormatType`. Jetty's server includes them, so
 these now have references.
 
-In the Jetty `heightmap` recording the four spheres have fallen through the
-terrain (z ≈ −1.6 × 10⁶ m after 30 s; DART with the bullet collision
-detector, gz-physics 9). On Harmonic they rested in the bowl. This is
-server-side physics; both clients just show the poses they're sent.
+`heightmap` is dynamic: four spheres roll on the bowl's slopes. It was
+recorded with `RECORD_WARMUP_S=5`, so its pose stream covers sim
+t ≈ 9.3–11.0 s, with every sphere on the terrain (z ≈ 3–8 m), close to the
+Harmonic recording (t ≈ 12–13 s). The first Jetty recording (default
+warmup) began at t ≈ 50 s, the spheres still on the terrain but rolling
+outward. Left running, they roll off the edge of the 128 m terrain and fall,
+with the ode collision detector as with bullet, so they don't fall through
+it; after about 10 minutes of free fall they are at z ≈ −1.6 × 10⁶ m. This
+is server-side physics; both clients just show the poses they're sent.
+
+`particle_emitter`'s scene names the emitter's `color_range_image` by an
+absolute Fuel cache path (`/root/.gz/fuel/…/fog generator/2/materials/textures/fogcolors.png`),
+which only exists inside the container that recorded it.
 
 Optional files next to `manifest.json`:
 

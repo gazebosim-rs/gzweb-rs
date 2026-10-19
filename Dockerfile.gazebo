@@ -25,10 +25,11 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # gz-sim10-server is the server-only package: gz-sim-server, the systems
 # (including the websocket server), physics and the installed worlds, without
-# the GUI or the gz CLI. It still depends on libgz-sensors10-dev, which pulls
-# in about 40 -dev packages (most of this layer's 1.49 GB); that is upstream
-# packaging. wget, gnupg and lsb-release only add the OSRF repository and are
-# purged once they have (apt verifies with gpgv, which stays).
+# the GUI or the gz CLI. It still depends on libgz-sensors10-dev, whose -dev
+# dependencies bring 142 -dev packages in all (much of this layer's
+# 1.49 GB); that is upstream packaging. wget, gnupg and lsb-release only add
+# the OSRF repository and are purged once they have (apt verifies with gpgv,
+# which stays).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release \
  && wget -q https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
