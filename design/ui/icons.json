@@ -1,0 +1,764 @@
+{
+  "$note": "Icon set used in the designs. All icons: viewBox 0 0 24 24, stroke = currentColor, fill = none, stroke-width 1.75, round caps and joins, unless 'fill' is true. Rasterize at build time (e.g. resvg) into an atlas at 1x and 2x for sizes 15, 17, 18, 20 px, tinted at runtime with the button's ColorRole. Do not use emoji or text glyphs as icons. v0.2: Scene is a hierarchy glyph (not three bars), Reset is return-to-start (mirror of Step), Revert/Undo is a curved arrow, Teleop is a d-pad, Workspaces is one-plus-two panes, Track/eye is an eye; added ~30 glyphs the spec references.",
+  "stroke_width": 1.75,
+  "icons": {
+    "navigate": {
+      "paths": [
+        "M5 3l14 8-6 2-2 6z"
+      ]
+    },
+    "box_select": {
+      "paths": [
+        "M13 13l8 3.5-3.5 1.2-1.2 3.5z"
+      ],
+      "rects": [
+        {
+          "x": 3,
+          "y": 3,
+          "w": 13,
+          "h": 13,
+          "rx": 1,
+          "dash": [
+            3,
+            2.5
+          ]
+        }
+      ]
+    },
+    "translate": {
+      "paths": [
+        "M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"
+      ]
+    },
+    "rotate": {
+      "paths": [
+        "M20 12a8 8 0 1 1-2.3-5.7",
+        "M20 4v5h-5"
+      ]
+    },
+    "snap": {
+      "paths": [
+        "M6 4v8a6 6 0 0 0 12 0V4",
+        "M6 8h4M14 8h4"
+      ]
+    },
+    "reset": {
+      "paths": [
+        "M5 5v14",
+        "M19 5l-11 7 11 7z"
+      ],
+      "note": "return to start (mirror of step); world control group"
+    },
+    "play": {
+      "paths": [
+        "M7 5l12 7-12 7z"
+      ],
+      "fill": true
+    },
+    "pause": {
+      "rects": [
+        {
+          "x": 6,
+          "y": 5,
+          "w": 4,
+          "h": 14,
+          "rx": 1
+        },
+        {
+          "x": 14,
+          "y": 5,
+          "w": 4,
+          "h": 14,
+          "rx": 1
+        }
+      ],
+      "fill": true
+    },
+    "step": {
+      "paths": [
+        "M6 5l10 7-10 7z",
+        "M19 5v14"
+      ]
+    },
+    "search": {
+      "paths": [
+        "M20 20l-4-4"
+      ],
+      "circles": [
+        {
+          "cx": 11,
+          "cy": 11,
+          "r": 7
+        }
+      ]
+    },
+    "chevron_down": {
+      "paths": [
+        "M6 9l6 6 6-6"
+      ]
+    },
+    "chevron_up": {
+      "paths": [
+        "M6 15l6-6 6 6"
+      ]
+    },
+    "chevron_left": {
+      "paths": [
+        "M15 6l-6 6 6 6"
+      ]
+    },
+    "chevron_right": {
+      "paths": [
+        "M9 6l6 6-6 6"
+      ]
+    },
+    "close": {
+      "paths": [
+        "M6 6l12 12M18 6L6 18"
+      ]
+    },
+    "plus": {
+      "paths": [
+        "M12 5v14M5 12h14"
+      ]
+    },
+    "more": {
+      "circles": [
+        {
+          "cx": 5,
+          "cy": 12,
+          "r": 1
+        },
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 1
+        },
+        {
+          "cx": 19,
+          "cy": 12,
+          "r": 1
+        }
+      ]
+    },
+    "filter": {
+      "paths": [
+        "M4 5h16l-6 7v6l-4 2v-8z"
+      ]
+    },
+    "pin": {
+      "paths": [
+        "M9 4h6l-1 6 3 3v2H7v-2l3-3z",
+        "M12 15v6"
+      ]
+    },
+    "warning": {
+      "paths": [
+        "M12 3l10 18H2z",
+        "M12 10v4M12 17v.5"
+      ]
+    },
+    "activity_scene": {
+      "paths": [
+        "M4 5h16M8 12h12M12 19h8",
+        "M4 5v14"
+      ],
+      "circles": [
+        {
+          "cx": 8,
+          "cy": 12,
+          "r": 0.01
+        }
+      ],
+      "note": "hierarchy: rows indent under a spine"
+    },
+    "activity_assets": {
+      "paths": [
+        "M3 7l9-4 9 4-9 4z",
+        "M3 7v10l9 4 9-4V7"
+      ]
+    },
+    "activity_topics": {
+      "paths": [
+        "M7.5 7.5l3.5 8.5M16.5 7.5l-3.5 8.5M8 6h8"
+      ],
+      "circles": [
+        {
+          "cx": 6,
+          "cy": 6,
+          "r": 2
+        },
+        {
+          "cx": 18,
+          "cy": 6,
+          "r": 2
+        },
+        {
+          "cx": 12,
+          "cy": 18,
+          "r": 2
+        }
+      ]
+    },
+    "activity_plot": {
+      "paths": [
+        "M3 20h18M4 16l5-6 4 3 7-8"
+      ]
+    },
+    "activity_sensors": {
+      "rects": [
+        {
+          "x": 3,
+          "y": 7,
+          "w": 18,
+          "h": 13,
+          "rx": 2
+        }
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 13.5,
+          "r": 3.5
+        }
+      ]
+    },
+    "activity_teleop": {
+      "paths": [
+        "M9 2h6v7h7v6h-7v7H9v-7H2V9h7z"
+      ],
+      "note": "d-pad"
+    },
+    "activity_console": {
+      "paths": [
+        "M4 17l6-5-6-5M12 19h8"
+      ]
+    },
+    "activity_workspaces": {
+      "paths": [
+        "M10 4v16M10 12h11"
+      ],
+      "rects": [
+        {
+          "x": 3,
+          "y": 4,
+          "w": 18,
+          "h": 16,
+          "rx": 2
+        }
+      ],
+      "note": "one-plus-two panes; Layout keeps the single vertical split"
+    },
+    "settings": {
+      "paths": [
+        "M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"
+      ],
+      "circles": [
+        {
+          "cx": 16,
+          "cy": 6,
+          "r": 2
+        },
+        {
+          "cx": 10,
+          "cy": 12,
+          "r": 2
+        },
+        {
+          "cx": 18,
+          "cy": 18,
+          "r": 2
+        }
+      ]
+    },
+    "cam_orbit": {
+      "paths": [
+        "M15 6l3 2-3 2"
+      ],
+      "ellipses": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "rx": 9,
+          "ry": 4
+        }
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 2
+        }
+      ]
+    },
+    "cam_pan": {
+      "paths": [
+        "M8 13V6a1.5 1.5 0 0 1 3 0v6M11 11V4.5a1.5 1.5 0 0 1 3 0V11M14 11V6a1.5 1.5 0 0 1 3 0v7a7 7 0 0 1-7 7h-1a6 6 0 0 1-5-3l-2-3.5a1.5 1.5 0 0 1 2.5-1.5L8 15"
+      ]
+    },
+    "cam_zoom": {
+      "paths": [
+        "M20 20l-4-4M11 8v6M8 11h6"
+      ],
+      "circles": [
+        {
+          "cx": 11,
+          "cy": 11,
+          "r": 7
+        }
+      ]
+    },
+    "proj_perspective": {
+      "paths": [
+        "M9 4h6l5 16H4z",
+        "M9 4l-2 16M15 4l2 16"
+      ]
+    },
+    "proj_ortho": {
+      "rects": [
+        {
+          "x": 5,
+          "y": 4,
+          "w": 14,
+          "h": 16,
+          "rx": 1
+        }
+      ]
+    },
+    "camera_mode": {
+      "paths": [
+        "M16 11l5-3v8l-5-3"
+      ],
+      "rects": [
+        {
+          "x": 3,
+          "y": 7,
+          "w": 13,
+          "h": 10,
+          "rx": 2
+        }
+      ]
+    },
+    "focus": {
+      "paths": [
+        "M12 2v3M12 19v3M2 12h3M19 12h3"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 7
+        },
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 1.5
+        }
+      ]
+    },
+    "overlays": {
+      "paths": [
+        "M12 3l9 5-9 5-9-5z",
+        "M3 13l9 5 9-5"
+      ]
+    },
+    "layout_split": {
+      "paths": [
+        "M12 4v16"
+      ],
+      "rects": [
+        {
+          "x": 3,
+          "y": 4,
+          "w": 18,
+          "h": 16,
+          "rx": 2
+        }
+      ]
+    },
+    "maximize": {
+      "paths": [
+        "M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"
+      ]
+    },
+    "follow": {
+      "paths": [
+        "M5 12a7 7 0 0 1 12-5M19 12a7 7 0 0 1-12 5",
+        "M17 3v4h-4M7 21v-4h4"
+      ]
+    },
+    "folder": {
+      "paths": [
+        "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+      ]
+    },
+    "recent": {
+      "paths": [
+        "M12 8v4l3 3"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 9
+        }
+      ]
+    },
+    "save": {
+      "paths": [
+        "M5 3h11l3 3v15H5z",
+        "M8 3v6h8V3M8 21v-7h8v7"
+      ]
+    },
+    "import": {
+      "paths": [
+        "M12 3v12M7 10l5 5 5-5M4 21h16"
+      ]
+    },
+    "export": {
+      "paths": [
+        "M12 15V3M7 8l5-5 5 5M4 21h16"
+      ]
+    },
+    "server": {
+      "paths": [
+        "M4 4h16v16H4z",
+        "M8 12h8M12 8v8"
+      ]
+    },
+    "shape_box": {
+      "paths": [
+        "M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 12l8-4.5M12 12v9M12 12L4 7.5"
+      ]
+    },
+    "shape_sphere": {
+      "paths": [
+        "M4 12c2 2 14 2 16 0"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 8
+        }
+      ]
+    },
+    "shape_cylinder": {
+      "paths": [
+        "M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3zM5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"
+      ]
+    },
+    "shape_capsule": {
+      "paths": [
+        "M8 8a4 4 0 0 1 8 0v8a4 4 0 0 1-8 0z"
+      ]
+    },
+    "shape_cone": {
+      "paths": [
+        "M12 3L5 18M12 3l7 15M5 18c0 1.7 3.1 3 7 3s7-1.3 7-3"
+      ]
+    },
+    "shape_plane": {
+      "paths": [
+        "M3 16l6-8h12l-6 8z"
+      ]
+    },
+    "light_point": {
+      "paths": [
+        "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9V16h7v-2.1A6 6 0 0 0 12 3z"
+      ]
+    },
+    "light_spot": {
+      "paths": [
+        "M9 3h6l2 6H7zM8 13l-3 8M16 13l3 8M12 13v8"
+      ]
+    },
+    "light_directional": {
+      "paths": [
+        "M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 4
+        }
+      ]
+    },
+    "trash": {
+      "paths": [
+        "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"
+      ]
+    },
+    "pop_out": {
+      "paths": [
+        "M14 4h6v6M20 4l-8 8",
+        "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"
+      ]
+    },
+    "publish": {
+      "paths": [
+        "M12 19V5M5 12l7-7 7 7"
+      ]
+    },
+    "revert": {
+      "paths": [
+        "M9 14L4 9l5-5",
+        "M4 9h10a6 6 0 0 1 0 12h-3"
+      ],
+      "note": "undo-arrow; used for Revert to saved"
+    },
+    "undo": {
+      "paths": [
+        "M9 14L4 9l5-5",
+        "M4 9h10a6 6 0 0 1 0 12h-3"
+      ],
+      "note": "undo-arrow; used for Revert to saved"
+    },
+    "redo": {
+      "paths": [
+        "M15 14l5-5-5-5",
+        "M20 9H10a6 6 0 0 0 0 12h3"
+      ]
+    },
+    "track": {
+      "paths": [
+        "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 3
+        }
+      ],
+      "note": "eye = look at"
+    },
+    "expand_all": {
+      "paths": [
+        "M7 9l5 5 5-5",
+        "M7 4l5 5 5-5"
+      ]
+    },
+    "collapse_all": {
+      "paths": [
+        "M7 15l5-5 5 5",
+        "M7 20l5-5 5 5"
+      ]
+    },
+    "services": {
+      "paths": [
+        "M4 7h16M4 12h10M4 17h7"
+      ]
+    },
+    "copy": {
+      "paths": [
+        "M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"
+      ],
+      "rects": [
+        {
+          "x": 8,
+          "y": 8,
+          "w": 12,
+          "h": 12,
+          "rx": 2
+        }
+      ]
+    },
+    "record": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 6
+        }
+      ],
+      "fill": true
+    },
+    "eye": {
+      "paths": [
+        "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 3
+        }
+      ],
+      "note": "eye = look at"
+    },
+    "eye_off": {
+      "paths": [
+        "M3 3l18 18",
+        "M10.6 10.6a2 2 0 0 0 2.8 2.8",
+        "M9.9 5.2A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 3.9",
+        "M6.3 6.3C3.8 8.1 2 12 2 12s4 7 10 7a9.6 9.6 0 0 0 4.2-.9"
+      ]
+    },
+    "check": {
+      "paths": [
+        "M5 12l5 5 9-10"
+      ]
+    },
+    "home": {
+      "paths": [
+        "M3 11l9-7 9 7",
+        "M5 10v10h14V10"
+      ]
+    },
+    "align": {
+      "paths": [
+        "M4 4v16M20 4v16M8 9h8M8 15h8"
+      ]
+    },
+    "rename": {
+      "paths": [
+        "M4 20h4l10-10-4-4L4 16z",
+        "M12 6l4 4"
+      ]
+    },
+    "move_to": {
+      "paths": [
+        "M12 2v6M12 16v6M2 12h6M16 12h6"
+      ],
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 3
+        }
+      ]
+    },
+    "overlay_grid": {
+      "paths": [
+        "M3 9h18M3 15h18M9 3v18M15 3v18"
+      ]
+    },
+    "overlay_collision": {
+      "paths": [
+        "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+        "M4 7.5l8 4.5 8-4.5"
+      ],
+      "dash": [
+        3,
+        2
+      ]
+    },
+    "overlay_inertia": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 8
+        },
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 2
+        }
+      ]
+    },
+    "overlay_com": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 7
+        }
+      ],
+      "paths": [
+        "M12 5v14M5 12h14"
+      ]
+    },
+    "overlay_joints": {
+      "paths": [
+        "M3 12h4l3-7 4 14 3-7h4"
+      ]
+    },
+    "overlay_frames": {
+      "paths": [
+        "M12 12H20M12 12V4M12 12L6 18"
+      ]
+    },
+    "overlay_wireframe": {
+      "paths": [
+        "M12 3l8 4.5v9L12 21l-8-4.5v-9z",
+        "M12 12l8-4.5M12 12v9M12 12L4 7.5",
+        "M4 16.5l8-4.5 8 4.5"
+      ]
+    },
+    "log_info": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 9
+        }
+      ],
+      "paths": [
+        "M12 11v5M12 8v.5"
+      ]
+    },
+    "log_warn": {
+      "paths": [
+        "M12 3l10 18H2z",
+        "M12 10v4M12 17v.5"
+      ]
+    },
+    "log_error": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 9
+        }
+      ],
+      "paths": [
+        "M9 9l6 6M15 9l-6 6"
+      ]
+    },
+    "log_debug": {
+      "paths": [
+        "M8 9h8M8 13h8M8 17h5",
+        "M5 4h14v16H5z"
+      ]
+    },
+    "stop": {
+      "rects": [
+        {
+          "x": 5,
+          "y": 5,
+          "w": 14,
+          "h": 14,
+          "rx": 2
+        }
+      ],
+      "fill": true
+    },
+    "pop_in": {
+      "paths": [
+        "M10 14H4V8",
+        "M4 14l8-8",
+        "M14 4h5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6"
+      ]
+    },
+    "link_cameras": {
+      "paths": [
+        "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1",
+        "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"
+      ]
+    },
+    "unsaved_dot": {
+      "circles": [
+        {
+          "cx": 12,
+          "cy": 12,
+          "r": 4
+        }
+      ],
+      "fill": true,
+      "note": "7px dot in warn"
+    }
+  }
+}

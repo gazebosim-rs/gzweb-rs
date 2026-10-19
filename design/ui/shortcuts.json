@@ -1,0 +1,414 @@
+{
+  "$note": "Single source of truth for keyboard shortcuts. Tooltips, menus, the command palette and a CI conflict test all read this file. 'mod' = Cmd on macOS, Ctrl on Linux/Windows. A binding with 'web': null is unavailable in the browser build and its tooltip shows the 'web_alt' binding instead. 'scope' decides which focus the key fires in: global | viewport (viewport or its rail has focus, or pointer is over a view) | text (never fires while a text field is focused) | teleop (Teleop panel armed). Single letters are always scope viewport or teleop, never global.",
+  "modifier_vocabulary": {
+    "shift": "coarse step (scrub, slider, snap angle/step) and extend selection (Shift+click adds, Shift+drag extends)",
+    "alt": "fine step (scrub, slider) and temporary alternate action",
+    "mod": "command chords and toggle selection (mod+click toggles one item everywhere: tree, viewport, box select)",
+    "space_hold": "hold + drag = temporary Pan (viewport); tap = play/pause (global)",
+    "note": "Z is reserved for axis constraint in Translate/Rotate and has no other binding."
+  },
+  "bindings": [
+    {
+      "id": "tool.navigate",
+      "label": "Navigate tool",
+      "keys": "Escape",
+      "scope": "viewport",
+      "note": "Esc order: close menu → cancel drag → Navigate. Never changes the camera drag action and never releases follow."
+    },
+    {
+      "id": "tool.box_select",
+      "label": "Box select tool",
+      "keys": "B",
+      "scope": "viewport",
+      "also": "mod+drag in Navigate draws a marquee without switching tools"
+    },
+    {
+      "id": "tool.translate",
+      "label": "Translate tool",
+      "keys": "T",
+      "scope": "viewport"
+    },
+    {
+      "id": "tool.rotate",
+      "label": "Rotate tool",
+      "keys": "R",
+      "scope": "viewport"
+    },
+    {
+      "id": "tool.constrain_x",
+      "label": "Constrain to X",
+      "keys": "X",
+      "scope": "viewport",
+      "note": "while dragging a gizmo"
+    },
+    {
+      "id": "tool.constrain_y",
+      "label": "Constrain to Y",
+      "keys": "Y",
+      "scope": "viewport"
+    },
+    {
+      "id": "tool.constrain_z",
+      "label": "Constrain to Z",
+      "keys": "Z",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.focus",
+      "label": "Focus selection",
+      "keys": "F",
+      "scope": "viewport",
+      "note": "no selection: frame world"
+    },
+    {
+      "id": "view.home",
+      "label": "Home view",
+      "keys": "H",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.projection",
+      "label": "Toggle perspective / orthographic",
+      "keys": "5",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.top",
+      "label": "Top view",
+      "keys": "7",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.bottom",
+      "label": "Bottom view",
+      "keys": "shift+7",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.front",
+      "label": "Front view",
+      "keys": "1",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.back",
+      "label": "Back view",
+      "keys": "shift+1",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.right",
+      "label": "Right view",
+      "keys": "3",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.left",
+      "label": "Left view",
+      "keys": "shift+3",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.pan_hold",
+      "label": "Pan (hold)",
+      "keys": "Space (hold)",
+      "scope": "viewport",
+      "note": "Pan while Space is held and the pointer drags; a tap (< 200 ms, no drag) is play/pause instead. Release returns to the view's drag action."
+    },
+    {
+      "id": "view.follow",
+      "label": "Follow selection / release",
+      "keys": "shift+F",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.track",
+      "label": "Track selection / release",
+      "keys": "shift+T",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.maximize",
+      "label": "Maximize / restore view",
+      "keys": "shift+Space",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.split_right",
+      "label": "Split view right",
+      "keys": "alt+mod+Right",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.split_down",
+      "label": "Split view down",
+      "keys": "alt+mod+Down",
+      "scope": "viewport"
+    },
+    {
+      "id": "view.close",
+      "label": "Close view",
+      "keys": "mod+W",
+      "scope": "viewport",
+      "web": null,
+      "web_alt": "alt+W"
+    },
+    {
+      "id": "overlay.grid",
+      "label": "Toggle grid",
+      "keys": "G",
+      "scope": "viewport"
+    },
+    {
+      "id": "overlay.collisions",
+      "label": "Toggle collisions",
+      "keys": "C",
+      "scope": "viewport"
+    },
+    {
+      "id": "overlay.inertia",
+      "label": "Toggle inertia",
+      "keys": "I",
+      "scope": "viewport"
+    },
+    {
+      "id": "overlay.joints",
+      "label": "Toggle joints",
+      "keys": "J",
+      "scope": "viewport"
+    },
+    {
+      "id": "sim.play_pause",
+      "label": "Play / pause",
+      "keys": "Space",
+      "scope": "global",
+      "note": "TAP toggles play/pause: key down and up within 200 ms with no pointer drag in between. Holding Space longer, or dragging while held, is temporary Pan and does not toggle. Never fires in text fields. Decided Q4."
+    },
+    {
+      "id": "sim.step",
+      "label": "Step",
+      "keys": "mod+Right",
+      "scope": "global"
+    },
+    {
+      "id": "sim.reset",
+      "label": "Reset world",
+      "keys": "mod+shift+R",
+      "scope": "global",
+      "note": "undoable; shows 'Reset · Undo' chip for 5 s"
+    },
+    {
+      "id": "teleop.stop",
+      "label": "Emergency stop",
+      "keys": "X",
+      "scope": "teleop",
+      "note": "Decided Q5. Fires only while Teleop is armed (publishing); also the red Stop button. Teleop armed disables gizmo drags so it never collides with constrain_x."
+    },
+    {
+      "id": "teleop.drive",
+      "label": "Drive",
+      "keys": "W A S D / arrows",
+      "scope": "teleop",
+      "note": "fires while Teleop is armed and focus is in the viewport or the Teleop panel"
+    },
+    {
+      "id": "edit.undo",
+      "label": "Undo",
+      "keys": "mod+Z",
+      "scope": "global"
+    },
+    {
+      "id": "edit.redo",
+      "label": "Redo",
+      "keys": "mod+shift+Z",
+      "scope": "global"
+    },
+    {
+      "id": "edit.copy",
+      "label": "Copy",
+      "keys": "mod+C",
+      "scope": "text"
+    },
+    {
+      "id": "edit.paste",
+      "label": "Paste",
+      "keys": "mod+V",
+      "scope": "text"
+    },
+    {
+      "id": "edit.duplicate",
+      "label": "Duplicate",
+      "keys": "mod+D",
+      "scope": "text",
+      "web": null,
+      "web_alt": "shift+D"
+    },
+    {
+      "id": "edit.delete",
+      "label": "Delete selection",
+      "keys": "Delete / Backspace",
+      "scope": "text",
+      "note": "undoable; shows 'Deleted <name> · Undo' chip for 5 s"
+    },
+    {
+      "id": "edit.rename",
+      "label": "Rename",
+      "keys": "F2",
+      "scope": "text"
+    },
+    {
+      "id": "edit.select_all",
+      "label": "Select all",
+      "keys": "mod+A",
+      "scope": "text"
+    },
+    {
+      "id": "file.new",
+      "label": "New world",
+      "keys": "mod+N",
+      "scope": "global",
+      "web": null,
+      "web_alt": "alt+N"
+    },
+    {
+      "id": "file.open",
+      "label": "Open world",
+      "keys": "mod+O",
+      "scope": "global"
+    },
+    {
+      "id": "file.save",
+      "label": "Save",
+      "keys": "mod+S",
+      "scope": "global"
+    },
+    {
+      "id": "file.save_as",
+      "label": "Save as",
+      "keys": "mod+shift+S",
+      "scope": "global"
+    },
+    {
+      "id": "file.import",
+      "label": "Import",
+      "keys": "mod+I",
+      "scope": "global"
+    },
+    {
+      "id": "ui.command_palette",
+      "label": "Command palette",
+      "keys": "mod+K",
+      "scope": "global"
+    },
+    {
+      "id": "ui.sidebar",
+      "label": "Toggle sidebar",
+      "keys": "mod+B",
+      "scope": "global"
+    },
+    {
+      "id": "ui.inspector",
+      "label": "Toggle inspector",
+      "keys": "mod+alt+I",
+      "scope": "global"
+    },
+    {
+      "id": "ui.workspace_1",
+      "label": "Workspace 1",
+      "keys": "alt+1",
+      "scope": "global"
+    },
+    {
+      "id": "ui.workspace_2",
+      "label": "Workspace 2",
+      "keys": "alt+2",
+      "scope": "global"
+    },
+    {
+      "id": "ui.workspace_3",
+      "label": "Workspace 3",
+      "keys": "alt+3",
+      "scope": "global"
+    },
+    {
+      "id": "ui.workspace_4",
+      "label": "Workspace 4",
+      "keys": "alt+4",
+      "scope": "global"
+    },
+    {
+      "id": "panel.scene",
+      "label": "Scene panel",
+      "keys": "mod+shift+E",
+      "scope": "global"
+    },
+    {
+      "id": "panel.assets",
+      "label": "Assets panel",
+      "keys": "mod+shift+A",
+      "scope": "global"
+    },
+    {
+      "id": "panel.topics",
+      "label": "Topics panel",
+      "keys": "mod+shift+T",
+      "scope": "global",
+      "web": null,
+      "web_alt": "alt+shift+T"
+    },
+    {
+      "id": "panel.plot",
+      "label": "Plot panel",
+      "keys": "mod+shift+P",
+      "scope": "global"
+    },
+    {
+      "id": "panel.console",
+      "label": "Console panel",
+      "keys": "mod+shift+C",
+      "scope": "global"
+    },
+    {
+      "id": "ui.theme_light",
+      "label": "Theme: light",
+      "keys": null,
+      "scope": "global",
+      "note": "command palette only"
+    },
+    {
+      "id": "ui.theme_dark",
+      "label": "Theme: dark",
+      "keys": null,
+      "scope": "global"
+    },
+    {
+      "id": "ui.theme_system",
+      "label": "Theme: follow system",
+      "keys": null,
+      "scope": "global"
+    }
+  ],
+  "web_reserved": {
+    "note": "Browsers do not deliver these to the page (Chrome unless installed as a PWA). Bindings using them MUST declare web: null and a web_alt.",
+    "keys": [
+      "mod+W",
+      "mod+N",
+      "mod+T",
+      "mod+shift+T",
+      "mod+shift+N",
+      "mod+1..9",
+      "mod+shift+W",
+      "mod+Q",
+      "mod+D (bookmarks)"
+    ],
+    "prevent_default_when_canvas_focused": [
+      "mod+K",
+      "mod+S",
+      "mod+O",
+      "mod+F",
+      "mod+P",
+      "Space",
+      "Tab (when in viewport)"
+    ]
+  }
+}

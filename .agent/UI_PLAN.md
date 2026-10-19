@@ -1,11 +1,16 @@
 # Phase 5 — UI implementation plan
 
-Plan for building the Gazebo UI spec (`docs/ui-spec/`, from `gazebo-ui-spec.zip`, v0.3) into
+Plan for building the Gazebo UI spec (`design/ui/`: DESIGN.md v0.3, tokens, icons, shortcuts,
+boards in `design/ui/assets/boards/`) into
 gzweb-rs, with a hard requirement that gzweb-rs also runs **without** the UI: just the 3D
 view, an orbit camera, and keyboard camera bindings.
 
-Status: proposal. Decisions marked **(decide)** need the owner's call before the milestone that
-depends on them.
+Status: approved 2026-10-19. Decisions (also logged in `design/ui/DECISIONS.md`):
+- Desktop gz-transport connection (spec Q7): **later**. Both targets use the websocket server,
+  behind a `SimBackend` trait.
+- Target Gazebo release: **Jetty** (gz-sim 10). See §3a.
+- Default UI mode: **`full` on desktop, `minimal` on the web**.
+- Visual references: the exported boards in `design/ui/assets/boards/{light,dark}/`.
 
 ---
 
@@ -37,10 +42,8 @@ That flag becomes the UI-mode switch below.
 
 Selecting the mode:
 - **Native:** `--ui full|minimal`, default `full`. `--snapshot`/`--screenshot` force `none`.
-- **Wasm:** `?ui=full|minimal`, default `full`. The embedding API (§2.3 of PORT_PLAN) takes the
-  same option.
-- **(decide)** Defaults: the recommended defaults are above. The alternative is `minimal` by default on wasm, since most
-  embeds want a bare view.
+- **Wasm:** `?ui=full|minimal`, default `minimal`. The embedding API (§2.3 of PORT_PLAN) takes
+  the same option.
 
 ### 2.2 Crate layout
 
@@ -91,14 +94,9 @@ From `shortcuts.json`, viewport and sim scopes only:
 
 ## 3. Spec items that need a decision or a change
 
-1. **(decide) Native backend, Q7.** The spec wants native to speak gz-transport (ZeroMQ + UDP
-   discovery) with no bridge. gzweb-rs speaks the websocket protocol on both targets today, and
-   every panel can be built on it. A Rust gz-transport client is its own project: discovery,
-   ZMTP, versioned wire format, services.
-   **Recommended:** add the `SimBackend` trait now with the websocket implementation behind it.
-   Treat `gz-transport-rs` as a separate later track, after the UI works end to end.
-2. **(decide) First target Gazebo release** (spec open Q2). **Recommended:** Harmonic (gz-sim 8),
-   which is what our Docker images and corpus use.
+1. **Native backend, Q7: deferred.** The `SimBackend` trait comes with the websocket
+   implementation behind it. A Rust gz-transport client is a separate later track.
+2. **Target release: Jetty** (spec open Q2). See §3a.
 3. **Console panel.** Gazebo doesn't publish its log on a topic, and the websocket server doesn't
    forward it. **Proposed:** the console shows client-side messages (connection, asset failures,
    service errors, our `warn!`s) and `/rosout`-style topics when present. Log this in
@@ -111,8 +109,8 @@ From `shortcuts.json`, viewport and sim scopes only:
 5. **Multi-view cost.** Each view is a full `Camera3d` with our quality stack. Quad view at
    Ultra means 4× TAA/SSAO/shadow cascades. **Proposed:** inactive views drop to the `High`
    preset, and the shadow map is shared. Measure in M6.
-6. **Spec location.** The spec gets vendored into `docs/ui-spec/` (DESIGN.md, DECISIONS.md, tokens.json,
-   icons.json, shortcuts.json, theme.rs, brand assets) so agents and CI read one copy. Decisions
+6. **Spec location.** `design/ui/` (DESIGN.md, DECISIONS.md, tokens.json, icons.json,
+   shortcuts.json, theme.rs, brand assets, boards). Agents and CI read this one copy. Decisions
    we make go into its `DECISIONS.md`, as the spec asks.
 7. **Fonts.** The Geist and Geist Mono TTFs (OFL-1.1) aren't in the zip. They get vendored from the
    upstream release, with the licence file, and embedded with `include_bytes!` for wasm.
@@ -122,6 +120,25 @@ From `shortcuts.json`, viewport and sim scopes only:
    payload.
 
 ---
+
+## 3a. Jetty migration track
+
+Jetty (gz-sim 10) deprecates gz-launch. The websocket server is now the gz-sim system
+`gz-sim-websocket-server-system`, added in the world SDF or at runtime through
+`/world/<w>/system/add`. Our Docker images, corpus and protos are all Harmonic today. This track
+runs alongside the UI milestones and must land before M4, which builds on server behaviour:
+
+- **J1, image:** `Dockerfile.gazebo` moves to Jetty on Ubuntu 24.04. It starts gz-sim with the
+  websocket system, through a `-s` flag or the `system/add` service, so arbitrary worlds still
+  work without editing them.
+- **J2, protos:** update `gz-proto` to Jetty's gz-msgs and check for wire changes the client cares
+  about (Scene, Material/PBR, Light, Heightmap, WorldStatistics).
+- **J3, protocol:** diff the gz-sim websocket system against gz-launch's (ops, `asset` handling,
+  auth, throttling, message framing, the out-of-bounds bugs noted in DESIGN.md). Fix the
+  client and the replay server where they differ.
+- **J4, corpus:** re-record `tests/corpus/*` against Jetty, and update the gzweb browser parity
+  job if gzweb needs changes to run against it. Keep the Harmonic corpus only if we decide to
+  support both.
 
 ## 4. Milestones
 
@@ -138,7 +155,7 @@ These follow the spec's §12 order, adapted to this repo. Each milestone is one 
 - Tests: unit tests for every `ViewCommand`; a headless `minimal` app driven by synthetic input.
 
 ### M1 — Theme, icons, fonts, widgets (`gz-ui` crate)
-- Vendor the spec. Generate `theme.rs` from `tokens.json` in `build.rs`, or keep the spec's
+- Generate `theme.rs` from `tokens.json` in `build.rs`, or keep the spec's
   hand-written mirror plus a test that it matches. Add the WCAG contrast test over the §13 pairs.
 - Icon atlas build step, fonts, `ColorRole` + `apply_theme_system` + `button_visuals_system`.
 - Widgets §5.1–5.16 on `bevy_ui_widgets`: IconButton, TextButton, Button, SegmentedGroup,
@@ -220,8 +237,7 @@ These follow the spec's §12 order, adapted to this repo. Each milestone is one 
   synthetic-world tests drive `full`-mode actions (play/pause round trip, select → inspector,
   inspector pose edit → `set_pose` request seen by the replay server).
 - **Visual:** screenshot capture per milestone in both themes (`--screenshot` gains `--ui full`).
-  We don't have the design-canvas boards, so the comparison is by review against the spec text.
-  **(decide)** whether board images can be exported into `docs/ui-spec/boards/`.
+  Compare against the exported boards in `design/ui/assets/boards/`.
 
 ---
 
