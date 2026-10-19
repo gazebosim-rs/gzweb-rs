@@ -67,7 +67,7 @@ pub struct TreeRowSpec {
     pub hidden: bool,
 }
 
-/// The row's parts, found by [`tree_row_system`].
+/// The row's parts, found by `tree_row_system`.
 #[derive(Component, Clone, Copy, Debug)]
 pub enum TreeRowPart {
     Badge,
@@ -175,10 +175,20 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
     )
 }
 
-/// Badge, name weight, eye icon and opacity from each row's state.
-#[allow(clippy::too_many_arguments)]
-pub fn tree_row_system(
+/// Badge, name weight, eye icon and opacity from each row's state, for
+/// rows that are new or whose spec, selection or hover changed.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub(crate) fn tree_row_system(
     rows: Query<(Entity, &TreeRowSpec, Has<Active>, &Hovered)>,
+    changed: Query<
+        Entity,
+        (
+            With<TreeRowSpec>,
+            Or<(Changed<TreeRowSpec>, Changed<Hovered>, Added<Active>)>,
+        ),
+    >,
+    mut deselected: RemovedComponents<Active>,
+    mut dirty: Local<Vec<Entity>>,
     children: Query<&Children>,
     parts: Query<&TreeRowPart>,
     mut fills: Query<&mut Fill>,
@@ -188,7 +198,11 @@ pub fn tree_row_system(
     opacity: Query<&Opacity>,
     mut commands: Commands,
 ) {
-    for (row, spec, selected, hovered) in &rows {
+    dirty.clear();
+    dirty.extend(changed.iter().chain(deselected.read()));
+    dirty.sort_unstable();
+    dirty.dedup();
+    for (row, spec, selected, hovered) in dirty.iter().filter_map(|&e| rows.get(e).ok()) {
         let alpha = if spec.hidden { 0.5 } else { 1.0 };
         for part_entity in children.iter_descendants(row) {
             if opacity.get(part_entity).map_or(true, |o| o.0 != alpha) {

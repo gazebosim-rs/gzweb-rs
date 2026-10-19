@@ -1,6 +1,6 @@
 //! The icon set (`design/ui/icons.json`), rasterized by `build.rs` into one
-//! atlas at 1× and one at 2× (sizes 15, 17, 18, 20 px), embedded with
-//! `include_bytes!`. Glyphs are white on transparent; an icon's [`Ink`]
+//! atlas at 1× and one at 2× (every size in [`layout::SIZES`]), embedded
+//! with `include_bytes!`. Glyphs are white on transparent; an icon's [`Ink`]
 //! role tints it at runtime. Icons are `ImageNode`s with a `TextureAtlas`;
 //! the 2× atlas is used when the UI renders at more than one physical
 //! pixel per logical pixel.
@@ -62,7 +62,7 @@ impl FromWorld for IconAtlas {
     }
 }
 
-/// An icon `px` logical pixels square. [`update_icons`] picks the atlas
+/// An icon `px` logical pixels square. `update_icons` picks the atlas
 /// cell: the smallest rasterized size ≥ `px` (else the largest), at 1× or
 /// 2× for the node's scale factor.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -85,20 +85,25 @@ pub fn atlas_for_scale(scale: f32) -> usize {
     usize::from(scale > 1.01)
 }
 
-/// Points each [`Icon`]'s `ImageNode` at its atlas cell. Runs when the icon
-/// changes or its render target's scale factor does.
+/// Points each [`Icon`]'s `ImageNode` at its atlas cell, and sizes its node
+/// to `px`. Runs for icons that are new or changed, or whose render
+/// target's scale factor changed.
 #[allow(clippy::type_complexity)]
-pub fn update_icons(
+pub(crate) fn update_icons(
     atlas: Res<IconAtlas>,
-    mut q: Query<(
-        Ref<Icon>,
-        Option<Ref<ComputedUiRenderTargetInfo>>,
-        &mut ImageNode,
-    )>,
+    mut q: Query<
+        (
+            Ref<Icon>,
+            Option<&ComputedUiRenderTargetInfo>,
+            &mut ImageNode,
+            Option<&mut Node>,
+        ),
+        Or<(Changed<Icon>, Changed<ComputedUiRenderTargetInfo>)>,
+    >,
 ) {
     let count = IconId::ALL.len();
-    for (icon, target, mut image) in &mut q {
-        let scale = target.as_ref().map_or(1.0, |t| t.scale_factor());
+    for (icon, target, mut image, node) in &mut q {
+        let scale = target.map_or(1.0, ComputedUiRenderTargetInfo::scale_factor);
         let which = atlas_for_scale(scale);
         let index = size_index(icon.px) * count + icon.id.index();
         let up_to_date = image.image == atlas.images[which]
@@ -106,18 +111,19 @@ pub fn update_icons(
                 .texture_atlas
                 .as_ref()
                 .is_some_and(|a| a.index == index && a.layout == atlas.layouts[which]);
-        if up_to_date
-            && !icon.is_changed()
-            && !target.as_ref().is_some_and(DetectChanges::is_changed)
-        {
-            continue;
-        }
         if !up_to_date {
             image.image = atlas.images[which].clone();
             image.texture_atlas = Some(TextureAtlas {
                 layout: atlas.layouts[which].clone(),
                 index,
             });
+        }
+        if let (true, Some(mut node)) = (icon.is_changed(), node) {
+            let side = Val::Px(icon.px);
+            if node.width != side || node.height != side {
+                node.width = side;
+                node.height = side;
+            }
         }
     }
 }

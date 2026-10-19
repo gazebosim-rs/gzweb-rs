@@ -199,7 +199,7 @@ pub struct TooltipStep {
     pub show: Option<Entity>,
 }
 
-/// The hover timing state machine (pure; [`tooltip_system`] drives it).
+/// The hover timing state machine (pure; `tooltip_system` drives it).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct TooltipTimer {
     /// The trigger under the pointer and since when.
@@ -244,16 +244,26 @@ impl TooltipTimer {
     }
 }
 
-/// Shows and hides tooltip cards from hover.
-pub fn tooltip_system(
+/// Shows and hides tooltip cards from hover. The triggers are searched
+/// only when one's hover changed; otherwise the timer's target stands.
+#[allow(clippy::type_complexity)]
+pub(crate) fn tooltip_system(
     time: Res<Time<Real>>,
     theme: Res<Theme>,
     mut timer: ResMut<TooltipTimer>,
     triggers: Query<(Entity, &Tooltip, &Hovered, Has<Pressed>)>,
+    hover_changed: Query<(), (With<Tooltip>, Changed<Hovered>)>,
     cards: Query<(Entity, &ChildOf), With<TooltipCard>>,
     mut commands: Commands,
 ) {
-    let hovered = triggers.iter().find(|(_, _, h, _)| h.get());
+    let hovered = if hover_changed.is_empty() {
+        timer
+            .target
+            .and_then(|(e, _)| triggers.get(e).ok())
+            .filter(|(_, _, h, _)| h.get())
+    } else {
+        triggers.iter().find(|(_, _, h, _)| h.get())
+    };
     let pressed = hovered.is_some_and(|h| h.3);
     let step = timer.step(hovered.map(|h| h.0), pressed, time.elapsed_secs_f64());
     if let Some(trigger) = step.hide {

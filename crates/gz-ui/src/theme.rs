@@ -11,11 +11,12 @@
 //! - Never write a colour literal; this is the only file allowed to (and
 //!   it doesn't either: the colours are generated). A test greps the crate.
 //! - Widgets store roles ([`Fill`], [`Stroke`], [`Ink`], [`Ring`],
-//!   [`Shadow`]), never a resolved `Color`. [`apply_theme_system`] resolves
+//!   [`Shadow`]), never a resolved `Color`. `apply_theme_system` resolves
 //!   them when the theme or a role changes.
 //! - Sizes come from [`Theme::s`], spacing from [`SPACE`], radii from
 //!   [`radius`].
 
+use bevy::ecs::query::QueryData;
 use bevy::input_focus::{InputFocus, InputFocusVisible};
 use bevy::prelude::*;
 use bevy::text::TextCursorStyle;
@@ -238,77 +239,89 @@ type Targets = (
     Option<&'static mut TextCursorStyle>,
 );
 
-fn changed<T: Component>(r: &Option<Ref<'_, T>>) -> bool {
-    r.as_ref().is_some_and(DetectChanges::is_changed)
+type RoleChanged = Or<(
+    Changed<Fill>,
+    Changed<Stroke>,
+    Changed<Ink>,
+    Changed<Ring>,
+    Changed<Shadow>,
+    Changed<Opacity>,
+)>;
+
+type WithRole = Or<(
+    With<Fill>,
+    With<Stroke>,
+    With<Ink>,
+    With<Ring>,
+    With<Shadow>,
+)>;
+
+/// Re-resolves role components: all of them when the [`Theme`] changes,
+/// otherwise only entities whose role (or [`Opacity`]) changed, found by
+/// change detection rather than a scan.
+#[allow(clippy::type_complexity)]
+pub(crate) fn apply_theme_system(
+    theme: Res<Theme>,
+    mut q: ParamSet<(
+        Query<(RoleRefs, Targets), WithRole>,
+        Query<(RoleRefs, Targets), (WithRole, RoleChanged)>,
+    )>,
+) {
+    if theme.is_changed() {
+        for (roles, targets) in &mut q.p0() {
+            resolve_roles(&theme, roles, targets);
+        }
+    } else {
+        for (roles, targets) in &mut q.p1() {
+            resolve_roles(&theme, roles, targets);
+        }
+    }
 }
 
-/// Re-resolves every role component: all of them when the [`Theme`]
-/// changes, otherwise only those whose role (or [`Opacity`]) changed.
-#[allow(clippy::type_complexity)]
-pub fn apply_theme_system(
-    theme: Res<Theme>,
-    mut q: Query<
-        (RoleRefs, Targets),
-        Or<(
-            With<Fill>,
-            With<Stroke>,
-            With<Ink>,
-            With<Ring>,
-            With<Shadow>,
-        )>,
-    >,
+/// Writes one entity's colours from its roles.
+fn resolve_roles(
+    theme: &Theme,
+    (fill, stroke, ink, ring, shadow, opacity, caret): <RoleRefs as QueryData>::Item<'_, '_>,
+    targets: <Targets as QueryData>::Item<'_, '_>,
 ) {
-    let all = theme.is_changed();
-    for ((fill, stroke, ink, ring, shadow, opacity, caret), targets) in &mut q {
-        if !(all
-            || changed(&fill)
-            || changed(&stroke)
-            || changed(&ink)
-            || changed(&ring)
-            || changed(&shadow)
-            || changed(&opacity))
-        {
-            continue;
+    let alpha = opacity.as_deref().map_or(1.0, |o| o.0);
+    let resolve = |role: ColorRole| {
+        let c = theme.color(role);
+        c.with_alpha(c.alpha() * alpha)
+    };
+    let (bg, border, text, image, outline, box_shadow, cursor) = targets;
+    if let (Some(fill), Some(mut bg)) = (fill, bg) {
+        bg.set_if_neq(BackgroundColor(resolve(fill.0)));
+    }
+    if let (Some(stroke), Some(mut border)) = (stroke, border) {
+        border.set_if_neq(BorderColor::all(resolve(stroke.0)));
+    }
+    if let Some(ink) = ink {
+        let c = resolve(ink.0);
+        if let Some(mut text) = text {
+            text.set_if_neq(TextColor(c));
         }
-        let alpha = opacity.as_deref().map_or(1.0, |o| o.0);
-        let resolve = |role: ColorRole| {
-            let c = theme.color(role);
-            c.with_alpha(c.alpha() * alpha)
-        };
-        let (bg, border, text, image, outline, box_shadow, cursor) = targets;
-        if let (Some(fill), Some(mut bg)) = (fill, bg) {
-            bg.set_if_neq(BackgroundColor(resolve(fill.0)));
-        }
-        if let (Some(stroke), Some(mut border)) = (stroke, border) {
-            border.set_if_neq(BorderColor::all(resolve(stroke.0)));
-        }
-        if let Some(ink) = ink {
-            let c = resolve(ink.0);
-            if let Some(mut text) = text {
-                text.set_if_neq(TextColor(c));
-            }
-            if let Some(mut image) = image {
-                if image.color != c {
-                    image.color = c;
-                }
-            }
-            if let (true, Some(mut cursor)) = (caret, cursor) {
-                cursor.color = c;
-                cursor.selection_color = theme.color(ColorRole::AccentSoft);
-                cursor.unfocused_selection_color = theme.color(ColorRole::Hover);
+        if let Some(mut image) = image {
+            if image.color != c {
+                image.color = c;
             }
         }
-        if let (Some(ring), Some(mut outline)) = (ring, outline) {
-            let c = resolve(ring.0);
-            if outline.color != c {
-                outline.color = c;
-            }
+        if let (true, Some(mut cursor)) = (caret, cursor) {
+            cursor.color = c;
+            cursor.selection_color = theme.color(ColorRole::AccentSoft);
+            cursor.unfocused_selection_color = theme.color(ColorRole::Hover);
         }
-        if let (Some(shadow), Some(mut box_shadow)) = (shadow, box_shadow) {
-            let c = resolve(shadow.0);
-            for layer in &mut box_shadow.0 {
-                layer.color = c;
-            }
+    }
+    if let (Some(ring), Some(mut outline)) = (ring, outline) {
+        let c = resolve(ring.0);
+        if outline.color != c {
+            outline.color = c;
+        }
+    }
+    if let (Some(shadow), Some(mut box_shadow)) = (shadow, box_shadow) {
+        let c = resolve(shadow.0);
+        for layer in &mut box_shadow.0 {
+            layer.color = c;
         }
     }
 }

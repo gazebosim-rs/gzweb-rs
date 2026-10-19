@@ -354,12 +354,19 @@ pub fn on_check_item_activate(
 /// Draws checkbox items' boxes from `Checked`: a filled box has no border
 /// (a border the same colour leaves an anti-aliasing seam at the corners).
 /// A checked item keeps the plain item look; the box shows the state.
-pub fn menu_checkbox_system(
+#[allow(clippy::type_complexity)]
+pub(crate) fn menu_checkbox_system(
     items: Query<(Entity, Has<Checked>), With<CheckItem>>,
+    changed: Query<Entity, (With<CheckItem>, Or<(Added<CheckItem>, Added<Checked>)>)>,
+    mut unchecked: RemovedComponents<Checked>,
     children: Query<&Children>,
     mut boxes: Query<(&mut Fill, &mut Node), With<MenuCheckBox>>,
 ) {
-    for (item, checked) in &items {
+    for (item, checked) in changed
+        .iter()
+        .chain(unchecked.read())
+        .filter_map(|e| items.get(e).ok())
+    {
         for e in children.iter_descendants(item) {
             if let Ok((mut fill, mut node)) = boxes.get_mut(e) {
                 let (f, b) = if checked {

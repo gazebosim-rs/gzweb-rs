@@ -6,9 +6,11 @@
 //!   (DECISIONS.md D-21). Included by `src/theme.rs`.
 //! - `icons.rs` from `icons.json`: the `IconId` enum. Included by
 //!   `src/icons/mod.rs`.
-//! - `icons@1x.png`, `icons@2x.png`: every icon at 15, 17, 18 and 20 px,
-//!   white on transparent, rasterized with resvg (build time only, so resvg
-//!   stays out of the wasm payload). Embedded with `include_bytes!`.
+//! - `icons@1x.png`, `icons@2x.png`: every icon at every size in
+//!   `layout::SIZES`, white on transparent, rasterized with resvg (build
+//!   time only, so resvg stays out of the wasm payload). Embedded with
+//!   `include_bytes!`. Every texel is white, transparent ones included, so
+//!   filtering at the glyph edges can't blend toward black.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -36,9 +38,10 @@ fn main() {
     let icons = icon_list(&icons);
     write(&out.join("icons.rs"), &icons_rs(&icons));
     for scale in [1, 2] {
-        atlas(&icons, scale)
-            .save_png(out.join(format!("icons@{scale}x.png")))
-            .expect("write the icon atlas");
+        save_white_png(
+            &atlas(&icons, scale),
+            &out.join(format!("icons@{scale}x.png")),
+        );
     }
 }
 
@@ -365,6 +368,31 @@ fn icons_rs(icons: &[Icon]) -> String {
     }
     s += "        }\n    }\n}\n";
     s
+}
+
+/// Writes `pixmap` (white glyphs, premultiplied) as straight-alpha RGBA
+/// with every texel's colour white: the alpha holds the whole glyph.
+/// Bevy samples straight alpha, and a transparent black texel next to an
+/// edge would darken it under linear filtering.
+fn save_white_png(pixmap: &tiny_skia::Pixmap, path: &Path) {
+    let data: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| [255, 255, 255, p.alpha()])
+        .collect();
+    let file =
+        std::fs::File::create(path).unwrap_or_else(|e| panic!("create {}: {e}", path.display()));
+    let mut encoder = png::Encoder::new(
+        std::io::BufWriter::new(file),
+        pixmap.width(),
+        pixmap.height(),
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(&data))
+        .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
 fn atlas(icons: &[Icon], scale: u32) -> tiny_skia::Pixmap {

@@ -85,14 +85,25 @@ pub fn toggle_row(theme: &Theme, label: impl Into<String>, on: bool) -> impl Bun
     )
 }
 
-/// Marks a toggle row (has a [`TogglePart::Track`] descendant).
-pub fn toggle_system(
+/// Draws each toggle's track and knob from `Checked`: for rows that are
+/// new or were checked or unchecked, or all of them when the theme changes.
+#[allow(clippy::type_complexity)]
+pub(crate) fn toggle_system(
     theme: Res<Theme>,
     rows: Query<(Entity, Has<Checked>), With<Checkbox>>,
+    changed: Query<Entity, (With<Checkbox>, Or<(Added<Checkbox>, Added<Checked>)>)>,
+    mut unchecked: RemovedComponents<Checked>,
     children: Query<&Children>,
     mut parts: Query<(&TogglePart, &mut Fill, &mut Node)>,
+    mut dirty: Local<Vec<Entity>>,
 ) {
-    for (row, on) in &rows {
+    dirty.clear();
+    if theme.is_changed() {
+        dirty.extend(rows.iter().map(|(e, _)| e));
+    } else {
+        dirty.extend(changed.iter().chain(unchecked.read()));
+    }
+    for (row, on) in dirty.iter().filter_map(|&e| rows.get(e).ok()) {
         for e in children.iter_descendants(row) {
             let Ok((part, mut fill, mut node)) = parts.get_mut(e) else {
                 continue;

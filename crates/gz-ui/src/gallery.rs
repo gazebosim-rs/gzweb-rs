@@ -1003,6 +1003,9 @@ pub fn gallery_texts(
     toggles: Query<&Children, With<ThemeToggle>>,
     mut labels: Query<&mut Text, (Without<ThemeText>, Without<TokenHex>)>,
 ) {
+    if !theme.is_changed() {
+        return;
+    }
     let dark = theme.is_dark;
     for (which, mut t) in &mut names {
         let want = match (which, dark) {

@@ -7,7 +7,8 @@ use super::app::{frames, ui_app, ui_app_at};
 use crate::brand::{logo, Logo, Logos, LOGO_DARK, LOGO_LIGHT};
 use crate::fonts::{span, text, Type, UiFonts};
 use crate::icons::{
-    atlas_for_scale, atlas_layout, icon, layout, size_index, IconAtlas, IconId, ATLAS_1X, ATLAS_2X,
+    atlas_for_scale, atlas_layout, icon, layout, size_index, Icon, IconAtlas, IconId, ATLAS_1X,
+    ATLAS_2X,
 };
 use crate::theme::{ColorRole, FontFamily, Theme, ThemeMode, TypeStyle};
 
@@ -40,7 +41,7 @@ fn atlas_cells_are_disjoint_and_inside() {
     }
     assert_eq!(
         layout::atlas_size(1, 1).0,
-        layout::side(20, 1) + 2 * layout::PAD
+        layout::side(24, 1) + 2 * layout::PAD
     );
 }
 
@@ -60,12 +61,14 @@ fn every_icon_is_drawn_white_at_every_size() {
             for id in IconId::ALL {
                 let (x0, y0, side) = layout::cell(scale, s, id.index() as u32, n);
                 let mut ink = 0;
-                for y in y0..y0 + side {
-                    for x in x0..x0 + side {
+                // Every texel is white, transparent ones too (so edges don't
+                // darken under filtering).
+                for y in y0 - layout::PAD..y0 + side + layout::PAD {
+                    for x in x0 - layout::PAD..x0 + side + layout::PAD {
                         let p = px(x, y);
+                        assert_eq!(&p[..3], &[255, 255, 255], "{} is white", id.name());
                         if p[3] > 0 {
                             ink += 1;
-                            assert_eq!(&p[..3], &[255, 255, 255], "{} is white", id.name());
                         }
                     }
                 }
@@ -84,12 +87,14 @@ fn every_icon_is_drawn_white_at_every_size() {
 
 #[test]
 fn sizes_and_scale_pick_the_cell() {
-    assert_eq!(size_index(10.0), 0);
-    assert_eq!(size_index(15.0), 0);
-    assert_eq!(size_index(17.0), 1);
-    assert_eq!(size_index(18.0), 2);
-    assert_eq!(size_index(20.0), 3);
-    assert_eq!(size_index(24.0), 3);
+    // Each size the spec uses has its own cell.
+    for (i, &s) in layout::SIZES.iter().enumerate() {
+        assert_eq!(size_index(s as f32), i);
+    }
+    assert_eq!(layout::SIZES, [10, 12, 13, 14, 15, 17, 18, 20, 24]);
+    // Between sizes: the next one up; past the largest: the largest.
+    assert_eq!(size_index(16.0), 5);
+    assert_eq!(size_index(32.0), 8);
     assert_eq!(atlas_for_scale(1.0), 0);
     assert_eq!(atlas_for_scale(1.5), 1);
     assert_eq!(atlas_for_scale(2.0), 1);
@@ -115,11 +120,35 @@ fn icons_use_the_2x_atlas_on_hidpi() {
     assert_eq!(one.image, atlas.images[0]);
     let a = one.texture_atlas.unwrap();
     assert_eq!(a.layout, atlas.layouts[0]);
-    assert_eq!(a.index, n + IconId::Rotate.index());
+    assert_eq!(a.index, size_index(17.0) * n + IconId::Rotate.index());
     assert_eq!(one.color, Theme::default().c.icon);
     let (two, atlas) = icon_image(2.0);
     assert_eq!(two.image, atlas.images[1]);
     assert_eq!(two.texture_atlas.unwrap().layout, atlas.layouts[1]);
+}
+
+#[test]
+fn a_changed_icon_changes_cell_and_size() {
+    let n = IconId::ALL.len();
+    let mut app = ui_app(ThemeMode::Light);
+    let e = app
+        .world_mut()
+        .spawn(icon(IconId::Rotate, 17.0, ColorRole::Icon))
+        .id();
+    frames(&mut app, 2);
+    app.world_mut().get_mut::<Icon>(e).unwrap().px = 13.0;
+    frames(&mut app, 2);
+    let w = app.world();
+    let index = w
+        .get::<ImageNode>(e)
+        .unwrap()
+        .texture_atlas
+        .as_ref()
+        .unwrap()
+        .index;
+    assert_eq!(index, size_index(13.0) * n + IconId::Rotate.index());
+    assert_eq!(w.get::<Node>(e).unwrap().width, Val::Px(13.0));
+    assert_eq!(w.get::<Node>(e).unwrap().height, Val::Px(13.0));
 }
 
 #[test]
