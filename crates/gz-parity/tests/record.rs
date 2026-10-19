@@ -22,6 +22,7 @@ fn options(url: &str) -> RecordOptions {
         duration: Duration::from_millis(150),
         max_stream_frames: 2,
         world_file: Some("w.sdf".into()),
+        gazebo: Some("jetty".into()),
         reply_timeout: Duration::from_secs(5),
         ca_cert: None,
     }
@@ -95,6 +96,7 @@ fn records_what_the_replay_server_serves() {
     let m = &c.manifest;
     assert_eq!(m.world, "w");
     assert_eq!(m.source["world_file"], "w.sdf");
+    assert_eq!(m.source["gazebo"], "jetty");
     assert!(m.protos.is_some());
     for r in ["topics-types", "worlds", "scene"] {
         assert!(m.responses.contains_key(r), "{r}");

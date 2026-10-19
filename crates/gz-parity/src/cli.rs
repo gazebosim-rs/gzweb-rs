@@ -89,6 +89,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                 duration: Duration::from_millis(num(&flags, "duration-ms", 3000)?),
                 max_stream_frames: num(&flags, "max-stream-frames", 200)?,
                 world_file: flags.get("world-file").cloned(),
+                gazebo: flags.get("gazebo").cloned(),
                 reply_timeout: Duration::from_millis(num(&flags, "timeout-ms", 20000)?),
                 ca_cert: flags.get("ca-cert").map(PathBuf::from),
             };

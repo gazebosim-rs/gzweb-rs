@@ -17,6 +17,8 @@ pub struct RecordOptions {
     pub duration: Duration,
     pub max_stream_frames: usize,
     pub world_file: Option<String>,
+    /// The Gazebo release recorded from (`jetty`), kept as `source.gazebo`.
+    pub gazebo: Option<String>,
     /// How long to wait for each handshake reply and for asset replies.
     pub reply_timeout: Duration,
     /// Extra PEM CA certificates to trust for `wss://`.
@@ -37,11 +39,12 @@ pub fn record(opts: &RecordOptions) -> Result<Corpus, String> {
         },
         frames: Vec::new(),
     };
+    let source = &mut corpus.manifest.source;
     if let Some(w) = &opts.world_file {
-        corpus
-            .manifest
-            .source
-            .insert("world_file".into(), w.clone());
+        source.insert("world_file".into(), w.clone());
+    }
+    if let Some(g) = &opts.gazebo {
+        source.insert("gazebo".into(), g.clone());
     }
 
     let send = |ws: &mut net::Socket, s: &str| {
