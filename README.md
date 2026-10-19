@@ -44,7 +44,24 @@ cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 `wss://` works; `--ca-cert ca.pem` trusts a private CA. The client reconnects
 when the server goes away (`--no-reconnect` to turn that off).
 
-Space toggles play/pause, N steps a paused simulation and G toggles the grid.
+`--ui full|minimal` picks the UI mode (default `full`; until the workbench
+lands, `full` behaves like `minimal`). Minimal is the 3D view with the camera
+and the viewport keys of `design/ui/shortcuts.json`:
+
+| Input | Does |
+|---|---|
+| Left drag / right drag / wheel or middle drag | orbit / pan / zoom about the point under the cursor |
+| Ctrl + wheel | zoom to the cursor (plain wheel zooms about the view centre) |
+| Space held + left drag | pan |
+| Space tap | play / pause |
+| Ctrl+→ (⌘→ on macOS) | step a paused simulation |
+| F / H | frame the model under the cursor (else the world) / home view |
+| 5 | perspective ↔ orthographic |
+| 7 / 1 / 3, Shift for the opposite side | top / front / right views (orthographic until you orbit away) |
+| G | grid |
+| W A S D or arrows, Q / E | move the camera; Q / E down / up |
+
+`--no-hud` hides the status text.
 `--quality low` trades TAA, SSAO and shadow resolution for speed.
 `--screenshot out.png` saves one frame once the scene has loaded, then exits.
 
@@ -60,7 +77,8 @@ snapshot once everything has loaded, then exits.
 
 Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
-connects to port 9002 on its own host.
+connects to port 9002 on its own host. `?ui=full|minimal` picks the UI mode
+(default `minimal` in the browser) and `?hud=0` hides the status text.
 
 ## Development
 

@@ -18,7 +18,8 @@ crates/
   gz-collada/ No Bevy. COLLADA documents as a node tree (vendored parsers,
               see "Assets").
   gz-bevy/    Bevy plugin: drivers, asset sources, spawning, poses, camera, HUD,
-              snapshot exporter, COLLADA loader.
+              snapshot exporter, COLLADA loader; `view`: camera controller,
+              key map and minimal-mode controls.
   gzweb/      The app: native binary (+ headless --snapshot mode) and wasm entry.
   gz-parity/  Native tool: record / replay / compare / compare-protocol.
 parity/       run.sh driver + js/ (gzweb reference exporter, Playwright).
@@ -145,9 +146,9 @@ connection can't send right now is dropped and logged, not queued.
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In
-interactive mode the client also subscribes to `/world/<w>/stats`
-(throttled to 5 Hz) for the HUD's sim line; Space toggles play/pause and N
-steps.
+interactive mode (`UiMode` other than `None`) the client also subscribes to
+`/world/<w>/stats` (throttled to 5 Hz) for the HUD's sim line and the
+play/pause key.
 
 **TLS.** Native `wss://` uses rustls with Mozilla's roots
 (`gz_core::net`, feature `native`); `--ca-cert PEM` adds a private CA. The
@@ -474,22 +475,100 @@ is set; G toggles it. Dark lines, because gizmos aren't exposed.
 60° vertical FOV, near/far 0.01/1000, clear colour `0xb2b2b2` unless the
 scene sets a background.
 
-## Camera controls
+## Views, input and UI modes
 
-`camera::GzOrbitControls` ports gzweb's patched three.js `OrbitControls`
-(`gzweb/include/OrbitControls.js`, mouse handlers in `Scene.ts`). The camera
-is never re-aimed at its pivot:
+**UI modes** (`gz_bevy::UiMode`, `.agent/UI_PLAN.md` §2, DECISIONS.md D-10)
+replace the old `GzConfig.interactive` flag; `GzConfig::interactive()` keeps
+its meaning (`ui != None`).
 
-- Any button press or wheel step sets the pivot to the point under the cursor.
-  It uses the nearest visible mesh (`MeshRayCast`), else the Gazebo z = 0 plane.
-  A miss keeps the old pivot; gzweb resets it to the origin (PORT_PLAN §2.5).
-- Left drag: `rotate_around(pivot)`, yaw about world up then pitch about the
-  camera's right axis, by `2π·Δpx / height`. The offset's polar angle is
-  clamped to (0, π).
-- Right drag: screen-space pan, scaled by `distance·tan(fov/2)`.
-- Wheel / middle drag: dolly along camera→pivot by `0.95` per step.
+| Mode | Runs | Selected by |
+|---|---|---|
+| `None` | scene, rendering, connection; no input, HUD or stats subscription | `--snapshot`, `--screenshot` |
+| `Minimal` | + `view::ViewerControls` and the status text (`--no-hud` / `?hud=0` hide it) | `--ui minimal`; the browser's default (`?ui=`) |
+| `Full` | for now the same as `Minimal` (`TODO(M1)`: `gz-ui`'s `GzUiPlugin`) | `--ui full`, the native default |
 
-Not used in headless mode.
+**`view::ViewCamera`** sits on the main camera next to its `Transform` and
+`Projection`: pivot, plain left-drag action (`DragAction`, Orbit by
+default), the snapped axis view, the perspective it returns to, speeds and a
+running animation. Only `view::apply_view_commands` changes it, from
+**`ViewCommand { view, op }`** messages, so the minimal mode's raw input and
+the full UI's rail and cube (M3) share one controller. It works in Bevy space;
+the camera is not under `GzWorldRoot`. When `render` respawns the camera for a
+new environment it carries the `ViewCamera` and `Projection` over.
+
+`ViewOp`s, following gzweb's patched three.js `OrbitControls` where the spec
+agrees (the camera is never re-aimed at its pivot):
+
+- `PivotAt(p)` at every drag start: the nearest visible mesh under `p`
+  (`MeshRayCast`), else the Gazebo z = 0 plane, else the selection's centre,
+  else the origin (spec §6.2; gzweb: the origin; gzweb-rs used to keep the
+  old pivot). Rays come from the `Projection` itself, so a projection change
+  and a pick in one frame agree.
+- `Orbit(Δpx)`: yaw about world up, then pitch about the camera's right
+  axis, `2π·Δ/height`, polar angle clamped to (0, π). Orbiting a snapped view
+  first returns it to perspective.
+- `Pan(Δpx)`: the plane through the pivot follows the pointer
+  (perspective: `2·|cam − pivot|·tan(fov/2)/height` per px, as gzweb;
+  orthographic: view height / viewport height).
+- `Zoom(steps)`, `ZoomAt { at, steps }`: dolly along camera→pivot by
+  `0.95^steps`; orthographic views scale the view height and keep the pivot
+  fixed on screen. Plain wheel zooms about the view centre and Ctrl+wheel
+  about the cursor (DECISIONS.md D-11). Line wheel units are steps, pixel
+  units 50 px per step; a middle (or Zoom-action) drag is one step per 5 px.
+- `ToggleProjection` / `SetProjection`: orthographic height
+  `2·depth·tan(fov/2)` for the pivot's depth, so the pivot keeps its screen
+  position and the plane through it its scale. The orthographic camera
+  backs off to at least 50 m (`ORTHO_STANDOFF`, near plane 0) so zooming in
+  doesn't clip the scene; perspective returns to the matching depth.
+- `Snap(face)`: about the selection centre, else the point at the view
+  centre, else the pivot; distance kept; animates 250 ms (smoothstep on
+  pivot, rotation and the pivot's camera-frame offset), then switches to
+  orthographic. Axes follow gz-sim's `ViewAngle`: top looks down with gz +X
+  up the screen, front looks along −X, right along −Y (DECISIONS.md D-13).
+- `Focus { at }`: frames the selection, else the top-level model under `at`,
+  else the world's meshes without plane visuals (or with them if there is
+  nothing else), else goes home. Radius × 1.1 fitted to the narrower FOV;
+  orthographic views fit the height. Animated, rotation kept.
+- `Home`: animates to gzweb's (−6, 0, 6) looking at the origin, in
+  perspective.
+- `Fly { dir, secs }`: W/S along the view direction flattened onto the
+  ground (looking straight down: up the screen), A/D sideways, Q/E world
+  down/up, at `fly_speed` (0.5) × the pivot distance per second (orthographic:
+  the matching distance; floor 0.5 m). Camera and pivot move together.
+- Any op other than Snap/Focus/Home/SetDragAction stops a running animation
+  where it is.
+- A projection switch (toggle, or the end of a snap) sets TAA's `reset`:
+  the history is from the other projection. One early top-snap capture at
+  High came out as flat sky colour and never recovered (not reproduced in
+  ten more runs, with or without the reset).
+
+`GzCameraTarget` publishes the first view's pivot in Gazebo coordinates
+(the snapshot reports it). `view::Selection` is empty until the full UI
+selects things (M5).
+
+**Key map.** `view::input::InputMap` parses `design/ui/shortcuts.json`
+(`include_str!` + serde) plus `MINIMAL_JSON` (the fly keys, scope `minimal`,
+DECISIONS.md D-12). Keys are physical `KeyCode`s named for a US layout;
+digits also answer to the keypad. `mod` resolves per `Platform`: ⌘ on
+macOS, Ctrl on Linux/Windows, either in the browser, where `web: null`
+bindings use their `web_alt`. A `Press` binding sharing its chord with a
+`Hold` binding is a *tap* (Space): it fires on release within 200 ms with no
+mouse button pressed in between. `Held` bindings (fly) don't fire while
+Ctrl/Alt/⌘ is down. The spec §13 test (`shortcuts_have_no_conflicts…`)
+checks every platform: no shared keys in overlapping scopes (all overlap
+except `minimal`/`teleop`), except the documented `EXCLUSIVE` pairs
+(`tool.constrain_x`/`teleop.stop`, Q5) and tap/hold pairs; and every
+browser-reserved chord is `web: null` with a non-reserved `web_alt`.
+
+**`view::ViewerControls`** (Update, chained): `mouse_input` (left drag =
+drag action, Space held → pan; right = pan; middle = zoom; wheel),
+`key_input` (actions from the scopes the mode enables: `global`, `viewport`,
+`minimal`; G toggles `render::GzGrid`; Space tap → `GzCommand::Play/Pause`
+from the stats; ⌘→ → `Step(1)` when paused), `fly_input`, then
+`apply_view_commands`. Bindings without an action (tools, panels, files,
+`sim.reset`, which needs the full UI's undo) parse but do nothing yet.
+Not done here: `preventDefault` for the browser's chords and right-click
+menu (M10), pointer routing around UI nodes (M2/M3).
 
 ## Headless snapshot mode
 

@@ -145,7 +145,7 @@ runs alongside the UI milestones and must land before M4, which builds on server
 These follow the spec's §12 order, adapted to this repo. Each milestone is one PR, ends green on
 `scripts/check.sh` plus the parity suite, and includes light and dark screenshots at 1440×900.
 
-### M0 — Split the camera out and add UI modes (no visible change)
+### M0 — Split the camera out and add UI modes (no visible change) — **done 2026-10-19**
 - `gz-bevy::view`: move `camera.rs` orbit/pan/zoom into `ViewCamera` + `ViewCommand`. Add
   projection toggle, snap views with a 250 ms animation, focus/home, Space tap/hold, Ctrl+wheel
   zoom to cursor, WASD/QE fly.

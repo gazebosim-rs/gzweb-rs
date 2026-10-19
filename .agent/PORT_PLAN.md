@@ -169,7 +169,10 @@ Parity tests allow-list these with a reason string:
   `map_Bump`/`bump` are normal maps, as in gz-common (three.js: bump maps). Not done:
   `-bm`, `map_d`, `map_Ks`, per-texture `-s`/`-o` (one `uv_transform` per material, from
   `map_Kd`).
-- Click with no hit keeps the orbit target (gzweb resets to origin).
+- A drag that starts on nothing pivots about the selection's centre, else the origin
+  (spec §6.2; gzweb: the origin). Plain wheel zooms about the view centre and Ctrl+wheel
+  about the cursor (gzweb's wheel zooms to the cursor). Space taps play/pause and ⌘→ steps
+  (gzweb has no keys). See DESIGN.md "Views, input and UI modes".
 - OBJ meshes actually cached; STL websocket fallback honours submesh.
 - STL faces with a zero stored normal take their winding's normal (gzweb keeps
   the zero normal, so they render unlit). ASCII STL starting `SOLID` loads
