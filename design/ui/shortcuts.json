@@ -408,7 +408,8 @@
       "mod+F",
       "mod+P",
       "Space",
-      "Tab (when in viewport)"
+      "Tab (when in viewport)",
+      "mod+Right (sim.step: Cmd+Right is Forward in Chrome on macOS; DECISIONS.md D-17)"
     ]
   }
 }

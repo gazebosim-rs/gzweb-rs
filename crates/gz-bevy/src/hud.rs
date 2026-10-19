@@ -7,6 +7,7 @@ use bevy::render::renderer::RenderAdapter;
 use gz_core::transport::Status;
 
 use crate::connection::GzStatus;
+use crate::view::InputMap;
 
 #[derive(Component)]
 pub struct FpsText;
@@ -20,18 +21,56 @@ pub struct StatusText;
 #[derive(Component)]
 pub struct SimText;
 
-/// The controls, as minimal mode binds them.
-pub const HINT: &str = if cfg!(target_os = "macos") {
-    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl: to cursor) \
-     | F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid \
-     | WASD QE: move | Space: play/pause | Cmd+Right: step"
-} else {
-    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl: to cursor) \
-     | F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid \
-     | WASD QE: move | Space: play/pause | Ctrl+Right: step"
-};
+/// The mouse part of the controls hint (the mouse isn't in the key map).
+pub const MOUSE_HINT: &str =
+    "Drag: orbit | Right drag, Space+drag: pan | Wheel, middle drag: zoom (Ctrl/pinch: to cursor)";
 
-pub fn spawn_hud(mut commands: Commands) {
+/// The key part of the hint: binding ids, and what they do in a word.
+/// The keys themselves come from the [`InputMap`].
+const KEY_HINTS: &[(&[&str], &str)] = &[
+    (&["view.focus"], "focus"),
+    (&["view.home"], "home"),
+    (&["view.projection"], "ortho"),
+    (
+        &["view.top", "view.front", "view.right"],
+        "views (Shift: opposite)",
+    ),
+    (&["overlay.grid"], "grid"),
+    (
+        &[
+            "view.fly_forward",
+            "view.fly_left",
+            "view.fly_back",
+            "view.fly_right",
+            "view.fly_down",
+            "view.fly_up",
+        ],
+        "move",
+    ),
+    (&["sim.play_pause"], "play/pause"),
+    (&["sim.step"], "step"),
+];
+
+/// The controls, as `map` binds them on its platform: each binding's first
+/// chord, so the hint follows `shortcuts.json`.
+pub fn hint(map: &InputMap) -> String {
+    let mut parts = vec![MOUSE_HINT.to_string()];
+    for (ids, what) in KEY_HINTS {
+        let keys: Vec<String> = ids
+            .iter()
+            .filter_map(|id| map.binding(id))
+            .filter_map(|b| b.chords(map.platform).first())
+            .map(|c| c.label(map.platform))
+            .collect();
+        if !keys.is_empty() {
+            parts.push(format!("{} {what}", keys.join(" ")));
+        }
+    }
+    parts.join(" | ")
+}
+
+pub fn spawn_hud(mut commands: Commands, map: Option<Res<InputMap>>) {
+    let hint = map.map_or_else(|| hint(&InputMap::builtin()), |m| hint(&m));
     let line = |top: f32| Node {
         position_type: PositionType::Absolute,
         top: Val::Px(top),
@@ -71,7 +110,7 @@ pub fn spawn_hud(mut commands: Commands) {
         SimText,
     ));
     commands.spawn((
-        Text::new(HINT),
+        Text::new(hint),
         TextFont {
             font_size: FontSize::Px(16.0),
             ..default()
@@ -217,6 +256,26 @@ mod tests {
         let mut world = hud_world();
         assert_eq!(world.query::<&Text>().iter(&world).count(), 5);
         assert_eq!(text_of::<FpsText>(&mut world).0, "FPS: N/A");
+    }
+
+    #[test]
+    fn the_hint_reads_its_keys_from_the_map() {
+        use crate::view::input::Platform;
+        let mut map = InputMap::builtin();
+        map.platform = Platform::Mac;
+        let mac = hint(&map);
+        assert!(mac.starts_with(MOUSE_HINT));
+        assert!(
+            mac.contains("| F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid")
+        );
+        assert!(mac.contains("| W A S D Q E move | Space play/pause | Cmd+Right step"));
+        map.platform = Platform::Linux;
+        assert!(hint(&map).ends_with("Ctrl+Right step"));
+        map.platform = Platform::Web;
+        assert!(hint(&map).ends_with("Ctrl/Cmd+Right step"));
+        // A binding the map lacks drops out.
+        map.bindings.retain(|b| b.id != "sim.step");
+        assert!(hint(&map).ends_with("Space play/pause"));
     }
 
     #[test]
