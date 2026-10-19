@@ -13,7 +13,9 @@
 //!   The listener is on the canvas, so it only sees keys while the canvas
 //!   has focus; text fields elsewhere on the page keep every browser
 //!   shortcut, and so do the UI's own text fields inside the canvas while
-//!   one has focus ([`set_text_focus`]).
+//!   one has focus ([`set_text_focus`]), except Tab and Shift+Tab: those
+//!   move focus between the UI's widgets, and the browser would also move
+//!   its own focus off the canvas.
 //!
 //! Listeners live as long as the page.
 
@@ -38,16 +40,18 @@ thread_local! {
 }
 
 /// Tells the canvas listener that a UI text field has (or lost) keyboard
-/// focus. While one has, no key's default is prevented: the viewport
-/// doesn't have focus (spec §9.6).
+/// focus. While one has, no key's default is prevented but Tab's: the
+/// viewport doesn't have focus (spec §9.6), and Tab belongs to the UI.
 pub fn set_text_focus(focused: bool) {
     TEXT_FOCUS.with(|f| f.set(focused));
 }
 
 /// Adds the listeners right away (they don't wait for the renderer, which
 /// starts asynchronously) and the system that hands their findings to
-/// [`BrowserWheel`] each frame.
+/// [`BrowserWheel`] each frame. The widget gallery calls it too, for the
+/// key handling.
 pub fn install(app: &mut App) {
+    app.init_resource::<BrowserWheel>();
     let world = app.world_mut();
     let selector = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
@@ -151,10 +155,10 @@ fn listen(selector: &str, map: &InputMap) {
                 super_key: k.meta_key(),
             };
             let code = k.code();
-            if !TEXT_FOCUS.with(Cell::get)
-                && swallow
-                    .iter()
-                    .any(|(c, key)| *c == code && map.prevents_default(*key, held))
+            let typing = TEXT_FOCUS.with(Cell::get);
+            if swallow
+                .iter()
+                .any(|(c, key)| *c == code && map.web_cancels(*key, held, typing))
             {
                 e.prevent_default();
             }

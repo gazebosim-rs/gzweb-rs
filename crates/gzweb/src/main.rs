@@ -336,6 +336,10 @@ fn run_gallery(args: Args) -> AppExit {
         gz_ui::GzUiPlugin { theme: args.theme },
         gz_ui::gallery::GalleryPlugin,
     ));
+    // The canvas key listener, as in the app: Tab stays in the gallery and
+    // Space doesn't scroll the page.
+    #[cfg(target_arch = "wasm32")]
+    gz_bevy::view::web::install(&mut app);
     if let Some(path) = args.snapshot.and_then(|s| s.screenshot) {
         app.insert_resource(gz_ui::gallery::GalleryCapture::new(path));
     }

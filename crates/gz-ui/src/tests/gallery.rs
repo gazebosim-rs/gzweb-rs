@@ -9,10 +9,14 @@ use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 
 use super::app::{frames, ui_app};
+use bevy::input_focus::{FocusCause, InputFocus};
+
 use crate::gallery::{
-    hex, GalleryCapture, GalleryPlugin, GalleryRoot, ThemeText, ThemeToggle, TokenHex, TOKENS,
+    hex, FocusExample, GalleryCapture, GalleryPlugin, GalleryRoot, ThemeText, ThemeToggle,
+    TokenHex, TOKENS,
 };
 use crate::theme::{Fill, Ink, Opacity, Stroke, Theme, ThemeMode};
+use crate::widgets::number_field::NumberInput;
 
 fn gallery(theme: ThemeMode) -> App {
     let mut app = ui_app(theme);
@@ -73,35 +77,48 @@ fn the_gallery_builds_and_switches_theme_at_runtime() {
             .single(w)
             .unwrap()
     };
+    let press_t = |app: &mut App| {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::KeyT,
+                logical_key: Key::Character("t".into()),
+                state,
+                text: Some("t".into()),
+                repeat: false,
+                window,
+            });
+            frames(app, 1);
+        }
+        frames(app, 1);
+    };
+    // No field has focus at launch, so T switches at once.
+    assert!(!app.world().resource::<crate::focus::TextFocus>().0);
+    press_t(&mut app);
+    assert!(app.world().resource::<Theme>().is_dark);
     // Typing in a field doesn't switch.
-    for state in [ButtonState::Pressed, ButtonState::Released] {
-        app.world_mut().write_message(KeyboardInput {
-            key_code: KeyCode::KeyT,
-            logical_key: Key::Character("t".into()),
-            state,
-            text: Some("t".into()),
-            repeat: false,
-            window,
-        });
-        frames(&mut app, 1);
-    }
-    assert!(!app.world().resource::<Theme>().is_dark);
+    let input = {
+        let w = app.world_mut();
+        let example = w
+            .query_filtered::<&Children, With<FocusExample>>()
+            .single(w)
+            .unwrap()
+            .to_vec();
+        example
+            .into_iter()
+            .find(|c| w.get::<NumberInput>(*c).is_some())
+            .unwrap()
+    };
     app.world_mut()
-        .resource_mut::<bevy::input_focus::InputFocus>()
-        .clear();
+        .resource_mut::<InputFocus>()
+        .set(input, FocusCause::Navigated);
     frames(&mut app, 1);
-    for state in [ButtonState::Pressed, ButtonState::Released] {
-        app.world_mut().write_message(KeyboardInput {
-            key_code: KeyCode::KeyT,
-            logical_key: Key::Character("t".into()),
-            state,
-            text: Some("t".into()),
-            repeat: false,
-            window,
-        });
-        frames(&mut app, 1);
-    }
+    press_t(&mut app);
+    assert!(app.world().resource::<Theme>().is_dark);
+    app.world_mut().resource_mut::<InputFocus>().clear();
     frames(&mut app, 1);
+    press_t(&mut app);
+    assert!(!app.world().resource::<Theme>().is_dark);
+    press_t(&mut app);
     assert!(app.world().resource::<Theme>().is_dark);
     assert_all_resolved(&mut app);
     assert_eq!(texts(&mut app), ["Dark", "SAME TOKENS · OWN VALUES"]);
@@ -143,6 +160,9 @@ fn capture_waits_then_screenshots_once() {
     };
     frames(&mut app, 1);
     assert_eq!(shots(&mut app), 0);
+    // A capture shows the example field focused.
+    let focused = app.world().resource::<InputFocus>().get();
+    assert!(focused.is_some_and(|e| app.world().get::<NumberInput>(e).is_some()));
     frames(&mut app, 1);
     assert_eq!(shots(&mut app), 1);
     frames(&mut app, 2);

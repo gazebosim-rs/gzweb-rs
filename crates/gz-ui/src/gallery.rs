@@ -745,7 +745,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             .with_children(|t| scene_panel(t, theme, map))
             .id();
         bottom.spawn(splitter(
-            theme.s.viewport_divider_hit,
+            theme,
             Splitter {
                 axis: SplitAxis::Columns,
                 pane: tree,
@@ -753,6 +753,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 min: 240.0,
                 max: 420.0,
             },
+            "Resize the scene panel",
         ));
         bottom
             .spawn(Node {
@@ -1024,15 +1025,18 @@ pub fn gallery_texts(
     }
 }
 
-/// Focuses the example field once, to show the focus look (and a caret).
+/// In a capture, focuses the example field once to show the focus look
+/// (and a caret). Not interactively: the focused field would take the T
+/// key (and, selected on focus, be replaced by a "t").
 pub fn focus_example(
+    capture: Option<Res<GalleryCapture>>,
     examples: Query<&Children, With<FocusExample>>,
     inputs: Query<(), With<NumberInput>>,
     mut focus: ResMut<InputFocus>,
     mut visible: ResMut<InputFocusVisible>,
     mut done: Local<bool>,
 ) {
-    if *done {
+    if *done || capture.is_none() {
         return;
     }
     for children in &examples {

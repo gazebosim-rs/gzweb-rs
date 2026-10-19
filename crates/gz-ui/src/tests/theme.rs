@@ -233,8 +233,32 @@ fn text_fields_take_the_keys_from_the_viewer() {
         .set(other, FocusCause::Navigated);
     frames(&mut app, 1);
     assert!(!app.world().resource::<TextFocus>().0);
+    // Not in the frame focus left: the key that blurred the field (Esc,
+    // Tab) is still `just_pressed` then, and the viewer mustn't see it.
+    assert!(app.world().resource::<ActiveScopes>().0.is_empty());
+    frames(&mut app, 1);
     assert_eq!(
         app.world().resource::<ActiveScopes>().0,
         vec![Scope::Global, Scope::Viewport]
+    );
+    // Field to field: the scopes stay with the fields.
+    let focus_input = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(input, FocusCause::Navigated);
+        frames(app, 1);
+    };
+    focus_input(&mut app);
+    app.world_mut().resource_mut::<InputFocus>().clear();
+    frames(&mut app, 1);
+    focus_input(&mut app);
+    assert!(app.world().resource::<ActiveScopes>().0.is_empty());
+    // Scopes set while typing aren't overwritten by the saved ones.
+    app.world_mut().resource_mut::<ActiveScopes>().0 = vec![Scope::Global];
+    app.world_mut().resource_mut::<InputFocus>().clear();
+    frames(&mut app, 2);
+    assert_eq!(
+        app.world().resource::<ActiveScopes>().0,
+        vec![Scope::Global]
     );
 }
