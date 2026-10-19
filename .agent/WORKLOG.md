@@ -681,3 +681,60 @@ Branch `feature/phase-5-m1` (from `feature/phase-5-ui`). Plan:
   the spec's 28 px.
 - **Merged** `origin/feature/phase-5-ui` (PR #27 fixes, then main with
   Jetty) before pushing.
+
+## 2026-10-19: Phase 5 M2, the shell
+
+Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
+`.agent/UI_PLAN.md` §4 M2; spec `design/ui/DESIGN.md` §2, §3, §5.18,
+§7.10, §8, §9.3. See DESIGN.md "Shell (gz-ui, M2)"; decisions D-30 to D-38.
+
+- **`gz_ui::shell::ShellPlugin`** (gzweb adds it in `--ui full`): the
+  region tree of §2.1 with every size and colour from the theme; top bar
+  (world name, tools radio, Snap, transport wired to `GzCommand`, steps per
+  click, clock, RTF, search); activity bar (order, groups, Settings, badges,
+  click / Shift+click / collapse); sidebar with two slots, row splitter and
+  header buttons, panel shells in their empty, loading and error states;
+  World inspector shell; status bar with its narrow-width drops; splitters
+  (6 px, col-resize, `accent` while dragging, double-click resets); ⌘B and
+  ⌘⌥I from the input map; start-up collapse at 1280 / 1100 and the floor
+  rule; `ShellLayout` holds it all. The full UI's window starts at
+  1440×900, minimum 1024×640. The status text is minimal mode's only.
+- **3D view in the viewport area:** first as `Camera::viewport`, which
+  rendered the scene squeezed into the middle of the view at High (Low was
+  right): Bevy 0.20's TAA samples the whole window-sized main texture and
+  only clips its output to the viewport. Now the main camera renders into a
+  texture of the view node's physical size (`gz-bevy::view::ViewPlacement`,
+  D-31), resized with its projection and target size in the same frame
+  after UI layout; colours match the window render (ground and box means
+  within 2/255). A first resize failed wgpu validation (Bevy's target
+  textures copy on resize, which needs COPY_SRC); copy-on-resize is off.
+- **Routing** (`ViewRouting`, D-32) from the hover map; viewport keys after
+  a press in the view; minimal mode unchanged.
+- **Connection:** `GzReconnect { url }` (Retry now, Reconnect, the card's
+  Connect), `GzStatus::attempting`, `SimStats::{real_time, step_size}`.
+  Connect card on both targets (D-33), banner with the 60 s change, the
+  dimmed last frame (D-34). Browser: `?url=`, else the last server
+  (`localStorage`).
+- **Captures:** `--ui full --screenshot` (1440×900), `--window WxH`,
+  `--capture-at-ms MS` (shoots at that time instead of when settled).
+- **Tests:** 17 shell tests in gz-ui (regions at 1440×900; collapse at six
+  widths; floor order; splitters and slot split; keys; placement at scale
+  1, 1.5, 2 and `UiScale` 1.25; routing; activity, transport, readouts,
+  formatting, phases, banner with fake time, card, cursor, theme, slot
+  buttons), plus gz-bevy tests for routing, placement, the ground pick,
+  reconnecting and forced captures, and gzweb flag tests. Headless suite
+  green with `--include-ignored`.
+- **Visual check** (fast non-LTO release build, against the running
+  `allmesh` world on ws://localhost:9004; `target/shots/`): `full-light`,
+  `full-dark` (1440×900), `w1280-light`, `w1280-dark`, `w1024-light`,
+  `w1024-dark`, `card-light`, `card-dark` (bad URL), `banner-light` and
+  `banner-long-dark` (a `gz-parity replay` server killed after 5 s, shot at
+  9 s and 68 s), compared with board 01 in crops at 2×. Region edges match
+  the board to the pixel (top bar 44, activity 56, sidebar 300, inspector
+  300, status 28); activity buttons within 2 px; inspector title row within
+  3 px; the transport sits centred between the left group and the search as
+  on the board. Differences: Bevy's text is lighter (as in M1); the search
+  placeholder clips instead of ending in "…" (no ellipsis in bevy_ui); key
+  caps are spelled ("Ctrl+K", D-26); the board's content (tree, rail,
+  cube, model inspector, message chip, badges, split view) is later
+  milestones.

@@ -177,13 +177,22 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   the canvas preventing defaults. The gallery shows one theme at a time (D-28). Bevy's text
   looks lighter than the boards' (linear-space glyph blending). See WORKLOG.
 
-### M2 — Shell layout
+### M2 — Shell layout — **done 2026-10-19**
 - Top bar, activity bar, sidebar with two slots, viewport area, inspector, status bar, splitters,
   collapse rules, minimum-size and floor rules (§2.1). Panels are empty shells with their
   empty/loading/error states.
 - The single 3D view renders into the viewport-area node (`Camera::viewport` synced each frame to
   the node rect, scale-factor aware). The no-world card and the disconnected banner (§7.10) are
   driven by `GzStatus`.
+- Notes: `gz_ui::shell` (`ShellPlugin`, `ShellLayout`, `UiCommand`). The view renders into a
+  texture the size of the view node instead of a `Camera::viewport` (DECISIONS.md D-31: Bevy
+  0.20's TAA ignores viewports), placed after UI layout in the same frame. Pointer routing
+  uses bevy_picking's hover map over pass-through containers (D-32). One connect card on both
+  targets (D-33); `GzReconnect` added to `gz-bevy::connection`. The transport (reset,
+  play/pause, step, steps per click), clock, RTF and status readouts are wired to the existing
+  stats, so part of M4's transport and status work is done; the World menu, Snap popover,
+  search and workspace button open nothing yet. Settings switches the theme until ⌘K (D-35).
+  `--ui full --screenshot`, `--window WxH`, `--capture-at-ms`. See WORKLOG.
 
 ### M3 — Viewport controls
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,

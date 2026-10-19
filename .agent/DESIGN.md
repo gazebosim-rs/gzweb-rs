@@ -536,7 +536,7 @@ its meaning (`ui != None`).
 |---|---|---|
 | `None` | scene, rendering, connection; no input, HUD or stats subscription | `--snapshot`, `--screenshot` |
 | `Minimal` | + `view::ViewerControls` and the status text (`--no-hud` / `?hud=0` hide it) | `--ui minimal`; the browser's default (`?ui=`) |
-| `Full` | `Minimal` + `gz_ui::GzUiPlugin` (added by gzweb; no shell until M2) | `--ui full`, the native default |
+| `Full` | `Minimal` + `gz_ui::GzUiPlugin` and `gz_ui::shell::ShellPlugin` (added by gzweb), no status text | `--ui full`, the native default |
 
 **`view::ViewCamera`** sits on the main camera next to its `Transform` and
 `Projection`: pivot, plain left-drag action (`DragAction`, Orbit by
@@ -669,8 +669,29 @@ the mode enables: `global`, `viewport`, `minimal`; G toggles
 losing keyboard focus cancels a tap rather than ending it; ⌘→ → `Step(1)`
 when paused), `fly_input` (at most 0.1 s a frame), then
 `apply_view_commands`. Bindings without an action (tools, panels, files,
-`sim.reset`, which needs the full UI's undo) parse but do nothing yet.
-Pointer routing around UI nodes is M2/M3.
+`sim.reset`, which needs the full UI's undo) parse but do nothing here; the
+full UI's shell reads `ui.sidebar`, `ui.inspector`, `tool.*` and `panel.*`
+from the same map.
+
+**Routing and placement** (full UI; minimal leaves both at their
+defaults). `controls::ViewRouting { pointer, keys }`, written by the shell
+each frame: without `pointer`, presses start no drag and the wheel and
+gestures are dropped (a drag already running continues); without `keys`,
+`ViewRouting::key_scopes` drops the `viewport` and `minimal` scopes for
+`key_input` and `fly_input`. `view::ViewPlacement { rect, scale, image }`:
+the shell writes the view node's window rect (logical) after UI layout;
+`apply_view_placement` (PostUpdate, set `ViewPlacementSystems`, before
+frustum culling) renders the main camera into `image`, an
+`Rgba8UnormSrgb` render target of the rect's physical size (no CPU data,
+no copy on resize), and in the same frame sets the camera's target size and
+projection, so a resize or splitter drag never renders a frame at the old
+size. `ViewOrigin` on the camera is the image's place in the window;
+`view_rect` gives pointer maths the view's window rect (image origin and
+size, else the camera viewport, else the window). Not `Camera::viewport`:
+Bevy 0.20's TAA samples the whole window-sized texture and squeezes the
+scene into the viewport (DECISIONS.md D-31). A respawned camera (new
+environment) is placed again the same frame. `cursor_on_ground` (the status
+bar's readout) and `ground_point` share the pivot's ground pick.
 
 Wheel and trackpad (DECISIONS.md D-11, D-18), summed per frame into one
 `ZoomAt` about the view centre (plain wheel) and one about the cursor
@@ -712,8 +733,9 @@ the status lines with and without `?hud=0`.
 `gz_ui::GzUiPlugin` is the full mode's plugin (`.agent/UI_PLAN.md` §2.2);
 gzweb adds it for `UiMode::Full` and for the gallery. It depends on
 gz-bevy for state and the key map (`view::input::InputMap`, read through its
-public API) and never reaches into rendering. M1 has the foundation; the
-shell is M2.
+public API) and never reaches into rendering (the 3D view's placement is
+`gz-bevy::view::ViewPlacement`, written by the shell). M1 has the
+foundation; the shell (M2) is below.
 
 **Generated from the spec** (`build.rs`, DECISIONS.md D-21): `tokens.json`
 becomes `Palette` (light and dark), `ColorRole` (every colour token plus
@@ -796,6 +818,105 @@ theme switching across the whole gallery, menus driven by `KeyboardInput`,
 number fields, tooltips, splitters, plus the spec checks from the data files
 (tokens, §13 contrast pairs, fonts, icons).
 
+## Shell (gz-ui, M2)
+
+`gz_ui::shell::ShellPlugin` (full mode, on top of `GzUiPlugin`) builds the
+workbench of spec §2–§3 and owns its layout state. Modules: `layout`
+(state and rules, no ECS), `top_bar`, `activity_bar`, `sidebar`,
+`inspector`, `status_bar`, `viewport` (view node, placement, routing, card,
+banner), `connection` (phase), `format` (readouts).
+
+- **Tree** (spec §2.1): `Region::Root` (column) → `TopBar` (44, `surface`,
+  bottom `line`), `Body` (row) → `ActivityBar` (56, `bg`), `Sidebar`
+  (`surface`, right `line`), `ViewportArea` (fill, `bg`), `Inspector`
+  (`surface`, left `line`); then `StatusBar` (28). Containers the pointer
+  passes through are `Pickable::IGNORE`. Every size and colour comes from
+  the theme (`Theme::s`, roles).
+- **`ShellLayout`** (resource; workspaces persist it in M8): sidebar and
+  inspector widths and open flags, the two slots' panels, the slot split,
+  the window width it was fitted to, and which panels the floor rule
+  closed. `ShellLayout::for_width` applies the start-up rules (inspector
+  collapsed below 1280, sidebar below 1100) and the floor rule; `fit`
+  re-applies the floor rule on a resize and reopens what it closed when
+  space returns; `show`/`toggle` never collapse the side being opened;
+  `drag_width` clamps a splitter drag to the side's limits and short of the
+  floor; `split_after` keeps both slots ≥ 180 (DECISIONS.md D-30). Widths are
+  UI logical pixels (window width / `UiScale`). `apply_layout` writes it to
+  the nodes (`Display::None` collapses, so nothing overlays the view).
+- **`UiCommand`** messages carry every request (toggle sidebar/inspector,
+  activity click with Shift, open in a slot, swap, close the secondary, set
+  tool, set/toggle theme, reset a width); `apply_ui_commands` applies them.
+  `shortcut_keys` maps `ui.sidebar`, `ui.inspector`, `tool.*` and `panel.*`
+  from the `InputMap` in the live scopes (`ViewRouting::key_scopes`, so
+  tool keys need the view; nothing while typing).
+- **Splitters**: `ShellSplitter(Side)`, a 6 px absolute hit area centred on
+  the panel's border pixel, `GlobalZIndex(10)`, col-resize cursor; drags
+  set the width through `ShellLayout::drag`, the region's border is
+  `accent` while dragging, and a double-click (`PointerClick::count`)
+  resets. The slot row splitter is in flow, 6 px with a 32×2 `cube_edge`
+  grip.
+- **Top bar** (§3.1): logo, world button (name, `.sdf` in `text_3`; no
+  dirty dot yet), separator, tool radio group (`Tool` resource; buttons
+  follow it, keys set it) with Snap, two spacers around the transport
+  (Reset → `GzCommand::Reset`; Play/Pause from the stats; Step →
+  `Step(StepsPerClick)` when paused, disabled while running; the steps
+  menu: 1, 10, 100), clock, RTF dot and text (tooltip: real and sim time,
+  iterations, step), and the search trigger (shrinks first on narrow
+  windows). Transport needs a live world.
+- **Activity bar** (§3.2): `ActivityFor(Panel)` buttons in order, Settings
+  last (switches the theme for now, D-35); `Active` while the panel is in
+  either slot of an open sidebar; `ActivityBadges` drives the Plot and
+  Console badges (hidden at zero). Click: inactive → primary slot; active →
+  collapse; Shift → secondary; a panel in the other slot swaps there.
+- **Sidebar slots** (§3.3, §3.3.2): `SlotView(Slot)` nodes, rebuilt by
+  `rebuild_slots` when their panel, state or count changes: section header
+  (title, Scene's entity count when live; Swap with two slots, collapse on
+  the primary, close on the secondary; D-36) and a body from `panel_view`:
+  ready (empty until M4/M7), loading skeleton, or the centred empty/error
+  state with its buttons (Reconnect sends `GzReconnect`; Open world…, New
+  world and Add field… are disabled).
+- **Inspector** (§3.5): header with pin and collapse; the World shell (WORLD
+  tag, world name, server address, Save/Reset/Statistics with Reset live,
+  Physics/Scene/Plugins groups with "—" except the step size, links).
+- **Status bar** (§3.6): connection dot (`ok`/`warn`/`danger`, `dot_role`)
+  and address, physics ("— · 1 ms"), fps (`FrameTimeDiagnosticsPlugin`,
+  now added in both interactive modes), iterations, an empty message chip
+  slot, tool hint, `sel: —`, cursor on the ground (`CursorReadout`, only
+  while the pointer is over the view), workspace button. `narrow_rules`
+  drops hint and cursor below 1280 and fps and iterations below 1100.
+- **Connection** (`connection::ConnectionView`, `CurrentPhase`): `Idle`,
+  `Connecting`, `Loading` (socket up, no scene), `Live`, `Lost { since }`
+  (a world had loaded). The card shows while no world has loaded (and while
+  lost after "Connect to another server…"), with the address prefilled
+  from `GzStatus::url` and Connect/Enter sending `GzReconnect { url }`; it
+  fades out over 160 ms (`Fading`, after the widgets' looks). Lost: the
+  36 px banner (`warn_soft`, "Reconnecting… (n)", Retry now; after 60 s
+  `danger_soft` and "Connect to another server…") and the `bg` dimming at
+  30% over the last frame (D-34). In the browser a successful connect
+  stores the address in `localStorage` (`view::web::remember_url`), which
+  the page uses when `?url=` is absent (D-33).
+- **View** (§9.3): `ViewNode` fills the viewport area; `place_view`
+  (PostUpdate after layout, before `ViewPlacementSystems`) writes its rect
+  to `ViewPlacement`; `show_view_image` shows the texture (hidden while no
+  world: the area's `bg` shows). `route_pointer` (PreUpdate after picking's
+  hover) writes `ViewRouting` (D-32). The UI camera is a `Camera2d` at
+  order 1.
+- **Connection side** (`gz-bevy::connection`): `GzReconnect { url }`
+  reconnects now (new URL: attempts reset; same: counted), clearing a
+  backoff and a rejection; `GzStatus::attempting` says a socket is open or
+  opening; `SimStats` gained `real_time` and `step_size`.
+- **Tests** (`crates/gz-ui/src/tests/shell.rs`, headless): every region's
+  rect at 1440×900, start-up collapse at 1440/1280/1279/1100/1099/1024 with
+  the status bar's drops, floor-rule order and restore, splitter maths,
+  drags, accent border and double-click, slot split clamping, Ctrl+B,
+  Ctrl+Alt+I, tool and panel keys and routing, the placement at scale 1,
+  1.5 and 2 and with `UiScale` 1.25 (rect, texture size, camera target and
+  projection in the same frame), pointer routing with the hover map, the
+  activity bar's slot logic, states and badges, transport commands and
+  states, readouts, formatting, panel states and phases, the banner with
+  time faked a second a frame, the card's Connect and Enter, the cursor
+  readout, theme switching, and the slot header buttons.
+
 ## Headless snapshot mode
 
 `gzweb --snapshot out.json` runs `DefaultPlugins` with no window, no winit and
@@ -815,7 +936,10 @@ simulation.
 parity harness's viewport), with the same settling rules and no HUD, saves a
 PNG (creating its directory) and exits: 1 if it couldn't save, 2 if no frame
 arrived before the timeout. It needs a GPU. Use it to review rendering
-changes.
+changes. With `--ui full` (or `minimal`) it keeps that UI and opens
+1440×900 for the full UI; `--window WxH` sets the size; `--capture-at-ms MS`
+captures at that time instead of once settled (UI states without a settled
+scene, such as the connect card or the disconnected banner).
 
 ## Conventions
 
