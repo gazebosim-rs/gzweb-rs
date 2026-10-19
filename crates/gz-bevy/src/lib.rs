@@ -163,8 +163,13 @@ impl Plugin for GzWebPlugin {
                 ),
             );
         render::configure(app, self.config.quality);
-        app.add_systems(Startup, render::setup_gizmos)
-            .add_systems(Update, render::draw_grid);
+        app.add_systems(Startup, render::setup_gizmos).add_systems(
+            Update,
+            (
+                render::draw_grid,
+                render::projection_effects.after(render::apply_environment),
+            ),
+        );
 
         if self.config.interactive() {
             // TODO(M1): `UiMode::Full` adds `gz_ui::GzUiPlugin` on top.
