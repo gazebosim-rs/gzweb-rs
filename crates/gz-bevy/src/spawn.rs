@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::FRAC_PI_2;
 
-use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use gz_core::scene::{
     BuildOptions, GeometryDesc, LightDesc, LightType, Node, NodeKind, PathAllocator, Pose,
@@ -553,15 +553,7 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
                     shadow_maps_enabled: light.cast_shadows,
                     ..default()
                 },
-                // Sharp near the camera, out to a typical Gazebo world's size.
-                CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: 0.1,
-                    first_cascade_far_bound: 5.0,
-                    maximum_distance: 150.0,
-                    overlap_proportion: 0.2,
-                }
-                .build(),
+                render::sun_cascades(),
             ));
         }
     }

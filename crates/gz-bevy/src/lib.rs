@@ -163,14 +163,24 @@ impl Plugin for GzWebPlugin {
                 ),
             );
         render::configure(app, self.config.quality);
-        app.add_systems(Startup, render::setup_gizmos)
-            .add_systems(Update, render::draw_grid);
+        app.add_systems(Startup, render::setup_gizmos).add_systems(
+            Update,
+            (
+                render::draw_grid,
+                render::projection_effects.after(render::apply_environment),
+            ),
+        );
 
         if self.config.interactive() {
             // TODO(M1): `UiMode::Full` adds `gz_ui::GzUiPlugin` on top.
             app.add_plugins(view::ViewerControls {
                 mode: self.config.ui,
             });
+        }
+        // The host page's own status lines go with the HUD.
+        #[cfg(target_arch = "wasm32")]
+        if !(self.config.interactive() && self.config.hud) {
+            hud::remove_dom_status();
         }
         if self.config.interactive() && self.config.hud {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())

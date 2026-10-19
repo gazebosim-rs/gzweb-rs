@@ -50,8 +50,10 @@ and the viewport keys of `design/ui/shortcuts.json`:
 
 | Input | Does |
 |---|---|
-| Left drag / right drag / wheel or middle drag | orbit / pan / zoom about the point under the cursor |
-| Ctrl + wheel | zoom to the cursor (plain wheel zooms about the view centre) |
+| Left drag / right drag / middle drag | orbit / pan / zoom about the point under the cursor at drag start |
+| Wheel | zoom about the point at the view centre |
+| Ctrl + wheel, trackpad pinch | zoom about the point under the cursor |
+| Two-finger scroll | pan (native macOS and Wayland; browsers report it as a wheel, so it zooms there) |
 | Space held + left drag | pan |
 | Space tap | play / pause |
 | Ctrl+→ (⌘→ on macOS) | step a paused simulation |
@@ -59,7 +61,7 @@ and the viewport keys of `design/ui/shortcuts.json`:
 | 5 | perspective ↔ orthographic |
 | 7 / 1 / 3, Shift for the opposite side | top / front / right views (orthographic until you orbit away) |
 | G | grid |
-| W A S D or arrows, Q / E | move the camera; Q / E down / up |
+| W A S D or arrows, Q / E | move the camera; Q / E down / up (orthographic: in the screen plane; Q / E zoom) |
 
 `--no-hud` hides the status text.
 `--quality low` trades TAA, SSAO and shadow resolution for speed.
@@ -78,7 +80,12 @@ snapshot once everything has loaded, then exits.
 Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
 connects to port 9002 on its own host. `?ui=full|minimal` picks the UI mode
-(default `minimal` in the browser) and `?hud=0` hides the status text.
+(default `minimal` in the browser) and `?hud=0` hides the status text, the
+page's status lines included. On the canvas the page cancels the browser's
+context menu (so right-drag pans), Ctrl+wheel and pinch page zoom, and the
+chords `shortcuts.json` lists for it (Space, Tab, ⌘/Ctrl+K, S, O, F, P and
+⌘/Ctrl+→ step, which is Forward in Chrome on macOS); everywhere else the
+browser keeps its shortcuts.
 
 ## Development
 

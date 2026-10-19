@@ -1,7 +1,9 @@
 //! The keyboard map: `design/ui/shortcuts.json`, embedded at build time and
 //! parsed into an [`InputMap`].
 //!
-//! The file is the spec's single source of truth (DESIGN.md §6.3). Each
+//! The file is the spec's single source of truth (DESIGN.md §6.3). The crate
+//! embeds its own copy (`src/view/shortcuts.json`, so `cargo package` works);
+//! a test keeps it identical to the spec's. Each
 //! binding has keys (`mod+shift+R`, `W A S D / arrows`, `Space (hold)`), a
 //! scope that decides when it fires, and for the browser either the same
 //! keys or `web: null` plus a `web_alt`. `mod` is ⌘ on macOS and Ctrl
@@ -15,12 +17,13 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::input::ButtonInput;
 use bevy::prelude::Resource;
+use serde::de::IgnoredAny;
 use serde::Deserialize;
 
 use super::{FlyDir, SnapView};
 
-/// `design/ui/shortcuts.json`.
-pub const SHORTCUTS_JSON: &str = include_str!("../../../../design/ui/shortcuts.json");
+/// `design/ui/shortcuts.json`, from the crate's copy.
+pub const SHORTCUTS_JSON: &str = include_str!("shortcuts.json");
 
 /// Bindings that the spec file leaves out: minimal mode's camera fly keys.
 /// Scope `minimal` fires only in minimal mode, which has no Teleop panel,
@@ -201,6 +204,35 @@ impl Chord {
         self.resolve(platform).contains(&held)
     }
 
+    /// How the chord reads on `platform`: `Ctrl+Right`, `Cmd+Shift+R`, and
+    /// `Ctrl/Cmd+K` in the browser, where `mod` is either.
+    pub fn label(&self, platform: Platform) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        if self.mods.cmd {
+            parts.push(match platform {
+                Platform::Mac => "Cmd",
+                Platform::Linux | Platform::Windows => "Ctrl",
+                Platform::Web => "Ctrl/Cmd",
+            });
+        }
+        if self.mods.ctrl {
+            parts.push("Ctrl");
+        }
+        if self.mods.alt {
+            parts.push(if platform == Platform::Mac {
+                "Option"
+            } else {
+                "Alt"
+            });
+        }
+        if self.mods.shift {
+            parts.push("Shift");
+        }
+        let key = key_name(self.key);
+        parts.push(&key);
+        parts.join("+")
+    }
+
     /// Whether both chords can be typed with the same keys on `platform`.
     pub fn collides(&self, other: &Chord, platform: Platform) -> bool {
         self.key == other.key
@@ -299,22 +331,38 @@ pub struct InputMap {
     pub bindings: Vec<Binding>,
     /// Chords the browser keeps for itself (`web_reserved.keys`).
     pub web_reserved: Vec<Chord>,
+    /// Chords the page swallows (`preventDefault`) while the canvas has
+    /// focus (`web_reserved.prevent_default_when_canvas_focused`), so the
+    /// browser's own shortcuts keep working everywhere else.
+    pub web_prevent_default: Vec<Chord>,
     pub platform: Platform,
 }
 
+/// The file's layout. Unknown fields are errors, so a typo (`"triger"`)
+/// can't silently drop a binding's meaning; the documentation fields are
+/// listed and ignored.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawFile {
     bindings: Vec<RawBinding>,
-    #[serde(default)]
     web_reserved: Option<RawReserved>,
+    #[serde(rename = "$note")]
+    _note: Option<IgnoredAny>,
+    #[serde(rename = "modifier_vocabulary")]
+    _modifier_vocabulary: Option<IgnoredAny>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawReserved {
     keys: Vec<String>,
+    prevent_default_when_canvas_focused: Option<Vec<String>>,
+    #[serde(rename = "note")]
+    _note: Option<IgnoredAny>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawBinding {
     id: String,
     label: String,
@@ -325,6 +373,10 @@ struct RawBinding {
     web: Option<serde_json::Value>,
     web_alt: Option<String>,
     trigger: Option<String>,
+    #[serde(rename = "note")]
+    _note: Option<IgnoredAny>,
+    #[serde(rename = "also")]
+    _also: Option<IgnoredAny>,
 }
 
 /// Keeps an explicit `null` as `Some(Null)`, so it differs from absent.
@@ -359,18 +411,23 @@ impl InputMap {
             .into_iter()
             .map(binding)
             .collect::<Result<Vec<_>, _>>()?;
-        let web_reserved = match raw.web_reserved {
-            Some(r) => r
-                .keys
-                .iter()
+        let chords = |list: &[String]| {
+            list.iter()
                 .map(|k| parse_keys(k).map(|(chords, _)| chords))
-                .collect::<Result<Vec<_>, _>>()?
-                .concat(),
-            None => Vec::new(),
+                .collect::<Result<Vec<_>, _>>()
+                .map(|c| c.concat())
+        };
+        let (web_reserved, web_prevent_default) = match raw.web_reserved {
+            Some(r) => (
+                chords(&r.keys)?,
+                chords(&r.prevent_default_when_canvas_focused.unwrap_or_default())?,
+            ),
+            None => (Vec::new(), Vec::new()),
         };
         let mut map = InputMap {
             bindings,
             web_reserved,
+            web_prevent_default,
             platform,
         };
         map.mark_taps();
@@ -460,17 +517,27 @@ impl InputMap {
         })
     }
 
+    /// Whether the browser must not act on `key` with `held` modifiers while
+    /// the canvas has focus (spec §9.6: only the listed chords).
+    pub fn prevents_default(&self, key: KeyCode, held: KeyMods) -> bool {
+        self.web_prevent_default
+            .iter()
+            .any(|c| c.key == key && c.matches(held, Platform::Web))
+    }
+
     /// Spec §13: bindings that the same keys fire at once on `platform`:
-    /// overlapping scopes, not listed in [`EXCLUSIVE`], and not a
-    /// tap/hold pair on one key (decision Q4).
+    /// overlapping scopes, not listed in [`EXCLUSIVE`], and not a tap with
+    /// the hold that shares its chord (decision Q4: Space tap and Space
+    /// hold).
     pub fn conflicts(&self, platform: Platform) -> Vec<Conflict> {
         let mut out = Vec::new();
+        let tap_pair = |x: &Binding, y: &Binding| x.trigger == Trigger::Hold && y.tap;
         for (i, a) in self.bindings.iter().enumerate() {
             for b in &self.bindings[i + 1..] {
                 let exclusive = EXCLUSIVE
                     .iter()
                     .any(|&(x, y)| (a.id == x && b.id == y) || (a.id == y && b.id == x));
-                let tap_and_hold = (a.trigger == Trigger::Hold) != (b.trigger == Trigger::Hold);
+                let tap_and_hold = tap_pair(a, b) || tap_pair(b, a);
                 if exclusive || tap_and_hold || !a.scope.overlaps(b.scope) {
                     continue;
                 }
@@ -495,12 +562,13 @@ impl InputMap {
 
     /// Bindings that break the web rules: a binding on a reserved chord
     /// must say `web: null`, and every `web: null` binding needs a
-    /// `web_alt` that isn't reserved itself.
+    /// `web_alt` that isn't reserved itself. "Reserved" means the browser
+    /// would see the same keys: `ctrl+W` is `mod+W` there.
     pub fn web_violations(&self) -> Vec<String> {
         let reserved = |c: &Chord| {
             self.web_reserved
                 .iter()
-                .any(|r| r.key == c.key && r.mods == c.mods)
+                .any(|r| r.collides(c, Platform::Web))
         };
         let mut out = Vec::new();
         for b in &self.bindings {
@@ -643,6 +711,9 @@ fn key_range(token: &str) -> Result<Vec<KeyCode>, String> {
         let (Some(a), Some(b)) = (digit(a), digit(b)) else {
             return Err(format!("range '{token}'"));
         };
+        if a > b {
+            return Err(format!("reversed range '{token}'"));
+        }
         return (a..=b).map(|d| key(&d.to_string())).collect();
     }
     key(token).map(|k| vec![k])
@@ -735,6 +806,27 @@ pub fn key(name: &str) -> Result<KeyCode, String> {
         "down" => KeyCode::ArrowDown,
         _ => return Err(format!("key '{name}'")),
     })
+}
+
+/// A key's name as the file writes it (the inverse of [`key`]); the
+/// keypad's digits read as digits.
+pub fn key_name(key: KeyCode) -> String {
+    let name = format!("{key:?}");
+    if let Some(rest) = name
+        .strip_prefix("Key")
+        .or_else(|| name.strip_prefix("Digit"))
+        .or_else(|| name.strip_prefix("Numpad"))
+        .or_else(|| name.strip_prefix("Arrow"))
+    {
+        return rest.to_string();
+    }
+    name
+}
+
+/// The DOM `KeyboardEvent.code` of a key: Bevy names [`KeyCode`]s after
+/// the same W3C list (`KeyK`, `ArrowRight`, `Space`, `Tab`).
+pub fn dom_code(key: KeyCode) -> String {
+    format!("{key:?}")
 }
 
 #[cfg(test)]
@@ -849,6 +941,126 @@ mod tests {
             ]
         );
         assert_eq!(map.binding("f").unwrap().chords(Platform::Web), []);
+    }
+
+    #[test]
+    fn the_embedded_copy_is_the_spec_file() {
+        let spec = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../design/ui/shortcuts.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            SHORTCUTS_JSON, spec,
+            "copy design/ui/shortcuts.json to crates/gz-bevy/src/view/"
+        );
+    }
+
+    /// Only a hold and the tap that shares its chord are exempt from the
+    /// conflict rule, and in the browser `ctrl+W` is the reserved `mod+W`.
+    #[test]
+    fn the_tap_exemption_and_reserved_chords_are_narrow() {
+        let json = r#"{ "bindings": [
+            { "id": "hold", "label": "H", "keys": "mod+X (hold)", "scope": "viewport" },
+            { "id": "press", "label": "P", "keys": "ctrl+X", "scope": "viewport" },
+            { "id": "pan", "label": "Pan", "keys": "Space (hold)", "scope": "viewport" },
+            { "id": "fly", "label": "Fly", "keys": "Space", "scope": "minimal", "trigger": "held" },
+            { "id": "tap", "label": "Tap", "keys": "Space", "scope": "global" },
+            { "id": "w", "label": "W", "keys": "ctrl+W", "scope": "global" }
+          ], "web_reserved": { "keys": ["mod+W"] } }"#;
+        let map = InputMap::parse(json, Platform::Linux).unwrap();
+        assert!(!map.binding("press").unwrap().tap);
+        assert!(map.binding("tap").unwrap().tap);
+        let pairs: Vec<_> = map
+            .conflicts(Platform::Linux)
+            .into_iter()
+            .map(|c| (c.a, c.b))
+            .collect();
+        // mod+X held is Ctrl+X off macOS: the press isn't its tap. A held
+        // fly key isn't a tap either. The tap and its hold are fine.
+        assert_eq!(
+            pairs,
+            [
+                ("hold".to_string(), "press".to_string()),
+                ("pan".into(), "fly".into()),
+                ("fly".into(), "tap".into()),
+            ]
+        );
+        assert_eq!(map.web_violations(), ["w: uses a browser-reserved chord"]);
+    }
+
+    #[test]
+    fn typos_and_reversed_ranges_are_errors() {
+        let typo = r#"{ "bindings": [ { "id": "a", "label": "A", "keys": "K", "scope": "global", "triger": "held" } ] }"#;
+        let e = InputMap::parse(typo, Platform::Linux).unwrap_err();
+        assert!(e.contains("unknown field `triger`"), "{e}");
+        let top = r#"{ "bindings": [], "web_reservd": { "keys": [] } }"#;
+        assert!(InputMap::parse(top, Platform::Linux).is_err());
+        let reserved = r#"{ "bindings": [], "web_reserved": { "keys": [], "kees": [] } }"#;
+        assert!(InputMap::parse(reserved, Platform::Linux).is_err());
+        // The documentation fields are allowed.
+        let docs = r#"{ "$note": "n", "modifier_vocabulary": { "shift": "s" },
+            "bindings": [ { "id": "a", "label": "A", "keys": "K", "scope": "global", "note": "n", "also": "x" } ],
+            "web_reserved": { "note": "n", "keys": [], "prevent_default_when_canvas_focused": ["mod+K"] } }"#;
+        let map = InputMap::parse(docs, Platform::Linux).unwrap();
+        assert_eq!(map.web_prevent_default, [chord("mod+K")]);
+        assert_eq!(parse_keys("A / 9..1").unwrap_err(), "reversed range '9..1'");
+        assert_eq!(parse_keys("1..1").unwrap().0, [chord("1")]);
+    }
+
+    #[test]
+    fn the_canvas_swallows_only_the_listed_chords() {
+        let map = spec();
+        assert!(map.web_prevent_default.contains(&chord("Space")));
+        assert!(map.web_prevent_default.contains(&chord("Tab")));
+        assert!(map.web_prevent_default.contains(&chord("mod+K")));
+        // Step: Cmd+Right is the browser's Forward on macOS (D-17).
+        assert!(map.web_prevent_default.contains(&chord("mod+Right")));
+        let mods = |ctrl, super_key, shift| KeyMods {
+            ctrl,
+            super_key,
+            shift,
+            alt: false,
+        };
+        assert!(map.prevents_default(KeyCode::ArrowRight, mods(false, true, false)));
+        assert!(map.prevents_default(KeyCode::ArrowRight, mods(true, false, false)));
+        assert!(map.prevents_default(KeyCode::Space, mods(false, false, false)));
+        // Not listed: the browser keeps them.
+        assert!(!map.prevents_default(KeyCode::ArrowRight, mods(false, false, false)));
+        assert!(!map.prevents_default(KeyCode::KeyR, mods(false, true, false)));
+        assert!(!map.prevents_default(KeyCode::Space, mods(false, false, true)));
+        assert!(!map.prevents_default(KeyCode::KeyW, mods(true, false, false)));
+    }
+
+    #[test]
+    fn chord_labels_and_dom_codes() {
+        assert_eq!(chord("mod+Right").label(Platform::Mac), "Cmd+Right");
+        assert_eq!(chord("mod+Right").label(Platform::Linux), "Ctrl+Right");
+        assert_eq!(chord("mod+K").label(Platform::Web), "Ctrl/Cmd+K");
+        assert_eq!(
+            chord("ctrl+alt+shift+7").label(Platform::Windows),
+            "Ctrl+Alt+Shift+7"
+        );
+        assert_eq!(chord("alt+W").label(Platform::Mac), "Option+W");
+        assert_eq!(chord("Space").label(Platform::Linux), "Space");
+        assert_eq!(key_name(KeyCode::Numpad3), "3");
+        assert_eq!(key_name(KeyCode::F2), "F2");
+        assert_eq!(key_name(KeyCode::Escape), "Escape");
+        for (k, code) in [
+            (KeyCode::KeyK, "KeyK"),
+            (KeyCode::ArrowRight, "ArrowRight"),
+            (KeyCode::Space, "Space"),
+            (KeyCode::Tab, "Tab"),
+            (KeyCode::Digit5, "Digit5"),
+        ] {
+            assert_eq!(dom_code(k), code);
+        }
+        // Every name the file uses reads back to the same key.
+        for b in spec().bindings {
+            for c in b.keys {
+                assert_eq!(key(&key_name(c.key)), Ok(c.key), "{}", b.id);
+            }
+        }
     }
 
     #[test]

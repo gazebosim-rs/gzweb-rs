@@ -1,0 +1,152 @@
+//! The browser side of the viewer's input (spec §9.6): listeners on the
+//! page's canvas for what winit leaves to the page.
+//!
+//! - **wheel** (`passive: false`): a wheel event with `ctrlKey` would zoom
+//!   the page, so it is cancelled; that is also how a trackpad pinch
+//!   arrives (Chrome, Firefox), with no Control key-down, so the frame is
+//!   flagged in [`BrowserWheel`] and zooms to the cursor.
+//! - **gesturestart/gesturechange** (Safari's pinch): cancelled, and the
+//!   scale change is passed on as a pinch.
+//! - **contextmenu**: cancelled on the canvas only, so right-drag pans.
+//! - **keydown**: `preventDefault` for the chords in `shortcuts.json`'s
+//!   `prevent_default_when_canvas_focused` ([`InputMap::prevents_default`]).
+//!   The listener is on the canvas, so it only sees keys while the canvas
+//!   has focus; text fields elsewhere on the page keep every browser
+//!   shortcut.
+//!
+//! Listeners live as long as the page.
+
+use std::cell::Cell;
+
+use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::JsCast;
+
+use super::controls::BrowserWheel;
+use super::input::{InputMap, KeyMods};
+
+thread_local! {
+    /// What the listeners saw since the last frame: a `ctrlKey` wheel event,
+    /// and a pinch's change in log scale.
+    static SEEN: Cell<(bool, f32)> = const { Cell::new((false, 0.0)) };
+    /// Safari's gesture scale at the last `gesturechange`.
+    static GESTURE_SCALE: Cell<f64> = const { Cell::new(1.0) };
+}
+
+/// Adds the listeners right away (they don't wait for the renderer, which
+/// starts asynchronously) and the system that hands their findings to
+/// [`BrowserWheel`] each frame.
+pub fn install(app: &mut App) {
+    let world = app.world_mut();
+    let selector = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .iter(world)
+        .next()
+        .and_then(|w| w.canvas.clone());
+    let map = world
+        .get_resource::<InputMap>()
+        .cloned()
+        .unwrap_or_default();
+    listen(selector.as_deref().unwrap_or("canvas"), &map);
+    app.add_systems(PreUpdate, pump);
+}
+
+/// Moves what the listeners saw into [`BrowserWheel`] for this frame.
+fn pump(mut wheel: ResMut<BrowserWheel>) {
+    let (ctrl, pinch) = SEEN.with(|s| s.replace((false, 0.0)));
+    let next = BrowserWheel { ctrl, pinch };
+    if *wheel != next {
+        *wheel = next;
+    }
+}
+
+fn listen(selector: &str, map: &InputMap) {
+    let Some(canvas) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.query_selector(selector).ok().flatten())
+    else {
+        warn!("no canvas '{selector}': the browser keeps its wheel, menu and key defaults");
+        return;
+    };
+    let options = web_sys::AddEventListenerOptions::new();
+    options.set_passive(false);
+    let on = |name: &str, f: Closure<dyn FnMut(web_sys::Event)>| {
+        if canvas
+            .add_event_listener_with_callback_and_add_event_listener_options(
+                name,
+                f.as_ref().unchecked_ref(),
+                &options,
+            )
+            .is_err()
+        {
+            warn!("couldn't listen for '{name}' on the canvas");
+        }
+        f.forget();
+    };
+
+    on(
+        "wheel",
+        Closure::new(|e: web_sys::Event| {
+            if e.dyn_ref::<web_sys::WheelEvent>()
+                .is_some_and(|w| w.ctrl_key())
+            {
+                e.prevent_default();
+                SEEN.with(|s| s.set((true, s.get().1)));
+            }
+        }),
+    );
+    on(
+        "contextmenu",
+        Closure::new(|e: web_sys::Event| e.prevent_default()),
+    );
+    on(
+        "gesturestart",
+        Closure::new(|e: web_sys::Event| {
+            e.prevent_default();
+            GESTURE_SCALE.with(|g| g.set(1.0));
+        }),
+    );
+    on(
+        "gesturechange",
+        Closure::new(|e: web_sys::Event| {
+            e.prevent_default();
+            let scale = js_sys::Reflect::get(&e, &"scale".into())
+                .ok()
+                .and_then(|v| v.as_f64())
+                .filter(|s| *s > 0.0);
+            if let Some(scale) = scale {
+                let last = GESTURE_SCALE.with(|g| g.replace(scale));
+                let d = (scale / last).ln() as f32;
+                SEEN.with(|s| s.set((s.get().0, s.get().1 + d)));
+            }
+        }),
+    );
+    let swallow: Vec<_> = map
+        .web_prevent_default
+        .iter()
+        .map(|c| (super::input::dom_code(c.key), c.key))
+        .collect();
+    let map = map.clone();
+    on(
+        "keydown",
+        Closure::new(move |e: web_sys::Event| {
+            let Some(k) = e.dyn_ref::<web_sys::KeyboardEvent>() else {
+                return;
+            };
+            let held = KeyMods {
+                ctrl: k.ctrl_key(),
+                shift: k.shift_key(),
+                alt: k.alt_key(),
+                super_key: k.meta_key(),
+            };
+            let code = k.code();
+            if swallow
+                .iter()
+                .any(|(c, key)| *c == code && map.prevents_default(*key, held))
+            {
+                e.prevent_default();
+            }
+        }),
+    );
+}

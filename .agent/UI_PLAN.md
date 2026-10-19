@@ -61,7 +61,8 @@ Rules that keep `minimal` real rather than a stripped-down `full`:
   `minimal` produces those messages from raw mouse and keys. `full` produces the same messages
   from the rail, the cube and the same key map, scoped to the hovered/active view.
 - **One input map**, loaded from `shortcuts.json` (embedded at build time), shared by both modes.
-  `minimal` enables only the `viewport` scope plus `sim.*`. `full` enables everything. The
+  `minimal` enables the `global`, `viewport` and `minimal` scopes; of the global bindings only
+  `sim.*` have actions there (DECISIONS.md D-16: no reset). `full` enables everything. The
   CI conflict test (spec §13) runs over the one table.
 - **`gz-ui` never reaches into rendering.** It reads `gz-bevy` state (`GzIndex`, `GzStatus`,
   scene entities) and writes messages: `SetTool`, `Select`, `SetPose`, `PlayPause`, `Step(n)`,
@@ -79,8 +80,10 @@ From `shortcuts.json`, viewport and sim scopes only:
 
 | Key | Action |
 |---|---|
-| Left drag / right drag / wheel, middle drag | orbit / pan / zoom (pivot = point under cursor) |
-| Ctrl + wheel | zoom to cursor |
+| Left drag / right drag / middle drag | orbit / pan / zoom (pivot = point under cursor at drag start) |
+| Wheel | zoom about the point at the view centre (D-11) |
+| Ctrl + wheel, pinch | zoom to cursor |
+| Two-finger scroll | pan where the platform tells it from a wheel (D-18) |
 | Space hold + drag | temporary pan |
 | Space tap | play/pause |
 | ⌘→ | step |
@@ -145,7 +148,11 @@ runs alongside the UI milestones and must land before M4, which builds on server
 These follow the spec's §12 order, adapted to this repo. Each milestone is one PR, ends green on
 `scripts/check.sh` plus the parity suite, and includes light and dark screenshots at 1440×900.
 
-### M0 — Split the camera out and add UI modes (no visible change) — **done 2026-10-19**
+### M0 — Split the camera out and add UI modes — **done 2026-10-19**
+
+Visible changes: the new keys (5, 7/1/3, F, H, G, Space, ⌘→, fly keys), the wheel zooming
+about the view centre (Ctrl+wheel and pinch to the cursor), N no longer stepping, the HUD hint,
+and orthographic views. The browser input items of M10 moved here (see M10).
 - `gz-bevy::view`: move `camera.rs` orbit/pan/zoom into `ViewCamera` + `ViewCommand`. Add
   projection toggle, snap views with a 250 ms animation, focus/home, Space tap/hold, Ctrl+wheel
   zoom to cursor, WASD/QE fly.
@@ -218,8 +225,12 @@ These follow the spec's §12 order, adapted to this repo. Each milestone is one 
   validation, write-back.
 
 ### M10 — Hardening
-- AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. Web: context-menu
-  suppression, `web_reserved`/`web_alt`, `preventDefault` only for listed chords.
+- AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion.
+- Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
+  `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
+  focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
+  the page's status lines. M10 still owns text-field focus inside the canvas (bevy_ui text
+  inputs must keep the browser's chords) and layout-aware letters.
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 
