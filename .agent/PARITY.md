@@ -20,16 +20,31 @@ This is how gzweb (`../gzweb`, the reference) and gzweb-rs are compared. See
 
 ## 1. Corpus format: `tests/corpus/<name>/`
 
-Record one with `parity/record.sh <world.sdf> [name]` (needs the `gz-websocket`
-image from `Dockerfile.gazebo`). Status of the recorded worlds:
+Record one with `parity/record.sh <world.sdf> [name]` (needs the
+`gz-websocket-jetty` image from `Dockerfile.gazebo`; `RECORD_PORT` picks the
+host port, default 9010). It waits for a websocket upgrade, not just a TCP
+accept, because Jetty's websocket system only starts once the world, Fuel
+models included, has loaded; then it lets the world run for
+`RECORD_WARMUP_S` (30) seconds. Every corpus was recorded from **Gazebo
+Jetty** (gz-sim 10.5.0, `source.gazebo = "jetty"` in the manifest). Status:
 
 | Corpus | gzweb reference | Rust vs gzweb | In `cargo test` |
 |---|---|---|---|
-| empty, shapes, lights, nested_model, diff_drive, polylines | committed | PASS | yes |
-| heightmap | committed | PASS with gaps (no heightmap geometry yet) | `--ignored` |
-| import_mesh | committed | PASS (Collada) | `--ignored` |
-| sky, visibility, fuel_textured_mesh | none: gzweb throws on `PixelFormatType` | — | no |
+| empty, shapes, lights, nested_model, diff_drive, polylines, visibility | committed | PASS | yes |
+| heightmap | committed | PASS with allow-listed terrain | `--ignored` (Fuel) |
+| import_mesh | committed | PASS (Collada) | `--ignored` (Fuel) |
+| sky, fuel_textured_mesh | committed | PASS (allow-listed materials) | `--ignored` (Fuel) |
 | particle_emitter | none: gzweb throws on a null `albedo_map` | — | no |
+
+gzweb couldn't load `sky`, `visibility` and `fuel_textured_mesh` from the
+Harmonic recordings: gz-launch's `protos` text left out the top-level enums,
+and protobufjs threw on `PixelFormatType`. Jetty's server includes them, so
+these now have references.
+
+In the Jetty `heightmap` recording the four spheres have fallen through the
+terrain (z ≈ −1.6 × 10⁶ m after 30 s; DART with the bullet collision
+detector, gz-physics 9). On Harmonic they rested in the bowl. This is
+server-side physics; both clients just show the poses they're sent.
 
 Optional files next to `manifest.json`:
 
@@ -56,7 +71,7 @@ is contacted only on a cache miss, and only that job fails if Fuel is down.
   {
     "format": "gz-parity-corpus/1",
     "world": "shapes",
-    "source": {"gazebo": "harmonic", "world_file": "shapes.sdf", "recorded_at": "..."},
+    "source": {"gazebo": "jetty", "world_file": "shapes.sdf"},
     "protos": 0,
     "responses": {"topics-types": 1, "worlds": 2, "scene": 3},
     "assets": {"file:///…/mesh.dae": 7},
@@ -226,5 +241,6 @@ graph. That keeps both sides' node sets identical by construction.
 4. Compares both snapshots and both client logs.
 5. Writes everything to `target/parity/<corpus>/`.
 
-CI's `parity` job runs it for every corpus against gzweb pinned at
-`519d4cf` (`.github/workflows/ci.yml`).
+CI's `parity` job runs it for every corpus without web assets against
+gzweb pinned at `519d4cf` (`.github/workflows/ci.yml`); the Fuel corpora
+are checked against their committed references in the `fuel` job.

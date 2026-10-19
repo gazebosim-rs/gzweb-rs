@@ -194,6 +194,26 @@ fn polylines_matches_gzweb() {
     recorded_corpus_matches_gzweb("polylines");
 }
 
+// gzweb can load these since Jetty's websocket server sends the top-level
+// enums (`PixelFormatType`) with the proto definitions.
+
+#[test]
+fn visibility_matches_gzweb() {
+    recorded_corpus_matches_gzweb("visibility");
+}
+
+#[test]
+#[ignore = "fetches from fuel.gazebosim.org on a cold cache"]
+fn sky_matches_gzweb() {
+    recorded_corpus_matches_gzweb("sky");
+}
+
+#[test]
+#[ignore = "fetches from fuel.gazebosim.org on a cold cache"]
+fn fuel_textured_mesh_matches_gzweb() {
+    recorded_corpus_matches_gzweb("fuel_textured_mesh");
+}
+
 // ─── Synthetic world ────────────────────────────────────────────────────────
 
 /// gz-collada's hand-written probe: hierarchy, instancing, two materials.

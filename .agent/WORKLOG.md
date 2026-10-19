@@ -490,3 +490,56 @@ Branch `feature/phase-4-materials`. Materials follow Gazebo (gz-sim
   at Low and Ultra: same bands in both (forward-only and prepass paths).
 - Not checked in a browser (WebGPU): the extension adds 6 textures and a
   sampler per fragment stage.
+
+## 2026-10-19: Gazebo Jetty (UI_PLAN §3a, J1–J4)
+
+- **J1, image:** `Dockerfile.gazebo` is now Ubuntu 24.04 + `gz-sim10-server`
+  (server only: `/usr/libexec/gz/sim10/gz-sim-server`, no GUI, no `gz` CLI),
+  tag `gz-websocket-jetty`. `docker/websocket.config`, through
+  `GZ_SIM_SERVER_CONFIG_PATH`, adds `gz-sim-websocket-server-system` (port
+  9002) to every world: since gz-sim 10 server-config systems load
+  alongside the world's own unless it sets
+  `<include_server_config_plugins>false`, de-duplicated by filename. The
+  file repeats the default server.config's three systems, since the
+  variable replaces it. Same interface: `docker run … gz-websocket-jetty
+  <world.sdf>`. No Harmonic image is kept: nothing replays against a live
+  server (the parity jobs use recordings). Harmless upstream warning: the
+  system logs "Partial SSL configuration" whenever `<ssl>` is absent.
+- **J2, protos:** vendored gz-msgs `gz-msgs12_12.0.2` (`703d291`). No wire
+  change to anything the client decodes (Scene, Visual, Material/PBR,
+  Light, Geometry/Heightmap, WorldStatistics, Pose_V, Publishers,
+  StringMsg_V, Bytes). Changes: `Sensor.navsat` (22), `GUICamera.duration`,
+  `WheelSlipParametersCmd` friction fields, `SerializedState` map key
+  int64 → uint64, `SphericalCoordinates.LOCAL2` removed, GPS messages
+  deprecated.
+- **J3, protocol:** gz-sim10_10.5.0's `WebsocketServer.cc` diffed against
+  gz-launch 7's; DESIGN.md "Websocket protocol" lists the result. Same ops,
+  framing, `strtok` split, asset resolution and allowed paths, error codes,
+  `req`, `image`, `throttle`. Different: `auth` is answered without a key
+  (`authorized`), `protos` includes top-level enums, world names go
+  through `AsValidTopic`, and the server starts after the world loads.
+  Probed live: `auth,,,secret` on a keyless server → `authorized`; unknown
+  service → `service_not_found`; `ignition.msgs.*` → empty `Boolean`; a `,`
+  in the payload → dropped; `sub,,,` still crashes it, now taking gz-sim
+  down. Client and replay server needed no behaviour change (the replay
+  server already accepted any key without `--key`); docs updated.
+- **Live check** (`--release`, Jetty containers): `--snapshot` and
+  `--screenshot` on shapes, sky, heightmap and fuel_textured_mesh. All
+  load, meshes and Fuel textures included. The heightmap screenshot shows
+  no terrain: the spheres have fallen to z ≈ −1.6 × 10⁶ m (Jetty physics,
+  see PARITY.md); the same binary renders the Harmonic recording's
+  terrain. Not investigated further. Two of four heightmap screenshot runs
+  crashed (a segfault after writing the image, with `NVVM compilation
+  failed` from the NVIDIA driver in the log, and an abort at `--quality
+  low`); the other two exited cleanly.
+- **J4, corpus:** all 12 corpora re-recorded from Jetty (`parity/record.sh`
+  now defaults to `gz-websocket-jetty` on port 9010, waits for a websocket
+  upgrade, and writes `source.gazebo`; `gz-parity record --gazebo`). gzweb
+  references regenerated with `parity/run.sh`; Fuel was up, so new lock
+  files (`sky`, `fuel_textured_mesh`) were fetched from fuel.gazebosim.org.
+  New references for `sky`, `visibility` and `fuel_textured_mesh`, which
+  gzweb couldn't load from Harmonic's protos. New allow-list entries:
+  material-less camera visuals (`gz-grey`) and the two Fuel PBR models.
+  `particle_emitter` still has no reference (gzweb throws on a null
+  `albedo_map`). Headless tests: `visibility` (default), `sky` and
+  `fuel_textured_mesh` (`--ignored`); CI parity job gains `visibility`.

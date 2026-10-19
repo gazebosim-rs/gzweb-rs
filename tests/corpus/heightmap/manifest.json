@@ -2,6 +2,7 @@
   "format": "gz-parity-corpus/1",
   "world": "heightmap",
   "source": {
+    "gazebo": "jetty",
     "world_file": "heightmap.sdf"
   },
   "protos": 0,

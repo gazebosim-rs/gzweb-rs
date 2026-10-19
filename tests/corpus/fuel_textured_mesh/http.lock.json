@@ -1,0 +1,13 @@
+{
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_albedo.png": "13da763ef7312bf953164030fb13d3909fd31bde3be29d97e9988e5ccf873306",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_metalness.png": "6ccc422ba6fc0c87b854d084291c217da4fb1a936802cdde4b23083945bb6725",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_normal.png": "387391b5d0ac611f50e13ca1c1eef76a8a16ee0b8f911c4d1723b530a7f58bbf",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/materials/textures/rescue_randy_roughness.png": "6bd73826906e0a40d37a5f3b531a69a6a66656edbe66b17951ccbb08a1b4cffa",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/rescue randy/3/files/meshes/rescue_randy.dae": "39cefdd4b3cb18ac7a2a80439200bd301e19c3d44547587333cda9a0809c8d92",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Albedo.png": "f6d2e68d764d10f52cb032d4e23eafa0bac7283719cc3f5c2fa2f3990dbbf438",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Emissive.png": "7ff03809865a64e60dff23ec22c42e41a955fa6da3e28d78bdf69015acc5b8ef",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Metalness.png": "7019b0e0f22fecbd675616fc4993cc8a8fb860db686fa096824b983ddf74279c",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Normal.png": "2a872d4e3b62bb25d724b79ca514ab5cc62801a4816cf75595482f74993c527b",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/materials/textures/TubeLight_Roughness.png": "ef206eaeb1eeecf5762eb24ac9e2e18aea052f8e36169ad5117139c511a2d9c2",
+  "https://fuel.gazebosim.org/1.0/openrobotics/models/tube light/2/files/meshes/tubelight.dae": "4afeb1e41b413f5ab7c8cea41d58ce5f28b6ff346daa8ecf7ed96a9611813580"
+}

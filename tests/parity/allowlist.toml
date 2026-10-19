@@ -25,14 +25,14 @@ id = "gzweb-hides-grid"
 path = "<scene>"
 field = "scene.grid_visible"
 reason = """gzweb always hides its grid. gzweb-rs shows Gazebo's grid when the scene's \
-`grid` flag is set (every Harmonic world sets it), as the Gazebo GUI does."""
+`grid` flag is set (every Harmonic and Jetty world sets it), as the Gazebo GUI does."""
 
 [[allow]]
 id = "gzweb-sky-header-only"
 path = "<scene>"
 field = "scene.sky"
 reason = """gzweb reads a sky cubemap only from the Sky header's `cubemap_uri`; gzweb-rs \
-falls back to the Sky.cubemap_uri field Harmonic sets. PORT_PLAN.md section 2.5."""
+falls back to the Sky.cubemap_uri field Harmonic and Jetty set. PORT_PLAN.md section 2.5."""
 
 [[allow]]
 id = "gzweb-heightmap-empty"
@@ -49,3 +49,26 @@ field = "material.color"
 reason = """A primitive visual without a material is Gazebo's `gz-grey` (diffuse 0.7, \
 metallic) in gzweb-rs, as gz-sim's SceneManager renders it; gzweb leaves three's white. \
 PORT_PLAN.md section 2.5."""
+
+[[allow]]
+id = "gazebo-default-material-cameras"
+path = "camera*/link/visual"
+field = "material.color"
+reason = """The camera sensors' box visuals have no material: Gazebo's `gz-grey` in \
+gzweb-rs, three's white in gzweb (see gazebo-default-material). Worlds sky, visibility \
+and fuel_textured_mesh, which gzweb can load since Jetty sends the top-level enums."""
+
+[[allow]]
+id = "gazebo-pbr-material-randy"
+path = "Rescue Randy/*"
+field = "material.*"
+reason = """Fuel PBR (metal workflow) material: gzweb-rs follows Gazebo's ogre2 rules \
+(diffuse, metalness and roughness from the message, the emissive map at full strength); \
+gzweb keeps its own defaults (colour 0.6, metalness 0, roughness 1). DESIGN.md \
+"Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-material-tube-light"
+path = "Tube Light/*"
+field = "material.*"
+reason = """Same as gazebo-pbr-material-randy, for the Tube Light model."""
