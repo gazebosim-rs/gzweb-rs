@@ -76,13 +76,16 @@ pub fn text_field(theme: &Theme, name: impl Into<String>, value: impl Into<Strin
     )
 }
 
-/// Enter submits.
-pub fn on_text_field_key(
+/// Enter submits, once: on the input, not again as the key bubbles up.
+pub(crate) fn on_text_field_key(
     ev: On<FocusedInput<KeyboardInput>>,
     inputs: Query<(&EditableText, &ChildOf), With<TextFieldInput>>,
     mut commands: Commands,
 ) {
-    if ev.input.state != ButtonState::Pressed || ev.input.logical_key != Key::Enter {
+    if ev.input.state != ButtonState::Pressed
+        || ev.input.logical_key != Key::Enter
+        || ev.event_target() != ev.focused_entity
+    {
         return;
     }
     if let Ok((text, parent)) = inputs.get(ev.focused_entity) {
@@ -94,12 +97,16 @@ pub fn on_text_field_key(
 }
 
 /// Focus look: `accent` border and the `accent_soft` halo, as the number
-/// field has.
-pub fn text_field_focus_system(
+/// field has. Runs when focus moves or a field is new.
+pub(crate) fn text_field_focus_system(
     focus: Res<bevy::input_focus::InputFocus>,
     inputs: Query<(Entity, &ChildOf), With<TextFieldInput>>,
+    added: Query<(), Added<TextFieldInput>>,
     mut fields: Query<(&mut Stroke, &mut Ring)>,
 ) {
+    if !focus.is_changed() && added.is_empty() {
+        return;
+    }
     for (input, parent) in &inputs {
         let focused = focus.get() == Some(input);
         if let Ok((mut stroke, mut ring)) = fields.get_mut(parent.parent()) {

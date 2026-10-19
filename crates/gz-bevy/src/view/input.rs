@@ -525,6 +525,19 @@ impl InputMap {
             .any(|c| c.key == key && c.matches(held, Platform::Web))
     }
 
+    /// Whether the browser canvas cancels a keydown's default: the
+    /// [`prevents_default`](Self::prevents_default) chords while no UI text
+    /// field has focus; while one has, only Tab and Shift+Tab, which move
+    /// focus between the UI's widgets (the browser would also move its own
+    /// focus off the canvas).
+    pub fn web_cancels(&self, key: KeyCode, held: KeyMods, text_focus: bool) -> bool {
+        if text_focus {
+            key == KeyCode::Tab && !(held.ctrl || held.alt || held.super_key)
+        } else {
+            self.prevents_default(key, held)
+        }
+    }
+
     /// Spec §13: bindings that the same keys fire at once on `platform`:
     /// overlapping scopes, not listed in [`EXCLUSIVE`], and not a tap with
     /// the hold that shares its chord (decision Q4: Space tap and Space
@@ -1028,6 +1041,13 @@ mod tests {
         // Not listed: the browser keeps them.
         assert!(!map.prevents_default(KeyCode::ArrowRight, mods(false, false, false)));
         assert!(!map.prevents_default(KeyCode::KeyR, mods(false, true, false)));
+        // In a UI text field: only Tab, with or without Shift.
+        assert!(map.web_cancels(KeyCode::Space, mods(false, false, false), false));
+        assert!(!map.web_cancels(KeyCode::Space, mods(false, false, false), true));
+        assert!(!map.web_cancels(KeyCode::KeyK, mods(true, false, false), true));
+        assert!(map.web_cancels(KeyCode::Tab, mods(false, false, false), true));
+        assert!(map.web_cancels(KeyCode::Tab, mods(false, false, true), true));
+        assert!(!map.web_cancels(KeyCode::Tab, mods(true, false, false), true));
         assert!(!map.prevents_default(KeyCode::Space, mods(false, false, true)));
         assert!(!map.prevents_default(KeyCode::KeyW, mods(true, false, false)));
     }

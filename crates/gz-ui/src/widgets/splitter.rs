@@ -1,8 +1,16 @@
-//! Splitter (§5.18): a 6 px hit area between two panes with a col-resize
-//! (or row-resize) cursor and an `accent` line while dragging. Dragging
-//! resizes one pane within its min/max.
+//! Splitter (§5.18): a `viewport_divider_hit` (6 px) hit area between two
+//! panes with a col-resize (or row-resize) cursor, held for the whole drag
+//! ([`crate::cursor`]), and a `viewport_divider` `accent` line while
+//! dragging. Dragging resizes one pane within its min/max, in UI pixels
+//! (the pointer moves in window pixels: [`UiScale`] divides them). It is a
+//! tab stop: the arrow keys along its axis move it by [`KEY_STEP`], Home
+//! and End to the pane's min and max (WAI-ARIA window splitter).
 
 use accesskit::Role;
+use bevy::input::keyboard::KeyboardInput;
+use bevy::input::ButtonState;
+use bevy::input_focus::tab_navigation::TabIndex;
+use bevy::input_focus::FocusedInput;
 use bevy::picking::cursor::EntityCursor;
 use bevy::picking::events::{PointerDrag, PointerDragEnd, PointerDragStart};
 use bevy::picking::hover::Hovered;
@@ -11,8 +19,11 @@ use bevy::ui::ComputedNode;
 use bevy::window::SystemCursorIcon;
 
 use super::a11y;
-use crate::theme::{ColorRole, Fill};
+use crate::theme::{ColorRole, Fill, FocusRing, Theme, SPACE};
 use crate::GzUiSystems;
+
+/// How far an arrow key moves a splitter.
+pub const KEY_STEP: f32 = SPACE[4];
 
 /// Which way a splitter moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -37,13 +48,13 @@ pub struct Splitter {
 
 /// A drag in progress, from the pane size at its start.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct SplitterDrag {
+pub(crate) struct SplitterDrag {
     pub start: f32,
 }
 
 /// The line in the middle of a splitter.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SplitterLine;
+pub(crate) struct SplitterLine;
 
 impl Splitter {
     /// The pane size after dragging `delta` px (along the axis) from `start`.
@@ -56,8 +67,11 @@ impl Splitter {
     }
 }
 
-/// A splitter for `pane`. Place it between the two panes.
-pub fn splitter(hit: f32, splitter: Splitter) -> impl Bundle {
+/// A splitter for `pane`, named `name` for AccessKit ("Resize sidebar").
+/// Place it between the two panes.
+pub fn splitter(theme: &Theme, splitter: Splitter, name: impl Into<String>) -> impl Bundle {
+    let hit = theme.s.viewport_divider_hit;
+    let thickness = theme.s.viewport_divider;
     let (node, line, cursor) = match splitter.axis {
         SplitAxis::Columns => (
             Node {
@@ -68,7 +82,7 @@ pub fn splitter(hit: f32, splitter: Splitter) -> impl Bundle {
                 ..default()
             },
             Node {
-                width: px(2),
+                width: px(thickness),
                 height: Val::Percent(100.0),
                 ..default()
             },
@@ -83,7 +97,7 @@ pub fn splitter(hit: f32, splitter: Splitter) -> impl Bundle {
                 ..default()
             },
             Node {
-                height: px(2),
+                height: px(thickness),
                 width: Val::Percent(100.0),
                 ..default()
             },
@@ -95,7 +109,9 @@ pub fn splitter(hit: f32, splitter: Splitter) -> impl Bundle {
         splitter,
         Hovered::default(),
         EntityCursor::System(cursor),
-        a11y(Role::Splitter, "Resize"),
+        TabIndex(0),
+        FocusRing,
+        a11y(Role::Splitter, name),
         children![(SplitterLine, line, Fill(ColorRole::Clear))],
     )
 }
@@ -108,7 +124,7 @@ fn pane_size(axis: SplitAxis, node: &ComputedNode) -> f32 {
     }
 }
 
-pub fn on_splitter_drag_start(
+pub(crate) fn on_splitter_drag_start(
     ev: On<PointerDragStart>,
     splitters: Query<&Splitter>,
     panes: Query<&ComputedNode>,
@@ -120,34 +136,83 @@ pub fn on_splitter_drag_start(
     }
 }
 
-pub fn on_splitter_drag(
+/// Sets the pane's width (or height) along `s`'s axis.
+fn set_pane_size(s: &Splitter, node: &mut Node, size: f32) {
+    match s.axis {
+        SplitAxis::Columns => node.width = px(size),
+        SplitAxis::Rows => node.height = px(size),
+    }
+}
+
+pub(crate) fn on_splitter_drag(
     ev: On<PointerDrag>,
+    scale: Res<UiScale>,
     splitters: Query<(&Splitter, &SplitterDrag)>,
     mut panes: Query<&mut Node>,
 ) {
     if let Ok((s, drag)) = splitters.get(ev.entity) {
         if let Ok(mut node) = panes.get_mut(s.pane) {
-            let size = px(s.size_after(drag.start, ev.distance));
-            match s.axis {
-                SplitAxis::Columns => node.width = size,
-                SplitAxis::Rows => node.height = size,
-            }
+            let size = s.size_after(drag.start, ev.distance / scale.0);
+            set_pane_size(s, &mut node, size);
         }
     }
 }
 
-pub fn on_splitter_drag_end(ev: On<PointerDragEnd>, mut commands: Commands) {
+/// Arrow keys along the axis move the splitter; Home and End go to the
+/// pane's min and max.
+pub(crate) fn on_splitter_key(
+    mut ev: On<FocusedInput<KeyboardInput>>,
+    splitters: Query<&Splitter>,
+    mut panes: Query<(&mut Node, &ComputedNode)>,
+) {
+    if ev.input.state != ButtonState::Pressed || ev.event_target() != ev.focused_entity {
+        return;
+    }
+    let Ok(s) = splitters.get(ev.focused_entity) else {
+        return;
+    };
+    let Ok((mut node, computed)) = panes.get_mut(s.pane) else {
+        return;
+    };
+    let current = pane_size(s.axis, computed);
+    let along = |d: f32| match s.axis {
+        SplitAxis::Columns => Vec2::new(d, 0.0),
+        SplitAxis::Rows => Vec2::new(0.0, d),
+    };
+    let size = match (s.axis, ev.input.key_code) {
+        (SplitAxis::Columns, KeyCode::ArrowLeft) | (SplitAxis::Rows, KeyCode::ArrowUp) => {
+            s.size_after(current, along(-KEY_STEP))
+        }
+        (SplitAxis::Columns, KeyCode::ArrowRight) | (SplitAxis::Rows, KeyCode::ArrowDown) => {
+            s.size_after(current, along(KEY_STEP))
+        }
+        (_, KeyCode::Home) => s.min,
+        (_, KeyCode::End) => s.max,
+        _ => return,
+    };
+    ev.propagate(false);
+    set_pane_size(s, &mut node, size);
+}
+
+pub(crate) fn on_splitter_drag_end(ev: On<PointerDragEnd>, mut commands: Commands) {
     if let Ok(mut e) = commands.get_entity(ev.entity) {
         e.remove::<SplitterDrag>();
     }
 }
 
 /// `accent` line while dragging.
-pub fn splitter_line_system(
+#[allow(clippy::type_complexity)]
+pub(crate) fn splitter_line_system(
+    started: Query<Entity, Or<(Added<Splitter>, Added<SplitterDrag>)>>,
+    mut ended: RemovedComponents<SplitterDrag>,
     splitters: Query<(&Children, Has<SplitterDrag>), With<Splitter>>,
     mut lines: Query<&mut Fill, With<SplitterLine>>,
 ) {
-    for (children, dragging) in &splitters {
+    for (children, dragging) in started
+        .iter()
+        .chain(ended.read())
+        .filter_map(|e| splitters.get(e).ok())
+    {
         for &c in children {
             if let Ok(mut fill) = lines.get_mut(c) {
                 fill.set_if_neq(Fill(if dragging {
@@ -164,5 +229,6 @@ pub(crate) fn build(app: &mut App) {
     app.add_observer(on_splitter_drag_start)
         .add_observer(on_splitter_drag)
         .add_observer(on_splitter_drag_end)
+        .add_observer(on_splitter_key)
         .add_systems(Update, splitter_line_system.in_set(GzUiSystems::Visuals));
 }

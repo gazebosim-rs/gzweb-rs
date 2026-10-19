@@ -7,15 +7,15 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{observe, radio_self_update, RadioGroup};
 
 use super::{a11y, rounded};
-use crate::theme::{border, radius, ColorRole, Fill, Stroke};
+use crate::theme::{border, radius, ColorRole, Fill, Stroke, SPACE};
 
 /// A segmented group container. `radio` makes it a radio group whose
 /// buttons select themselves; `bordered` adds the transport group's 1px
 /// `line` border (§3.1). Spawn the buttons as children.
 pub fn segmented_group(label: impl Into<String>, radio: bool, bordered: bool) -> impl Bundle {
     let node = Node {
-        padding: UiRect::all(px(2)),
-        column_gap: px(2),
+        padding: UiRect::all(px(SPACE[1])),
+        column_gap: px(SPACE[1]),
         align_items: AlignItems::Center,
         flex_shrink: 0.0,
         border: if bordered {

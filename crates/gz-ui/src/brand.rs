@@ -52,7 +52,7 @@ impl FromWorld for Logos {
     }
 }
 
-/// Marks a logo image; [`logo_system`] swaps it with the theme.
+/// Marks a logo image; `logo_system` swaps it with the theme.
 #[derive(Component, Clone, Copy, Debug, Default)]
 #[require(ImageNode)]
 pub struct Logo;
@@ -71,7 +71,7 @@ pub fn logo(size: f32) -> impl Bundle {
 }
 
 /// Points logos at the image for the current theme.
-pub fn logo_system(
+pub(crate) fn logo_system(
     theme: Res<Theme>,
     logos: Res<Logos>,
     mut images: Query<&mut ImageNode, With<Logo>>,

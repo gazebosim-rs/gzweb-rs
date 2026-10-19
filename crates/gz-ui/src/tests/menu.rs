@@ -151,6 +151,17 @@ fn opens_navigates_and_closes_on_escape() {
     // Type-to-search: "f" from Focus goes to Follow.
     m.key(KeyCode::KeyF, Key::Character("f".into()), Some("f"));
     assert_eq!(m.focused(), Some(list[2]));
+    // A chord isn't typing: Ctrl+F leaves focus where it is.
+    m.app
+        .world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::ControlLeft);
+    m.key(KeyCode::KeyF, Key::Character("f".into()), Some("f"));
+    assert_eq!(m.focused(), Some(list[2]));
+    m.app
+        .world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .release(KeyCode::ControlLeft);
     m.key(KeyCode::Escape, Key::Escape, None);
     assert!(!m.visible());
     // Focus returns to the trigger.
@@ -342,4 +353,69 @@ fn shortcut_text() {
     assert!(shortcut_label(&mac, "panel.scene")
         .unwrap()
         .starts_with("Cmd+"));
+}
+
+/// A disabled item dims everything in it, its shortcut, icon and checkbox
+/// too, each keeping its own colour.
+#[test]
+fn disabled_items_dim_their_shortcut_icon_and_box() {
+    use crate::theme::{Ink, Opacity};
+    use crate::visuals::DISABLED_OPACITY;
+    use bevy::ui::InteractionDisabled;
+    let mut app = ui_app(ThemeMode::Light);
+    let t = Theme::default();
+    let item = app
+        .world_mut()
+        .spawn((
+            menu_item(
+                &t,
+                "Grid",
+                Some(crate::icons::IconId::Home),
+                Some("G".into()),
+            ),
+            InteractionDisabled,
+        ))
+        .id();
+    let check = app
+        .world_mut()
+        .spawn((
+            menu_checkbox(&t, "Snap", true, Some("S".into())),
+            InteractionDisabled,
+        ))
+        .id();
+    frames(&mut app, 3);
+    let w = app.world();
+    let opacity = |e| w.get::<Opacity>(e).map(|o| o.0);
+    let parts: Vec<Entity> = w.get::<Children>(item).unwrap().to_vec();
+    // Icon, label, spacer, shortcut.
+    assert_eq!(opacity(parts[0]), Some(DISABLED_OPACITY));
+    assert_eq!(w.get::<Ink>(parts[0]).unwrap().0, ColorRole::Text2);
+    assert_eq!(opacity(parts[1]), Some(DISABLED_OPACITY));
+    assert_eq!(opacity(parts[3]), Some(DISABLED_OPACITY));
+    assert_eq!(w.get::<Ink>(parts[3]).unwrap().0, ColorRole::Text3);
+    let parts: Vec<Entity> = w.get::<Children>(check).unwrap().to_vec();
+    assert!(w.get::<MenuCheckBox>(parts[0]).is_some());
+    assert_eq!(opacity(parts[0]), Some(DISABLED_OPACITY));
+    assert_eq!(w.get::<Fill>(parts[0]).unwrap().0, ColorRole::Accent);
+    assert_eq!(opacity(parts[3]), Some(DISABLED_OPACITY));
+    // The resolved colours carry the opacity.
+    let bg = w.get::<BackgroundColor>(parts[0]).unwrap().0;
+    assert!((bg.alpha() - DISABLED_OPACITY).abs() < 1e-6);
+}
+
+#[test]
+fn menus_fall_back_to_the_mirrored_end_placement() {
+    use bevy::ui_widgets::popover::{PopoverAlign, PopoverSide};
+    let p = MenuSide::Below.popover();
+    let sides: Vec<(PopoverSide, PopoverAlign)> =
+        p.positions.iter().map(|p| (p.side, p.align)).collect();
+    assert_eq!(
+        sides,
+        [
+            (PopoverSide::Bottom, PopoverAlign::Start),
+            (PopoverSide::Top, PopoverAlign::Start),
+            (PopoverSide::Bottom, PopoverAlign::End),
+            (PopoverSide::Top, PopoverAlign::End),
+        ]
+    );
 }

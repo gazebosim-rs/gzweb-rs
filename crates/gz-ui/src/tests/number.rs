@@ -1,5 +1,6 @@
 //! NumberField: the expression parser, commit and revert, scrubbing.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::input_focus::{FocusCause, InputFocus};
@@ -43,6 +44,17 @@ fn units_convert_into_the_field_unit() {
     assert!(close(a("(pi/2)rad"), 90.0));
     assert!(close(a("1rad"), 180.0 / std::f64::consts::PI));
     assert!(close(a("45deg*2"), 90.0));
+    // The module doc's example: the unit applies to the whole term.
+    assert!(close(a("pi/2 rad"), 90.0));
+    assert!(close(a("pi / 4rad * 2"), 90.0));
+    assert!(close(a("2*pi/8 rad"), 45.0));
+    assert!(close(a("-pi/2 rad + 10"), -80.0));
+    assert!(close(eval("50/2%", Unit::None).unwrap(), 0.25));
+    // One unit per term.
+    assert_eq!(
+        eval("90deg*2rad", Unit::Angle),
+        Err(ExprError::Unexpected(7))
+    );
     let l = |s| eval(s, Unit::Length).unwrap();
     assert!(close(l("50cm"), 0.5));
     assert!(close(l("2 mm"), 0.002));
@@ -87,9 +99,29 @@ fn errors() {
         ExprError::UnknownUnit("ft".into()),
         ExprError::WrongUnit("cm".into()),
         ExprError::NotFinite,
+        ExprError::TooDeep,
     ] {
         assert!(!err.to_string().is_empty());
     }
+}
+
+#[test]
+fn nesting_is_bounded() {
+    use crate::widgets::expr::MAX_DEPTH;
+    let nested = |n: usize| format!("{}1{}", "(".repeat(n), ")".repeat(n));
+    assert_eq!(eval(&nested(MAX_DEPTH), Unit::None), Ok(1.0));
+    assert_eq!(
+        eval(&nested(MAX_DEPTH + 1), Unit::None),
+        Err(ExprError::TooDeep)
+    );
+    // Far past the limit (this overflowed the stack before the limit).
+    assert_eq!(
+        eval(&"(".repeat(100_000), Unit::None),
+        Err(ExprError::TooDeep)
+    );
+    // A long run of signs doesn't recurse at all.
+    let signs = format!("{}1", "-".repeat(100_001));
+    assert_eq!(eval(&signs, Unit::None), Ok(-1.0));
 }
 
 #[test]
@@ -107,6 +139,7 @@ fn format_parse_clamp_and_scrub() {
     assert!(close(f.scrub(0.0, 3.0, false, true), 0.03));
     assert!(close(f.scrub(0.0, 3.0, true, true), 0.3));
     assert!(close(f.scrub(0.0, 100.0, false, false), 1.0));
+    assert!(close(f.scrub(0.5, -2.0, false, false), 0.3));
     let deg = NumberField::new(15.0).unit(Unit::Angle);
     assert_eq!(deg.parse("(pi/4)rad"), Ok(45.0));
     assert_eq!(deg.format(45.0), "45.000");
@@ -300,6 +333,55 @@ fn blur_commits_or_reverts() {
 }
 
 #[test]
+fn unedited_text_commits_nothing() {
+    let mut f = field();
+    f.app
+        .world_mut()
+        .get_mut::<NumberField>(f.root)
+        .unwrap()
+        .value = 2.4567;
+    frames(&mut f.app, 2);
+    assert_eq!(f.text(), "2.457");
+    // Tabbing through: focus and blur without typing keeps the full value.
+    f.focus();
+    f.app.world_mut().resource_mut::<InputFocus>().clear();
+    frames(&mut f.app, 2);
+    assert_eq!(f.value(), 2.4567);
+    assert!(f.commits().is_empty());
+    // Enter on unedited text doesn't commit either.
+    f.focus();
+    f.press(KeyCode::Enter, Key::Enter);
+    assert_eq!(f.value(), 2.4567);
+    assert!(f.commits().is_empty());
+    // A live value arriving while focused: the text stays frozen, and blur
+    // without change shows the new value instead of writing the old one.
+    f.app
+        .world_mut()
+        .get_mut::<NumberField>(f.root)
+        .unwrap()
+        .value = 5.0;
+    frames(&mut f.app, 2);
+    assert_eq!(f.text(), "2.457");
+    f.app.world_mut().resource_mut::<InputFocus>().clear();
+    frames(&mut f.app, 2);
+    assert_eq!(f.value(), 5.0);
+    assert_eq!(f.text(), "5.000");
+    assert!(f.commits().is_empty());
+}
+
+#[test]
+fn the_field_has_an_accessible_name_and_value() {
+    let f = field();
+    let node = f.app.world().get::<AccessibilityNode>(f.input).unwrap();
+    assert_eq!(node.label(), Some("X"));
+    assert_eq!(node.numeric_value(), Some(2.4));
+    assert_eq!(AxisTag::Yaw.name(), "Yaw");
+    assert_eq!(AxisTag::Label("mass".into()).name(), "mass");
+    let named = NumberField::new(0.0).named("Position X");
+    assert_eq!(named.name.as_deref(), Some("Position X"));
+}
+
+#[test]
 fn scrubbing_the_tag() {
     use bevy::camera::NormalizedRenderTarget;
     use bevy::picking::backend::HitData;
@@ -327,30 +409,38 @@ fn scrubbing_the_tag() {
         hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
     });
     w.flush();
-    assert_eq!(w.get::<Scrub>(f.root), Some(&Scrub { start: 2.4 }));
-    let drag = |w: &mut World, dx: f32| {
+    assert_eq!(w.get::<Scrub>(f.root), Some(&Scrub { value: 2.4 }));
+    let mut distance = 0.0;
+    let mut drag = |w: &mut World, dx: f32| {
+        distance += dx;
         w.trigger(PointerDrag {
             entity: tag,
             pointer: pointer.clone(),
             button: PointerButton::Primary,
-            distance: Vec2::new(dx, 3.0),
-            delta: Vec2::ZERO,
+            distance: Vec2::new(distance, 3.0),
+            delta: Vec2::new(dx, 1.0),
         });
         w.flush();
     };
+    let value = |w: &World| w.get::<NumberField>(f.root).unwrap().value;
     drag(w, 10.0);
-    assert!(close(w.get::<NumberField>(f.root).unwrap().value, 2.5));
-    // Shift: coarse.
+    assert!(close(value(w), 2.5));
+    // Shift: coarse, for the moves made while it's held. Pressing it
+    // doesn't rescale the distance already dragged.
     w.resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::ShiftLeft);
+    drag(w, 0.0);
+    assert!(close(value(w), 2.5));
     drag(w, 10.0);
-    assert!(close(w.get::<NumberField>(f.root).unwrap().value, 3.4));
+    assert!(close(value(w), 3.5));
     w.resource_mut::<ButtonInput<KeyCode>>()
         .release(KeyCode::ShiftLeft);
     w.resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::AltLeft);
     drag(w, 10.0);
-    assert!(close(w.get::<NumberField>(f.root).unwrap().value, 2.41));
+    assert!(close(value(w), 3.51));
+    drag(w, -20.0);
+    assert!(close(value(w), 3.49));
     w.trigger(PointerDragEnd {
         entity: tag,
         pointer,
@@ -361,9 +451,9 @@ fn scrubbing_the_tag() {
     assert!(w.get::<Scrub>(f.root).is_none());
     frames(&mut f.app, 2);
     let commits = f.commits();
-    assert_eq!(commits.len(), 4);
-    assert!(commits[..3].iter().all(|c| !c.1));
-    assert!(close(commits[3].0, 2.41) && commits[3].1);
+    assert_eq!(commits.len(), 5);
+    assert!(commits[..4].iter().all(|c| !c.1));
+    assert!(close(commits[4].0, 3.49) && commits[4].1);
     // The unfocused field shows the scrubbed value.
-    assert_eq!(f.text(), "2.410");
+    assert_eq!(f.text(), "3.490");
 }

@@ -6,9 +6,11 @@
 //!   (DECISIONS.md D-21). Included by `src/theme.rs`.
 //! - `icons.rs` from `icons.json`: the `IconId` enum. Included by
 //!   `src/icons/mod.rs`.
-//! - `icons@1x.png`, `icons@2x.png`: every icon at 15, 17, 18 and 20 px,
-//!   white on transparent, rasterized with resvg (build time only, so resvg
-//!   stays out of the wasm payload). Embedded with `include_bytes!`.
+//! - `icons@1x.png`, `icons@2x.png`: every icon at every size in
+//!   `layout::SIZES`, white on transparent, rasterized with resvg (build
+//!   time only, so resvg stays out of the wasm payload). Embedded with
+//!   `include_bytes!`. Every texel is white, transparent ones included, so
+//!   filtering at the glyph edges can't blend toward black.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -36,9 +38,10 @@ fn main() {
     let icons = icon_list(&icons);
     write(&out.join("icons.rs"), &icons_rs(&icons));
     for scale in [1, 2] {
-        atlas(&icons, scale)
-            .save_png(out.join(format!("icons@{scale}x.png")))
-            .expect("write the icon atlas");
+        save_white_png(
+            &atlas(&icons, scale),
+            &out.join(format!("icons@{scale}x.png")),
+        );
     }
 }
 
@@ -181,13 +184,15 @@ fn tokens_rs(t: &Value) -> String {
     }
     s += "];\n\n";
 
-    // Radii and borders.
+    // Radii and borders. Each module also lists its entries in `ALL`, so a
+    // test can walk tokens.json against them.
     for (key, module, doc) in [
         ("radius", "radius", "Corner radii"),
         ("border", "border", "Border widths"),
     ] {
         let _ = writeln!(s, "/// {doc} (`tokens.json` `{key}`).\npub mod {module} {{");
-        for (n, v) in obj(t, key) {
+        let entries = obj(t, key);
+        for (n, v) in entries {
             let _ = writeln!(
                 s,
                 "    /// `{n}`\n    pub const {}: f32 = {};",
@@ -195,34 +200,54 @@ fn tokens_rs(t: &Value) -> String {
                 float(num(v))
             );
         }
+        all(&mut s, "f32", entries.keys());
         s += "}\n\n";
     }
 
-    // Motion.
-    s += "/// Durations in milliseconds (`tokens.json` `motion`).\npub mod motion {\n";
-    for (n, v) in obj(t, "motion") {
-        if let Some(ms) = v.as_f64() {
-            let _ = writeln!(
-                s,
-                "    /// `{n}`\n    pub const {}: f32 = {};",
-                n.to_ascii_uppercase(),
-                float(ms)
-            );
+    // Motion: durations (numbers, `_ms`) and the easing and reduce-motion
+    // rules (strings); anything else is an error rather than skipped.
+    s += "/// Durations in milliseconds and the motion rules (`tokens.json` `motion`).\npub mod motion {\n";
+    let motion = obj(t, "motion");
+    let mut durations = Vec::new();
+    for (n, v) in motion {
+        let name = n.to_ascii_uppercase();
+        match (v.as_f64(), v.as_str()) {
+            (Some(ms), _) if n.ends_with("_ms") => {
+                let _ = writeln!(
+                    s,
+                    "    /// `{n}`\n    pub const {name}: f32 = {};",
+                    float(ms)
+                );
+                durations.push(n);
+            }
+            (None, Some(text)) if !n.ends_with("_ms") => {
+                let _ = writeln!(s, "    /// `{n}`\n    pub const {name}: &str = {text:?};");
+            }
+            _ => panic!("tokens.json: motion.{n} = {v}: durations end in _ms, rules are strings"),
         }
     }
+    all(&mut s, "f32", durations.into_iter());
     s += "}\n\n";
 
-    // Elevation.
-    s += "/// Shadows (`tokens.json` `elevation`).\npub mod elevation {\n    use super::Elevation;\n";
-    for (n, v) in obj(t, "elevation") {
+    // Elevation: a shadow `y` below, blurred by `blur`, in the `color`
+    // token (none: no shadow).
+    s += "/// Shadows (`tokens.json` `elevation`).\npub mod elevation {\n    use super::{ColorRole, Elevation};\n";
+    let elevations = obj(t, "elevation");
+    for (n, v) in elevations {
+        let color = match v.get("color").map(|c| c.as_str()) {
+            None => "None".to_string(),
+            Some(Some(c)) if light.contains_key(c) => format!("Some(ColorRole::{})", camel(c)),
+            Some(c) => panic!("tokens.json: elevation.{n}.color {c:?} is not a colour token"),
+        };
         let _ = writeln!(
             s,
-            "    /// `{n}`\n    pub const {}: Elevation = Elevation {{ blur: {}, y: {} }};",
+            "    /// `{n}`\n    pub const {}: Elevation = Elevation {{ blur: {}, y: {}, color: {color} }};",
             n.to_ascii_uppercase(),
             float(num(&v["blur"])),
             float(num(&v["y"]))
         );
     }
+    all(&mut s, "Elevation", elevations.keys());
     s += "}\n\n";
 
     // Type styles.
@@ -250,6 +275,20 @@ fn tokens_rs(t: &Value) -> String {
     }
     s += "}\n";
     s
+}
+
+/// `pub const ALL: [(&str, ty); N]`: every entry of a token module by its
+/// `tokens.json` name.
+fn all<'a>(s: &mut String, ty: &str, names: impl ExactSizeIterator<Item = &'a String>) {
+    let _ = writeln!(
+        s,
+        "    /// Every entry, by its `tokens.json` name.\n    pub const ALL: [(&str, {ty}); {}] = [",
+        names.len()
+    );
+    for n in names {
+        let _ = writeln!(s, "        (\"{n}\", {}),", n.to_ascii_uppercase());
+    }
+    s.push_str("    ];\n");
 }
 
 /// One icon from icons.json.
@@ -365,6 +404,31 @@ fn icons_rs(icons: &[Icon]) -> String {
     }
     s += "        }\n    }\n}\n";
     s
+}
+
+/// Writes `pixmap` (white glyphs, premultiplied) as straight-alpha RGBA
+/// with every texel's colour white: the alpha holds the whole glyph.
+/// Bevy samples straight alpha, and a transparent black texel next to an
+/// edge would darken it under linear filtering.
+fn save_white_png(pixmap: &tiny_skia::Pixmap, path: &Path) {
+    let data: Vec<u8> = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| [255, 255, 255, p.alpha()])
+        .collect();
+    let file =
+        std::fs::File::create(path).unwrap_or_else(|e| panic!("create {}: {e}", path.display()));
+    let mut encoder = png::Encoder::new(
+        std::io::BufWriter::new(file),
+        pixmap.width(),
+        pixmap.height(),
+    );
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .and_then(|mut w| w.write_image_data(&data))
+        .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
 }
 
 fn atlas(icons: &[Icon], scale: u32) -> tiny_skia::Pixmap {

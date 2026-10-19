@@ -1,6 +1,7 @@
 //! Tooltip timing, slider steps, splitter maths, toggles, tree rows,
 //! chips and badges.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::{Checked, Pressed};
@@ -150,6 +151,21 @@ fn tooltip_cards_show_on_hover_and_follow_the_theme() {
         .unwrap();
     // Below the trigger: the arrow sits on top.
     assert_eq!(w.get::<Node>(arrow).unwrap().top, px(-4));
+    // The shortcut is a Geist Mono span on the second line (D-26).
+    let lines: Vec<Entity> = w
+        .get::<Children>(card)
+        .unwrap()
+        .iter()
+        .filter(|c| w.get::<Text>(*c).is_some())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(w.get::<Text>(lines[1]).unwrap().0, "");
+    let keys = w.get::<Children>(lines[1]).unwrap()[0];
+    assert_eq!(w.get::<TextSpan>(keys).unwrap().0, "S");
+    assert_eq!(
+        w.get::<Type>(keys).unwrap().0.font,
+        crate::theme::FontFamily::Mono
+    );
     // Dark: a 1px line.
     app.world_mut().resource_mut::<Theme>().toggle();
     frames(&mut app, 1);
@@ -226,6 +242,39 @@ fn slider_steps_and_visuals() {
     let mut readout = w.query_filtered::<&Text, With<SliderReadout>>();
     assert_eq!(readout.single(w).unwrap().0, "1.50");
     assert!(w.get::<Children>(row).is_some());
+    assert_eq!(
+        w.get::<Node>(row).unwrap().height,
+        px(Theme::default().s.input_h)
+    );
+    // Up and Down step too (with the step the modifiers set: Alt, 0.01).
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use bevy::input_focus::{FocusCause, InputFocus};
+    use bevy::window::PrimaryWindow;
+    w.resource_mut::<InputFocus>()
+        .set(slider, FocusCause::Navigated);
+    let window = w
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(w)
+        .unwrap();
+    for (code, key, want) in [
+        (KeyCode::ArrowUp, Key::ArrowUp, 1.51),
+        (KeyCode::ArrowDown, Key::ArrowDown, 1.5),
+        (KeyCode::ArrowDown, Key::ArrowDown, 1.49),
+        (KeyCode::KeyA, Key::Character("a".into()), 1.49),
+    ] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: code,
+            logical_key: key,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window,
+        });
+        frames(&mut app, 2);
+        let v = app.world().get::<SliderValue>(slider).unwrap().0;
+        assert!((v - want).abs() < 1e-5, "{code:?}: {v}");
+    }
 }
 
 #[test]
@@ -274,7 +323,10 @@ fn splitter_drag_maths_and_resizing() {
         .id();
     let bar = app
         .world_mut()
-        .spawn((splitter(6.0, Splitter { pane, ..s }), ChildOf(row)))
+        .spawn((
+            splitter(&Theme::default(), Splitter { pane, ..s }, "Resize"),
+            ChildOf(row),
+        ))
         .id();
     frames(&mut app, 2);
     let pointer = Pointer::new(
@@ -326,7 +378,11 @@ fn splitter_drag_maths_and_resizing() {
     // Rows set heights.
     let rows_bar = app
         .world_mut()
-        .spawn(splitter(6.0, Splitter { pane, ..rows }))
+        .spawn(splitter(
+            &Theme::default(),
+            Splitter { pane, ..rows },
+            "Resize",
+        ))
         .id();
     frames(&mut app, 1);
     let w = app.world_mut();
@@ -349,6 +405,155 @@ fn splitter_drag_maths_and_resizing() {
     });
     w.flush();
     assert_eq!(w.get::<Node>(pane).unwrap().height, px(250));
+}
+
+/// A drag of the pointer in window pixels at UI scale 1.5 moves the pane
+/// by as much on screen (2/3 as many UI pixels).
+#[test]
+fn splitter_drags_follow_the_pointer_at_any_ui_scale() {
+    use bevy::camera::NormalizedRenderTarget;
+    use bevy::picking::backend::HitData;
+    use bevy::picking::events::{Pointer, PointerDrag, PointerDragStart};
+    use bevy::picking::pointer::{Location, PointerButton, PointerId};
+    let mut app = ui_app(ThemeMode::Light);
+    app.world_mut().resource_mut::<Theme>().scale = 1.5;
+    let row = app
+        .world_mut()
+        .spawn(Node {
+            width: px(800),
+            height: px(200),
+            ..default()
+        })
+        .id();
+    let pane = app
+        .world_mut()
+        .spawn((
+            Node {
+                width: px(300),
+                ..default()
+            },
+            ChildOf(row),
+        ))
+        .id();
+    let s = Splitter {
+        axis: SplitAxis::Columns,
+        pane,
+        sign: 1.0,
+        min: 100.0,
+        max: 700.0,
+    };
+    let bar = app
+        .world_mut()
+        .spawn((splitter(&Theme::default(), s, "Resize"), ChildOf(row)))
+        .id();
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<UiScale>().0, 1.5);
+    let pointer = Pointer::new(
+        PointerId::Mouse,
+        Location {
+            target: NormalizedRenderTarget::None {
+                width: 1,
+                height: 1,
+            },
+            position: Vec2::ZERO,
+        },
+    );
+    let w = app.world_mut();
+    w.trigger(PointerDragStart {
+        entity: bar,
+        pointer: pointer.clone(),
+        button: PointerButton::Primary,
+        hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+    });
+    w.flush();
+    assert_eq!(
+        w.get::<SplitterDrag>(bar),
+        Some(&SplitterDrag { start: 300.0 })
+    );
+    w.trigger(PointerDrag {
+        entity: bar,
+        pointer,
+        button: PointerButton::Primary,
+        distance: Vec2::new(90.0, 0.0),
+        delta: Vec2::new(90.0, 0.0),
+    });
+    w.flush();
+    assert_eq!(w.get::<Node>(pane).unwrap().width, px(360));
+}
+
+#[test]
+fn splitters_move_with_the_keyboard() {
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use bevy::input_focus::{FocusCause, InputFocus};
+    use bevy::window::PrimaryWindow;
+    let mut app = ui_app(ThemeMode::Light);
+    let row = app
+        .world_mut()
+        .spawn(Node {
+            width: px(800),
+            height: px(200),
+            ..default()
+        })
+        .id();
+    let pane = app
+        .world_mut()
+        .spawn((
+            Node {
+                width: px(300),
+                ..default()
+            },
+            ChildOf(row),
+        ))
+        .id();
+    let s = Splitter {
+        axis: SplitAxis::Columns,
+        pane,
+        sign: -1.0,
+        min: 250.0,
+        max: 400.0,
+    };
+    let bar = app
+        .world_mut()
+        .spawn((
+            splitter(&Theme::default(), s, "Resize the inspector"),
+            ChildOf(row),
+        ))
+        .id();
+    frames(&mut app, 2);
+    let access = app.world().get::<AccessibilityNode>(bar).unwrap();
+    assert_eq!(access.label(), Some("Resize the inspector"));
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(bar, FocusCause::Navigated);
+    let window = {
+        let w = app.world_mut();
+        w.query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(w)
+            .unwrap()
+    };
+    let press = |app: &mut App, key: KeyCode, logical: Key| {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: key,
+            logical_key: logical,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window,
+        });
+        frames(app, 2);
+        app.world().get::<Node>(pane).unwrap().width
+    };
+    // The pane is after the splitter: Left widens it.
+    assert_eq!(press(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft), px(308));
+    assert_eq!(
+        press(&mut app, KeyCode::ArrowRight, Key::ArrowRight),
+        px(300)
+    );
+    // Off-axis keys do nothing.
+    assert_eq!(press(&mut app, KeyCode::ArrowUp, Key::ArrowUp), px(300));
+    assert_eq!(press(&mut app, KeyCode::Home, Key::Home), px(250));
+    assert_eq!(press(&mut app, KeyCode::End, Key::End), px(400));
 }
 
 #[test]
@@ -517,6 +722,10 @@ fn chips_badges_and_buttons() {
     // A selected filter chip: `text` fill, `surface` label.
     assert!(w.get::<Checked>(chip).is_some());
     assert_eq!(w.get::<Fill>(chip).unwrap().0, ColorRole::Text);
+    // No `text` border on the `text` fill (it leaves a ragged seam); the
+    // border keeps its width, clear.
+    assert_eq!(w.get::<Stroke>(chip).unwrap().0, ColorRole::Clear);
+    assert_eq!(w.get::<Node>(chip).unwrap().border, UiRect::all(px(1)));
     assert_eq!(w.get::<Fill>(status).unwrap().0, ColorRole::WarnSoft);
     assert_eq!(w.get::<Children>(status).unwrap().len(), 3);
     assert_eq!(w.get::<Children>(info).unwrap().len(), 1);
@@ -536,5 +745,146 @@ fn chips_badges_and_buttons() {
     assert_eq!(
         app.world().get::<Stroke>(activity).unwrap().0,
         ColorRole::AccentRing
+    );
+}
+
+/// Hover cursors are on (Bevy's `CursorIconPlugin`), and a drag holds the
+/// cursor of what it started on until it ends.
+#[test]
+fn drags_hold_their_cursor() {
+    use bevy::camera::NormalizedRenderTarget;
+    use bevy::picking::backend::HitData;
+    use bevy::picking::cursor::{EntityCursor, OverrideCursor};
+    use bevy::picking::events::{Pointer, PointerDragEnd, PointerDragStart};
+    use bevy::picking::pointer::{Location, PointerButton, PointerId};
+    use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon};
+    let mut app = ui_app(ThemeMode::Light);
+    let pane = app.world_mut().spawn(Node::default()).id();
+    let s = Splitter {
+        axis: SplitAxis::Rows,
+        pane,
+        sign: 1.0,
+        min: 0.0,
+        max: 100.0,
+    };
+    let bar = app
+        .world_mut()
+        .spawn(splitter(&Theme::default(), s, "Resize"))
+        .id();
+    let plain = app.world_mut().spawn(Node::default()).id();
+    let line = app.world().get::<Children>(bar).unwrap()[0];
+    frames(&mut app, 2);
+    // The plugin's system gives the window a cursor.
+    let w = app.world_mut();
+    let window = w
+        .query_filtered::<Entity, With<PrimaryWindow>>()
+        .single(w)
+        .unwrap();
+    assert!(w.get::<CursorIcon>(window).is_some());
+    let pointer = |id| {
+        Pointer::new(
+            id,
+            Location {
+                target: NormalizedRenderTarget::None {
+                    width: 1,
+                    height: 1,
+                },
+                position: Vec2::ZERO,
+            },
+        )
+    };
+    let start = |w: &mut World, entity, id| {
+        w.trigger(PointerDragStart {
+            entity,
+            pointer: pointer(id),
+            button: PointerButton::Primary,
+            hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+        });
+        w.flush();
+    };
+    let end = |w: &mut World, entity, id| {
+        w.trigger(PointerDragEnd {
+            entity,
+            pointer: pointer(id),
+            button: PointerButton::Primary,
+            distance: Vec2::ZERO,
+        });
+        w.flush();
+    };
+    let held = |w: &World| w.resource::<OverrideCursor>().0.clone();
+    // Started on the splitter's line: the splitter's cursor.
+    start(w, line, PointerId::Mouse);
+    assert_eq!(
+        held(w),
+        Some(EntityCursor::System(SystemCursorIcon::RowResize))
+    );
+    end(w, line, PointerId::Mouse);
+    assert_eq!(held(w), None);
+    // Started on something without a cursor: the default one.
+    start(w, plain, PointerId::Mouse);
+    assert_eq!(held(w), Some(EntityCursor::default()));
+    end(w, plain, PointerId::Mouse);
+    // Touch has no cursor to hold.
+    start(w, bar, PointerId::Touch(1));
+    assert_eq!(held(w), None);
+}
+
+/// Enter in a text field submits once, however deep the field sits (the
+/// key bubbles through every ancestor).
+#[test]
+fn text_fields_submit_once() {
+    use crate::widgets::{text_field, TextSubmit};
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use bevy::input_focus::{FocusCause, InputFocus};
+    use bevy::window::PrimaryWindow;
+    #[derive(Resource, Default)]
+    struct Submits(Vec<String>);
+    let mut app = ui_app(ThemeMode::Light);
+    app.init_resource::<Submits>()
+        .add_observer(|ev: On<TextSubmit>, mut s: ResMut<Submits>| {
+            s.0.push(ev.value.clone());
+        });
+    let outer = app.world_mut().spawn(Node::default()).id();
+    let inner = app
+        .world_mut()
+        .spawn((Node::default(), ChildOf(outer)))
+        .id();
+    let field = app
+        .world_mut()
+        .spawn((
+            text_field(&Theme::default(), "Address", "ws://localhost:9002"),
+            ChildOf(inner),
+        ))
+        .id();
+    frames(&mut app, 2);
+    let input = app.world().get::<Children>(field).unwrap()[0];
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(input, FocusCause::Navigated);
+    frames(&mut app, 1);
+    // The focus look.
+    assert_eq!(
+        app.world().get::<Stroke>(field).unwrap().0,
+        ColorRole::Accent
+    );
+    let window = {
+        let w = app.world_mut();
+        w.query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(w)
+            .unwrap()
+    };
+    app.world_mut().write_message(KeyboardInput {
+        key_code: KeyCode::Enter,
+        logical_key: Key::Enter,
+        state: ButtonState::Pressed,
+        text: None,
+        repeat: false,
+        window,
+    });
+    frames(&mut app, 2);
+    assert_eq!(
+        app.world().resource::<Submits>().0,
+        ["ws://localhost:9002".to_string()]
     );
 }

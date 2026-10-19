@@ -280,6 +280,49 @@ fn the_floor_rule_collapses_the_inspector_then_the_sidebar() {
     assert!(tiny.sidebar_open && !tiny.inspector_open);
 }
 
+/// At UI scale 1.25 a 100 px pointer drag moves the edge 100 window px,
+/// which is 80 UI px of width (DECISIONS.md D-41).
+#[test]
+fn splitter_drags_follow_the_pointer_at_any_ui_scale() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.world_mut().resource_mut::<Theme>().scale = 1.25;
+    frames(&mut app, 3);
+    let start = layout(&app).sidebar_w;
+    let world = app.world_mut();
+    let bar = world
+        .query::<(Entity, &ShellSplitter)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == Side::Sidebar)
+        .unwrap()
+        .0;
+    let pointer = Pointer::new(
+        PointerId::Mouse,
+        Location {
+            target: bevy::camera::NormalizedRenderTarget::None {
+                width: 1,
+                height: 1,
+            },
+            position: Vec2::ZERO,
+        },
+    );
+    world.trigger(PointerDragStart {
+        entity: bar,
+        pointer: pointer.clone(),
+        button: PointerButton::Primary,
+        hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+    });
+    world.flush();
+    world.trigger(PointerDrag {
+        entity: bar,
+        pointer,
+        button: PointerButton::Primary,
+        distance: Vec2::new(100.0, 0.0),
+        delta: Vec2::new(100.0, 0.0),
+    });
+    frames(&mut app, 2);
+    assert_eq!(layout(&app).sidebar_w, start + 80.0);
+}
+
 #[test]
 fn splitter_drags_clamp_and_double_click_resets() {
     let l = ShellLayout::for_width(1440.0);

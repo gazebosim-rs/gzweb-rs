@@ -317,7 +317,6 @@ pub fn apply_ui_commands(
     mut layout: ResMut<ShellLayout>,
     mut tool: ResMut<Tool>,
     mut theme: ResMut<Theme>,
-    os: Res<crate::theme::OsTheme>,
 ) {
     for cmd in commands.read() {
         match *cmd {
@@ -330,7 +329,7 @@ pub fn apply_ui_commands(
             UiCommand::SetTool(t) => {
                 tool.set_if_neq(t);
             }
-            UiCommand::SetTheme(mode) => theme.set_mode(mode, os.dark),
+            UiCommand::SetTheme(mode) => theme.set_mode(mode),
             UiCommand::ToggleTheme => theme.toggle(),
             UiCommand::ResetWidth(side) => layout.reset_width(side),
         }
@@ -434,13 +433,16 @@ pub fn on_splitter_drag_start(
     }
 }
 
+/// The pointer moves in window pixels and widths are UI pixels: the drag
+/// divides by `UiScale` (DECISIONS.md D-41).
 pub fn on_splitter_drag(
     ev: On<PointerDrag>,
+    scale: Res<UiScale>,
     splitters: Query<(&ShellSplitter, &SplitDrag)>,
     mut layout: ResMut<ShellLayout>,
 ) {
     if let Ok((s, drag)) = splitters.get(ev.entity) {
-        layout.drag(s.0, drag.0, ev.distance.x);
+        layout.drag(s.0, drag.0, ev.distance.x / scale.0);
     }
 }
 

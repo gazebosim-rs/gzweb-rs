@@ -208,7 +208,7 @@ fn row(gap: f32) -> Node {
 }
 
 /// Spawns the gallery (and a UI camera).
-pub fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Option<Res<InputMap>>) {
+pub(crate) fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Option<Res<InputMap>>) {
     let map = map.map_or_else(InputMap::builtin, |m| m.clone());
     commands.spawn((Camera2d, IsDefaultUiCamera));
     commands
@@ -667,11 +667,15 @@ fn states_grid(c: &mut ChildSpawnerCommands, theme: &Theme) {
             }
             h.spawn(caps("Focus", CELL_W));
         });
+        // Room for the Focus column's ring (offset 2, width 2) above and
+        // below, so neighbouring rings don't touch.
+        let ring = 2.0 + border::FOCUS_RING;
         for (sample, label) in Sample::ALL {
             let h = match sample {
                 Sample::Activity => theme.s.activity_btn,
-                _ => theme.s.icon_btn + 6.0,
-            };
+                _ => theme.s.icon_btn,
+            } + 2.0 * ring
+                + SPACE[1];
             g.spawn(Node {
                 height: px(h),
                 align_items: AlignItems::Center,
@@ -745,7 +749,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             .with_children(|t| scene_panel(t, theme, map))
             .id();
         bottom.spawn(splitter(
-            theme.s.viewport_divider_hit,
+            theme,
             Splitter {
                 axis: SplitAxis::Columns,
                 pane: tree,
@@ -753,6 +757,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 min: 240.0,
                 max: 420.0,
             },
+            "Resize the scene panel",
         ));
         bottom
             .spawn(Node {
@@ -967,7 +972,7 @@ fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
 }
 
 /// T switches light ↔ dark (not while typing in a field).
-pub fn toggle_theme_key(
+pub(crate) fn toggle_theme_key(
     keys: Res<ButtonInput<KeyCode>>,
     typing: Res<TextFocus>,
     mut theme: ResMut<Theme>,
@@ -978,7 +983,7 @@ pub fn toggle_theme_key(
 }
 
 /// The theme button switches light ↔ dark.
-pub fn on_theme_button(
+pub(crate) fn on_theme_button(
     activate: On<Activate>,
     toggles: Query<(), With<ThemeToggle>>,
     mut theme: ResMut<Theme>,
@@ -995,13 +1000,16 @@ fn set_text(t: &mut Text, want: &str) {
 }
 
 /// The theme name and caption, the toggle's label and the token hex values.
-pub fn gallery_texts(
+pub(crate) fn gallery_texts(
     theme: Res<Theme>,
     mut names: Query<(&ThemeText, &mut Text)>,
     mut hexes: Query<(&TokenHex, &mut Text), Without<ThemeText>>,
     toggles: Query<&Children, With<ThemeToggle>>,
     mut labels: Query<&mut Text, (Without<ThemeText>, Without<TokenHex>)>,
 ) {
+    if !theme.is_changed() {
+        return;
+    }
     let dark = theme.is_dark;
     for (which, mut t) in &mut names {
         let want = match (which, dark) {
@@ -1024,15 +1032,18 @@ pub fn gallery_texts(
     }
 }
 
-/// Focuses the example field once, to show the focus look (and a caret).
-pub fn focus_example(
+/// In a capture, focuses the example field once to show the focus look
+/// (and a caret). Not interactively: the focused field would take the T
+/// key (and, selected on focus, be replaced by a "t").
+pub(crate) fn focus_example(
+    capture: Option<Res<GalleryCapture>>,
     examples: Query<&Children, With<FocusExample>>,
     inputs: Query<(), With<NumberInput>>,
     mut focus: ResMut<InputFocus>,
     mut visible: ResMut<InputFocusVisible>,
     mut done: Local<bool>,
 ) {
-    if *done {
+    if *done || capture.is_none() {
         return;
     }
     for children in &examples {
@@ -1045,7 +1056,7 @@ pub fn focus_example(
 }
 
 /// Saves the screenshot after [`GalleryCapture::frames`] frames, once.
-pub fn capture_gallery(capture: Option<ResMut<GalleryCapture>>, mut commands: Commands) {
+pub(crate) fn capture_gallery(capture: Option<ResMut<GalleryCapture>>, mut commands: Commands) {
     let Some(mut capture) = capture else {
         return;
     };

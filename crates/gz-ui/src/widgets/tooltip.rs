@@ -1,7 +1,8 @@
 //! Tooltip (§5.15): after 500 ms of hover, or at once when another
 //! tooltip closed less than 300 ms ago. Radius 7, padding 8 10, Geist 12:
 //! a 600-weight title in `tooltip_text` and an optional second line in
-//! `tooltip_text_2`. Placed below its trigger (above in the status bar,
+//! `tooltip_text_2`, its shortcut in Geist Mono (Geist lacks key caps such
+//! as ⏎ and ⌫; DECISIONS.md D-26). Placed below its trigger (above in the status bar,
 //! left of the rail) with an 8 px gap and an 8 px arrow; flips to stay on
 //! screen.
 
@@ -13,9 +14,9 @@ use bevy::ui::{OverrideClip, Pressed, UiGlobalTransform};
 use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 
 use super::rounded;
-use crate::fonts::text;
+use crate::fonts::{span, text};
 use crate::theme::{
-    border, elevation, ColorRole, Fill, FontFamily, Shadow, Stroke, Theme, TypeStyle,
+    border, elevation, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
 };
 use crate::GzUiSystems;
 
@@ -32,6 +33,8 @@ pub const RADIUS: f32 = 7.0;
 pub const TITLE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 600);
 /// Tooltip second line: Geist 12/400 (`small`).
 pub const DETAIL_TYPE: TypeStyle = TypeStyle::SMALL;
+/// A shortcut on the second line: Geist Mono 12/400 (`mono_small`).
+pub const KEYS_TYPE: TypeStyle = TypeStyle::MONO_SMALL;
 
 /// Where a tooltip goes relative to its trigger.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,7 +132,8 @@ impl Tooltip {
 /// the gallery shows a static one in flow.
 pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
     let title = tip.title.clone();
-    let second = tip.second_line();
+    let detail = tip.detail.clone();
+    let keys = tip.shortcut.clone();
     let side = tip.side;
     (
         TooltipCard,
@@ -141,16 +145,15 @@ pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
             },
             flex_direction: FlexDirection::Column,
             flex_shrink: 0.0,
-            padding: UiRect::axes(px(10), px(8)),
-            row_gap: px(2),
+            padding: UiRect::axes(px(SPACE[5]), px(SPACE[4])),
+            row_gap: px(SPACE[1]),
             border: UiRect::all(px(border::HAIRLINE)),
             border_radius: rounded(RADIUS),
             ..default()
         },
         Fill(ColorRole::Tooltip),
         Stroke(card_stroke(theme)),
-        elevation::TOOLTIP.box_shadow(),
-        Shadow(ColorRole::Shadow),
+        elevation::TOOLTIP.shadow(),
         Pickable::IGNORE,
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             if live {
@@ -165,11 +168,20 @@ pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
                 text(TITLE_TYPE, ColorRole::TooltipText, title),
                 Pickable::IGNORE,
             ));
-            if let Some(second) = second {
-                p.spawn((
-                    text(DETAIL_TYPE, ColorRole::TooltipText2, second),
+            // The second line: "detail · keys", the keys a mono span.
+            if detail.is_some() || keys.is_some() {
+                let lead = match (&detail, &keys) {
+                    (Some(d), Some(_)) => format!("{d} · "),
+                    (Some(d), None) => d.clone(),
+                    (None, _) => String::new(),
+                };
+                let mut line = p.spawn((
+                    text(DETAIL_TYPE, ColorRole::TooltipText2, lead),
                     Pickable::IGNORE,
                 ));
+                if let Some(keys) = keys {
+                    line.with_child(span(KEYS_TYPE, ColorRole::TooltipText2, keys));
+                }
             }
         })),
     )
@@ -186,11 +198,11 @@ fn card_stroke(theme: &Theme) -> ColorRole {
 
 /// Marks a tooltip card.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct TooltipCard;
+pub(crate) struct TooltipCard;
 
 /// The 8 px arrow on a live tooltip, pointing at the trigger.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct TooltipArrow;
+pub(crate) struct TooltipArrow;
 
 /// What [`TooltipTimer::step`] asks for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -199,7 +211,7 @@ pub struct TooltipStep {
     pub show: Option<Entity>,
 }
 
-/// The hover timing state machine (pure; [`tooltip_system`] drives it).
+/// The hover timing state machine (pure; `tooltip_system` drives it).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct TooltipTimer {
     /// The trigger under the pointer and since when.
@@ -244,16 +256,26 @@ impl TooltipTimer {
     }
 }
 
-/// Shows and hides tooltip cards from hover.
-pub fn tooltip_system(
+/// Shows and hides tooltip cards from hover. The triggers are searched
+/// only when one's hover changed; otherwise the timer's target stands.
+#[allow(clippy::type_complexity)]
+pub(crate) fn tooltip_system(
     time: Res<Time<Real>>,
     theme: Res<Theme>,
     mut timer: ResMut<TooltipTimer>,
     triggers: Query<(Entity, &Tooltip, &Hovered, Has<Pressed>)>,
+    hover_changed: Query<(), (With<Tooltip>, Changed<Hovered>)>,
     cards: Query<(Entity, &ChildOf), With<TooltipCard>>,
     mut commands: Commands,
 ) {
-    let hovered = triggers.iter().find(|(_, _, h, _)| h.get());
+    let hovered = if hover_changed.is_empty() {
+        timer
+            .target
+            .and_then(|(e, _)| triggers.get(e).ok())
+            .filter(|(_, _, h, _)| h.get())
+    } else {
+        triggers.iter().find(|(_, _, h, _)| h.get())
+    };
     let pressed = hovered.is_some_and(|h| h.3);
     let step = timer.step(hovered.map(|h| h.0), pressed, time.elapsed_secs_f64());
     if let Some(trigger) = step.hide {
@@ -316,7 +338,7 @@ fn arrow_node(side: TooltipSide) -> (Node, UiTransform) {
 
 /// Puts each arrow on the side that faces the trigger after the popover
 /// placed (and maybe flipped) its card.
-pub fn orient_tooltip_arrows(
+pub(crate) fn orient_tooltip_arrows(
     cards: Query<(&UiGlobalTransform, &ChildOf, &Children), With<TooltipCard>>,
     triggers: Query<&UiGlobalTransform, Without<TooltipCard>>,
     mut arrows: Query<&mut Node, With<TooltipArrow>>,
@@ -362,7 +384,10 @@ pub fn orient_tooltip_arrows(
 }
 
 /// Re-picks the card border role when the theme flips (§4.2).
-pub fn tooltip_border_system(theme: Res<Theme>, mut cards: Query<&mut Stroke, With<TooltipCard>>) {
+pub(crate) fn tooltip_border_system(
+    theme: Res<Theme>,
+    mut cards: Query<&mut Stroke, With<TooltipCard>>,
+) {
     if !theme.is_changed() {
         return;
     }

@@ -6,11 +6,14 @@
 //!
 //! Editing is Bevy's headless text input (selection, clipping, clipboard,
 //! IME; DECISIONS.md D-27) behind this wrapper. Enter or blur evaluates the
-//! text with [`expr::eval`] and commits; Esc reverts. Dragging the tag
-//! scrubs: one `step` per pixel, ×10 with Shift, ÷10 with Alt. Commits are
-//! [`NumberCommit`] events on the field.
+//! text with [`expr::eval`] and commits; Esc reverts. Text the user didn't
+//! edit commits nothing: it only catches up with the current value (spec
+//! §13: blur without change resumes streaming). Dragging the tag scrubs:
+//! one `step` per pixel, ×10 with Shift, ÷10 with Alt, from the modifiers
+//! held at each move. Commits are [`NumberCommit`] events on the field.
 
 use accesskit::Role;
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
@@ -63,6 +66,16 @@ impl AxisTag {
         }
     }
 
+    /// The accessible name: the axis or angle spelled out, or the label.
+    pub fn name(&self) -> &str {
+        match self {
+            AxisTag::Roll => "Roll",
+            AxisTag::Pitch => "Pitch",
+            AxisTag::Yaw => "Yaw",
+            other => other.tag(),
+        }
+    }
+
     /// R→x, P→y, Yw→z colours; labels in `text_2`.
     pub fn role(&self) -> ColorRole {
         match self {
@@ -85,6 +98,8 @@ pub struct NumberField {
     pub unit: Unit,
     pub min: Option<f64>,
     pub max: Option<f64>,
+    /// The accessible name, if not the tag's ("Position X").
+    pub name: Option<String>,
 }
 
 impl NumberField {
@@ -96,6 +111,7 @@ impl NumberField {
             unit: Unit::None,
             min: None,
             max: None,
+            name: None,
         }
     }
 
@@ -107,6 +123,12 @@ impl NumberField {
     pub fn precision(mut self, precision: usize, step: f64) -> Self {
         self.precision = precision;
         self.step = step;
+        self
+    }
+
+    /// The accessible name, when the tag alone is ambiguous.
+    pub fn named(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
         self
     }
 
@@ -139,14 +161,15 @@ impl NumberField {
         expr::eval(text, self.unit).map(|v| self.clamp(v))
     }
 
-    /// The value a scrub of `dx` pixels from `start` gives.
-    pub fn scrub(&self, start: f64, dx: f32, shift: bool, alt: bool) -> f64 {
+    /// The value a scrub move of `dx` pixels from `from` gives, with the
+    /// modifiers held during that move.
+    pub fn scrub(&self, from: f64, dx: f32, shift: bool, alt: bool) -> f64 {
         let k = match (shift, alt) {
             (true, false) => 10.0,
             (false, true) => 0.1,
             _ => 1.0,
         };
-        self.clamp(start + f64::from(dx) * self.step * k)
+        self.clamp(from + f64::from(dx) * self.step * k)
     }
 }
 
@@ -161,16 +184,22 @@ pub struct NumberCommit {
 
 /// The editable text of a field.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct NumberInput;
+pub(crate) struct NumberInput;
+
+/// The text the field last showed. Text that still equals it wasn't edited,
+/// so Enter or blur commits nothing.
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ShownText(pub String);
 
 /// The scrub handle (the tag).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct NumberTag;
+pub(crate) struct NumberTag;
 
-/// Where a scrub started.
+/// A scrub in progress: its value so far. Each move adds to it with the
+/// modifiers held then, so pressing Shift mid-drag doesn't jump.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Scrub {
-    pub start: f64,
+pub(crate) struct Scrub {
+    pub value: f64,
 }
 
 /// Set while the text doesn't evaluate (the border turns `danger`).
@@ -187,7 +216,11 @@ pub fn number_field(theme: &Theme, tag: AxisTag, field: NumberField, compact: bo
     };
     let shown = field.format(field.value);
     let unit = field.unit.suffix();
-    let name = tag.tag().to_string();
+    let mut access = a11y(
+        Role::SpinButton,
+        field.name.clone().unwrap_or_else(|| tag.name().to_string()),
+    );
+    access.set_numeric_value(field.value);
     (
         Node {
             height: px(h),
@@ -215,7 +248,8 @@ pub fn number_field(theme: &Theme, tag: AxisTag, field: NumberField, compact: bo
             p.spawn((
                 NumberInput,
                 TextInput,
-                EditableText::new(shown),
+                EditableText::new(shown.clone()),
+                ShownText(shown),
                 SelectAllOnFocus,
                 TextLayout {
                     linebreak: LineBreak::NoWrap,
@@ -226,7 +260,7 @@ pub fn number_field(theme: &Theme, tag: AxisTag, field: NumberField, compact: bo
                 Ink(ColorRole::Text),
                 CaretRoles,
                 TabIndex(0),
-                a11y(Role::SpinButton, name),
+                access,
                 bevy::picking::cursor::EntityCursor::System(SystemCursorIcon::Text),
                 Node {
                     flex_grow: 1.0,
@@ -241,37 +275,59 @@ pub fn number_field(theme: &Theme, tag: AxisTag, field: NumberField, compact: bo
     )
 }
 
-fn set_text(editable: &mut EditableText, s: &str) {
+fn set_text(editable: &mut EditableText, shown: &mut ShownText, s: &str) {
     if editable.value() != s {
         editable.editor.set_text(s);
         editable.queue_edit(TextEdit::TextEnd(false));
     }
+    if shown.0 != s {
+        shown.0 = s.to_string();
+    }
 }
+
+type InputQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static mut EditableText,
+        &'static mut ShownText,
+        &'static ChildOf,
+    ),
+    With<NumberInput>,
+>;
 
 /// Evaluates an input's text into its field: commits a valid value and
 /// reformats, or marks the field [`Invalid`]. `revert_on_error` (blur)
-/// restores the old value instead.
+/// restores the old value instead. Unedited text commits nothing; it shows
+/// the current value again (it may have changed while the field had focus).
 fn commit(
     input: Entity,
     revert_on_error: bool,
-    inputs: &mut Query<(&mut EditableText, &ChildOf), With<NumberInput>>,
+    inputs: &mut InputQuery,
     fields: &mut Query<&mut NumberField>,
     commands: &mut Commands,
 ) {
-    let Ok((mut editable, parent)) = inputs.get_mut(input) else {
+    let Ok((mut editable, mut shown, parent)) = inputs.get_mut(input) else {
         return;
     };
     let root = parent.parent();
     let Ok(mut field) = fields.get_mut(root) else {
         return;
     };
-    match field.parse(&editable.value().to_string()) {
+    let text = editable.value().to_string();
+    if text == shown.0 {
+        commands.entity(root).remove::<Invalid>();
+        let current = field.format(field.value);
+        set_text(&mut editable, &mut shown, &current);
+        return;
+    }
+    match field.parse(&text) {
         Ok(v) => {
             commands.entity(root).remove::<Invalid>();
             let changed = v != field.value;
             field.value = v;
-            let shown = field.format(v);
-            set_text(&mut editable, &shown);
+            let formatted = field.format(v);
+            set_text(&mut editable, &mut shown, &formatted);
             if changed {
                 commands.trigger(NumberCommit {
                     entity: root,
@@ -280,11 +336,10 @@ fn commit(
                 });
             }
         }
-        Err(e) if revert_on_error => {
+        Err(_) if revert_on_error => {
             commands.entity(root).remove::<Invalid>();
-            let shown = field.format(field.value);
-            set_text(&mut editable, &shown);
-            let _ = e;
+            let formatted = field.format(field.value);
+            set_text(&mut editable, &mut shown, &formatted);
         }
         Err(e) => {
             commands.entity(root).insert(Invalid(e));
@@ -292,14 +347,18 @@ fn commit(
     }
 }
 
-/// Enter commits; Esc reverts (Bevy's text input then drops focus).
-pub fn on_number_key(
+/// Enter commits; Esc reverts (Bevy's text input then drops focus). Runs
+/// once, on the input itself, not again as the key bubbles up.
+pub(crate) fn on_number_key(
     ev: On<FocusedInput<KeyboardInput>>,
-    mut inputs: Query<(&mut EditableText, &ChildOf), With<NumberInput>>,
+    mut inputs: InputQuery,
     mut fields: Query<&mut NumberField>,
     mut commands: Commands,
 ) {
-    if ev.input.state != ButtonState::Pressed || !inputs.contains(ev.focused_entity) {
+    if ev.input.state != ButtonState::Pressed
+        || ev.event_target() != ev.focused_entity
+        || !inputs.contains(ev.focused_entity)
+    {
         return;
     }
     match ev.input.logical_key {
@@ -311,10 +370,10 @@ pub fn on_number_key(
             &mut commands,
         ),
         Key::Escape => {
-            if let Ok((mut editable, parent)) = inputs.get_mut(ev.focused_entity) {
+            if let Ok((mut editable, mut shown, parent)) = inputs.get_mut(ev.focused_entity) {
                 if let Ok(field) = fields.get(parent.parent()) {
-                    let shown = field.format(field.value);
-                    set_text(&mut editable, &shown);
+                    let formatted = field.format(field.value);
+                    set_text(&mut editable, &mut shown, &formatted);
                     commands.entity(parent.parent()).remove::<Invalid>();
                 }
             }
@@ -323,10 +382,10 @@ pub fn on_number_key(
     }
 }
 
-/// Blur commits (or reverts text that doesn't evaluate).
-pub fn on_number_blur(
+/// Blur commits an edit (or reverts text that doesn't evaluate).
+pub(crate) fn on_number_blur(
     ev: On<FocusLost>,
-    mut inputs: Query<(&mut EditableText, &ChildOf), With<NumberInput>>,
+    mut inputs: InputQuery,
     mut fields: Query<&mut NumberField>,
     mut commands: Commands,
 ) {
@@ -336,7 +395,7 @@ pub fn on_number_blur(
 }
 
 /// Scrub start: remember the value.
-pub fn on_scrub_start(
+pub(crate) fn on_scrub_start(
     ev: On<PointerDragStart>,
     tags: Query<&ChildOf, With<NumberTag>>,
     fields: Query<&NumberField>,
@@ -346,29 +405,31 @@ pub fn on_scrub_start(
         if let Ok(field) = fields.get(parent.parent()) {
             commands
                 .entity(parent.parent())
-                .insert(Scrub { start: field.value });
+                .insert(Scrub { value: field.value });
         }
     }
 }
 
-/// Scrubbing: the value follows the horizontal drag distance.
-pub fn on_scrub(
+/// Scrubbing: each horizontal move adds `step` per pixel, scaled by the
+/// modifiers held now.
+pub(crate) fn on_scrub(
     ev: On<PointerDrag>,
     keys: Res<ButtonInput<KeyCode>>,
     tags: Query<&ChildOf, With<NumberTag>>,
-    mut fields: Query<(&mut NumberField, &Scrub)>,
+    mut fields: Query<(&mut NumberField, &mut Scrub)>,
     mut commands: Commands,
 ) {
     let Ok(parent) = tags.get(ev.entity) else {
         return;
     };
     let root = parent.parent();
-    let Ok((mut field, scrub)) = fields.get_mut(root) else {
+    let Ok((mut field, mut scrub)) = fields.get_mut(root) else {
         return;
     };
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let alt = keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
-    let v = field.scrub(scrub.start, ev.distance.x, shift, alt);
+    let v = field.scrub(scrub.value, ev.delta.x, shift, alt);
+    scrub.value = v;
     if v != field.value {
         field.value = v;
         commands.trigger(NumberCommit {
@@ -380,7 +441,7 @@ pub fn on_scrub(
 }
 
 /// Scrub end: a final commit.
-pub fn on_scrub_end(
+pub(crate) fn on_scrub_end(
     ev: On<PointerDragEnd>,
     tags: Query<&ChildOf, With<NumberTag>>,
     fields: Query<&NumberField, With<Scrub>>,
@@ -399,17 +460,30 @@ pub fn on_scrub_end(
     }
 }
 
-/// Shows a changed value in an unfocused field (scrubs, programmatic sets).
-pub fn sync_number_text(
+/// Shows a changed value in an unfocused field (scrubs, programmatic sets)
+/// and gives it to AccessKit. A focused field's text stays as it is.
+#[allow(clippy::type_complexity)]
+pub(crate) fn sync_number_text(
     focus: Res<InputFocus>,
     fields: Query<(&NumberField, &Children), Changed<NumberField>>,
-    mut inputs: Query<(Entity, &mut EditableText), With<NumberInput>>,
+    mut inputs: Query<
+        (
+            Entity,
+            &mut EditableText,
+            &mut ShownText,
+            &mut AccessibilityNode,
+        ),
+        With<NumberInput>,
+    >,
 ) {
     for (field, children) in &fields {
         for &c in children {
-            if let Ok((e, mut editable)) = inputs.get_mut(c) {
+            if let Ok((e, mut editable, mut shown, mut access)) = inputs.get_mut(c) {
+                if access.numeric_value() != Some(field.value) {
+                    access.set_numeric_value(field.value);
+                }
                 if focus.get() != Some(e) {
-                    set_text(&mut editable, &field.format(field.value));
+                    set_text(&mut editable, &mut shown, &field.format(field.value));
                 }
             }
         }
@@ -417,27 +491,45 @@ pub fn sync_number_text(
 }
 
 /// Border and halo: `accent` + `accent_soft` while the input has focus,
-/// `danger` while the text doesn't evaluate, else `line`.
-pub fn number_focus_system(
+/// `danger` while the text doesn't evaluate, else `line`. Runs for every
+/// field when focus moves, else only for fields that are new or whose
+/// [`Invalid`] state changed.
+#[allow(clippy::type_complexity)]
+pub(crate) fn number_focus_system(
     focus: Res<InputFocus>,
     mut fields: Query<(&Children, &mut Stroke, &mut Ring, Has<Invalid>), With<NumberField>>,
+    changed: Query<Entity, Or<(Added<NumberField>, Added<Invalid>)>>,
+    mut valid_again: RemovedComponents<Invalid>,
     inputs: Query<(), With<NumberInput>>,
+    mut dirty: Local<Vec<Entity>>,
 ) {
-    for (children, mut stroke, mut ring, invalid) in &mut fields {
-        let focused = children
-            .iter()
-            .any(|c| inputs.contains(c) && focus.get() == Some(c));
-        let border = match (invalid, focused) {
-            (true, _) => ColorRole::Danger,
-            (false, true) => ColorRole::Accent,
-            (false, false) => ColorRole::Line,
+    dirty.clear();
+    dirty.extend(changed.iter().chain(valid_again.read()));
+    let mut style =
+        |(children, mut stroke, mut ring, invalid): (&Children, Mut<Stroke>, Mut<Ring>, bool)| {
+            let focused = children
+                .iter()
+                .any(|c| inputs.contains(c) && focus.get() == Some(c));
+            let border = match (invalid, focused) {
+                (true, _) => ColorRole::Danger,
+                (false, true) => ColorRole::Accent,
+                (false, false) => ColorRole::Line,
+            };
+            stroke.set_if_neq(Stroke(border));
+            ring.set_if_neq(Ring(if focused {
+                ColorRole::AccentSoft
+            } else {
+                ColorRole::Clear
+            }));
         };
-        stroke.set_if_neq(Stroke(border));
-        ring.set_if_neq(Ring(if focused {
-            ColorRole::AccentSoft
-        } else {
-            ColorRole::Clear
-        }));
+    if focus.is_changed() {
+        fields.iter_mut().for_each(&mut style);
+    } else {
+        for &e in &*dirty {
+            if let Ok(item) = fields.get_mut(e) {
+                style(item);
+            }
+        }
     }
 }
 

@@ -153,3 +153,105 @@ fn checked_and_focus_hover() {
     assert_eq!(fill(&app, check_item), ColorRole::Clear);
     assert_eq!(fill(&app, item), ColorRole::Hover);
 }
+
+/// The system visits only widgets whose state changed: a settled widget
+/// isn't rewritten, and each kind of change (and its removal) restyles.
+#[test]
+fn only_changed_widgets_are_restyled() {
+    let mut app = ui_app(ThemeMode::Light);
+    let w = app.world_mut();
+    let a = w.spawn((Node::default(), BASE, Hovered(false))).id();
+    let b = w.spawn((Node::default(), BASE, HoverOnFocus)).id();
+    frames(&mut app, 2);
+    let fill = |app: &App, e| app.world().get::<Fill>(e).unwrap().0;
+    // A marker colour nothing would write: it stays while `a` is settled.
+    app.world_mut()
+        .entity_mut(a)
+        .insert(Fill(ColorRole::Danger));
+    frames(&mut app, 2);
+    assert_eq!(fill(&app, a), ColorRole::Danger);
+    // Each change and its undoing restyles.
+    for (on, off, want) in [
+        (
+            (|e: &mut EntityWorldMut| {
+                e.insert(Checked);
+            }) as fn(&mut EntityWorldMut),
+            (|e: &mut EntityWorldMut| {
+                e.remove::<Checked>();
+            }) as fn(&mut EntityWorldMut),
+            ColorRole::AccentSoft,
+        ),
+        (
+            |e| {
+                e.insert(Active);
+            },
+            |e| {
+                e.remove::<Active>();
+            },
+            ColorRole::AccentSoft,
+        ),
+        (
+            |e| {
+                e.insert(Pressed);
+            },
+            |e| {
+                e.remove::<Pressed>();
+            },
+            ColorRole::Pressed,
+        ),
+        (
+            |e| {
+                e.insert(ForceState(st(true, false, false, false)));
+            },
+            |e| {
+                e.remove::<ForceState>();
+            },
+            ColorRole::Hover,
+        ),
+    ] {
+        on(&mut app.world_mut().entity_mut(a));
+        frames(&mut app, 1);
+        assert_eq!(fill(&app, a), want);
+        off(&mut app.world_mut().entity_mut(a));
+        frames(&mut app, 1);
+        assert_eq!(fill(&app, a), ColorRole::Clear);
+    }
+    // Content spawned later takes its widget's look.
+    app.world_mut().entity_mut(a).insert(Active);
+    frames(&mut app, 1);
+    let late = app
+        .world_mut()
+        .spawn((Node::default(), ChildOf(a)))
+        .with_child((Text::new("late"), Content))
+        .id();
+    frames(&mut app, 1);
+    let text = app.world().get::<Children>(late).unwrap()[0];
+    assert_eq!(
+        *app.world().get::<Ink>(text).unwrap(),
+        Ink(ColorRole::AccentText)
+    );
+    // Focus moving off a HoverOnFocus widget restyles it.
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(b, FocusCause::Navigated);
+    frames(&mut app, 1);
+    assert_eq!(fill(&app, b), ColorRole::Hover);
+    app.world_mut().resource_mut::<InputFocus>().clear();
+    frames(&mut app, 1);
+    assert_eq!(fill(&app, b), ColorRole::Clear);
+}
+
+/// A disabled widget that is on still shows that it's on (§10: state
+/// isn't hidden), with its content at 40%.
+#[test]
+fn disabled_keeps_the_active_look() {
+    let l = look(st(false, false, true, true));
+    assert_eq!(
+        (l.fill, l.ink, l.opacity),
+        (
+            ColorRole::AccentSoft,
+            ColorRole::AccentText,
+            DISABLED_OPACITY
+        )
+    );
+}

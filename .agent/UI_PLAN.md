@@ -118,7 +118,7 @@ From `shortcuts.json`, viewport and sim scopes only:
 7. **Fonts.** The Geist and Geist Mono TTFs (OFL-1.1) aren't in the zip. They get vendored from the
    upstream release, with the licence file, and embedded with `include_bytes!` for wasm.
 8. **Icons.** `icons.json` holds 89 SVG path icons. A `build.rs` in `gz-ui` rasterizes them with
-   `resvg` into an atlas (1× and 2×, at 15/17/18/20 px) and generates the `IconId` enum. Icons
+   `resvg` into an atlas (1× and 2×, at 15/17/18/20 px and the other drawn sizes, D-44) and generates the `IconId` enum. Icons
    are tinted at runtime by `ColorRole`. Build-time rasterizing keeps `resvg` out of the wasm
    payload.
 

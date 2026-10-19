@@ -12,6 +12,7 @@
 //!   clickable widget;
 //! - [`icons`]: the icon atlas generated from `icons.json`;
 //! - [`focus`]: shortcuts stand down while a text field has focus;
+//! - [`cursor`]: hover cursors, held through a drag;
 //! - [`fonts`]: Geist and Geist Mono, embedded, and the type styles;
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
@@ -21,6 +22,7 @@
 //! ([`shell::ShellPlugin`], added with this plugin in the full mode).
 
 pub mod brand;
+pub mod cursor;
 pub mod focus;
 pub mod fonts;
 pub mod gallery;
@@ -111,6 +113,7 @@ impl Plugin for GzUiPlugin {
                 PostUpdate,
                 (theme::sync_ui_scale, theme::apply_theme_system).in_set(GzUiSystems::Resolve),
             );
+        cursor::build(app);
         widgets::build(app);
     }
 }

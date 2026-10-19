@@ -11,11 +11,12 @@
 //! - Never write a colour literal; this is the only file allowed to (and
 //!   it doesn't either: the colours are generated). A test greps the crate.
 //! - Widgets store roles ([`Fill`], [`Stroke`], [`Ink`], [`Ring`],
-//!   [`Shadow`]), never a resolved `Color`. [`apply_theme_system`] resolves
+//!   [`Shadow`]), never a resolved `Color`. `apply_theme_system` resolves
 //!   them when the theme or a role changes.
 //! - Sizes come from [`Theme::s`], spacing from [`SPACE`], radii from
 //!   [`radius`].
 
+use bevy::ecs::query::QueryData;
 use bevy::input_focus::{InputFocus, InputFocusVisible};
 use bevy::prelude::*;
 use bevy::text::TextCursorStyle;
@@ -90,17 +91,26 @@ impl TypeStyle {
 }
 
 /// A `tokens.json` `elevation` entry: a drop shadow `y` below, blurred by
-/// `blur`, in the `shadow` colour.
+/// `blur`, in the `color` token (`None`: no shadow).
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Elevation {
     pub blur: f32,
     pub y: f32,
+    pub color: Option<ColorRole>,
 }
 
 impl Elevation {
     /// The Bevy shadow for this elevation (colour set by [`Shadow`]).
     pub fn box_shadow(self) -> BoxShadow {
         BoxShadow::new(Color::NONE, px(0), px(self.y), px(0), px(self.blur))
+    }
+
+    /// The shadow and its colour role.
+    pub fn shadow(self) -> (BoxShadow, Shadow) {
+        (
+            self.box_shadow(),
+            Shadow(self.color.unwrap_or(ColorRole::Clear)),
+        )
     }
 }
 
@@ -116,6 +126,9 @@ pub struct Theme {
     /// UI scale; 1.0 is the designs as drawn. Synced to Bevy's `UiScale`
     /// (DECISIONS.md D-23).
     pub scale: f32,
+    /// The OS prefers dark: what [`ThemeMode::System`] resolves to. Kept
+    /// in step with [`OsTheme`] by `follow_os_theme`.
+    pub os_dark: bool,
 }
 
 impl Default for Theme {
@@ -132,18 +145,20 @@ impl Theme {
             c: Palette::light(),
             s: Sizes::default(),
             scale: 1.0,
+            os_dark: os_prefers_dark,
         };
-        theme.set_mode(mode, os_prefers_dark);
+        theme.set_mode(mode);
         theme
     }
 
-    /// Sets the mode and re-resolves the palette.
-    pub fn set_mode(&mut self, mode: ThemeMode, os_prefers_dark: bool) {
+    /// Sets the mode and re-resolves the palette; `System` follows the
+    /// OS preference the theme already tracks ([`Theme::os_dark`]).
+    pub fn set_mode(&mut self, mode: ThemeMode) {
         self.mode = mode;
         self.is_dark = match mode {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
-            ThemeMode::System => os_prefers_dark,
+            ThemeMode::System => self.os_dark,
         };
         self.c = if self.is_dark {
             Palette::dark()
@@ -159,21 +174,12 @@ impl Theme {
         } else {
             ThemeMode::Dark
         };
-        self.set_mode(next, false);
+        self.set_mode(next);
     }
 
     /// The colour of `role` in this theme.
     pub fn color(&self, role: ColorRole) -> Color {
         self.c.role(role)
-    }
-
-    /// Logo for the current mode (dark mode uses light strokes, §4.2).
-    pub fn logo_path(&self) -> &'static str {
-        if self.is_dark {
-            "ui/brand/gazebo-icon-dark.png"
-        } else {
-            "ui/brand/gazebo-icon.png"
-        }
     }
 }
 
@@ -238,77 +244,89 @@ type Targets = (
     Option<&'static mut TextCursorStyle>,
 );
 
-fn changed<T: Component>(r: &Option<Ref<'_, T>>) -> bool {
-    r.as_ref().is_some_and(DetectChanges::is_changed)
+type RoleChanged = Or<(
+    Changed<Fill>,
+    Changed<Stroke>,
+    Changed<Ink>,
+    Changed<Ring>,
+    Changed<Shadow>,
+    Changed<Opacity>,
+)>;
+
+type WithRole = Or<(
+    With<Fill>,
+    With<Stroke>,
+    With<Ink>,
+    With<Ring>,
+    With<Shadow>,
+)>;
+
+/// Re-resolves role components: all of them when the [`Theme`] changes,
+/// otherwise only entities whose role (or [`Opacity`]) changed, found by
+/// change detection rather than a scan.
+#[allow(clippy::type_complexity)]
+pub(crate) fn apply_theme_system(
+    theme: Res<Theme>,
+    mut q: ParamSet<(
+        Query<(RoleRefs, Targets), WithRole>,
+        Query<(RoleRefs, Targets), (WithRole, RoleChanged)>,
+    )>,
+) {
+    if theme.is_changed() {
+        for (roles, targets) in &mut q.p0() {
+            resolve_roles(&theme, roles, targets);
+        }
+    } else {
+        for (roles, targets) in &mut q.p1() {
+            resolve_roles(&theme, roles, targets);
+        }
+    }
 }
 
-/// Re-resolves every role component: all of them when the [`Theme`]
-/// changes, otherwise only those whose role (or [`Opacity`]) changed.
-#[allow(clippy::type_complexity)]
-pub fn apply_theme_system(
-    theme: Res<Theme>,
-    mut q: Query<
-        (RoleRefs, Targets),
-        Or<(
-            With<Fill>,
-            With<Stroke>,
-            With<Ink>,
-            With<Ring>,
-            With<Shadow>,
-        )>,
-    >,
+/// Writes one entity's colours from its roles.
+fn resolve_roles(
+    theme: &Theme,
+    (fill, stroke, ink, ring, shadow, opacity, caret): <RoleRefs as QueryData>::Item<'_, '_>,
+    targets: <Targets as QueryData>::Item<'_, '_>,
 ) {
-    let all = theme.is_changed();
-    for ((fill, stroke, ink, ring, shadow, opacity, caret), targets) in &mut q {
-        if !(all
-            || changed(&fill)
-            || changed(&stroke)
-            || changed(&ink)
-            || changed(&ring)
-            || changed(&shadow)
-            || changed(&opacity))
-        {
-            continue;
+    let alpha = opacity.as_deref().map_or(1.0, |o| o.0);
+    let resolve = |role: ColorRole| {
+        let c = theme.color(role);
+        c.with_alpha(c.alpha() * alpha)
+    };
+    let (bg, border, text, image, outline, box_shadow, cursor) = targets;
+    if let (Some(fill), Some(mut bg)) = (fill, bg) {
+        bg.set_if_neq(BackgroundColor(resolve(fill.0)));
+    }
+    if let (Some(stroke), Some(mut border)) = (stroke, border) {
+        border.set_if_neq(BorderColor::all(resolve(stroke.0)));
+    }
+    if let Some(ink) = ink {
+        let c = resolve(ink.0);
+        if let Some(mut text) = text {
+            text.set_if_neq(TextColor(c));
         }
-        let alpha = opacity.as_deref().map_or(1.0, |o| o.0);
-        let resolve = |role: ColorRole| {
-            let c = theme.color(role);
-            c.with_alpha(c.alpha() * alpha)
-        };
-        let (bg, border, text, image, outline, box_shadow, cursor) = targets;
-        if let (Some(fill), Some(mut bg)) = (fill, bg) {
-            bg.set_if_neq(BackgroundColor(resolve(fill.0)));
-        }
-        if let (Some(stroke), Some(mut border)) = (stroke, border) {
-            border.set_if_neq(BorderColor::all(resolve(stroke.0)));
-        }
-        if let Some(ink) = ink {
-            let c = resolve(ink.0);
-            if let Some(mut text) = text {
-                text.set_if_neq(TextColor(c));
-            }
-            if let Some(mut image) = image {
-                if image.color != c {
-                    image.color = c;
-                }
-            }
-            if let (true, Some(mut cursor)) = (caret, cursor) {
-                cursor.color = c;
-                cursor.selection_color = theme.color(ColorRole::AccentSoft);
-                cursor.unfocused_selection_color = theme.color(ColorRole::Hover);
+        if let Some(mut image) = image {
+            if image.color != c {
+                image.color = c;
             }
         }
-        if let (Some(ring), Some(mut outline)) = (ring, outline) {
-            let c = resolve(ring.0);
-            if outline.color != c {
-                outline.color = c;
-            }
+        if let (true, Some(mut cursor)) = (caret, cursor) {
+            cursor.color = c;
+            cursor.selection_color = theme.color(ColorRole::AccentSoft);
+            cursor.unfocused_selection_color = theme.color(ColorRole::Hover);
         }
-        if let (Some(shadow), Some(mut box_shadow)) = (shadow, box_shadow) {
-            let c = resolve(shadow.0);
-            for layer in &mut box_shadow.0 {
-                layer.color = c;
-            }
+    }
+    if let (Some(ring), Some(mut outline)) = (ring, outline) {
+        let c = resolve(ring.0);
+        if outline.color != c {
+            outline.color = c;
+        }
+    }
+    if let (Some(shadow), Some(mut box_shadow)) = (shadow, box_shadow) {
+        let c = resolve(shadow.0);
+        for layer in &mut box_shadow.0 {
+            layer.color = c;
         }
     }
 }
@@ -316,7 +334,7 @@ pub fn apply_theme_system(
 /// Keeps [`OsTheme`] in step with the primary window's theme: its initial
 /// value (winit fills `Window::window_theme` at creation) and
 /// [`WindowThemeChanged`] messages.
-pub fn read_os_theme(
+pub(crate) fn read_os_theme(
     windows: Query<&Window, Changed<Window>>,
     mut changes: MessageReader<WindowThemeChanged>,
     mut os: ResMut<OsTheme>,
@@ -338,16 +356,23 @@ pub fn read_os_theme(
     }
 }
 
-/// In [`ThemeMode::System`], follows [`OsTheme`].
-pub fn follow_os_theme(os: Res<OsTheme>, mut theme: ResMut<Theme>) {
-    if os.is_changed() && theme.mode == ThemeMode::System && theme.is_dark != os.dark {
-        let mode = theme.mode;
-        theme.set_mode(mode, os.dark);
+/// Hands [`OsTheme`] to the [`Theme`]; in [`ThemeMode::System`], the
+/// palette follows it.
+pub(crate) fn follow_os_theme(os: Res<OsTheme>, mut theme: ResMut<Theme>) {
+    if !os.is_changed() || theme.os_dark == os.dark {
+        return;
+    }
+    if theme.mode == ThemeMode::System {
+        theme.os_dark = os.dark;
+        theme.set_mode(ThemeMode::System);
+    } else {
+        // The palette doesn't change: don't re-resolve every role.
+        theme.bypass_change_detection().os_dark = os.dark;
     }
 }
 
 /// Mirrors [`Theme::scale`] into Bevy's `UiScale`.
-pub fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
+pub(crate) fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
     if theme.is_changed() && scale.0 != theme.scale {
         scale.0 = theme.scale;
     }
@@ -359,7 +384,7 @@ pub fn sync_ui_scale(theme: Res<Theme>, mut scale: ResMut<UiScale>) {
 pub struct FocusRing;
 
 /// Draws or clears the [`FocusRing`]s.
-pub fn focus_ring_system(
+pub(crate) fn focus_ring_system(
     focus: Res<InputFocus>,
     visible: Res<InputFocusVisible>,
     mut q: Query<(Entity, Option<&mut Ring>), With<FocusRing>>,

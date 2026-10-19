@@ -1,8 +1,11 @@
 //! The arithmetic a NumberField accepts: `1.5*2`, `-(0.25 + 1)/2`, `90deg`,
 //! `pi/2 rad`, `50cm`, `12.5%`. `+ - * /`, parentheses, unary signs,
-//! decimals with exponents, the constant `pi`, and a unit after any number
-//! or parenthesised group. Units convert into the field's [`Unit`]: angles
-//! into degrees, lengths into metres; a unit of the wrong kind is an error.
+//! decimals with exponents, the constant `pi`, and units. A unit applies to
+//! the whole product or quotient before it (`pi/2 rad` is `(pi/2) rad`,
+//! `45deg*2` is 90°); `+` and `-` end it (`3m + 20cm` is 3.2 m). Units
+//! convert into the field's [`Unit`]: angles into degrees, lengths into
+//! metres; a unit of the wrong kind is an error. Parentheses nest at most
+//! [`MAX_DEPTH`] deep.
 
 use std::fmt;
 
@@ -58,7 +61,13 @@ pub enum ExprError {
     WrongUnit(String),
     /// Division by zero, overflow or similar.
     NotFinite,
+    /// Parentheses nested deeper than [`MAX_DEPTH`].
+    TooDeep,
 }
+
+/// How deeply parentheses may nest. The parser recurses once per level, so
+/// this bounds its stack use (wasm's stack is 1 MB).
+pub const MAX_DEPTH: usize = 64;
 
 impl fmt::Display for ExprError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -69,6 +78,7 @@ impl fmt::Display for ExprError {
             ExprError::UnknownUnit(u) => write!(f, "unknown unit '{u}'"),
             ExprError::WrongUnit(u) => write!(f, "'{u}' doesn't fit this field"),
             ExprError::NotFinite => write!(f, "not a finite number"),
+            ExprError::TooDeep => write!(f, "too many nested parentheses"),
         }
     }
 }
@@ -80,6 +90,7 @@ pub fn eval(input: &str, unit: Unit) -> Result<f64, ExprError> {
         text: input,
         i: 0,
         unit,
+        depth: 0,
     };
     p.skip_ws();
     if p.i == p.s.len() {
@@ -102,6 +113,8 @@ struct Parser<'a> {
     text: &'a str,
     i: usize,
     unit: Unit,
+    /// Open parentheses around the current position.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -126,39 +139,53 @@ impl Parser<'_> {
         Ok(v)
     }
 
+    /// Factors joined by `*` and `/`; a unit after any of them scales the
+    /// term so far. One unit per term (`90deg*2rad` is an error).
     fn term(&mut self) -> Result<f64, ExprError> {
         let mut v = self.factor()?;
-        while let Some(op @ (b'*' | b'/')) = self.peek() {
+        let mut united = false;
+        loop {
+            self.skip_ws();
+            let at = self.i;
+            if let Some(f) = self.unit()? {
+                if united {
+                    return Err(ExprError::Unexpected(at));
+                }
+                united = true;
+                v *= f;
+            }
+            let Some(op @ (b'*' | b'/')) = self.peek() else {
+                return Ok(v);
+            };
             self.i += 1;
             let r = self.factor()?;
             v = if op == b'*' { v * r } else { v / r };
         }
-        Ok(v)
     }
 
+    /// Unary signs (in a loop, so a run of them doesn't recurse) and a
+    /// primary.
     fn factor(&mut self) -> Result<f64, ExprError> {
-        match self.peek() {
-            Some(b'-') => {
-                self.i += 1;
-                Ok(-self.factor()?)
-            }
-            Some(b'+') => {
-                self.i += 1;
-                self.factor()
-            }
-            _ => {
-                let v = self.primary()?;
-                self.suffix(v)
-            }
+        let mut negative = false;
+        while let Some(sign @ (b'-' | b'+')) = self.peek() {
+            self.i += 1;
+            negative ^= sign == b'-';
         }
+        let v = self.primary()?;
+        Ok(if negative { -v } else { v })
     }
 
     fn primary(&mut self) -> Result<f64, ExprError> {
         match self.peek() {
             None => Err(ExprError::UnexpectedEnd),
             Some(b'(') => {
+                if self.depth == MAX_DEPTH {
+                    return Err(ExprError::TooDeep);
+                }
                 self.i += 1;
+                self.depth += 1;
                 let v = self.expr()?;
+                self.depth -= 1;
                 match self.peek() {
                     Some(b')') => {
                         self.i += 1;
@@ -210,9 +237,8 @@ impl Parser<'_> {
             .map_err(|_| ExprError::Unexpected(start))
     }
 
-    /// A unit right after a value.
-    fn suffix(&mut self, v: f64) -> Result<f64, ExprError> {
-        self.skip_ws();
+    /// The factor of a unit at the current position, if there is one.
+    fn unit(&mut self) -> Result<Option<f64>, ExprError> {
         let rest = &self.text[self.i..];
         let len = if rest.starts_with('°') {
             '°'.len_utf8()
@@ -222,7 +248,7 @@ impl Parser<'_> {
             rest.bytes().take_while(u8::is_ascii_alphabetic).count()
         };
         if len == 0 {
-            return Ok(v);
+            return Ok(None);
         }
         let name = rest[..len].to_ascii_lowercase();
         if name == "pi" || name == "e" {
@@ -230,6 +256,6 @@ impl Parser<'_> {
         }
         let f = self.unit.factor(&name)?;
         self.i += len;
-        Ok(v * f)
+        Ok(Some(f))
     }
 }

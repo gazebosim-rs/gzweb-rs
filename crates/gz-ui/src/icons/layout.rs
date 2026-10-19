@@ -7,8 +7,12 @@
 //! [`PAD`]-pixel transparent gutter on each side so linear filtering never
 //! picks up a neighbour.
 
-/// Icon sizes in logical pixels (icons.json `$note`).
-pub const SIZES: [u32; 4] = [15, 17, 18, 20];
+/// Icon sizes in logical pixels: the four icons.json `$note` lists (15,
+/// 17, 18, 20) and the others the spec draws icons at (10 px tree carets,
+/// 12 px status-bar glyphs, the 13 px warning chip icon, 14 px play/pause
+/// and eye, 24 px empty states), each rasterized at its own size rather
+/// than scaled from a neighbour (DECISIONS.md D-24).
+pub const SIZES: [u32; 9] = [10, 12, 13, 14, 15, 17, 18, 20, 24];
 /// Icons per atlas row.
 pub const COLUMNS: u32 = 16;
 /// Transparent gutter around each cell, in atlas pixels.

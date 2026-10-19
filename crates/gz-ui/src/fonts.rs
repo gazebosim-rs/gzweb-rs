@@ -3,7 +3,7 @@
 //! `tokens.json` lists: Geist 400/500/600 and Geist Mono 400/500.
 //!
 //! Text entities carry a [`Type`] (a `tokens.json` type style) and an
-//! [`Ink`] role; [`apply_type_system`] turns the style
+//! [`Ink`] role; `apply_type_system` turns the style
 //! into a `TextFont` and letter spacing.
 
 use bevy::prelude::*;
@@ -82,14 +82,14 @@ impl UiFonts {
     }
 }
 
-/// A text entity's type style. [`apply_type_system`] sets its `TextFont`
+/// A text entity's type style. `apply_type_system` sets its `TextFont`
 /// and `LetterSpacing`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 #[require(LetterSpacing, FontHinting::Enabled)]
 pub struct Type(pub TypeStyle);
 
 /// Resolves [`Type`] into fonts when it is added or changed.
-pub fn apply_type_system(
+pub(crate) fn apply_type_system(
     fonts: Res<UiFonts>,
     mut q: Query<(&Type, &mut TextFont, &mut LetterSpacing), Changed<Type>>,
 ) {

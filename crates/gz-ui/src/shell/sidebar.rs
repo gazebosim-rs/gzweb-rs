@@ -445,12 +445,14 @@ pub fn on_slot_drag(
     ev: On<PointerDrag>,
     drags: Query<&SlotDrag>,
     theme: Res<Theme>,
+    scale: Res<UiScale>,
     mut layout: ResMut<ShellLayout>,
 ) {
     if let Ok(d) = drags.get(ev.entity) {
-        // The slots share the height less the splitter.
+        // The slots share the height less the splitter; the pointer moves
+        // in window pixels, the height is in UI pixels.
         let h = d.height - theme.s.viewport_divider_hit;
-        let split = ShellLayout::split_after(d.split, ev.distance.y, h);
+        let split = ShellLayout::split_after(d.split, ev.distance.y / scale.0, h);
         if layout.split != split {
             layout.split = split;
         }

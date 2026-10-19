@@ -4,6 +4,7 @@
 //! DECISIONS.md D-22) and the state markers [`Active`], `Checked` and
 //! `InteractionDisabled`. No widget sets colours itself.
 
+use bevy::ecs::system::SystemParam;
 use bevy::input_focus::InputFocus;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -20,6 +21,12 @@ pub struct Active;
 /// nearest ancestor with [`Visuals`] drives it.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Content;
+
+/// [`Content`] that keeps its own colour and only takes the widget's
+/// opacity: a menu item's shortcut (`text_3`) and leading icon (`text_2`)
+/// and a checkbox item's box dim with the item when it's disabled.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OwnInk;
 
 /// The roles a clickable widget uses in each state. [`Visuals::new`] fills
 /// in the common table: hover → `hover` / `text`, pressed → `pressed` /
@@ -72,7 +79,9 @@ impl Visuals {
         self
     }
 
-    /// The resolved roles for `state`.
+    /// The resolved roles for `state`. Active wins over disabled: a
+    /// disabled widget that is on still shows it (spec §10: state isn't
+    /// hidden), with its content at [`DISABLED_OPACITY`].
     pub fn look(&self, state: WidgetState) -> Look {
         let (fill, ink, stroke) = if state.active {
             (self.active_fill, self.active_ink, self.active_stroke)
@@ -141,26 +150,104 @@ type StateQuery = (
     Has<HoverOnFocus>,
 );
 
+/// What changed a widget's look since the last frame.
+#[derive(SystemParam)]
+#[allow(clippy::type_complexity)]
+pub(crate) struct LookChanges<'w, 's> {
+    changed: Query<
+        'w,
+        's,
+        Entity,
+        (
+            With<Visuals>,
+            Or<(
+                Changed<Visuals>,
+                Changed<Hovered>,
+                Changed<ForceState>,
+                Changed<Children>,
+                Added<Pressed>,
+                Added<Active>,
+                Added<Checked>,
+                Added<InteractionDisabled>,
+            )>,
+        ),
+    >,
+    released: RemovedComponents<'w, 's, Pressed>,
+    inactive: RemovedComponents<'w, 's, Active>,
+    unchecked: RemovedComponents<'w, 's, Checked>,
+    enabled: RemovedComponents<'w, 's, InteractionDisabled>,
+    unforced: RemovedComponents<'w, 's, ForceState>,
+    new_content: Query<'w, 's, Entity, Added<Content>>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    widgets: Query<'w, 's, (), With<Visuals>>,
+    focus: Res<'w, InputFocus>,
+}
+
+impl LookChanges<'_, '_> {
+    /// The widgets to restyle: new or changed state, new content, and the
+    /// widgets focus left and entered ([`HoverOnFocus`]).
+    fn collect(&mut self, out: &mut Vec<Entity>, last_focus: &mut Option<Entity>) {
+        out.clear();
+        out.extend(self.changed.iter());
+        out.extend(self.released.read());
+        out.extend(self.inactive.read());
+        out.extend(self.unchecked.read());
+        out.extend(self.enabled.read());
+        out.extend(self.unforced.read());
+        for content in &self.new_content {
+            let owner = self
+                .parents
+                .iter_ancestors(content)
+                .find(|e| self.widgets.contains(*e));
+            out.extend(owner);
+        }
+        if self.focus.is_changed() {
+            out.extend(last_focus.take());
+            *last_focus = self.focus.get();
+            out.extend(*last_focus);
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+}
+
 /// Writes each widget's [`Fill`] / [`Stroke`] and its [`Content`]'s
-/// [`Ink`] and [`Opacity`] from its state, every frame (only real changes
-/// are written, so the theme pass stays incremental).
+/// [`Ink`] and [`Opacity`] from its state. Only widgets whose state, or
+/// content, changed this frame are visited, and only real changes are
+/// written, so the theme pass stays incremental.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn button_visuals_system(
+pub(crate) fn button_visuals_system(
+    mut changes: LookChanges,
     widgets: Query<StateQuery>,
-    focus: Res<InputFocus>,
     children: Query<&Children>,
     mut fills: Query<&mut Fill>,
     mut strokes: Query<&mut Stroke>,
-    mut content: Query<(Option<&mut Ink>, Option<&mut Opacity>, Has<Visuals>), With<Content>>,
+    mut content: Query<
+        (
+            Option<&mut Ink>,
+            Option<&mut Opacity>,
+            Has<Visuals>,
+            Has<OwnInk>,
+        ),
+        With<Content>,
+    >,
     mut commands: Commands,
+    mut dirty: Local<Vec<Entity>>,
+    mut stack: Local<Vec<Entity>>,
+    mut last_focus: Local<Option<Entity>>,
 ) {
-    for (entity, visuals, hovered, pressed, active, checked, disabled, forced, focus_hover) in
-        &widgets
-    {
+    changes.collect(&mut dirty, &mut last_focus);
+    let focus = changes.focus.get();
+    for &widget in &*dirty {
+        let Ok((entity, visuals, hovered, pressed, active, checked, disabled, forced, focus_hover)) =
+            widgets.get(widget)
+        else {
+            continue;
+        };
         let state = forced.map_or(
             WidgetState {
                 hovered: hovered.is_some_and(Hovered::get)
-                    || (focus_hover && focus.get() == Some(entity)),
+                    || (focus_hover && focus == Some(entity)),
                 pressed,
                 active: active || (checked && visuals.checked_is_active),
                 disabled,
@@ -187,22 +274,24 @@ pub fn button_visuals_system(
             }
         }
         // Content down to (not into) nested widgets.
-        let mut stack: Vec<Entity> = children.get(entity).map(|c| c.to_vec()).unwrap_or_default();
+        stack.clear();
+        stack.extend(children.get(entity).into_iter().flatten());
         while let Some(child) = stack.pop() {
-            let Ok((ink, opacity, nested)) = content.get_mut(child) else {
-                if let Ok(c) = children.get(child) {
-                    stack.extend(c.iter());
+            let Ok((ink, opacity, nested, own_ink)) = content.get_mut(child) else {
+                if !widgets.contains(child) {
+                    stack.extend(children.get(child).into_iter().flatten());
                 }
                 continue;
             };
             if nested {
                 continue;
             }
-            match ink {
-                Some(mut ink) => {
+            match (ink, own_ink) {
+                (_, true) => {}
+                (Some(mut ink), false) => {
                     ink.set_if_neq(Ink(look.ink));
                 }
-                None => {
+                (None, false) => {
                     commands.entity(child).insert(Ink(look.ink));
                 }
             }
@@ -214,9 +303,7 @@ pub fn button_visuals_system(
                     commands.entity(child).insert(Opacity(look.opacity));
                 }
             }
-            if let Ok(c) = children.get(child) {
-                stack.extend(c.iter());
-            }
+            stack.extend(children.get(child).into_iter().flatten());
         }
     }
 }
