@@ -58,17 +58,53 @@ reason = """The camera sensors' box visuals have no material: Gazebo's `gz-grey`
 gzweb-rs, three's white in gzweb (see gazebo-default-material). Worlds sky, visibility \
 and fuel_textured_mesh, which gzweb can load since Jetty sends the top-level enums."""
 
-[[allow]]
-id = "gazebo-pbr-material-randy"
-path = "Rescue Randy/*"
-field = "material.*"
-reason = """Fuel PBR (metal workflow) material: gzweb-rs follows Gazebo's ogre2 rules \
-(diffuse, metalness and roughness from the message, the emissive map at full strength); \
-gzweb keeps its own defaults (colour 0.6, metalness 0, roughness 1). DESIGN.md \
-"Materials"."""
+# Fuel PBR (metal workflow) materials in fuel_textured_mesh: gzweb-rs follows
+# Gazebo's ogre2 rules (DESIGN.md "Materials"), gzweb keeps its own defaults.
+# One entry per field that differs, so map, opacity and transparency diffs
+# still fail.
 
 [[allow]]
-id = "gazebo-pbr-material-tube-light"
-path = "Tube Light/*"
-field = "material.*"
-reason = """Same as gazebo-pbr-material-randy, for the Tube Light model."""
+id = "gazebo-pbr-color-randy"
+path = "Rescue Randy/link/visual"
+field = "material.color"
+reason = """Fuel PBR material: gzweb-rs uses the message's diffuse (white), as ogre2 \
+does; gzweb keeps its own 0.6 grey. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-metalness-randy"
+path = "Rescue Randy/link/visual"
+field = "material.metalness"
+reason = """Fuel PBR material: gzweb-rs uses the message's metalness (0.5); gzweb's \
+MeshStandardMaterial keeps three's 0. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-roughness-randy"
+path = "Rescue Randy/link/visual"
+field = "material.roughness"
+reason = """Fuel PBR material: gzweb-rs uses the message's roughness (0.5); gzweb's \
+MeshStandardMaterial keeps three's 1. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-color-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.color"
+reason = """Same as gazebo-pbr-color-randy, for the Tube Light model."""
+
+[[allow]]
+id = "gazebo-pbr-emissive-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.emissive"
+reason = """The Tube Light has an emissive map: gzweb-rs applies it at full strength \
+(emissive white), as ogre2 does; gzweb leaves the emissive black. DESIGN.md "Materials"."""
+
+[[allow]]
+id = "gazebo-pbr-metalness-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.metalness"
+reason = """Same as gazebo-pbr-metalness-randy, for the Tube Light model."""
+
+[[allow]]
+id = "gazebo-pbr-roughness-tube-light"
+path = "Tube Light/base_link/TubeLight_visual"
+field = "material.roughness"
+reason = """Same as gazebo-pbr-roughness-randy, for the Tube Light model."""
