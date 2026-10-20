@@ -18,7 +18,7 @@ use crate::widgets::layout::node_rect;
 /// The view had the last pointer press (its keys apply while the pointer
 /// is elsewhere). True at start, so keys work before the first click.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ViewFocus(pub bool);
+pub(crate) struct ViewFocus(pub bool);
 
 impl Default for ViewFocus {
     fn default() -> Self {
@@ -28,7 +28,7 @@ impl Default for ViewFocus {
 
 /// Where the pointer is: over the view's node, and over a UI node.
 #[derive(SystemParam)]
-pub struct PointerOver<'w, 's> {
+pub(crate) struct PointerOver<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     views: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<ViewNode>>,
     nodes: Query<'w, 's, (), (With<ComputedNode>, Without<ViewNode>)>,
@@ -66,7 +66,7 @@ impl PointerOver<'_, '_> {
 /// Pointer and key routing (spec §3.4, §9.3): the camera gets the pointer
 /// only over the view's node and not over any UI node; the view keeps the
 /// keys after a press in it, and loses them to a press elsewhere.
-pub fn route_pointer(
+pub(crate) fn route_pointer(
     over: PointerOver,
     buttons: Res<ButtonInput<MouseButton>>,
     focus: Option<Res<InputFocus>>,

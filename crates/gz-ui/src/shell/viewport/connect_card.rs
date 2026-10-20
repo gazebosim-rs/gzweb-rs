@@ -24,11 +24,11 @@ use crate::widgets::text_field::TextFieldInput;
 use crate::widgets::{button, rounded, text_field, ButtonVariant, TextSubmit};
 
 /// The connect card's width (§7.10).
-pub const CARD_W: f32 = 420.0;
+pub(crate) const CARD_W: f32 = 420.0;
 
 /// Banner and card buttons.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConnectButton {
+pub(crate) enum ConnectButton {
     /// "Retry now".
     Retry,
     /// "Connect to another server…": shows the card.
@@ -39,22 +39,22 @@ pub enum ConnectButton {
 
 /// The no-world card.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct ConnectCard;
+pub(crate) struct ConnectCard;
 
 /// The card's address field.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct AddressField;
+pub(crate) struct AddressField;
 
 /// The card's status line.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct CardStatus;
+pub(crate) struct CardStatus;
 
 /// A fade-out in progress (§7.10: 160 ms), seconds left.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Fading(pub f32);
+pub(crate) struct Fading(pub f32);
 
 /// The fade's length: `panel_slide_ms` (160).
-pub fn fade_secs() -> f32 {
+pub(crate) fn fade_secs() -> f32 {
     motion::PANEL_SLIDE_MS / 1000.0
 }
 
@@ -103,7 +103,7 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
 /// The card shows while no world has loaded, or when asked for while
 /// lost; it fades out once a world loads. Its status line follows the
 /// connection.
-pub fn card_state(
+pub(crate) fn card_state(
     phase: Res<CurrentPhase>,
     status: Option<Res<GzStatus>>,
     view: Res<ConnectionView>,
@@ -131,7 +131,7 @@ pub fn card_state(
 }
 
 /// The card's status line (§7.10).
-pub fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
+pub(crate) fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
     let Some(s) = status else {
         return "Not connected".into();
     };
@@ -162,7 +162,7 @@ type WithRole = Or<(With<Fill>, With<Stroke>, With<Ink>, With<Shadow>)>;
 
 /// Fades the card out (after the widgets' own looks, so the fade wins),
 /// then hides it.
-pub fn fade_card(
+pub(crate) fn fade_card(
     time: Res<Time<Real>>,
     mut cards: Query<(Entity, &mut Node, &mut Fading), With<ConnectCard>>,
     children: Query<&Children>,
@@ -202,7 +202,7 @@ pub fn fade_card(
 }
 
 /// Fills the card's address with the server's address once.
-pub fn prefill_address(
+pub(crate) fn prefill_address(
     status: Option<Res<GzStatus>>,
     fields: Query<&Children, With<AddressField>>,
     mut inputs: Query<&mut EditableText, With<TextFieldInput>>,
@@ -235,7 +235,7 @@ fn address(
 }
 
 /// The address to connect to: `ws://` added when no scheme is given.
-pub fn normalize_address(s: &str) -> String {
+pub(crate) fn normalize_address(s: &str) -> String {
     let s = s.trim();
     if s.contains("://") {
         s.to_string()
@@ -245,7 +245,7 @@ pub fn normalize_address(s: &str) -> String {
 }
 
 /// Banner and card buttons.
-pub fn on_connect_button(
+pub(crate) fn on_connect_button(
     ev: On<Activate>,
     buttons: Query<&ConnectButton>,
     fields: Query<&Children, With<AddressField>>,
@@ -283,7 +283,7 @@ fn connect_to(
 }
 
 /// Enter in the address field connects.
-pub fn on_address_submit(
+pub(crate) fn on_address_submit(
     ev: On<TextSubmit>,
     fields: Query<(), With<AddressField>>,
     status: Option<Res<GzStatus>>,

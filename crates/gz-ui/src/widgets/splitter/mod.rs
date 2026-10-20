@@ -23,7 +23,7 @@ use crate::theme::{ColorRole, Fill, FocusRing, Theme, SPACE};
 use crate::GzUiSystems;
 
 /// How far an arrow key moves a splitter.
-pub const KEY_STEP: f32 = SPACE[4];
+pub(crate) const KEY_STEP: f32 = SPACE[4];
 
 /// Which way a splitter moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

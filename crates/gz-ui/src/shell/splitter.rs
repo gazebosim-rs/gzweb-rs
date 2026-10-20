@@ -17,15 +17,15 @@ use crate::theme::{border, ColorRole, Stroke, Theme};
 /// A splitter between a side panel and the viewport area (§2.1): a 6 px
 /// hit area centred on the panel's border.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ShellSplitter(pub Side);
+pub(crate) struct ShellSplitter(pub Side);
 
 /// A splitter drag in progress: the width it started from.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct SplitDrag(pub f32);
+pub(crate) struct SplitDrag(pub f32);
 
 /// A side splitter: absolute, 6 px wide, centred on the panel's 1 px
 /// border (`right` for the sidebar, `left` for the inspector).
-pub fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
+pub(crate) fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
     let hit = theme.s.viewport_divider_hit;
     // Absolute offsets are from the padding box, inside the border: centre
     // the hit area on the border pixel.
@@ -57,7 +57,7 @@ pub fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
     )
 }
 
-pub fn on_splitter_drag_start(
+pub(crate) fn on_splitter_drag_start(
     ev: On<PointerDragStart>,
     splitters: Query<&ShellSplitter>,
     layout: Res<ShellLayout>,
@@ -72,7 +72,7 @@ pub fn on_splitter_drag_start(
 
 /// The pointer moves in window pixels and widths are UI pixels: the drag
 /// divides by `UiScale` (DECISIONS.md D-41).
-pub fn on_splitter_drag(
+pub(crate) fn on_splitter_drag(
     ev: On<PointerDrag>,
     scale: Res<UiScale>,
     splitters: Query<(&ShellSplitter, &SplitDrag)>,
@@ -83,7 +83,7 @@ pub fn on_splitter_drag(
     }
 }
 
-pub fn on_splitter_drag_end(
+pub(crate) fn on_splitter_drag_end(
     ev: On<PointerDragEnd>,
     splitters: Query<(), With<ShellSplitter>>,
     mut commands: Commands,
@@ -94,7 +94,7 @@ pub fn on_splitter_drag_end(
 }
 
 /// A double-click resets the width (§2.1).
-pub fn on_splitter_click(
+pub(crate) fn on_splitter_click(
     ev: On<PointerClick>,
     splitters: Query<&ShellSplitter>,
     mut out: MessageWriter<UiCommand>,
@@ -107,7 +107,7 @@ pub fn on_splitter_click(
 }
 
 /// The panel's border turns `accent` while its splitter drags (§2.1).
-pub fn splitter_strokes(
+pub(crate) fn splitter_strokes(
     splitters: Query<(&ShellSplitter, Has<SplitDrag>)>,
     mut regions: Query<(&Region, &mut Stroke)>,
 ) {

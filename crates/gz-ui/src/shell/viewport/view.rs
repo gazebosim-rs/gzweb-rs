@@ -12,17 +12,17 @@ use crate::widgets::layout::{node_rect, set_shown};
 
 /// The 3D view's placeholder node: the main camera renders into its rect.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct ViewNode;
+pub(crate) struct ViewNode;
 
 /// The last frame shows at 70% while disconnected (§7.10).
-pub const DIM_OPACITY: f32 = 0.3;
+pub(crate) const DIM_OPACITY: f32 = 0.3;
 
 /// The dimming over the last frame.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct DimOverlay;
+pub(crate) struct DimOverlay;
 
 /// The last frame dims while the connection is lost (§7.10).
-pub fn dim_state(phase: Res<CurrentPhase>, mut dims: Query<&mut Node, With<DimOverlay>>) {
+pub(crate) fn dim_state(phase: Res<CurrentPhase>, mut dims: Query<&mut Node, With<DimOverlay>>) {
     let lost = matches!(phase.0, Phase::Lost { .. });
     for mut node in &mut dims {
         set_shown(&mut node, lost);
@@ -33,7 +33,7 @@ pub fn dim_state(phase: Res<CurrentPhase>, mut dims: Query<&mut Node, With<DimOv
 /// logical pixels, goes to `gz-bevy`, which renders the main camera into a
 /// texture of the node's physical size in the same frame (after UI layout,
 /// before culling); the node shows that texture.
-pub fn place_view(
+pub(crate) fn place_view(
     views: Query<(&ComputedNode, &UiGlobalTransform), With<ViewNode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut placement: ResMut<ViewPlacement>,
@@ -53,7 +53,7 @@ pub fn place_view(
 
 /// The view node shows the camera's texture once it exists, and nothing
 /// (the area's `bg`) while no world is loaded.
-pub fn show_view_image(
+pub(crate) fn show_view_image(
     placement: Res<ViewPlacement>,
     phase: Res<CurrentPhase>,
     mut views: Query<(Entity, Option<&mut ImageNode>, &mut Visibility), With<ViewNode>>,

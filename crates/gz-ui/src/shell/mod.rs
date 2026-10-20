@@ -6,35 +6,32 @@
 //! [`ShellPlugin`] is added on top of [`GzUiPlugin`](crate::GzUiPlugin) in
 //! the full UI mode. The layout state is [`ShellLayout`]; everything the
 //! user asks for goes through [`UiCommand`] messages, which
-//! [`apply_ui_commands`](commands::apply_ui_commands) applies, so buttons,
+//! `commands::apply_ui_commands` applies, so buttons,
 //! keys and tests share one path. Sim requests are `gz-bevy` messages
 //! (`GzCommand`, `GzReconnect`).
 
-pub mod activity_bar;
-pub mod collapsed_bar;
-pub mod commands;
+pub(crate) mod activity_bar;
+pub(crate) mod collapsed_bar;
+pub(crate) mod commands;
 pub mod connection;
-pub mod format;
-pub mod inspector;
+pub(crate) mod format;
+pub(crate) mod inspector;
 pub mod layout;
-pub mod regions;
-pub mod routing;
-pub mod sidebar;
-pub mod splitter;
-pub mod status_bar;
-pub mod top_bar;
-pub mod viewport;
+pub(crate) mod regions;
+pub(crate) mod routing;
+pub(crate) mod sidebar;
+pub(crate) mod splitter;
+pub(crate) mod status_bar;
+pub(crate) mod top_bar;
+pub(crate) mod viewport;
 
 use bevy::prelude::*;
 use gz_bevy::connection::{GzCommand, GzReconnect};
 
-pub use collapsed_bar::ExpandButton;
+pub use activity_bar::ActivityBadges;
 pub use commands::UiCommand;
 pub use layout::{Panel, ShellLayout, Side, Slot};
-pub use regions::Region;
-pub use splitter::ShellSplitter;
 pub use top_bar::tools::Tool;
-pub use top_bar::transport::StepsPerClick;
 
 use crate::inspectors::InspectorsPlugin;
 use crate::panels::PanelsPlugin;

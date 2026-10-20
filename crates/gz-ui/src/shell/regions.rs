@@ -17,7 +17,7 @@ use crate::widgets::layout::{column, display, fill_parent};
 
 /// Marks the shell's regions (spec §2.1).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Region {
+pub(crate) enum Region {
     Root,
     TopBar,
     Body,
@@ -59,13 +59,13 @@ pub(crate) fn side_panel(side: Side, layout: &ShellLayout) -> impl Bundle {
 
 /// A container the pointer passes through: not a hit for picking, so
 /// "over the UI" means over a real control or panel.
-pub fn pass_through() -> Pickable {
+pub(crate) fn pass_through() -> Pickable {
     Pickable::IGNORE
 }
 
 /// The UI's own camera on the window. It runs after the 3D view's camera
 /// (order 1), which renders into the texture the view node shows.
-pub fn spawn_ui_camera(mut commands: Commands) {
+pub(crate) fn spawn_ui_camera(mut commands: Commands) {
     commands.spawn((
         Camera2d,
         Camera {
@@ -78,13 +78,13 @@ pub fn spawn_ui_camera(mut commands: Commands) {
 }
 
 /// The window's width in UI logical pixels (`UiScale` applied).
-pub fn ui_width(window: &Window, ui_scale: f32) -> f32 {
+pub(crate) fn ui_width(window: &Window, ui_scale: f32) -> f32 {
     window.width() / ui_scale.max(f32::EPSILON)
 }
 
 /// The start-up layout from the window's width (§2.1), at the theme's UI
 /// scale (which becomes `UiScale` later in the first frame).
-pub fn init_layout(
+pub(crate) fn init_layout(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
     theme: Option<Res<Theme>>,
@@ -101,7 +101,7 @@ pub fn init_layout(
 }
 
 /// Refits the layout when the window's width changes (the floor rule).
-pub fn fit_to_window(
+pub(crate) fn fit_to_window(
     windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
     mut layout: ResMut<ShellLayout>,
@@ -118,7 +118,7 @@ pub fn fit_to_window(
 /// Writes [`ShellLayout`] into the region nodes: widths and collapse
 /// (`Display::None`, so a collapsed panel takes no room and never overlays
 /// the viewport).
-pub fn apply_layout(layout: Res<ShellLayout>, mut regions: Query<(&Region, &mut Node)>) {
+pub(crate) fn apply_layout(layout: Res<ShellLayout>, mut regions: Query<(&Region, &mut Node)>) {
     if !layout.is_changed() {
         return;
     }
@@ -141,7 +141,7 @@ pub fn apply_layout(layout: Res<ShellLayout>, mut regions: Query<(&Region, &mut 
 
 /// Spawns the shell (spec §2.1): a column of top bar, body and status bar;
 /// the body a row of activity bar, sidebar, viewport area and inspector.
-pub fn spawn_shell(
+pub(crate) fn spawn_shell(
     mut commands: Commands,
     theme: Res<Theme>,
     layout: Res<ShellLayout>,

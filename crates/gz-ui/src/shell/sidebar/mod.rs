@@ -5,8 +5,8 @@
 //! in M4 and M7; the panels register themselves
 //! ([`PanelRegistry`]).
 
-pub mod body;
-pub mod slot_splitter;
+pub(crate) mod body;
+pub(crate) mod slot_splitter;
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
@@ -27,16 +27,15 @@ use crate::theme::Theme;
 use crate::widgets::layout::{self, column};
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 use body::panel_body;
-pub use body::{PanelBody, SkeletonRow};
-pub use slot_splitter::{SlotDrag, SlotSplitter};
+use slot_splitter::SlotSplitter;
 
 /// A sidebar slot's node.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SlotView(pub Slot);
+pub(crate) struct SlotView(pub Slot);
 
 /// A panel header's slot buttons (§3.3.2).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SlotAction {
+pub(crate) enum SlotAction {
     /// With two slots: the panels swap.
     Swap,
     /// The primary header's chevron: collapse the sidebar.
@@ -46,7 +45,7 @@ pub enum SlotAction {
 }
 
 /// The sidebar region.
-pub fn sidebar(theme: &Theme, layout: &ShellLayout) -> impl Bundle {
+pub(crate) fn sidebar(theme: &Theme, layout: &ShellLayout) -> impl Bundle {
     let t = theme.clone();
     (
         side_panel(Side::Sidebar, layout),
@@ -77,7 +76,7 @@ fn slot_node(slot: Slot) -> impl Bundle {
 
 /// What a slot shows; rebuilt when it changes.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SlotContent {
+pub(crate) struct SlotContent {
     pub panel: Option<Panel>,
     pub view: Option<PanelView>,
     pub count: Option<String>,
@@ -87,7 +86,7 @@ pub struct SlotContent {
 /// What the slots are built from: the layout, the registered panels, and
 /// the connection and scene their states follow.
 #[derive(SystemParam)]
-pub struct SlotSources<'w> {
+pub(crate) struct SlotSources<'w> {
     layout: Res<'w, ShellLayout>,
     panels: Res<'w, PanelRegistry>,
     phase: Res<'w, CurrentPhase>,
@@ -115,7 +114,7 @@ impl SlotSources<'_> {
 
 /// Rebuilds a slot's header and body when its panel, state or count
 /// changes.
-pub fn rebuild_slots(
+pub(crate) fn rebuild_slots(
     sources: SlotSources,
     slots: Query<(Entity, &SlotView)>,
     mut shown: Local<[Option<SlotContent>; 2]>,
@@ -198,7 +197,7 @@ fn header_buttons(
 
 /// Writes the slot split into the slots: one slot takes the sidebar; with
 /// two, the primary takes `split` of it and the row splitter shows.
-pub fn apply_slots(
+pub(crate) fn apply_slots(
     layout: Res<ShellLayout>,
     mut slots: Query<(&SlotView, &mut Node)>,
     mut splitters: Query<&mut Node, (With<SlotSplitter>, Without<SlotView>)>,
@@ -223,7 +222,7 @@ pub fn apply_slots(
 }
 
 /// The panel headers' slot buttons.
-pub fn on_slot_action(
+pub(crate) fn on_slot_action(
     ev: On<Activate>,
     actions: Query<&SlotAction>,
     mut out: MessageWriter<UiCommand>,

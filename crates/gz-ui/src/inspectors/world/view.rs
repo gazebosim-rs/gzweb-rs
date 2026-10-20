@@ -10,13 +10,13 @@ use crate::widgets::layout::{self, column, flex_spacer, group_header, property_r
 use crate::widgets::{button, icon_button, rounded, ButtonVariant, IconButtonSize, Tooltip};
 
 /// The type tag's type: mono 11/500 (§3.5).
-pub const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 500);
+pub(super) const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 500);
 /// The breadcrumb's type: mono 11 `text_3`.
-pub const CRUMB_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+pub(super) const CRUMB_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
 
 /// The world quick actions (§3.5): Save (M8), Reset, Statistics (M4).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorldAction {
+pub(super) enum WorldAction {
     Save,
     Reset,
     Statistics,
@@ -24,7 +24,7 @@ pub enum WorldAction {
 
 /// Text the World inspector keeps up to date.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorldField {
+pub(super) enum WorldField {
     Name,
     Source,
     Step,

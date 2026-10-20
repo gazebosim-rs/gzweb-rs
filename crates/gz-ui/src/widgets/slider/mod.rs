@@ -25,16 +25,16 @@ use crate::theme::{ColorRole, Fill, FocusRing, FontFamily, Stroke, Theme, TypeSt
 use crate::GzUiSystems;
 
 /// Thumb diameter.
-pub const THUMB: f32 = 16.0;
+pub(crate) const THUMB: f32 = 16.0;
 /// Track thickness.
-pub const TRACK: f32 = 4.0;
+pub(crate) const TRACK: f32 = 4.0;
 /// Value read-out type: mono 12/400.
-pub const VALUE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 400);
+pub(crate) const VALUE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 400);
 /// The default label column width ("fixed width", §5.11).
-pub const LABEL_W: f32 = 64.0;
+pub(crate) const LABEL_W: f32 = 64.0;
 /// The value read-out's minimum width, so the track doesn't move as the
 /// digits change.
-pub const READOUT_MIN_W: f32 = 40.0;
+pub(crate) const READOUT_MIN_W: f32 = 40.0;
 
 /// A slider row's props: its label, range, value and step.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +77,7 @@ pub(crate) struct SliderReadout {
 }
 
 /// The arrow-key step with Shift (×10, coarse) or Alt (÷10, fine) held.
-pub fn step_for(base: f32, shift: bool, alt: bool) -> f32 {
+pub(crate) fn step_for(base: f32, shift: bool, alt: bool) -> f32 {
     match (shift, alt) {
         (true, false) => base * 10.0,
         (false, true) => base / 10.0,
@@ -86,7 +86,7 @@ pub fn step_for(base: f32, shift: bool, alt: bool) -> f32 {
 }
 
 /// Formats a slider value with `precision` decimals.
-pub fn format_value(value: f32, precision: i32) -> String {
+pub(crate) fn format_value(value: f32, precision: i32) -> String {
     format!("{value:.*}", precision.max(0) as usize)
 }
 

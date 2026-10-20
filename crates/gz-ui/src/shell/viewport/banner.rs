@@ -17,21 +17,21 @@ use crate::widgets::text::set_text;
 use crate::widgets::{button, ButtonVariant};
 
 /// The banner's height (§7.10).
-pub const BANNER_H: f32 = 36.0;
+pub(crate) const BANNER_H: f32 = 36.0;
 
 /// The disconnected banner and its parts.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct DisconnectBanner;
+pub(crate) struct DisconnectBanner;
 
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct BannerText;
+pub(crate) struct BannerText;
 
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct BannerIcon;
+pub(crate) struct BannerIcon;
 
 /// The banner shows while lost (§7.10): its text, `warn_soft` then
 /// `danger_soft` after a minute, and then "Connect to another server…".
-pub fn banner_state(
+pub(crate) fn banner_state(
     phase: Res<CurrentPhase>,
     status: Option<Res<GzStatus>>,
     time: Res<Time<Real>>,

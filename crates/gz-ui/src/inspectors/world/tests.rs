@@ -3,7 +3,7 @@ use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::connection::GzCommand;
 
-use super::{WorldAction, WorldField};
+use super::view::{WorldAction, WorldField};
 use crate::test_support::frames;
 use crate::test_support::shell::{go_live, sent, shell_app};
 use crate::theme::{ColorRole, Ink};

@@ -63,7 +63,7 @@ pub fn button_group(label: impl Into<String>, radio: bool) -> impl Bundle {
 /// on spawn.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[component(on_add = add_radio)]
-pub struct SegmentedGroup {
+pub(crate) struct SegmentedGroup {
     pub radio: bool,
 }
 

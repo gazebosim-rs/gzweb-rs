@@ -43,7 +43,7 @@ pub enum UiCommand {
 
 /// ⌘B, ⌘⌥I and the tool keys, from the input map, in the scopes live now
 /// (none while typing; viewport keys only when the view has them).
-pub fn shortcut_keys(
+pub(crate) fn shortcut_keys(
     keys: Res<ButtonInput<KeyCode>>,
     map: Option<Res<InputMap>>,
     scopes: Option<Res<ActiveScopes>>,
@@ -75,7 +75,7 @@ pub fn shortcut_keys(
 }
 
 /// Applies [`UiCommand`]s.
-pub fn apply_ui_commands(
+pub(crate) fn apply_ui_commands(
     mut commands: MessageReader<UiCommand>,
     mut layout: ResMut<ShellLayout>,
     mut tool: ResMut<Tool>,

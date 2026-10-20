@@ -37,7 +37,7 @@ impl IconButtonSize {
 
 /// IconButton and TextButton corner radius (§5.1, §5.2: 7, between the
 /// `sm` and `md` tokens).
-pub const ICON_BUTTON_RADIUS: f32 = 7.0;
+pub(crate) const ICON_BUTTON_RADIUS: f32 = 7.0;
 
 fn icon_button_node(side: f32, r: f32) -> Node {
     Node {
@@ -162,7 +162,7 @@ pub fn primary_button(theme: &Theme, id: IconId, tip: Tooltip) -> impl Bundle {
 /// spawn (a bundle can't hold an optional component).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[component(on_add = apply_checkedness)]
-pub struct Checkedness(pub bool);
+pub(crate) struct Checkedness(pub bool);
 
 fn apply_checkedness(
     mut world: bevy::ecs::world::DeferredWorld,
@@ -291,7 +291,7 @@ pub enum ButtonVariant {
 }
 
 /// Bordered button label type: Geist 12/500 (§5.3).
-pub const BUTTON_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 500);
+pub(crate) const BUTTON_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 500);
 
 /// A bordered button (§5.3): 30 tall, 1px `line`, fill `surface_2`.
 pub fn button(theme: &Theme, label: impl Into<String>, variant: ButtonVariant) -> impl Bundle {

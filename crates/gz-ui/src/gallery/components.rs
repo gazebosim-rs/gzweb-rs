@@ -4,7 +4,8 @@
 use bevy::prelude::*;
 use gz_bevy::view::input::InputMap;
 
-use super::{card_node, sample_row, STATES};
+use super::states::STATES;
+use super::{card_node, sample_row};
 use crate::assets::brand::logo;
 use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
@@ -23,7 +24,7 @@ use crate::widgets::{
 
 /// The number field the gallery focuses to show the focus look.
 #[derive(Component, Clone, Copy, Debug)]
-pub struct FocusExample;
+pub(crate) struct FocusExample;
 
 pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     c.spawn(card_node(Node {

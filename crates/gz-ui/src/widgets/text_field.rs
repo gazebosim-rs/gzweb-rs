@@ -21,11 +21,11 @@ use crate::theme::{
 };
 
 /// Field text: mono 12/400 (addresses and paths).
-pub const FIELD_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 400);
+pub(crate) const FIELD_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 400);
 
 /// The editable text of a [`text_field`].
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct TextFieldInput;
+pub(crate) struct TextFieldInput;
 
 /// Enter was pressed in a text field: `entity` is the field's root.
 #[derive(EntityEvent, Clone, Debug, PartialEq, Eq)]

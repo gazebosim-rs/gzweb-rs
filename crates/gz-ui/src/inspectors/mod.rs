@@ -6,7 +6,9 @@
 //! World inspector, the only one until M5 adds Model, Link, Joint, Light,
 //! Sensor and multi-select (DECISIONS.md D-51).
 
-pub mod world;
+mod world;
+
+pub use world::WorldInspectorPlugin;
 
 use bevy::prelude::*;
 
@@ -73,7 +75,7 @@ pub struct InspectorsPlugin;
 impl Plugin for InspectorsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InspectorRegistry>()
-            .add_plugins(world::WorldInspectorPlugin);
+            .add_plugins(WorldInspectorPlugin);
     }
 }
 

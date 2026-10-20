@@ -23,12 +23,12 @@ use crate::widgets::{activity_button, BadgeKind, Tooltip};
 
 /// An activity button's panel.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ActivityFor(pub Panel);
+pub(crate) struct ActivityFor(pub Panel);
 
 /// The Settings button (opens the Settings dialog later; for now it
 /// switches the theme, DECISIONS.md).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SettingsButton;
+pub(crate) struct SettingsButton;
 
 /// Badge counts (§3.2): active charts on Plot, unread warnings and errors
 /// on Console. Filled by the panels (M7); each panel's
@@ -45,7 +45,7 @@ pub struct ActivityBadges {
 const SEPARATOR_W: f32 = 24.0;
 
 /// The bar, with a button for each registered panel.
-pub fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry) -> impl Bundle {
+pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry) -> impl Bundle {
     let t = theme.clone();
     let map = map.clone();
     let panels = panels.clone();
@@ -92,7 +92,7 @@ pub fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry) -> im
 }
 
 /// Activity clicks (Shift from the keyboard state) and Settings.
-pub fn on_activity(
+pub(crate) fn on_activity(
     ev: On<Activate>,
     buttons: Query<&ActivityFor>,
     settings: Query<(), With<SettingsButton>>,
@@ -109,7 +109,7 @@ pub fn on_activity(
 
 /// Active state per §3.2's table: a button is active while its panel is
 /// in either slot, and pressed to AccessKit.
-pub fn activity_active(
+pub(crate) fn activity_active(
     layout: Res<ShellLayout>,
     mut buttons: Query<(Entity, &ActivityFor, Has<Active>, &mut AccessibilityNode)>,
     mut commands: Commands,
@@ -137,7 +137,7 @@ pub fn activity_active(
 }
 
 /// The badges show their counts and hide at zero (§3.2).
-pub fn activity_badges(
+pub(crate) fn activity_badges(
     badges: Res<ActivityBadges>,
     panels: Res<PanelRegistry>,
     buttons: Query<(&ActivityFor, &Children)>,

@@ -8,21 +8,21 @@ use bevy::prelude::*;
 use crate::theme::Theme;
 
 /// `gazebo-icon.png` (light theme).
-pub const LOGO_LIGHT: &[u8] =
+pub(crate) const LOGO_LIGHT: &[u8] =
     include_bytes!("../../../../design/ui/assets/ui/brand/gazebo-icon.png");
 /// `gazebo-icon-dark.png` (dark theme).
-pub const LOGO_DARK: &[u8] =
+pub(crate) const LOGO_DARK: &[u8] =
     include_bytes!("../../../../design/ui/assets/ui/brand/gazebo-icon-dark.png");
 
 /// The two logo images.
 #[derive(Resource, Clone, Debug)]
-pub struct Logos {
+pub(crate) struct Logos {
     pub light: Handle<Image>,
     pub dark: Handle<Image>,
 }
 
 impl Logos {
-    pub fn for_theme(&self, theme: &Theme) -> Handle<Image> {
+    pub(crate) fn for_theme(&self, theme: &Theme) -> Handle<Image> {
         if theme.is_dark {
             self.dark.clone()
         } else {
@@ -56,10 +56,10 @@ impl FromWorld for Logos {
 /// Marks a logo image; `logo_system` swaps it with the theme.
 #[derive(Component, Clone, Copy, Debug, Default)]
 #[require(ImageNode)]
-pub struct Logo;
+pub(crate) struct Logo;
 
 /// The logo, `size` px square.
-pub fn logo(size: f32) -> impl Bundle {
+pub(crate) fn logo(size: f32) -> impl Bundle {
     (
         Logo,
         Node {

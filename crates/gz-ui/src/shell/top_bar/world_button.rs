@@ -21,7 +21,7 @@ use crate::widgets::{clickable, Tooltip};
 
 /// The world menu button (opens the World menu in M8).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct WorldButton;
+pub(crate) struct WorldButton;
 
 /// The world menu button: name in `text` 500, `.sdf` in `text_3` 400, the
 /// unsaved dot when dirty (never yet), chevron.
@@ -55,7 +55,7 @@ pub(super) fn world_button(theme: &Theme) -> impl Bundle {
 
 /// The world button's two texts.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WorldText {
+pub(crate) enum WorldText {
     /// The world's name, "No world" without one.
     Name,
     /// ".sdf" after the name.
@@ -63,7 +63,7 @@ pub enum WorldText {
 }
 
 /// The world's name and its extension follow the server.
-pub fn world_texts(
+pub(crate) fn world_texts(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     mut texts: Query<(&WorldText, &mut Text)>,

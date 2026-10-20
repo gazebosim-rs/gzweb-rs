@@ -3,7 +3,7 @@
 //! cursor position and the workspace button. Below 1280 px the hint and
 //! cursor drop out, below 1100 px the frame rate and iterations too.
 
-pub mod readouts;
+pub(crate) mod readouts;
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
@@ -20,11 +20,11 @@ use crate::widgets::button::ICON_BUTTON_RADIUS;
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{flex_spacer, row, set_shown};
 use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
-pub use readouts::{ConnectionDot, CursorReadout, StatusText};
+pub(crate) use readouts::{ConnectionDot, CursorReadout, StatusText};
 
 /// The status bar's items, numbered as in §3.6.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum StatusItem {
+pub(crate) enum StatusItem {
     /// 1: dot and address.
     Connection,
     /// 2: "dart · 1 ms".
@@ -48,7 +48,7 @@ pub enum StatusItem {
 impl StatusItem {
     /// Whether the item shows in a window `width` wide (§3.6: below 1280
     /// drop 7 and 9 first, then 3 and 4; DECISIONS.md puts "then" at 1100).
-    pub fn shown_at(self, width: f32) -> bool {
+    pub(crate) fn shown_at(self, width: f32) -> bool {
         match self {
             StatusItem::Hint | StatusItem::Cursor => width >= INSPECTOR_START_W,
             StatusItem::Fps | StatusItem::Iterations => width >= SIDEBAR_START_W,
@@ -58,9 +58,9 @@ impl StatusItem {
 }
 
 /// Mono 12 `text_2`, the bar's type (§3.6).
-pub const BAR_TYPE: TypeStyle = TypeStyle::MONO_SMALL;
+pub(crate) const BAR_TYPE: TypeStyle = TypeStyle::MONO_SMALL;
 /// The hint's type: Geist 12 `text_3`.
-pub const HINT_TYPE: TypeStyle = TypeStyle::SMALL;
+pub(crate) const HINT_TYPE: TypeStyle = TypeStyle::SMALL;
 
 fn item(which: StatusItem, style: TypeStyle, role: ColorRole, value: &str) -> impl Bundle {
     (
@@ -78,7 +78,7 @@ fn item(which: StatusItem, style: TypeStyle, role: ColorRole, value: &str) -> im
 }
 
 /// The status bar.
-pub fn status_bar(theme: &Theme) -> impl Bundle {
+pub(crate) fn status_bar(theme: &Theme) -> impl Bundle {
     let t = theme.clone();
     (
         region(
@@ -183,7 +183,7 @@ fn workspace_button(theme: &Theme) -> impl Bundle {
 }
 
 /// Drops items on narrow windows (§3.6).
-pub fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusItem, &mut Node)>) {
+pub(crate) fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusItem, &mut Node)>) {
     if !layout.is_changed() {
         return;
     }

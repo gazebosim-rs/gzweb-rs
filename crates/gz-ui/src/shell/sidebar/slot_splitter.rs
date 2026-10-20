@@ -14,11 +14,11 @@ use crate::widgets::rounded;
 
 /// The row splitter between the slots.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SlotSplitter;
+pub(crate) struct SlotSplitter;
 
 /// A row-splitter drag: the split and the sidebar's height at its start.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct SlotDrag {
+pub(crate) struct SlotDrag {
     pub split: f32,
     pub height: f32,
 }
@@ -52,7 +52,7 @@ pub(super) fn slot_splitter(theme: &Theme) -> impl Bundle {
     )
 }
 
-pub fn on_slot_drag_start(
+pub(crate) fn on_slot_drag_start(
     ev: On<PointerDragStart>,
     splitters: Query<&ChildOf, With<SlotSplitter>>,
     nodes: Query<&ComputedNode>,
@@ -70,7 +70,7 @@ pub fn on_slot_drag_start(
     }
 }
 
-pub fn on_slot_drag(
+pub(crate) fn on_slot_drag(
     ev: On<PointerDrag>,
     drags: Query<&SlotDrag>,
     theme: Res<Theme>,
@@ -88,7 +88,7 @@ pub fn on_slot_drag(
     }
 }
 
-pub fn on_slot_drag_end(
+pub(crate) fn on_slot_drag_end(
     ev: On<PointerDragEnd>,
     drags: Query<(), With<SlotDrag>>,
     mut commands: Commands,

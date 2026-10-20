@@ -72,7 +72,7 @@ impl Tool {
 
 /// A tool button's tool.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ToolChoice(pub Tool);
+pub(crate) struct ToolChoice(pub Tool);
 
 /// Spawns the tool group: a radio [`button_group`] of the tools, then Snap.
 pub(super) fn spawn_tools(b: &mut ChildSpawner, t: &Theme, map: &InputMap) {
@@ -99,7 +99,7 @@ pub(super) fn spawn_tools(b: &mut ChildSpawner, t: &Theme, map: &InputMap) {
 }
 
 /// A tool button click selects the tool.
-pub fn on_tool_change(
+pub(crate) fn on_tool_change(
     ev: On<ValueChange<Entity>>,
     choices: Query<&ToolChoice>,
     mut out: MessageWriter<UiCommand>,
@@ -110,7 +110,7 @@ pub fn on_tool_change(
 }
 
 /// The tool buttons show [`Tool`] (keys change it too).
-pub fn tool_states(
+pub(crate) fn tool_states(
     tool: Res<Tool>,
     buttons: Query<(Entity, &ToolChoice, Has<Checked>)>,
     mut commands: Commands,

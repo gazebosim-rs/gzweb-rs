@@ -19,7 +19,7 @@ use gz_bevy::view::input::Scope;
 
 /// A text field has keyboard focus.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TextFocus(pub bool);
+pub(crate) struct TextFocus(pub bool);
 
 /// What [`text_focus_system`] keeps between frames.
 #[derive(Default)]

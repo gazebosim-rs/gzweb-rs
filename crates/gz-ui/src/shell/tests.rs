@@ -22,20 +22,23 @@ use gz_bevy::view::{ViewOrigin, ViewPlacement};
 use gz_core::transport::Status;
 
 use crate::shell::activity_bar::{ActivityBadges, ActivityFor, SettingsButton};
+use crate::shell::collapsed_bar::ExpandButton;
 use crate::shell::connection::{banner, dot_role, ConnectionView, Phase, LOST_LONG_SECS};
 use crate::shell::layout::MIN_SLOT_H;
-use crate::shell::sidebar::{PanelBody, SlotView};
+use crate::shell::regions::Region;
+use crate::shell::sidebar::body::PanelBody;
+use crate::shell::sidebar::SlotView;
+use crate::shell::splitter::ShellSplitter;
 use crate::shell::status_bar::StatusItem;
 use crate::shell::top_bar::tools::ToolChoice;
+use crate::shell::top_bar::transport::StepsPerClick;
 use crate::shell::top_bar::transport::{steps_label, StepsOption, Transport};
 use crate::shell::viewport::banner::DisconnectBanner;
 use crate::shell::viewport::connect_card::{
     card_status, normalize_address, AddressField, ConnectButton, ConnectCard,
 };
 use crate::shell::viewport::view::{DimOverlay, ViewNode};
-use crate::shell::{
-    format, Panel, Region, ShellLayout, ShellSplitter, Side, Slot, StepsPerClick, Tool, UiCommand,
-};
+use crate::shell::{format, Panel, ShellLayout, Side, Slot, Tool, UiCommand};
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
@@ -143,7 +146,6 @@ fn narrow_windows_start_with_panels_collapsed() {
 /// back at its previous width (DECISIONS.md D-50).
 #[test]
 fn collapsed_panels_leave_a_bar_that_expands_them() {
-    use crate::shell::ExpandButton;
     use crate::widgets::{Tooltip, TooltipSide};
     // 1024 wide: both start collapsed.
     let mut app = shell_app((1024, 700), 1.0);
@@ -1179,7 +1181,7 @@ fn the_row_splitter_resizes_the_slots_within_their_minimum() {
         slot: Slot::Secondary,
     });
     frames(&mut app, 3);
-    let bar = find::<crate::shell::sidebar::SlotSplitter>(&mut app);
+    let bar = find::<crate::shell::sidebar::slot_splitter::SlotSplitter>(&mut app);
     assert!(displayed(&app, bar));
     let pointer = Pointer::new(
         PointerId::Mouse,
@@ -1217,7 +1219,7 @@ fn the_row_splitter_resizes_the_slots_within_their_minimum() {
     assert!((split - MIN_SLOT_H / (828.0 - 6.0)).abs() < 1e-4, "{split}");
     assert!(app
         .world()
-        .get::<crate::shell::sidebar::SlotDrag>(bar)
+        .get::<crate::shell::sidebar::slot_splitter::SlotDrag>(bar)
         .is_none());
 }
 

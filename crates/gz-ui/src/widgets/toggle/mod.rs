@@ -17,7 +17,7 @@ use crate::theme::{ColorRole, Fill, Theme, TypeStyle};
 use crate::GzUiSystems;
 
 /// Row height for a toggle (§5.9: 30–32).
-pub const TOGGLE_ROW_H: f32 = 30.0;
+pub(crate) const TOGGLE_ROW_H: f32 = 30.0;
 
 /// Marks a toggle's track and knob.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +27,7 @@ pub(crate) enum TogglePart {
 }
 
 /// Where the knob sits: inset 2 when off, `toggle_w - knob - 2` when on.
-pub fn knob_left(theme: &Theme, on: bool) -> f32 {
+pub(crate) fn knob_left(theme: &Theme, on: bool) -> f32 {
     if on {
         theme.s.toggle_w - theme.s.toggle_knob - 2.0
     } else {

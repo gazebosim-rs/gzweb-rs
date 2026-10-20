@@ -13,8 +13,8 @@
 //!   Geist and Geist Mono [`fonts`] with the type styles, and the logo;
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter, the
 //!   layout primitives they and the shell are built from, and the shared
-//!   behaviour ([`focus`]: shortcuts stand down while a text field has
-//!   focus; [`cursor`]: hover cursors, held through a drag);
+//!   behaviour (`focus`: shortcuts stand down while a text field has
+//!   focus; `cursor`: hover cursors, held through a drag);
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
 //!
 //! Milestone M2 adds [`shell`]: the workbench's regions, their layout
@@ -23,6 +23,8 @@
 //! sidebar's [`panels`] and the [`inspectors`] are plugins of their own
 //! that register into a registry the shell hosts (DECISIONS.md D-51).
 
+#![warn(unreachable_pub)]
+
 pub mod assets;
 pub mod gallery;
 pub mod inspectors;
@@ -30,6 +32,21 @@ pub mod panels;
 pub mod shell;
 pub mod theme;
 pub mod widgets;
+
+/// What a plugin that adds to the UI usually needs: the plugins and system
+/// sets, the shell's commands and layout, the panel and inspector
+/// registries, and the theme.
+pub mod prelude {
+    pub use crate::inspectors::{
+        InspectorDef, InspectorKind, InspectorRegistry, RegisterInspector,
+    };
+    pub use crate::panels::{
+        Panel, PanelAction, PanelDef, PanelRegistry, PanelView, RegisterPanel,
+    };
+    pub use crate::shell::{ShellLayout, ShellPlugin, ShellSystems, Side, Slot, Tool, UiCommand};
+    pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
+    pub use crate::{GzUiPlugin, GzUiSystems};
+}
 
 use bevy::input::InputSystems;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;

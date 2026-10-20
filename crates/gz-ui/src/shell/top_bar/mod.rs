@@ -5,10 +5,10 @@
 //! sit on the bar's `surface` with the activity buttons' look, Play/Pause
 //! included (DECISIONS.md D-48).
 
-pub mod search;
-pub mod tools;
-pub mod transport;
-pub mod world_button;
+pub(crate) mod search;
+pub(crate) mod tools;
+pub(crate) mod transport;
+pub(crate) mod world_button;
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
@@ -24,7 +24,7 @@ use crate::widgets::layout::{flex_spacer, row, separator, Orientation};
 const BAR_SEPARATOR_H: f32 = 18.0;
 
 /// The top bar.
-pub fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
+pub(crate) fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
     let t = theme.clone();
     let map = map.clone();
     (

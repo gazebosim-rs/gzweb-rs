@@ -35,11 +35,11 @@ impl Phase {
 
 /// After this long lost, the banner turns `danger_soft` and offers
 /// another server (§7.10).
-pub const LOST_LONG_SECS: f64 = 60.0;
+pub(crate) const LOST_LONG_SECS: f64 = 60.0;
 
 /// The connection memory behind [`Phase`].
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct ConnectionView {
+pub(crate) struct ConnectionView {
     /// A world loaded since the last connect to a new address.
     pub had_world: bool,
     /// When the loaded world's connection dropped.
@@ -52,7 +52,7 @@ pub struct ConnectionView {
 impl ConnectionView {
     /// Updates the memory from the status at real time `now`, and returns
     /// the phase.
-    pub fn update(&mut self, status: Option<&GzStatus>, loaded: bool, now: f64) -> Phase {
+    pub(crate) fn update(&mut self, status: Option<&GzStatus>, loaded: bool, now: f64) -> Phase {
         let Some(status) = status else {
             return Phase::Idle;
         };
@@ -75,12 +75,12 @@ impl ConnectionView {
     }
 
     /// A connect to a new address starts over: the card, not the banner.
-    pub fn connect_elsewhere(&mut self) {
+    pub(crate) fn connect_elsewhere(&mut self) {
         *self = Self::default();
     }
 }
 
-/// The connection's [`Phase`] this frame (kept by [`track_connection`]).
+/// The connection's [`Phase`] this frame (kept by `track_connection`).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct CurrentPhase(pub Phase);
 
@@ -91,7 +91,7 @@ impl Default for CurrentPhase {
 }
 
 /// Keeps [`ConnectionView`] and [`CurrentPhase`] up to date.
-pub fn track_connection(
+pub(crate) fn track_connection(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     time: Res<Time<Real>>,
@@ -112,7 +112,7 @@ pub fn track_connection(
 
 /// The status bar's connection dot (§3.6 item 1): `ok` connected, `warn`
 /// reconnecting or connecting, `danger` lost with nothing being tried.
-pub fn dot_role(phase: Phase, status: Option<&GzStatus>) -> ColorRole {
+pub(crate) fn dot_role(phase: Phase, status: Option<&GzStatus>) -> ColorRole {
     let trying = status.is_some_and(|s| s.attempting || s.reconnect_at.is_some());
     match phase {
         Phase::Live | Phase::Loading => ColorRole::Ok,
@@ -123,7 +123,7 @@ pub fn dot_role(phase: Phase, status: Option<&GzStatus>) -> ColorRole {
 
 /// The disconnected banner (§7.10).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Banner {
+pub(crate) struct Banner {
     pub text: String,
     /// Lost for a minute: `danger_soft`, and "Connect to another server…".
     pub long: bool,
@@ -131,7 +131,7 @@ pub struct Banner {
 
 impl Banner {
     /// Fill and text roles.
-    pub fn roles(&self) -> (ColorRole, ColorRole) {
+    pub(crate) fn roles(&self) -> (ColorRole, ColorRole) {
         if self.long {
             (ColorRole::DangerSoft, ColorRole::Danger)
         } else {
@@ -141,7 +141,7 @@ impl Banner {
 }
 
 /// The banner for `phase` at real time `now`, if one shows.
-pub fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Option<Banner> {
+pub(crate) fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Option<Banner> {
     let Phase::Lost { since } = phase else {
         return None;
     };
@@ -163,7 +163,7 @@ pub fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Option<Banne
 }
 
 /// "Retry now" and Reconnect: try the current server again at once.
-pub fn retry(out: &mut MessageWriter<GzReconnect>) {
+pub(crate) fn retry(out: &mut MessageWriter<GzReconnect>) {
     out.write(GzReconnect::default());
 }
 

@@ -2,8 +2,8 @@ use bevy::prelude::*;
 
 use super::{Panel, PanelAction, PanelDef, PanelRegistry, PanelView, PanelsPlugin};
 use crate::assets::icons::IconId;
-use crate::shell::activity_bar::ActivityBadges;
 use crate::shell::connection::Phase;
+use crate::shell::ActivityBadges;
 use crate::widgets::BadgeKind;
 
 fn registry() -> PanelRegistry {

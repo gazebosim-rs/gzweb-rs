@@ -23,11 +23,11 @@ pub struct Select {
 
 /// Option `n` of the enclosing [`Select`].
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SelectOption(pub usize);
+pub(crate) struct SelectOption(pub usize);
 
 /// The trigger's label.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SelectLabel;
+pub(crate) struct SelectLabel;
 
 /// Sent to the [`Select`] root when the user picks an option.
 #[derive(EntityEvent, Clone, Copy, Debug, PartialEq, Eq)]

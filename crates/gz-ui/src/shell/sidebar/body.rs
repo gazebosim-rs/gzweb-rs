@@ -17,11 +17,11 @@ use crate::widgets::{button, rounded, ButtonVariant, Tooltip};
 
 /// Marks a panel body.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PanelBody(pub Panel);
+pub(crate) struct PanelBody(pub Panel);
 
 /// A skeleton row (§3.3.1 loading: `hover` fill).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SkeletonRow;
+pub(crate) struct SkeletonRow;
 
 pub(super) fn panel_body(theme: &Theme, panel: &PanelDef, view: PanelView) -> impl Bundle {
     let t = theme.clone();
@@ -102,7 +102,7 @@ pub(super) fn panel_body(theme: &Theme, panel: &PanelDef, view: PanelView) -> im
 }
 
 /// An empty or error state's Reconnect retries the server now.
-pub fn on_panel_action(
+pub(crate) fn on_panel_action(
     ev: On<Activate>,
     actions: Query<(&PanelAction, Has<InteractionDisabled>)>,
     mut reconnect: MessageWriter<GzReconnect>,

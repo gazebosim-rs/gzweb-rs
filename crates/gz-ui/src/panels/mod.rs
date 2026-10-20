@@ -14,23 +14,30 @@
 //! ask for it): it depends on this module and the widgets, and its plugin
 //! is the whole of its interface (DECISIONS.md D-51).
 
-pub mod assets;
-pub mod console;
-pub mod plot;
-pub mod scene;
-pub mod sensors;
-pub mod teleop;
-pub mod topics;
+mod assets;
+mod console;
+mod plot;
+mod scene;
+mod sensors;
+mod teleop;
+mod topics;
 
 use bevy::prelude::*;
 use gz_bevy::spawn::GzIndex;
 
 use crate::assets::icons::IconId;
-use crate::shell::activity_bar::ActivityBadges;
 use crate::shell::connection::Phase;
 pub use crate::shell::layout::Panel;
+use crate::shell::ActivityBadges;
 use crate::theme::Theme;
 use crate::widgets::BadgeKind;
+pub use assets::AssetsPanelPlugin;
+pub use console::ConsolePanelPlugin;
+pub use plot::PlotPanelPlugin;
+pub use scene::ScenePanelPlugin;
+pub use sensors::SensorsPanelPlugin;
+pub use teleop::TeleopPanelPlugin;
+pub use topics::TopicsPanelPlugin;
 
 /// What a panel's body shows (§3.3.1).
 #[derive(Clone, Debug, PartialEq)]
@@ -219,13 +226,13 @@ pub struct PanelsPlugin;
 impl Plugin for PanelsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PanelRegistry>().add_plugins((
-            scene::ScenePanelPlugin,
-            assets::AssetsPanelPlugin,
-            topics::TopicsPanelPlugin,
-            plot::PlotPanelPlugin,
-            sensors::SensorsPanelPlugin,
-            teleop::TeleopPanelPlugin,
-            console::ConsolePanelPlugin,
+            ScenePanelPlugin,
+            AssetsPanelPlugin,
+            TopicsPanelPlugin,
+            PlotPanelPlugin,
+            SensorsPanelPlugin,
+            TeleopPanelPlugin,
+            ConsolePanelPlugin,
         ));
     }
 }

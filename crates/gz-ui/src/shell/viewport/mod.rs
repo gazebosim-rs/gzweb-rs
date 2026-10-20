@@ -2,9 +2,9 @@
 //! camera viewport synced to it, and the no-world card, the disconnected
 //! banner and the dimming over the last frame.
 
-pub mod banner;
-pub mod connect_card;
-pub mod view;
+pub(crate) mod banner;
+pub(crate) mod connect_card;
+pub(crate) mod view;
 
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::ecs::spawn::SpawnWith;
@@ -21,7 +21,7 @@ use crate::GzUiSystems;
 use view::{DimOverlay, ViewNode, DIM_OPACITY};
 
 /// The viewport area.
-pub fn viewport_area(theme: &Theme) -> impl Bundle {
+pub(crate) fn viewport_area(theme: &Theme) -> impl Bundle {
     let t = theme.clone();
     (
         Region::ViewportArea,

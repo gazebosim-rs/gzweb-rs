@@ -25,7 +25,7 @@ const fn state(hovered: bool, pressed: bool, active: bool, disabled: bool) -> Wi
 }
 
 /// The states shown in the states grid (plus a Focus column).
-pub const STATES: [(&str, WidgetState); 5] = [
+pub(crate) const STATES: [(&str, WidgetState); 5] = [
     ("Default", state(false, false, false, false)),
     ("Hover", state(true, false, false, false)),
     ("Pressed", state(true, true, false, false)),

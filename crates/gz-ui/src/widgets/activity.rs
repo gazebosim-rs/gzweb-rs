@@ -19,7 +19,7 @@ use crate::theme::{border, radius, ColorRole, Theme, SPACE};
 /// rest, `hover` / `text` on hover, `accent_soft` / `accent_text` with an
 /// inset 1px `accent_ring` when active. The top bar's buttons share it
 /// (DECISIONS.md D-48). Needs a 1px border on the node for the ring.
-pub fn activity_visuals() -> Visuals {
+pub(crate) fn activity_visuals() -> Visuals {
     let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text3).stroked(ColorRole::Clear);
     visuals.active_stroke = Some(ColorRole::AccentRing);
     visuals

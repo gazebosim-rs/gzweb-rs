@@ -10,7 +10,6 @@ use bevy::prelude::*;
 
 use super::{InspectorDef, InspectorKind, RegisterInspector};
 use crate::shell::ShellSystems;
-pub use view::{WorldAction, WorldField, CRUMB_TYPE, TAG_TYPE};
 
 /// Registers the World inspector and its systems.
 pub struct WorldInspectorPlugin;

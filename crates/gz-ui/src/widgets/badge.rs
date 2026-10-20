@@ -31,10 +31,10 @@ impl BadgeKind {
 
 /// Marks a badge.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct Badge;
+pub(crate) struct Badge;
 
 /// A badge's box.
-pub fn badge_node(theme: &Theme) -> Node {
+pub(crate) fn badge_node(theme: &Theme) -> Node {
     let h = theme.s.badge_h;
     Node {
         height: px(h),
@@ -49,7 +49,7 @@ pub fn badge_node(theme: &Theme) -> Node {
 }
 
 /// A badge without its box, for callers that place it ([`badge_node`]).
-pub fn badge_parts(kind: BadgeKind, count: u32) -> impl Bundle {
+pub(crate) fn badge_parts(kind: BadgeKind, count: u32) -> impl Bundle {
     (
         Badge,
         Fill(kind.fill()),

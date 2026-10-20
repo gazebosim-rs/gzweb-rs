@@ -13,7 +13,7 @@ use crate::theme::{ColorRole, Ink};
 use crate::widgets::text::set_text;
 
 /// The world's name, its source (the server) and the step size.
-pub fn world_fields(
+pub(super) fn world_fields(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     mut texts: Query<(&WorldField, &mut Text, &mut Ink)>,
@@ -45,7 +45,7 @@ pub fn world_fields(
 }
 
 /// Reset needs a live world.
-pub fn reset_availability(
+pub(super) fn reset_availability(
     phase: Res<CurrentPhase>,
     buttons: Query<(Entity, &WorldAction, Has<InteractionDisabled>)>,
     mut commands: Commands,
@@ -63,7 +63,7 @@ pub fn reset_availability(
 }
 
 /// Reset resets the world (Save and Statistics do nothing yet).
-pub fn on_world_action(
+pub(super) fn on_world_action(
     ev: On<Activate>,
     buttons: Query<(&WorldAction, Has<InteractionDisabled>)>,
     mut sim: MessageWriter<GzCommand>,

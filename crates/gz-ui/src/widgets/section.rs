@@ -13,7 +13,7 @@ use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 
 /// The count's type: mono 11/400.
-pub const COUNT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+pub(crate) const COUNT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
 
 /// A panel section header. Spawn its action buttons as further children.
 pub fn section_header(

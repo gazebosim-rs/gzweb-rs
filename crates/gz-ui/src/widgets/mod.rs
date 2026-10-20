@@ -9,26 +9,26 @@
 //! spacing and radii from the tokens. Every control gets an AccessKit name:
 //! its tooltip or its label (spec §10).
 
-pub mod activity;
-pub mod badge;
-pub mod button;
-pub mod chip;
-pub mod cursor;
-pub mod focus;
+pub(crate) mod activity;
+pub(crate) mod badge;
+pub(crate) mod button;
+pub(crate) mod chip;
+pub(crate) mod cursor;
+pub(crate) mod focus;
 pub mod layout;
-pub mod menu;
-pub mod number_field;
-pub mod section;
-pub mod segmented;
-pub mod select;
+pub(crate) mod menu;
+pub(crate) mod number_field;
+pub(crate) mod section;
+pub(crate) mod segmented;
+pub(crate) mod select;
 pub mod shortcut;
-pub mod slider;
-pub mod splitter;
+pub(crate) mod slider;
+pub(crate) mod splitter;
 pub mod text;
-pub mod text_field;
-pub mod toggle;
-pub mod tooltip;
-pub mod tree_row;
+pub(crate) mod text_field;
+pub(crate) mod toggle;
+pub(crate) mod tooltip;
+pub(crate) mod tree_row;
 
 use accesskit::Role;
 use bevy::a11y::AccessibilityNode;
@@ -36,7 +36,6 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
-pub use crate::theme::visuals::ForceState;
 use crate::theme::visuals::Visuals;
 use crate::theme::{radius, Fill, FocusRing};
 
@@ -48,14 +47,16 @@ pub use button::{
 };
 pub use chip::{filter_chip, status_chip, StatusKind};
 pub use menu::{
-    menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator, MenuItemProps,
+    menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator, Menu,
+    MenuItemProps, MenuSide,
 };
-pub use number_field::{number_field, AxisTag, NumberCommit, NumberField, Unit};
+pub use number_field::expr::{eval, ExprError, MAX_DEPTH};
+pub use number_field::{number_field, AxisTag, Invalid, NumberCommit, NumberField, Unit};
 pub use section::section_header;
 pub use segmented::{button_group, segmented_group};
-pub use select::{select, SelectChanged};
+pub use select::{select, Select, SelectChanged};
 pub use slider::{slider_row, SliderProps};
-pub use splitter::{splitter, Splitter};
+pub use splitter::{splitter, SplitAxis, Splitter};
 pub use text_field::{text_field, TextSubmit};
 pub use toggle::toggle_row;
 pub use tooltip::{tooltip_card, Tooltip, TooltipSide};

@@ -13,14 +13,14 @@ use crate::widgets::layout::column;
 
 /// A collapsed panel's bar button: shows that side again.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExpandButton(pub Side);
+pub(crate) struct ExpandButton(pub Side);
 
 /// The bar a collapsed side panel leaves between the activity bar (or the
 /// window's right edge) and the view (DECISIONS.md D-50):
 /// [`COLLAPSED_BAR_W`](layout::COLLAPSED_BAR_W) wide, `surface`, a 1px
 /// `line` border facing the view, and at the top a small button with a
 /// chevron pointing at the view that brings the panel back.
-pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
+pub(crate) fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
     use crate::assets::icons::{content_icon, IconId};
     use crate::theme::visuals::Visuals;
     use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
@@ -82,10 +82,10 @@ pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
 }
 
 /// The collapsed bar's button: 20 px, inside the 24 px bar.
-pub const EXPAND_BUTTON: f32 = SPACE[9];
+pub(crate) const EXPAND_BUTTON: f32 = SPACE[9];
 
 /// A collapsed bar's button expands its side.
-pub fn on_expand(
+pub(crate) fn on_expand(
     ev: On<bevy::ui_widgets::Activate>,
     buttons: Query<&ExpandButton>,
     mut out: MessageWriter<UiCommand>,

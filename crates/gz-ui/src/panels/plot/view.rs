@@ -1,8 +1,8 @@
 //! The Plot panel's body.
 
 use crate::panels::{PanelAction, PanelView};
-use crate::shell::activity_bar::ActivityBadges;
 use crate::shell::connection::Phase;
+use crate::shell::ActivityBadges;
 use crate::widgets::BadgeKind;
 
 /// Fields come from Topics or the inspector: the empty state offers Add

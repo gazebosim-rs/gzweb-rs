@@ -23,13 +23,13 @@ use crate::theme::{radius, ColorRole, Fill, Ink, Opacity, Theme, TypeStyle, SPAC
 use crate::GzUiSystems;
 
 /// The caret column's width (§5.7: "caret 14 wide").
-pub const CARET_W: f32 = 14.0;
+pub(crate) const CARET_W: f32 = 14.0;
 /// The caret icon (chevron) size, the size of the spec's mono 10 caret.
-pub const CARET_ICON: f32 = 10.0;
+pub(crate) const CARET_ICON: f32 = 10.0;
 /// The visibility toggle's box (§5.7: 16×16).
-pub const EYE_BOX: f32 = 16.0;
+pub(crate) const EYE_BOX: f32 = 16.0;
 /// The eye icon inside it.
-pub const EYE_ICON: f32 = 14.0;
+pub(crate) const EYE_ICON: f32 = 14.0;
 
 /// Entity kinds and their badge letters (§5.7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +87,7 @@ pub(crate) enum TreeRowPart {
 }
 
 /// The type of a row's name: Geist 13, 500 when selected.
-pub fn name_type(selected: bool) -> TypeStyle {
+pub(crate) fn name_type(selected: bool) -> TypeStyle {
     TypeStyle {
         weight: if selected { 500 } else { 400 },
         ..TypeStyle::BODY

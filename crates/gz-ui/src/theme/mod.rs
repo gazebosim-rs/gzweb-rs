@@ -3,13 +3,13 @@
 //! The token tables (`Palette`, [`ColorRole`], [`Sizes`], [`SPACE`],
 //! [`radius`], [`border`], [`motion`], [`elevation`] and the [`TypeStyle`]
 //! constants) are generated from `design/ui/tokens.json` by `build.rs`
-//! (DECISIONS.md D-21), so they can't drift from the spec ([`tokens`]).
+//! (DECISIONS.md D-21), so they can't drift from the spec (`tokens.rs`).
 //! This module holds the [`Theme`] resource and the OS preference; the
-//! role components and their resolution are in [`roles`], the widgets'
+//! role components and their resolution are in `roles.rs`, the widgets'
 //! state looks in [`visuals`].
 //!
 //! Rules for widget code (spec §4.1):
-//! - Never write a colour literal; only [`tokens`] may (and it doesn't
+//! - Never write a colour literal; only `tokens.rs` may (and it doesn't
 //!   either: the colours are generated). A test greps the crate.
 //! - Widgets store roles ([`Fill`], [`Stroke`], [`Ink`], [`Ring`],
 //!   [`Shadow`]), never a resolved `Color`. `apply_theme_system` resolves
@@ -17,8 +17,8 @@
 //! - Sizes come from [`Theme::s`], spacing from [`SPACE`], radii from
 //!   [`radius`].
 
-pub mod roles;
-pub mod tokens;
+pub(crate) mod roles;
+pub(crate) mod tokens;
 pub mod visuals;
 
 use bevy::prelude::*;
@@ -64,7 +64,7 @@ pub struct Theme {
     /// (DECISIONS.md D-23).
     pub scale: f32,
     /// The OS prefers dark: what [`ThemeMode::System`] resolves to. Kept
-    /// in step with [`OsTheme`] by `follow_os_theme`.
+    /// in step with the OS preference (`OsTheme`) by `follow_os_theme`.
     pub os_dark: bool,
 }
 
@@ -125,7 +125,7 @@ impl Theme {
 /// desktop and the `prefers-color-scheme` media query in the browser, and
 /// reports changes of either.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OsTheme {
+pub(crate) struct OsTheme {
     pub dark: bool,
 }
 

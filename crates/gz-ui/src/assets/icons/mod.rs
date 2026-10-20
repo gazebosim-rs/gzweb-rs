@@ -1,11 +1,11 @@
 //! The icon set (`design/ui/icons.json`), rasterized by `build.rs` into one
-//! atlas at 1× and one at 2× (every size in [`layout::SIZES`]), embedded
+//! atlas at 1× and one at 2× (every size in `layout::SIZES`), embedded
 //! with `include_bytes!`. Glyphs are white on transparent; an icon's [`Ink`]
 //! role tints it at runtime. Icons are `ImageNode`s with a `TextureAtlas`;
 //! the 2× atlas is used when the UI renders at more than one physical
 //! pixel per logical pixel.
 
-pub mod layout;
+pub(crate) mod layout;
 
 use bevy::prelude::*;
 use bevy::ui::ComputedUiRenderTargetInfo;
@@ -17,9 +17,9 @@ use crate::theme::{ColorRole, Ink};
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
 /// The 1× atlas PNG.
-pub const ATLAS_1X: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icons@1x.png"));
+pub(crate) const ATLAS_1X: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icons@1x.png"));
 /// The 2× atlas PNG.
-pub const ATLAS_2X: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icons@2x.png"));
+pub(crate) const ATLAS_2X: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/icons@2x.png"));
 
 impl IconId {
     /// Position in `icons.json` (and the atlas).
@@ -30,13 +30,13 @@ impl IconId {
 
 /// The atlas images and layouts, 1× and 2×.
 #[derive(Resource, Clone, Debug)]
-pub struct IconAtlas {
+pub(crate) struct IconAtlas {
     pub images: [Handle<Image>; 2],
     pub layouts: [Handle<TextureAtlasLayout>; 2],
 }
 
 /// The atlas layout for `scale` (1 or 2): `size_index * N + icon`.
-pub fn atlas_layout(scale: u32) -> TextureAtlasLayout {
+pub(crate) fn atlas_layout(scale: u32) -> TextureAtlasLayout {
     let count = IconId::ALL.len() as u32;
     let (w, h) = layout::atlas_size(scale, count);
     let mut atlas = TextureAtlasLayout::new_empty(UVec2::new(w, h));
@@ -73,7 +73,7 @@ pub struct Icon {
 }
 
 /// The rasterized size index used for an icon drawn at `px`.
-pub fn size_index(px: f32) -> usize {
+pub(crate) fn size_index(px: f32) -> usize {
     layout::SIZES
         .iter()
         .position(|&s| s as f32 >= px - 0.01)
@@ -81,7 +81,7 @@ pub fn size_index(px: f32) -> usize {
 }
 
 /// Which atlas (0 = 1×, 1 = 2×) suits a physical-per-logical `scale`.
-pub fn atlas_for_scale(scale: f32) -> usize {
+pub(crate) fn atlas_for_scale(scale: f32) -> usize {
     usize::from(scale > 1.01)
 }
 

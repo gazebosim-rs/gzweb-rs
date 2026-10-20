@@ -17,7 +17,8 @@ use gz_bevy::view::input::{InputMap, Platform, Scope};
 use gz_core::transport::Status;
 
 use super::{frames, ui_app_with};
-use crate::shell::{Region, ShellLayout, ShellPlugin};
+use crate::shell::regions::Region;
+use crate::shell::{ShellLayout, ShellPlugin};
 use crate::theme::ThemeMode;
 
 /// GzCommands and reconnects sent so far.

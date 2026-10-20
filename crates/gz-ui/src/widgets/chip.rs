@@ -20,11 +20,11 @@ use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 
 /// Chip label type: Geist 12/500.
-pub const CHIP_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 500);
+pub(crate) const CHIP_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 500);
 /// Filter chip height and radius.
-pub const FILTER_CHIP_H: f32 = 24.0;
+pub(crate) const FILTER_CHIP_H: f32 = 24.0;
 /// Status chip height and radius.
-pub const STATUS_CHIP_H: f32 = 22.0;
+pub(crate) const STATUS_CHIP_H: f32 = 22.0;
 const STATUS_CHIP_RADIUS: f32 = 5.0;
 
 /// A toggleable filter chip (a checkbox: `Checked` = selected).
@@ -126,7 +126,7 @@ pub fn status_chip(
 }
 
 /// A plain coloured dot (status dots, 7 px).
-pub fn dot(size: f32, role: ColorRole) -> impl Bundle {
+pub(crate) fn dot(size: f32, role: ColorRole) -> impl Bundle {
     (
         Node {
             width: px(size),

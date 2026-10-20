@@ -12,14 +12,14 @@
 /// 12 px status-bar glyphs, the 13 px warning chip icon, 14 px play/pause
 /// and eye, 24 px empty states), each rasterized at its own size rather
 /// than scaled from a neighbour (DECISIONS.md D-24).
-pub const SIZES: [u32; 9] = [10, 12, 13, 14, 15, 17, 18, 20, 24];
+pub(crate) const SIZES: [u32; 9] = [10, 12, 13, 14, 15, 17, 18, 20, 24];
 /// Icons per atlas row.
-pub const COLUMNS: u32 = 16;
+pub(crate) const COLUMNS: u32 = 16;
 /// Transparent gutter around each cell, in atlas pixels.
-pub const PAD: u32 = 2;
+pub(crate) const PAD: u32 = 2;
 
 /// Side of a `size`-px icon at `scale` (1 or 2), in atlas pixels.
-pub const fn side(size: u32, scale: u32) -> u32 {
+pub(crate) const fn side(size: u32, scale: u32) -> u32 {
     size * scale
 }
 
@@ -29,7 +29,7 @@ fn rows(count: u32) -> u32 {
 
 /// Top-left corner and side of icon `icon` (of `count`) at size index
 /// `size_index` in the `scale` atlas.
-pub fn cell(scale: u32, size_index: usize, icon: u32, count: u32) -> (u32, u32, u32) {
+pub(crate) fn cell(scale: u32, size_index: usize, icon: u32, count: u32) -> (u32, u32, u32) {
     let block_y: u32 = SIZES[..size_index]
         .iter()
         .map(|&s| rows(count) * (side(s, scale) + 2 * PAD))
@@ -42,7 +42,7 @@ pub fn cell(scale: u32, size_index: usize, icon: u32, count: u32) -> (u32, u32, 
 }
 
 /// Width and height of the `scale` atlas holding `count` icons.
-pub fn atlas_size(scale: u32, count: u32) -> (u32, u32) {
+pub(crate) fn atlas_size(scale: u32, count: u32) -> (u32, u32) {
     let widest = side(SIZES[SIZES.len() - 1], scale) + 2 * PAD;
     let height = SIZES
         .iter()

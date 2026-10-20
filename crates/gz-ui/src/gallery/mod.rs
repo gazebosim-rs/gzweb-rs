@@ -31,9 +31,9 @@ use crate::widgets::{
 };
 use crate::GzUiSystems;
 
-pub use components::FocusExample;
-pub use states::STATES;
-pub use tokens::{hex, TokenHex, TOKENS};
+// The shell's tests check colours by their hex value too.
+#[cfg(test)]
+pub(crate) use tokens::hex;
 
 /// The gallery's window size (the spec's screenshot size, §12).
 pub const SIZE: (u32, u32) = (1440, 900);
@@ -77,14 +77,14 @@ impl GalleryCapture {
 
 /// Text that names the current theme ("Light" / "Dark").
 #[derive(Component, Clone, Copy, Debug)]
-pub enum ThemeText {
+pub(crate) enum ThemeText {
     Name,
     Caption,
 }
 
 /// The button that switches theme.
 #[derive(Component, Clone, Copy, Debug)]
-pub struct ThemeToggle;
+pub(crate) struct ThemeToggle;
 
 const COLUMN_W: f32 = 674.0;
 const TITLE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 22.0, 600);
@@ -146,7 +146,7 @@ pub(crate) fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Opti
 
 /// The gallery's root node.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct GalleryRoot;
+pub(crate) struct GalleryRoot;
 
 fn header(c: &mut ChildSpawnerCommands) {
     c.spawn(Node {

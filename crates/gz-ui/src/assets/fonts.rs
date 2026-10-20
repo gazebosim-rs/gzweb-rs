@@ -12,7 +12,7 @@ use bevy::text::{FontHinting, FontWeight, LetterSpacing};
 use crate::theme::{ColorRole, FontFamily, Ink, TypeStyle};
 
 /// The embedded files, as `tokens.json` `font` lists them.
-pub const FONT_FILES: [(&str, &[u8]); 5] = [
+pub(crate) const FONT_FILES: [(&str, &[u8]); 5] = [
     (
         "Geist-Regular.ttf",
         include_bytes!("../../assets/fonts/Geist-Regular.ttf"),
@@ -37,7 +37,7 @@ pub const FONT_FILES: [(&str, &[u8]); 5] = [
 
 /// Handles to the embedded fonts.
 #[derive(Resource, Clone, Debug)]
-pub struct UiFonts {
+pub(crate) struct UiFonts {
     pub ui_regular: Handle<Font>,
     pub ui_medium: Handle<Font>,
     pub ui_semibold: Handle<Font>,
@@ -63,7 +63,7 @@ impl UiFonts {
     /// The file for `family` at `weight`, and the weight it really has.
     /// Geist Mono has no 600: the `micro` badge style uses Medium
     /// (DECISIONS.md D-25).
-    pub fn face(&self, family: FontFamily, weight: u16) -> (Handle<Font>, u16) {
+    pub(crate) fn face(&self, family: FontFamily, weight: u16) -> (Handle<Font>, u16) {
         match (family, weight) {
             (FontFamily::Ui, 0..=449) => (self.ui_regular.clone(), 400),
             (FontFamily::Ui, 450..=549) => (self.ui_medium.clone(), 500),
@@ -74,7 +74,7 @@ impl UiFonts {
     }
 
     /// The `TextFont` for a style.
-    pub fn text_font(&self, style: &TypeStyle) -> TextFont {
+    pub(crate) fn text_font(&self, style: &TypeStyle) -> TextFont {
         let (handle, weight) = self.face(style.font, style.weight);
         TextFont::from_font_size(style.size)
             .with_font(handle)

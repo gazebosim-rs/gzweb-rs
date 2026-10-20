@@ -11,10 +11,10 @@ use crate::widgets::rounded;
 
 /// A token's hex value, shown next to its swatch.
 #[derive(Component, Clone, Copy, Debug)]
-pub struct TokenHex(pub ColorRole);
+pub(crate) struct TokenHex(pub(crate) ColorRole);
 
 /// `#RRGGBB` (or `#RRGGBBAA`) for a colour.
-pub fn hex(color: Color) -> String {
+pub(crate) fn hex(color: Color) -> String {
     let c = color.to_srgba();
     let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     if c.alpha < 1.0 {
@@ -31,7 +31,7 @@ pub fn hex(color: Color) -> String {
 }
 
 /// The board's token list: role, name, what it's for.
-pub const TOKENS: [(ColorRole, &str, &str); 20] = [
+pub(crate) const TOKENS: [(ColorRole, &str, &str); 20] = [
     (ColorRole::Bg, "bg", "app ground, activity bar"),
     (
         ColorRole::Surface,

@@ -28,20 +28,20 @@ use crate::theme::{
 use crate::GzUiSystems;
 
 /// Hover time before a tooltip shows, in seconds (`tooltip_delay_ms`).
-pub const DELAY_SECS: f64 = 0.5;
+pub(crate) const DELAY_SECS: f64 = 0.5;
 /// A tooltip that closed this recently lets the next one show at once.
-pub const CHAIN_SECS: f64 = 0.3;
+pub(crate) const CHAIN_SECS: f64 = 0.3;
 /// Gap between trigger and tooltip, and the arrow's size.
-pub const GAP: f32 = 8.0;
+pub(crate) const GAP: f32 = 8.0;
 /// Corner radius (§5.15).
-pub const RADIUS: f32 = 7.0;
+pub(crate) const RADIUS: f32 = 7.0;
 
 /// Tooltip title type: Geist 12/600.
-pub const TITLE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 600);
+pub(crate) const TITLE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 600);
 /// Tooltip second line: Geist 12/400 (`small`).
-pub const DETAIL_TYPE: TypeStyle = TypeStyle::SMALL;
+pub(crate) const DETAIL_TYPE: TypeStyle = TypeStyle::SMALL;
 /// A shortcut on the second line: Geist Mono 12/400 (`mono_small`).
-pub const KEYS_TYPE: TypeStyle = TypeStyle::MONO_SMALL;
+pub(crate) const KEYS_TYPE: TypeStyle = TypeStyle::MONO_SMALL;
 
 /// Where a tooltip goes relative to its trigger.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -226,14 +226,14 @@ pub(crate) struct TooltipArrow;
 
 /// What [`TooltipTimer::step`] asks for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TooltipStep {
+pub(crate) struct TooltipStep {
     pub hide: Option<Entity>,
     pub show: Option<Entity>,
 }
 
 /// The hover timing state machine (pure; `tooltip_system` drives it).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct TooltipTimer {
+pub(crate) struct TooltipTimer {
     /// The trigger under the pointer and since when.
     pub target: Option<(Entity, f64)>,
     /// The trigger whose tooltip is showing.
@@ -247,7 +247,7 @@ pub struct TooltipTimer {
 impl TooltipTimer {
     /// Advances to `now` with `hovered` (a pressed trigger counts as
     /// pressed).
-    pub fn step(&mut self, hovered: Option<Entity>, pressed: bool, now: f64) -> TooltipStep {
+    pub(crate) fn step(&mut self, hovered: Option<Entity>, pressed: bool, now: f64) -> TooltipStep {
         let mut out = TooltipStep::default();
         if self.target.map(|t| t.0) != hovered {
             if let Some(shown) = self.shown.take() {
@@ -312,7 +312,7 @@ pub(crate) fn tooltip_system(
 }
 
 /// Spawns `tip`'s floating card on `trigger`.
-pub fn show_tooltip(commands: &mut Commands, theme: &Theme, trigger: Entity, tip: &Tooltip) {
+pub(crate) fn show_tooltip(commands: &mut Commands, theme: &Theme, trigger: Entity, tip: &Tooltip) {
     commands.entity(trigger).with_child((
         tooltip_card(theme, tip, true),
         tip.side.popover(),
@@ -368,7 +368,7 @@ fn logical_rect(node: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
 
 /// How far `rect` must move to lie inside `bounds` (to its top-left when
 /// it's larger).
-pub fn shift_inside(rect: Rect, bounds: Rect) -> Vec2 {
+pub(crate) fn shift_inside(rect: Rect, bounds: Rect) -> Vec2 {
     let axis = |min: f32, max: f32, lo: f32, hi: f32| {
         if min < lo || max - min > hi - lo {
             lo - min

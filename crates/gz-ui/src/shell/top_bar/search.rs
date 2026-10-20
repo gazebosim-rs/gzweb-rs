@@ -18,12 +18,12 @@ use crate::widgets::{clickable, rounded};
 
 /// The search / command bar trigger (opens ⌘K in M8).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SearchTrigger;
+pub(crate) struct SearchTrigger;
 
 /// Search placeholder and key cap text: mono 11 for the cap.
-pub const KEYCAP_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+pub(crate) const KEYCAP_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
 /// Width of the search trigger (§3.1).
-pub const SEARCH_W: f32 = 220.0;
+pub(crate) const SEARCH_W: f32 = 220.0;
 
 pub(super) fn search_trigger(theme: &Theme, map: &InputMap) -> impl Bundle {
     let cap = shortcut_label(map, "ui.command_palette").unwrap_or_default();

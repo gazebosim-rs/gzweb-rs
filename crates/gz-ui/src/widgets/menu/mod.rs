@@ -38,7 +38,7 @@ use crate::theme::{
 };
 
 /// Shortcut text type: mono 11/400.
-pub const SHORTCUT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+pub(crate) const SHORTCUT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
 
 /// Where a menu opens relative to its trigger.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -298,7 +298,7 @@ fn shortcut_text(keys: String) -> impl Bundle {
 pub(crate) struct MenuCheckBox;
 
 /// The 14 px box of a checkbox item (§5.14).
-pub const CHECK_BOX: f32 = 14.0;
+pub(crate) const CHECK_BOX: f32 = 14.0;
 
 /// A checkbox item: a 14 px box (radius 4; off: 1.5px `text_3` border, on:
 /// `accent` fill), label and shortcut. Activating it toggles `Checked`.
@@ -420,10 +420,10 @@ pub(crate) fn menu_checkbox_system(
 }
 
 /// The unchecked box's border width.
-pub const CHECK_BORDER: f32 = 1.5;
+pub(crate) const CHECK_BORDER: f32 = 1.5;
 
 /// The item after `from` (wrapping) whose label starts with `c`.
-pub fn type_to_search(labels: &[&str], from: Option<usize>, c: char) -> Option<usize> {
+pub(crate) fn type_to_search(labels: &[&str], from: Option<usize>, c: char) -> Option<usize> {
     let n = labels.len();
     let lower: String = c.to_lowercase().collect();
     let start = from.map_or(0, |i| i + 1);

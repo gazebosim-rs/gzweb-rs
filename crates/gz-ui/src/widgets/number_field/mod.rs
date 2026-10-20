@@ -25,7 +25,7 @@ use bevy::text::{EditableText, LineBreak, TextEdit};
 use bevy::ui_widgets::{SelectAllOnFocus, TextInput};
 use bevy::window::SystemCursorIcon;
 
-pub mod expr;
+pub(crate) mod expr;
 
 use super::{a11y, rounded};
 use crate::assets::fonts::{text, Type};
@@ -38,9 +38,9 @@ use expr::ExprError;
 pub use expr::Unit;
 
 /// Value type: mono 12/500.
-pub const VALUE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 500);
+pub(crate) const VALUE_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 500);
 /// Tag type: mono 12/600 (Geist Mono's heaviest file is 500; D-25).
-pub const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 600);
+pub(crate) const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 12.0, 600);
 
 /// A field's leading tag.
 #[derive(Clone, Debug, PartialEq, Eq)]

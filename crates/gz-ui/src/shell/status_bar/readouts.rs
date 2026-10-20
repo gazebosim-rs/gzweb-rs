@@ -20,19 +20,19 @@ use crate::widgets::text::set_text;
 
 /// The text of an item.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StatusText(pub StatusItem);
+pub(crate) struct StatusText(pub StatusItem);
 
 /// The connection dot.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct ConnectionDot;
+pub(crate) struct ConnectionDot;
 
 /// The ground point under the cursor, Gazebo x, y (§3.6 item 9).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct CursorReadout(pub Option<[f32; 2]>);
+pub(crate) struct CursorReadout(pub Option<[f32; 2]>);
 
 /// What the status bar's texts are read from.
 #[derive(SystemParam)]
-pub struct StatusSources<'w> {
+pub(crate) struct StatusSources<'w> {
     status: Option<Res<'w, GzStatus>>,
     tool: Res<'w, Tool>,
     cursor: Res<'w, CursorReadout>,
@@ -41,7 +41,7 @@ pub struct StatusSources<'w> {
 
 impl StatusSources<'_> {
     /// The text `item` shows now, if it has one.
-    pub fn text(&self, item: StatusItem) -> Option<String> {
+    pub(crate) fn text(&self, item: StatusItem) -> Option<String> {
         let status = self.status.as_deref();
         let sim = status.and_then(|s| s.sim);
         Some(match item {
@@ -63,7 +63,7 @@ impl StatusSources<'_> {
 }
 
 /// Every item's text.
-pub fn status_texts(sources: StatusSources, mut texts: Query<(&StatusText, &mut Text)>) {
+pub(crate) fn status_texts(sources: StatusSources, mut texts: Query<(&StatusText, &mut Text)>) {
     for (which, mut t) in &mut texts {
         if let Some(want) = sources.text(which.0) {
             set_text(&mut t, &want);
@@ -72,7 +72,7 @@ pub fn status_texts(sources: StatusSources, mut texts: Query<(&StatusText, &mut 
 }
 
 /// The connection dot (§3.6 item 1).
-pub fn connection_dot(
+pub(crate) fn connection_dot(
     status: Option<Res<GzStatus>>,
     phase: Res<CurrentPhase>,
     mut dots: Query<&mut Fill, With<ConnectionDot>>,
@@ -84,7 +84,7 @@ pub fn connection_dot(
 }
 
 /// The ground point under the cursor while it is over the view.
-pub fn cursor_readout(
+pub(crate) fn cursor_readout(
     windows: Query<&Window, With<PrimaryWindow>>,
     routing: Res<ViewRouting>,
     cameras: Query<(&Camera, Option<&ViewOrigin>, &Projection, &Transform), With<MainCamera>>,

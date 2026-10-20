@@ -1,8 +1,8 @@
 //! The Console panel's body.
 
 use crate::panels::PanelView;
-use crate::shell::activity_bar::ActivityBadges;
 use crate::shell::connection::Phase;
+use crate::shell::ActivityBadges;
 use crate::widgets::BadgeKind;
 
 /// No messages yet.

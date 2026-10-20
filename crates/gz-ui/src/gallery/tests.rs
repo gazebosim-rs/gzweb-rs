@@ -11,10 +11,9 @@ use bevy::window::PrimaryWindow;
 use crate::test_support::{frames, ui_app};
 use bevy::input_focus::{FocusCause, InputFocus};
 
-use crate::gallery::{
-    hex, FocusExample, GalleryCapture, GalleryPlugin, GalleryRoot, ThemeText, ThemeToggle,
-    TokenHex, TOKENS,
-};
+use super::components::FocusExample;
+use super::tokens::{hex, TokenHex, TOKENS};
+use super::{GalleryCapture, GalleryPlugin, GalleryRoot, ThemeText, ThemeToggle};
 use crate::theme::{Fill, Ink, Opacity, Ring, Shadow, Stroke, Theme, ThemeMode};
 use crate::widgets::number_field::NumberInput;
 

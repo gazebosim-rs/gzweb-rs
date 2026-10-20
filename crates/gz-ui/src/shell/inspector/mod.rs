@@ -20,7 +20,7 @@ use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 
 /// The inspector header's buttons.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InspectorHeader {
+pub(crate) enum InspectorHeader {
     /// Keeps showing this entity when the selection changes (M5).
     Pin,
     Collapse,
@@ -28,7 +28,7 @@ pub enum InspectorHeader {
 
 /// The inspector region, with the body of the inspector for the
 /// selection.
-pub fn inspector(
+pub(crate) fn inspector(
     theme: &Theme,
     layout: &ShellLayout,
     map: &InputMap,
@@ -81,7 +81,7 @@ pub fn inspector(
 
 /// The header's buttons: Pin toggles, the chevron collapses the
 /// inspector.
-pub fn on_header_button(
+pub(crate) fn on_header_button(
     ev: On<Activate>,
     buttons: Query<(&InspectorHeader, Has<Active>)>,
     mut out: MessageWriter<UiCommand>,

@@ -1,7 +1,7 @@
 use super::view::{badge, state};
 use crate::panels::PanelView;
-use crate::shell::activity_bar::ActivityBadges;
 use crate::shell::connection::Phase;
+use crate::shell::ActivityBadges;
 use crate::widgets::BadgeKind;
 
 #[test]

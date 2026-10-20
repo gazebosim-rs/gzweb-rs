@@ -26,7 +26,7 @@ use crate::widgets::{bar_button, button_group, Tooltip};
 
 /// Iterations per Step click (§3.1 "1 step ▾").
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StepsPerClick(pub u32);
+pub(crate) struct StepsPerClick(pub u32);
 
 impl Default for StepsPerClick {
     fn default() -> Self {
@@ -36,7 +36,7 @@ impl Default for StepsPerClick {
 
 /// The transport's buttons.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Transport {
+pub(crate) enum Transport {
     Reset,
     PlayPause,
     Step,
@@ -44,27 +44,27 @@ pub enum Transport {
 
 /// A "Steps per click" menu item.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StepsOption(pub u32);
+pub(crate) struct StepsOption(pub u32);
 
 /// The steps trigger.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct StepsTrigger;
+pub(crate) struct StepsTrigger;
 
 /// The sim clock's text.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SimClock;
+pub(crate) struct SimClock;
 
 /// The RTF readout's text.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct RtfText;
+pub(crate) struct RtfText;
 
 /// The RTF status dot.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct RtfDot;
+pub(crate) struct RtfDot;
 
 /// The RTF readout's hover target (its tooltip has the stats).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct RtfReadout;
+pub(crate) struct RtfReadout;
 
 /// The steps-per-click menu: "1 step ▾" with 1, 10 and 100.
 fn steps_menu(theme: &Theme) -> impl Bundle {
@@ -89,7 +89,7 @@ fn steps_menu(theme: &Theme) -> impl Bundle {
 }
 
 /// "1 step", "10 steps".
-pub fn steps_label(n: u32) -> String {
+pub(crate) fn steps_label(n: u32) -> String {
     if n == 1 {
         "1 step".into()
     } else {
@@ -163,7 +163,7 @@ pub(super) fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
 
 /// Transport clicks → sim commands. Play/Pause follows the stats; Step
 /// steps a paused sim by the steps per click.
-pub fn on_transport(
+pub(crate) fn on_transport(
     ev: On<Activate>,
     buttons: Query<(&Transport, Has<InteractionDisabled>)>,
     status: Option<Res<GzStatus>>,
@@ -199,7 +199,7 @@ pub fn on_transport(
 }
 
 /// A steps-per-click item sets the count.
-pub fn on_steps_option(
+pub(crate) fn on_steps_option(
     ev: On<Activate>,
     options: Query<&StepsOption>,
     mut steps: ResMut<StepsPerClick>,
@@ -211,7 +211,7 @@ pub fn on_steps_option(
 
 /// The transport is disabled without a live world, and Step while the
 /// sim runs.
-pub fn transport_enabled(
+pub(crate) fn transport_enabled(
     status: Option<Res<GzStatus>>,
     phase: Res<CurrentPhase>,
     buttons: Query<(Entity, &Transport, Has<InteractionDisabled>)>,
@@ -237,7 +237,7 @@ pub fn transport_enabled(
 
 /// Play/Pause shows `pause` (and says Pause) while running, `play` while
 /// paused.
-pub fn play_pause_look(
+pub(crate) fn play_pause_look(
     status: Option<Res<GzStatus>>,
     mut buttons: Query<(&Transport, &mut Tooltip, &Children)>,
     mut icons: Query<&mut Icon>,
@@ -266,7 +266,10 @@ pub fn play_pause_look(
 }
 
 /// The sim clock (§3.1).
-pub fn clock_text(status: Option<Res<GzStatus>>, mut clocks: Query<&mut Text, With<SimClock>>) {
+pub(crate) fn clock_text(
+    status: Option<Res<GzStatus>>,
+    mut clocks: Query<&mut Text, With<SimClock>>,
+) {
     let sim = status.and_then(|s| s.sim);
     let want = format::clock(sim.map_or(0.0, |s| s.sim_time));
     for mut t in &mut clocks {
@@ -276,7 +279,7 @@ pub fn clock_text(status: Option<Res<GzStatus>>, mut clocks: Query<&mut Text, Wi
 
 /// The RTF readout (§3.1): its text, its dot's colour and its tooltip's
 /// stats.
-pub fn rtf_readout(
+pub(crate) fn rtf_readout(
     status: Option<Res<GzStatus>>,
     mut texts: Query<&mut Text, With<RtfText>>,
     mut dots: Query<&mut Fill, With<RtfDot>>,
@@ -299,7 +302,7 @@ pub fn rtf_readout(
 }
 
 /// The steps trigger says the steps per click ("10 steps").
-pub fn steps_label_text(
+pub(crate) fn steps_label_text(
     steps: Res<StepsPerClick>,
     triggers: Query<&Children, With<StepsTrigger>>,
     mut labels: Query<&mut Text>,
