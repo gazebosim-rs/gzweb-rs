@@ -51,6 +51,7 @@ Selecting the mode:
 gz-bevy   (exists)  scene, render, connection, assets — no UI, no input
   └─ gz-bevy::view  (new module) camera controller + input map shared by minimal and full
 gz-ui     (new crate) GzUiPlugin: theme, icons, fonts, widgets, shell, panels, tools, state
+                    (its layout and conventions: §7)
 gzweb     (exists)  binary/wasm entry: picks the mode and adds the plugins
 ```
 
@@ -193,6 +194,9 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   stats, so part of M4's transport and status work is done; the World menu, Snap popover,
   search and workspace button open nothing yet. Settings switches the theme until ⌘K (D-35).
   `--ui full --screenshot`, `--window WxH`, `--capture-at-ms`. See WORKLOG.
+- Restructured after M2 (DECISIONS.md D-51): feature folders, panels and inspectors as
+  plugins in registries, shared layout primitives, a small public API and tests next to
+  their modules. Later milestones follow §7.
 
 ### M3 — Viewport controls
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,
@@ -276,3 +280,76 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 | Input conflicts between UI, camera and teleop | One input map with scopes, focus tracking, and the CI conflict test |
 | Editing services missing from the websocket server | Verify each service against Harmonic in M4/M5 before building UI on it. Fall back to read-only with a disabled control and tooltip |
 | Large scope | Milestones are independent PRs. `minimal` mode is usable and shippable after M0 |
+
+---
+
+## 7. Code layout and conventions (`gz-ui`)
+
+Agreed after M2 (DECISIONS.md D-51), after Rerun (`re_ui` plus a crate per view, registered
+as a view class), Zed (`ui` plus a crate per panel behind a `Panel` trait) and Bevy's
+`bevy_feathers`. Later milestones follow it; change it here, not by example.
+
+```
+crates/gz-ui/src/
+  lib.rs            GzUiPlugin, GzUiSystems, prelude
+  spec_checks.rs    the spec's own checks (tokens, contrast, no colour literals, fonts, icons)
+  test_support/     the headless harness (ui_app) and the full UI on it (shell_app, helpers)
+  theme/            Theme and the OS preference; tokens.rs (generated tables), roles.rs,
+                    visuals/ (state looks)
+  assets/           fonts, icons/ (atlas), brand (logo)
+  widgets/          the §5 components, flat under widgets::; layout.rs (row, column,
+                    flex_spacer, overlay, clip_box, separator, group/group_header/
+                    property_row, set_shown), text.rs (set_text), shortcut.rs; a folder per
+                    widget with more than one file or its own tests (menu/, number_field/,
+                    slider/, splitter/, toggle/, tooltip/, tree_row/)
+  shell/            mod.rs: ShellPlugin and ShellSystems only; commands, layout (ShellLayout),
+                    regions, routing, splitter, collapsed_bar, connection, format, inspector
+                    (the frame); top_bar/ activity_bar/ sidebar/ status_bar/ viewport/
+  panels/           PanelRegistry, PanelDef, RegisterPanel, PanelsPlugin; one folder per
+                    panel: scene/ assets/ topics/ plot/ sensors/ teleop/ console/
+  inspectors/       InspectorRegistry, InspectorDef; one folder per kind: world/ (M5 adds
+                    model, link, joint, light, sensor, multi)
+  gallery/          the --ui gallery page, one file per section
+```
+
+Rules:
+
+- **Feature folders.** A shell region, panel, inspector or widget with more than one file or
+  tests of its own is a folder: `mod.rs` (the plugin or builder and the module's docs), a
+  file per job (`view.rs`, `systems.rs`, …) and `tests.rs`. One-file widgets stay files.
+- **Panels and inspectors are plugins in a registry.** A panel's plugin calls
+  `app.register_panel(PanelDef::new(id, title, icon, order).binding(..).view(..).count(..)
+  .badge(..))`; its body per connection phase, header count, badge and later its systems live
+  in its folder. The activity bar, the sidebar's slots and the panel shortcuts only host what
+  `PanelRegistry` holds; nothing outside `panels/<name>/` matches on one panel. `Panel` is
+  the id `ShellLayout` stores (adding a panel adds a variant). Inspectors work the same way
+  (`register_inspector`, `InspectorKind`); `shell::inspector` is the frame.
+- **Crates later.** A panel moves to its own crate when it grows heavy or compile times ask
+  for it; it depends only on `gz-ui`'s public API (prelude, widgets, theme, registries), so
+  the move is mechanical.
+- **Widgets.** Spawn functions return a bundle; names are the spec's §5 names, and
+  `bevy_feathers`' where the spec has none (`flex_spacer`, `group`, `group_header`). A widget
+  with optional parts takes a `XxxProps` struct with `new()` and builder methods
+  (`TextButtonProps`, `SliderProps`, `MenuItemProps`); slots for children take a closure
+  (`menu`) or are the caller's children (`section_header`). Behaviour markers are components
+  named after the widget. Don't add a props struct where two plain parameters say it.
+- **Build from primitives.** The shell, panels and gallery use `widgets::layout`
+  (`Node { padding, ..row(SPACE[4]) }`) rather than spelling out a flexbox, `set_text` /
+  `set_shown` for readouts (they write, and mark changed, only on a change), and
+  `Tooltip::new(..).binding(map, id)` for shortcuts. Sizes from `Theme::s`, spacing from
+  `SPACE`, colours only through roles: no colour literals (`spec_checks` greps; only
+  `theme/tokens.rs` is exempt).
+- **Systems.** A system updates one thing; one that needs more than seven parameters reads
+  through a `#[derive(SystemParam)]` struct (`StatusSources`, `SlotSources`, `PointerOver`)
+  instead of a `clippy::too_many_arguments` allow. Each region's `build()` (each panel's
+  plugin) registers its own systems: the layout chain in `ShellSystems::Layout`, everything
+  that shows state in `ShellSystems::Readouts`.
+- **Visibility.** `pub` is the crate's API only: the plugins and sets, `UiCommand`,
+  `ShellLayout`/`Panel`/`Slot`/`Side`/`Tool`, the registries, the theme, the fonts' and
+  icons' builders, and the widgets (constructors, props, markers, events). Everything else
+  is `pub(crate)` or private, and module trees are `pub(crate)` with re-exports. The crate
+  warns on `unreachable_pub`, so check.sh rejects a stray `pub`.
+- **Tests** sit next to their module (`#[cfg(test)] mod tests;`, a sibling `tests.rs`);
+  shared harness code goes in `test_support`. A region's and widget's tests import it through
+  `super::`.
+- **Docs.** Every module opens with what it is and its spec §; decisions cite DECISIONS.md.

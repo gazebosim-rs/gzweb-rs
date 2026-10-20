@@ -809,3 +809,32 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   ws://localhost:9004; `target/shots/`): `full-light`, `full-dark`
   (1440×900) and `w1024-light`, `w1024-dark` (1024×700, both panels
   collapsed to their bars, Scene still selected).
+
+## 2026-10-19: gz-ui restructure (D-51)
+
+- **Layout**: feature folders (`theme/`, `assets/`, `widgets/`, `shell/`
+  with a folder per region, `panels/`, `inspectors/`, `gallery/`) instead
+  of one file per region with a 646-line `shell/mod.rs`, a 1072-line
+  gallery and central test files. Conventions in UI_PLAN §7, spec 0.4.1
+  §9.1.
+- **Panels and inspectors** are plugins registering a `PanelDef` /
+  `InspectorDef`; the sidebar's per-panel `match`, `Panel`'s
+  title/icon/binding and the per-panel badge rules moved into
+  `panels/<name>/`, the World inspector into `inspectors/world/`.
+- **Shared**: `widgets::layout` (row, column, flex_spacer, separator,
+  overlay, clip_box, group, property_row, set_shown), `widgets::text::
+  set_text`, `Tooltip::binding`, `TextButtonProps` / `SliderProps` /
+  `MenuItemProps`, one `side_panel` region. The top bar's and status bar's
+  god systems split per readout (`StatusSources`, `SlotSources`,
+  `PointerOver` SystemParams); clippy allows down from 25 to 10.
+- **API**: 345 public items in 42 modules before, 252 in 21 after
+  (rustdoc pages); `unreachable_pub` warns.
+- **Tests**: next to their modules; 83 before, 98 after (registry, each
+  panel, the World inspector, layout primitives, set_text/set_shown change
+  detection; the connection test split in two).
+- **Behaviour**: unchanged. Captures from the M2 binary and after (full UI
+  light/dark at 1440×900 and 1024×700 against `allmesh` on
+  ws://localhost:9004 with the world paused, the connect card against a
+  closed port, the gallery light/dark) are pixel-identical outside the 3D
+  view (temporal AA differs run to run) and the fps readout. Readout texts
+  and the overlays' nodes are now marked changed only when they change.
