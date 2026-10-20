@@ -875,3 +875,28 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   `regions.rs`, `commands.rs`, `status_bar/`, `viewport/`,
   `widgets/focus.rs`) and each test beside its module; the banner's
   change gate is a `SystemParam` rather than an eighth argument.
+
+## 2026-10-20: PR #30 review fixes (D-57)
+
+- **Registry**: open `PanelId`/`InspectorId`; `PanelDef` carries the
+  activity bar group and order and `default_open`; badges and counts are
+  the panels' own systems writing the shell's `PanelStatus`;
+  `ActivityBadges`, `Panel::ALL`, the count and badge function types are
+  gone. A count changes the header's text in place (a test checks the
+  body entity survives it); `register_panel` is the only way in, warns on
+  a duplicate id or binding and panics after the shell spawned;
+  `ShellPlugins` = `ShellPlugin` + `PanelPlugins` + `InspectorPlugins`.
+- **Nits**: `widgets::format` (was `shell::format`), module trees
+  `pub(crate)` with re-exports, the last `too_many_arguments` allows
+  replaced by `SystemParam`s, the checkbox item's icon, the gallery on
+  `row`/`column` and `BAR_SEPARATOR_H`, the cursor readout chained before
+  the status texts, docs in build.rs and theme/tokens.rs, tests for
+  panel actions and `PanelDef::content`.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI
+  light/dark at 1440×900 and 1024×700, the connect card against a closed
+  port, the gallery light/dark): against M2 with the #29 fixes, identical
+  outside the 3D view (temporal AA differs run to run) but for the fps
+  digits; against the M2 binary before the fixes, the differences are the
+  search placeholder ("Search…", D-56) and the step size ("— · 1 ms" in
+  the status bar, "1 ms" in the inspector, D-56). The gallery is
+  pixel-identical to both.
