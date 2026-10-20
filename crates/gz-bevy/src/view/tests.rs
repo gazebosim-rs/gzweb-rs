@@ -3,13 +3,14 @@
 //! by synthetic input messages.
 
 use super::controls::{ViewerControls, TAP_SECS, WHEEL_PX_PER_STEP, ZOOM_DRAG_PX};
+use super::input::Scope;
 use super::*;
 use crate::camera::perspective as gz_perspective;
 use crate::connection::{GzCommand, GzStatus, SimStats};
 use crate::render::GzGrid;
 use crate::UiMode;
 use bevy::camera::visibility::SetViewVisibility;
-use bevy::camera::RenderTargetInfo;
+use bevy::camera::{RenderTarget, RenderTargetInfo};
 use bevy::ecs::system::RunSystemOnce;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel};
@@ -162,8 +163,10 @@ impl Rig {
         self.app.world_mut().resource_mut::<GzStatus>().sim = paused.map(|paused| SimStats {
             paused,
             sim_time: 0.0,
+            real_time: 0.0,
             real_time_factor: 1.0,
             iterations: 0,
+            step_size: 0.001,
         });
     }
 
@@ -1170,6 +1173,13 @@ fn ctrl_right_steps_a_paused_sim() {
     // N no longer steps.
     r.chord(&[KeyCode::KeyN]);
     assert!(r.sent().is_empty());
+    // The steps-per-click setting applies to the key too, as to the Step
+    // button whose tooltip shows it.
+    r.app
+        .world_mut()
+        .insert_resource(crate::connection::StepsPerClick(10));
+    r.chord(&[KeyCode::ControlLeft, KeyCode::ArrowRight]);
+    assert_eq!(r.sent(), [GzCommand::Step(10)]);
 }
 
 #[test]
@@ -1733,4 +1743,166 @@ fn a_native_two_finger_scroll_pans() {
         .write_message(bevy::input::gestures::PanGesture(Vec2::new(10.0, 0.0)));
     r.app.update();
     assert_near2(r.screen(pivot), at + Vec2::new(40.0, -20.0), 1e-2);
+}
+
+fn routing(r: &mut Rig, pointer: bool, keys: bool) {
+    *r.app.world_mut().resource_mut::<controls::ViewRouting>() =
+        controls::ViewRouting { pointer, keys };
+}
+
+#[test]
+fn camera_input_over_the_ui_is_ignored_and_over_the_view_applied() {
+    let mut r = rig(default_view());
+    // Over a UI node: a press starts no drag and the wheel does nothing.
+    routing(&mut r, false, true);
+    r.drag(MouseButton::Left, CENTER, &[CENTER + Vec2::new(40.0, 0.0)]);
+    r.wheel(2.0, MouseScrollUnit::Line);
+    r.frames(2);
+    assert_eq!(r.transform(), default_view());
+    // Over the view: applied.
+    routing(&mut r, true, true);
+    r.drag(MouseButton::Left, CENTER, &[CENTER + Vec2::new(40.0, 0.0)]);
+    let orbited = r.transform();
+    assert_ne!(orbited, default_view());
+    // A drag that starts in the view keeps going over the UI.
+    r.cursor(Some(CENTER));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    routing(&mut r, false, true);
+    r.cursor(Some(CENTER + Vec2::new(0.0, 30.0)));
+    r.app.update();
+    assert_ne!(r.transform(), orbited);
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+}
+
+#[test]
+fn viewport_keys_need_the_view_but_global_keys_do_not() {
+    let mut r = rig(default_view());
+    routing(&mut r, false, false);
+    r.chord(&[KeyCode::KeyG]);
+    assert!(!r.app.world().resource::<GzGrid>().visible);
+    // Fly keys are the view's too.
+    r.key(KeyCode::KeyW, ButtonState::Pressed);
+    r.frames(3);
+    r.key(KeyCode::KeyW, ButtonState::Released);
+    r.app.update();
+    assert_eq!(r.transform(), default_view());
+    // Space (global) still plays.
+    r.set_sim(Some(true));
+    r.chord(&[KeyCode::Space]);
+    assert_eq!(r.sent(), [GzCommand::Play]);
+    routing(&mut r, false, true);
+    r.chord(&[KeyCode::KeyG]);
+    assert!(r.app.world().resource::<GzGrid>().visible);
+    let all = [Scope::Global, Scope::Viewport, Scope::Minimal];
+    let off = controls::ViewRouting {
+        pointer: true,
+        keys: false,
+    };
+    assert_eq!(*off.key_scopes(&all), [Scope::Global]);
+    // With the keys: every active scope, once each.
+    let on = controls::ViewRouting { keys: true, ..off };
+    assert_eq!(
+        *on.key_scopes(&[Scope::Global, Scope::Viewport, Scope::Global]),
+        [Scope::Global, Scope::Viewport]
+    );
+}
+
+#[test]
+fn a_placed_view_renders_to_its_texture_and_offsets_the_cursor() {
+    let mut r = rig(default_view());
+    r.app.insert_resource(Assets::<Image>::default());
+    r.app
+        .world_mut()
+        .entity_mut(r.camera)
+        .insert(crate::camera::MainCamera);
+    // No rect (minimal mode): nothing changes.
+    r.app.update();
+    assert!(matches!(
+        r.app.world().get::<RenderTarget>(r.camera),
+        Some(RenderTarget::Window(_))
+    ));
+    for (scale, rect) in [
+        (1.0, Rect::new(100.0, 50.0, 500.0, 350.0)),
+        (1.5, Rect::new(100.0, 50.0, 500.0, 350.0)),
+        (2.0, Rect::new(56.0, 44.0, 840.0, 872.0)),
+    ] {
+        r.app.insert_resource(ViewPlacement {
+            rect: Some(rect),
+            scale,
+            image: r.app.world().resource::<ViewPlacement>().image.clone(),
+        });
+        r.app.update();
+        let placement = r.app.world().resource::<ViewPlacement>().clone();
+        let size = (rect.size() * scale).round().as_uvec2();
+        assert_eq!(placement.physical_size(), Some(size));
+        let handle = placement.image.clone().expect("a texture");
+        let image = r
+            .app
+            .world()
+            .resource::<Assets<Image>>()
+            .get(&handle)
+            .unwrap();
+        assert_eq!(image.size(), size, "{scale}");
+        assert!(image.data.is_none() && !image.copy_on_resize);
+        let world = r.app.world();
+        let target = world.get::<RenderTarget>(r.camera).unwrap();
+        assert!(
+            matches!(target, RenderTarget::Image(t) if t.handle == handle && t.scale_factor == scale)
+        );
+        let camera = world.get::<Camera>(r.camera).unwrap();
+        assert_eq!(camera.logical_viewport_size(), Some(rect.size()), "{scale}");
+        let origin = world.get::<ViewOrigin>(r.camera).copied();
+        assert_eq!(origin, Some(ViewOrigin(rect.min)));
+        assert_eq!(view_rect(camera, origin.as_ref()), Some(rect));
+        let Projection::Perspective(p) = world.get::<Projection>(r.camera).unwrap() else {
+            panic!("perspective")
+        };
+        assert!((p.aspect_ratio - rect.width() / rect.height()).abs() < 1e-5);
+    }
+    // The cursor over the view's centre is the view centre: the home view
+    // looks at the gz origin.
+    let rect = Rect::new(100.0, 50.0, 500.0, 350.0);
+    r.app.insert_resource(ViewPlacement {
+        rect: Some(rect),
+        scale: 1.0,
+        image: r.app.world().resource::<ViewPlacement>().image.clone(),
+    });
+    r.app.update();
+    let world = r.app.world();
+    let cam = world.get::<Camera>(r.camera).unwrap().clone();
+    let origin = world.get::<ViewOrigin>(r.camera).copied();
+    let projection = r.projection();
+    let t = r.transform();
+    let centre = rect.center();
+    let at = cursor_on_ground(&cam, origin.as_ref(), &projection, &t, centre).unwrap();
+    assert!(at.length() < 1e-3, "{at}");
+    assert_eq!(
+        cursor_on_ground(&cam, origin.as_ref(), &projection, &t, Vec2::ZERO),
+        None
+    );
+    let sky = Transform::from_xyz(0.0, 1.0, 0.0).looking_at(Vec3::new(0.0, 5.0, -1.0), Vec3::Y);
+    assert_eq!(
+        cursor_on_ground(&cam, origin.as_ref(), &projection, &sky, centre),
+        None
+    );
+    let ray = Ray3d::new(Vec3::new(0.0, 2.0, 0.0), Dir3::NEG_Y);
+    assert_eq!(ground_point(ray, 10.0), Some(Vec3::ZERO));
+    assert_eq!(ground_point(ray, 1.0), None);
+    // A drag in the view orbits about the point under the cursor there.
+    r.drag(MouseButton::Left, centre, &[centre + Vec2::new(30.0, 0.0)]);
+    assert!(r.pivot().length() < 1e-3, "{}", r.pivot());
+    // A respawned camera (new environment) is placed again.
+    r.app
+        .world_mut()
+        .entity_mut(r.camera)
+        .insert(RenderTarget::default())
+        .remove::<ViewOrigin>();
+    r.app.update();
+    assert!(r.app.world().get::<ViewOrigin>(r.camera).is_some());
+    assert!(matches!(
+        r.app.world().get::<RenderTarget>(r.camera),
+        Some(RenderTarget::Image(_))
+    ));
 }

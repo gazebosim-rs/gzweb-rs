@@ -7,14 +7,22 @@ use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 
-use super::{a11y, spacer};
-use crate::fonts::text;
+use super::a11y;
+use super::layout::flex_spacer;
+use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 
 /// The count's type: mono 11/400.
-pub const COUNT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+pub(crate) const COUNT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
+
+/// A section header's count text (empty without a count), for whoever
+/// keeps it up to date in place.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct SectionCount;
 
 /// A panel section header. Spawn its action buttons as further children.
+/// The count's text is always there ([`SectionCount`]; empty for `None`),
+/// so it can change without rebuilding the header.
 pub fn section_header(
     theme: &Theme,
     title: impl Into<String>,
@@ -40,10 +48,11 @@ pub fn section_header(
         a11y(Role::Heading, label),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             p.spawn(text(TypeStyle::SECTION, ColorRole::Text2, title));
-            if let Some(count) = count {
-                p.spawn(text(COUNT_TYPE, ColorRole::Text3, count));
-            }
-            p.spawn(spacer());
+            p.spawn((
+                text(COUNT_TYPE, ColorRole::Text3, count.unwrap_or_default()),
+                SectionCount,
+            ));
+            p.spawn(flex_spacer());
         })),
     )
 }

@@ -10,21 +10,32 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Button as Headless;
 
 use super::badge::{badge_node, badge_parts};
-use super::{clickable, rounded, BadgeKind, Tooltip};
-use crate::icons::{content_icon, IconId};
+use super::{clickable, rounded, BadgeKind, Tooltip, TooltipSide};
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::Visuals;
 use crate::theme::{border, radius, ColorRole, Theme, SPACE};
-use crate::visuals::Visuals;
 
-/// An activity bar button, with an optional `(kind, count)` badge.
+/// The activity button's state table: transparent with a `text_3` icon at
+/// rest, `hover` / `text` on hover, `accent_soft` / `accent_text` with an
+/// inset 1px `accent_ring` when active. The top bar's buttons share it
+/// (DECISIONS.md D-48). Needs a 1px border on the node for the ring.
+pub(crate) fn activity_visuals() -> Visuals {
+    let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text3).stroked(ColorRole::Clear);
+    visuals.active_stroke = Some(ColorRole::AccentRing);
+    visuals
+}
+
+/// An activity bar button, with an optional `(kind, count)` badge. Its
+/// tooltip opens to the right: the bar is at the window's left edge (§5.15).
 pub fn activity_button(
     theme: &Theme,
     id: IconId,
     tip: Tooltip,
     badge_count: Option<(BadgeKind, u32)>,
 ) -> impl Bundle {
+    let tip = tip.side(TooltipSide::Right);
     let s = &theme.s;
-    let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text3).stroked(ColorRole::Clear);
-    visuals.active_stroke = Some(ColorRole::AccentRing);
+    let visuals = activity_visuals();
     let icon_px = s.activity_icon;
     let theme = theme.clone();
     (

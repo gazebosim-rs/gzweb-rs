@@ -7,22 +7,23 @@
 //!   the scene has settled, and exits (needs a GPU).
 //! - `--quality low|high|ultra` picks the rendering level (`render::Quality`).
 //! - `--ui full|minimal` picks the UI mode (`gz_bevy::UiMode`, default
-//!   full); the capture modes run without UI. `--no-hud` hides the status
-//!   text. `--ui gallery` shows the widget gallery instead of a world (no
-//!   connection); `--screenshot` captures it at 1440x900.
+//!   full); `--snapshot` runs without UI, and so does `--screenshot` unless
+//!   `--ui` is given (the full UI is then captured at 1440x900).
+//!   `--no-hud` hides minimal mode's status text. `--ui gallery` shows the
+//!   widget gallery instead of a world (no connection); `--screenshot`
+//!   captures it at 1440x900.
+//! - `--window WxH` sizes the window (and a capture).
+//! - `--capture-at-ms MS` takes the screenshot at that time even if the
+//!   scene hasn't settled (the connect card, the disconnected banner).
 //! - `--theme system|light|dark` picks the UI theme (default system).
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
 //! plus `ui=full|minimal|gallery` (default minimal), `theme=` and `hud=0`.
 
 use bevy::prelude::*;
-use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode};
+use bevy::window::WindowResizeConstraints;
+use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode, DEFAULT_PORT};
 use gz_ui::theme::ThemeMode;
-
-const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
-    Some(p) => p,
-    None => "9002",
-};
 
 #[derive(Debug)]
 struct Args {
@@ -34,15 +35,18 @@ struct Args {
     /// `--ui gallery`: the widget gallery instead of a world.
     gallery: bool,
     theme: ThemeMode,
+    /// `--window WxH`.
+    window: Option<(u32, u32)>,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
                      [--ui full|minimal|gallery] [--theme system|light|dark] [--no-hud] \
-                     [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] [--timeout-ms MS]\n\
+                     [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
+                     [--timeout-ms MS] [--capture-at-ms MS]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
-                     --snapshot/--screenshot otherwise run with no UI.\n\
+                     --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
                      Reconnecting is on by default, except in --snapshot/--screenshot mode.";
 
 /// The browser's UI mode from `?ui=`: minimal unless it says otherwise
@@ -50,6 +54,27 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn web_ui(value: Option<&str>) -> Result<UiMode, String> {
     value.map_or(Ok(UiMode::Minimal), str::parse)
+}
+
+/// The browser's server (spec §7.10): `?url=`, else `?port=` on the page's
+/// host, else, in the full UI only, the last server the page connected to
+/// (`last`; only the full UI's connect card can change the server, so
+/// minimal mode never inherits one it can't change back), else the page's
+/// host on the default port. A page served over https gets `wss://`
+/// (`secure`): browsers block `ws://` from a secure page.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn web_url(
+    url: Option<String>,
+    port: Option<String>,
+    last: Option<String>,
+    host: &str,
+    secure: bool,
+    ui: UiMode,
+) -> String {
+    let scheme = if secure { "wss" } else { "ws" };
+    url.or_else(|| port.map(|p| format!("{scheme}://{host}:{p}")))
+        .or_else(|| last.filter(|_| ui == UiMode::Full))
+        .unwrap_or_else(|| format!("{scheme}://{host}:{DEFAULT_PORT}"))
 }
 
 /// `--ui gallery` / `?ui=gallery`.
@@ -66,13 +91,29 @@ fn web_hud(value: Option<&str>) -> bool {
     )
 }
 
+/// `--window WxH`.
+fn parse_window(v: &str) -> Result<(u32, u32), String> {
+    let bad = || format!("--window: '{v}' is not WIDTHxHEIGHT");
+    let (w, h) = v.split_once(['x', 'X']).ok_or_else(bad)?;
+    let w: u32 = w.trim().parse().map_err(|_| bad())?;
+    let h: u32 = h.trim().parse().map_err(|_| bad())?;
+    if w == 0 || h == 0 {
+        return Err(bad());
+    }
+    Ok((w, h))
+}
+
+/// The full UI's window: 1440x900 (the boards' size), at least 1024x640
+/// (spec §2.1).
+const FULL_WINDOW: (u32, u32) = (1440, 900);
+
 /// What kind of window the app runs with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// A resizable window (or the page's canvas) with controls and HUD.
     Interactive,
-    /// A fixed 1280x720 window at scale 1, like the gzweb parity harness,
-    /// with no HUD, for `--screenshot`.
+    /// A fixed window at scale 1 for `--screenshot`: 1280x720 like the
+    /// gzweb parity harness with no UI, 1440x900 with the full UI.
     Capture,
     /// No window or GPU (`--snapshot`).
     Headless,
@@ -104,6 +145,9 @@ fn parse_args(
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
     let mut ui = UiMode::Full;
+    let mut ui_given = false;
+    let mut window = None;
+    let mut capture_at_ms = None;
     let mut gallery = false;
     let mut theme = ThemeMode::System;
     let mut hud = true;
@@ -130,6 +174,7 @@ fn parse_args(
             "--ui" => {
                 let v = value()?;
                 gallery = is_gallery(Some(&v));
+                ui_given = true;
                 if !gallery {
                     ui = v.parse().map_err(|_| {
                         format!("--ui: unknown UI mode '{v}' (full, minimal or gallery)")
@@ -138,6 +183,8 @@ fn parse_args(
             }
             "--theme" => theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?,
             "--no-hud" => hud = false,
+            "--window" => window = Some(parse_window(&value()?)?),
+            "--capture-at-ms" => capture_at_ms = Some(millis()?),
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
             "--screenshot" => {
                 let path = std::path::PathBuf::from(value()?);
@@ -160,11 +207,14 @@ fn parse_args(
         return Err("--snapshot doesn't apply to --ui gallery (use --screenshot)".into());
     }
     let capture = snapshot.is_some() || screenshot.is_some();
+    // A screenshot keeps a UI mode asked for by name; a snapshot has no
+    // window to show one in.
+    let no_ui = snapshot.is_some() || (screenshot.is_some() && !ui_given);
     Ok(Command::Run(Args {
         config: GzConfig {
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
-            ui: if capture { UiMode::None } else { ui },
+            ui: if no_ui { UiMode::None } else { ui },
             hud,
             gpu: screenshot.is_some() || snapshot.is_none(),
             reconnect: reconnect.unwrap_or(!capture),
@@ -184,10 +234,12 @@ fn parse_args(
             screenshot,
             settle_secs: settle_ms / 1000.0,
             timeout_secs: timeout_ms / 1000.0,
+            capture_at_secs: capture_at_ms.map(|ms| ms / 1000.0),
         }),
         http_mirror,
         gallery,
         theme,
+        window,
     }))
 }
 
@@ -214,10 +266,25 @@ fn command() -> Result<Command, String> {
         .and_then(|w| w.location().hostname().ok())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "localhost".into());
-    let port = get("port").unwrap_or_else(|| DEFAULT_PORT.to_string());
+    let ui = web_ui(
+        get("ui")
+            .filter(|v| !is_gallery(Some(v.as_str())))
+            .as_deref(),
+    )
+    .unwrap_or_else(|e| {
+        bevy::log::warn!("?ui: {e}");
+        UiMode::Minimal
+    });
     Ok(Command::Run(Args {
         config: GzConfig {
-            url: get("url").unwrap_or_else(|| format!("ws://{host}:{port}")),
+            url: web_url(
+                get("url"),
+                get("port"),
+                gz_bevy::view::web::last_url(),
+                &host,
+                gz_bevy::view::web::page_is_secure(),
+                ui,
+            ),
             key: get("key"),
             quality: get("quality")
                 .and_then(|q| {
@@ -226,15 +293,7 @@ fn command() -> Result<Command, String> {
                         .ok()
                 })
                 .unwrap_or_default(),
-            ui: web_ui(
-                get("ui")
-                    .filter(|v| !is_gallery(Some(v.as_str())))
-                    .as_deref(),
-            )
-            .unwrap_or_else(|e| {
-                bevy::log::warn!("?ui: {e}");
-                UiMode::Minimal
-            }),
+            ui,
             hud: web_hud(get("hud").as_deref()),
             ..Default::default()
         },
@@ -245,13 +304,29 @@ fn command() -> Result<Command, String> {
         theme: get("theme")
             .and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok())
             .unwrap_or_default(),
+        window: None,
     }))
 }
 
+/// The log filter. `bevy_ecs::system::system` logs one thing: "System '…'
+/// has not run for N ticks", once the world's change tick has moved about
+/// 3.2 billion past a system's last run. In a viewer left running for
+/// hours that is every system that ran only at start-up (ours:
+/// `init_layout`, `spawn_shell`; Bevy's own) and Bevy's systems behind run
+/// conditions that stay false (hover maps without a pointer, asset events
+/// for unused types, dialogs); none of them misses a change it needs.
+const LOG_FILTER: &str = "wgpu=warn,naga=warn,bevy_ecs::system::system=error";
+
 /// Bevy's default plugins for `mode`: an interactive window (native, or the
 /// `#bevy-canvas` element on wasm), a fixed capture window, or headless
-/// snapshot mode (no window, no winit, no GPU backend).
-fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
+/// snapshot mode (no window, no winit, no GPU backend). `size` is the
+/// window's size (the capture's: 1280x720 without one); `full` is the full
+/// UI, which has a minimum size.
+fn default_plugins(
+    mode: Mode,
+    size: Option<(u32, u32)>,
+    full: bool,
+) -> bevy::app::PluginGroupBuilder {
     let window = |w: Window| {
         DefaultPlugins
             .set(WindowPlugin {
@@ -259,7 +334,7 @@ fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
                 ..default()
             })
             .set(bevy::log::LogPlugin {
-                filter: "wgpu=warn,naga=warn".into(),
+                filter: LOG_FILTER.into(),
                 ..default()
             })
     };
@@ -283,23 +358,50 @@ fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
                 })
                 .disable::<bevy::winit::WinitPlugin>()
         }
-        Mode::Capture => window(Window {
-            title: "gzweb (capture)".into(),
-            resolution: bevy::window::WindowResolution::new(1280, 720)
-                .with_scale_factor_override(1.0),
-            resizable: false,
-            ..default()
-        }),
-        Mode::Interactive => window(Window {
-            title: "gzweb".into(),
-            canvas: Some("#bevy-canvas".into()),
-            fit_canvas_to_parent: true,
-            // Off: winit would cancel every key and wheel event on the
-            // canvas. `gz_bevy::view::web` cancels only what the spec lists
-            // (context menu, Ctrl+wheel and pinch, the canvas chords).
-            prevent_default_event_handling: false,
-            ..default()
-        }),
+        Mode::Capture => {
+            let (w, h) = size.unwrap_or((1280, 720));
+            window(Window {
+                title: "gzweb (capture)".into(),
+                resolution: bevy::window::WindowResolution::new(w, h)
+                    .with_scale_factor_override(1.0),
+                resizable: false,
+                ..default()
+            })
+        }
+        Mode::Interactive => window(interactive_window(size, full)),
+    }
+}
+
+/// The interactive window: `size`, else 1440x900 for the full UI (which
+/// has a minimum size on native), else Bevy's default; in the browser, the
+/// page's `#bevy-canvas`.
+fn interactive_window(size: Option<(u32, u32)>, full: bool) -> Window {
+    Window {
+        title: "gzweb".into(),
+        resolution: size
+            .or(full.then_some(FULL_WINDOW))
+            .map_or_else(default, |(w, h)| bevy::window::WindowResolution::new(w, h)),
+        // Native only: in the browser winit turns this into the
+        // canvas's CSS min-width/min-height, and a smaller window would
+        // overflow and scroll instead of reflowing (the floor rule
+        // handles narrow windows).
+        resize_constraints: if full && cfg!(not(target_arch = "wasm32")) {
+            let (w, h) = gz_ui::shell::MIN_WINDOW;
+            WindowResizeConstraints {
+                min_width: w,
+                min_height: h,
+                ..default()
+            }
+        } else {
+            default()
+        },
+        canvas: Some("#bevy-canvas".into()),
+        fit_canvas_to_parent: true,
+        // Off: winit would cancel every key and wheel event on the
+        // canvas. `gz_bevy::view::web` cancels only what the spec lists
+        // (context menu, Ctrl+wheel and pinch, the canvas chords).
+        prevent_default_event_handling: false,
+        ..default()
     }
 }
 
@@ -323,7 +425,7 @@ fn gallery_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
             ..default()
         },
     };
-    default_plugins(mode).set(WindowPlugin {
+    default_plugins(mode, None, false).set(WindowPlugin {
         primary_window: Some(window),
         ..default()
     })
@@ -371,19 +473,25 @@ fn main() -> AppExit {
         http_mirror: args.http_mirror.clone(),
     });
 
-    app.add_plugins(default_plugins(args.mode));
+    let full = args.config.ui == UiMode::Full;
+    let size = args
+        .window
+        .or((full && args.mode == Mode::Capture).then_some(FULL_WINDOW));
+    app.add_plugins(default_plugins(args.mode, size, full));
     if args.mode == Mode::Headless {
         app.add_plugins(bevy::app::ScheduleRunnerPlugin::run_loop(
             std::time::Duration::from_secs_f64(1.0 / 120.0),
         ));
     }
 
-    let full = args.config.ui == UiMode::Full;
     app.add_plugins(GzWebPlugin {
         config: args.config,
     });
     if full {
-        app.add_plugins(gz_ui::GzUiPlugin { theme: args.theme });
+        app.add_plugins((
+            gz_ui::GzUiPlugin { theme: args.theme },
+            gz_ui::shell::ShellPlugins,
+        ));
     }
     if let Some(req) = args.snapshot {
         app.insert_resource(req)
@@ -513,17 +621,49 @@ mod tests {
         );
         assert_eq!(run_args(&["--ui", "full"], None).config.ui, UiMode::Full);
         assert!(!run_args(&["--no-hud"], None).config.hud);
-        // The capture modes force no UI.
-        for capture in [["--snapshot", "o.json"], ["--screenshot", "o.png"]] {
-            let a = run_args(&[&["--ui", "minimal"], &capture[..]].concat(), None);
-            assert_eq!(a.config.ui, UiMode::None);
-        }
+        // A snapshot forces no UI; a screenshot keeps one asked for.
+        let a = run_args(&["--ui", "minimal", "--snapshot", "o.json"], None);
+        assert_eq!(a.config.ui, UiMode::None);
+        let a = run_args(&["--ui", "full", "--screenshot", "o.png"], None);
+        assert_eq!(a.config.ui, UiMode::Full);
+        assert_eq!(a.mode, Mode::Capture);
+        let a = run_args(&["--screenshot", "o.png"], None);
+        assert_eq!(a.config.ui, UiMode::None);
         assert_eq!(
             parse(&["--ui", "none"], None).unwrap_err(),
             "--ui: unknown UI mode 'none' (full, minimal or gallery)"
         );
         assert_eq!(parse(&["--ui"], None).unwrap_err(), "--ui needs a value");
         assert!(USAGE.contains("[--ui full|minimal|gallery] [--theme system|light|dark]"));
+    }
+
+    #[test]
+    fn window_and_capture_time_flags() {
+        let a = run_args(
+            &[
+                "--window",
+                "1280x800",
+                "--screenshot",
+                "o.png",
+                "--capture-at-ms",
+                "2500",
+            ],
+            None,
+        );
+        assert_eq!(a.window, Some((1280, 800)));
+        assert_eq!(a.snapshot.unwrap().capture_at_secs, Some(2.5));
+        assert_eq!(run_args(&[], None).window, None);
+        assert_eq!(parse_window("1024X640"), Ok((1024, 640)));
+        for bad in ["1024", "0x5", "ax5", "5xb"] {
+            assert_eq!(
+                parse_window(bad).unwrap_err(),
+                format!("--window: '{bad}' is not WIDTHxHEIGHT")
+            );
+        }
+        let windowed = default_plugins(Mode::Interactive, None, true);
+        assert!(windowed.enabled::<WindowPlugin>());
+        let shot = default_plugins(Mode::Capture, Some((1024, 640)), true);
+        assert!(shot.enabled::<WindowPlugin>());
     }
 
     #[test]
@@ -565,6 +705,54 @@ mod tests {
         }
     }
 
+    /// `?url=` wins, then `?port=`, then (full UI only) the remembered
+    /// server, then the page's host; an https page uses `wss://`.
+    #[test]
+    fn web_url_precedence() {
+        let s = |v: &str| Some(v.to_string());
+        let last = || s("ws://remembered:9010");
+        let url = |u, p, l, secure, ui| web_url(u, p, l, "example.org", secure, ui);
+        let full = UiMode::Full;
+        let minimal = UiMode::Minimal;
+        assert_eq!(
+            url(s("ws://given:1"), s("9003"), last(), false, full),
+            "ws://given:1"
+        );
+        assert_eq!(
+            url(None, s("9003"), last(), false, full),
+            "ws://example.org:9003"
+        );
+        assert_eq!(url(None, None, last(), false, full), "ws://remembered:9010");
+        // Minimal mode can't change the server, so it never inherits one.
+        assert_eq!(
+            url(None, None, last(), false, minimal),
+            format!("ws://example.org:{DEFAULT_PORT}")
+        );
+        assert_eq!(
+            url(None, s("9003"), None, true, minimal),
+            "wss://example.org:9003"
+        );
+        assert_eq!(
+            url(None, None, None, true, full),
+            format!("wss://example.org:{DEFAULT_PORT}")
+        );
+    }
+
+    /// The full UI's minimum window size is a native window's: in the
+    /// browser it would become the canvas's CSS minimum.
+    #[test]
+    fn the_minimum_window_size_is_native_only() {
+        let c = interactive_window(None, true).resize_constraints;
+        let (w, h) = gz_ui::shell::MIN_WINDOW;
+        assert_eq!((c.min_width, c.min_height), (w, h));
+        let default = WindowResizeConstraints::default();
+        let c = interactive_window(None, false).resize_constraints;
+        assert_eq!(
+            (c.min_width, c.min_height),
+            (default.min_width, default.min_height)
+        );
+    }
+
     #[test]
     fn help_and_errors() {
         assert!(matches!(parse(&["--help"], None), Ok(Command::Help)));
@@ -588,13 +776,13 @@ mod tests {
 
     #[test]
     fn headless_plugins_drop_winit_and_windowed_keep_it() {
-        let headless = default_plugins(Mode::Headless);
+        let headless = default_plugins(Mode::Headless, None, false);
         assert!(headless.contains::<bevy::winit::WinitPlugin>());
         assert!(!headless.enabled::<bevy::winit::WinitPlugin>());
         assert!(headless.enabled::<bevy::render::RenderPlugin>());
 
         for mode in [Mode::Interactive, Mode::Capture] {
-            let windowed = default_plugins(mode);
+            let windowed = default_plugins(mode, None, false);
             assert!(windowed.enabled::<bevy::winit::WinitPlugin>());
             assert!(windowed.enabled::<WindowPlugin>());
         }

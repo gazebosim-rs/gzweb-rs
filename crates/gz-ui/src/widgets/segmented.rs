@@ -41,11 +41,29 @@ pub fn segmented_group(label: impl Into<String>, radio: bool, bordered: bool) ->
     )
 }
 
+/// A group of buttons with a segmented group's semantics (a radio group
+/// when `radio`) but no container: no fill, border or padding. The top
+/// bar's tool and transport groups (DECISIONS.md D-48).
+pub fn button_group(label: impl Into<String>, radio: bool) -> impl Bundle {
+    let role = if radio { Role::RadioGroup } else { Role::Group };
+    (
+        Node {
+            column_gap: px(SPACE[1]),
+            align_items: AlignItems::Center,
+            flex_shrink: 0.0,
+            ..default()
+        },
+        Fill(ColorRole::Clear),
+        a11y(role, label),
+        SegmentedGroup { radio },
+    )
+}
+
 /// Marks a segmented group; radio groups get `RadioGroup` and self-update
 /// on spawn.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 #[component(on_add = add_radio)]
-pub struct SegmentedGroup {
+pub(crate) struct SegmentedGroup {
     pub radio: bool,
 }
 

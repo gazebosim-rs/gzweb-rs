@@ -35,6 +35,9 @@ pub struct SnapshotRequest {
     pub settle_secs: f64,
     /// Give up (and write what there is, exiting non-zero) after this long.
     pub timeout_secs: f64,
+    /// Capture at this time instead of once the scene has settled (UI
+    /// states such as the connect card or the disconnected banner).
+    pub capture_at_secs: Option<f64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -56,7 +59,8 @@ pub fn snapshot_when_settled(
     mut stage: Local<Stage>,
 ) {
     let now = time.elapsed_secs_f64();
-    let timed_out = now > req.timeout_secs;
+    let forced = req.capture_at_secs.is_some_and(|at| now >= at);
+    let timed_out = now > req.timeout_secs && !forced;
     match *stage {
         Stage::Done => return,
         // The capture observer exits; this only catches a capture that
@@ -104,7 +108,13 @@ pub fn snapshot_when_settled(
         && gz_materials.settled()
         && now - inbox.last_activity_secs >= req.settle_secs;
 
-    if !settled && !timed_out {
+    // A capture time replaces the settling rule.
+    let ready = if req.capture_at_secs.is_some() {
+        forced
+    } else {
+        settled
+    };
+    if !ready && !timed_out {
         return;
     }
     *stage = Stage::Done;
@@ -514,6 +524,7 @@ mod tests {
             screenshot: None,
             settle_secs: 0.0,
             timeout_secs: 1e9,
+            capture_at_secs: None,
         });
         app.update();
         let world = app.world_mut();
@@ -612,6 +623,7 @@ mod tests {
             screenshot: None,
             settle_secs: 0.0,
             timeout_secs: 1e9,
+            capture_at_secs: None,
         });
         app.update();
         let layer = |name: &str| gz_core::scene::HeightmapLayer {
@@ -680,6 +692,7 @@ mod tests {
             screenshot: Some(png.clone()),
             settle_secs: 0.0,
             timeout_secs: 1e9,
+            capture_at_secs: None,
         });
         app.update();
         app.world_mut().resource_mut::<GzIndex>().scene = Some(
@@ -743,6 +756,7 @@ mod tests {
             screenshot: Some(out_path("never.png")),
             settle_secs: 0.0,
             timeout_secs: 0.05,
+            capture_at_secs: None,
         });
         app.update();
         app.world_mut().resource_mut::<GzIndex>().scene = Some(
@@ -766,10 +780,29 @@ mod tests {
             screenshot: Some(out_path("timeout.png")),
             settle_secs: 1e9,
             timeout_secs: 0.0,
+            capture_at_secs: None,
         });
         app.update();
         app.update();
         assert_eq!(exit_code(&mut app), Some(AppExit::from_code(2)));
+        assert!(out.exists());
+        std::fs::remove_file(out).unwrap();
+    }
+
+    #[test]
+    fn a_capture_time_shoots_an_unsettled_scene() {
+        let out = out_path("forced");
+        let mut app = app_with(SnapshotRequest {
+            out: Some(out.clone()),
+            screenshot: None,
+            settle_secs: 1e9,
+            timeout_secs: 0.0,
+            capture_at_secs: Some(0.0),
+        });
+        app.update();
+        app.update();
+        // Not a timeout: written, and a clean exit.
+        assert_eq!(exit_code(&mut app), Some(AppExit::Success));
         assert!(out.exists());
         std::fs::remove_file(out).unwrap();
     }
@@ -783,6 +816,7 @@ mod tests {
             screenshot: None,
             settle_secs: 1e9,
             timeout_secs: 0.0,
+            capture_at_secs: None,
         });
         app.update();
         app.update();

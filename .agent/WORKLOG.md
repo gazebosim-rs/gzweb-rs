@@ -682,6 +682,63 @@ Branch `feature/phase-5-m1` (from `feature/phase-5-ui`). Plan:
 - **Merged** `origin/feature/phase-5-ui` (PR #27 fixes, then main with
   Jetty) before pushing.
 
+## 2026-10-19: Phase 5 M2, the shell
+
+Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
+`.agent/UI_PLAN.md` §4 M2; spec `design/ui/DESIGN.md` §2, §3, §5.18,
+§7.10, §8, §9.3. See DESIGN.md "Shell (gz-ui, M2)"; decisions D-30 to D-38.
+
+- **`gz_ui::shell::ShellPlugin`** (gzweb adds it in `--ui full`): the
+  region tree of §2.1 with every size and colour from the theme; top bar
+  (world name, tools radio, Snap, transport wired to `GzCommand`, steps per
+  click, clock, RTF, search); activity bar (order, groups, Settings, badges,
+  click / Shift+click / collapse); sidebar with two slots, row splitter and
+  header buttons, panel shells in their empty, loading and error states;
+  World inspector shell; status bar with its narrow-width drops; splitters
+  (6 px, col-resize, `accent` while dragging, double-click resets); ⌘B and
+  ⌘⌥I from the input map; start-up collapse at 1280 / 1100 and the floor
+  rule; `ShellLayout` holds it all. The full UI's window starts at
+  1440×900, minimum 1024×640. The status text is minimal mode's only.
+- **3D view in the viewport area:** first as `Camera::viewport`, which
+  rendered the scene squeezed into the middle of the view at High (Low was
+  right): Bevy 0.20's TAA samples the whole window-sized main texture and
+  only clips its output to the viewport. Now the main camera renders into a
+  texture of the view node's physical size (`gz-bevy::view::ViewPlacement`,
+  D-31), resized with its projection and target size in the same frame
+  after UI layout; colours match the window render (ground and box means
+  within 2/255). A first resize failed wgpu validation (Bevy's target
+  textures copy on resize, which needs COPY_SRC); copy-on-resize is off.
+- **Routing** (`ViewRouting`, D-32) from the hover map; viewport keys after
+  a press in the view; minimal mode unchanged.
+- **Connection:** `GzReconnect { url }` (Retry now, Reconnect, the card's
+  Connect), `GzStatus::attempting`, `SimStats::{real_time, step_size}`.
+  Connect card on both targets (D-33), banner with the 60 s change, the
+  dimmed last frame (D-34). Browser: `?url=`, else the last server
+  (`localStorage`).
+- **Captures:** `--ui full --screenshot` (1440×900), `--window WxH`,
+  `--capture-at-ms MS` (shoots at that time instead of when settled).
+- **Tests:** 17 shell tests in gz-ui (regions at 1440×900; collapse at six
+  widths; floor order; splitters and slot split; keys; placement at scale
+  1, 1.5, 2 and `UiScale` 1.25; routing; activity, transport, readouts,
+  formatting, phases, banner with fake time, card, cursor, theme, slot
+  buttons), plus gz-bevy tests for routing, placement, the ground pick,
+  reconnecting and forced captures, and gzweb flag tests. Headless suite
+  green with `--include-ignored`.
+- **Visual check** (fast non-LTO release build, against the running
+  `allmesh` world on ws://localhost:9004; `target/shots/`): `full-light`,
+  `full-dark` (1440×900), `w1280-light`, `w1280-dark`, `w1024-light`,
+  `w1024-dark`, `card-light`, `card-dark` (bad URL), `banner-light` and
+  `banner-long-dark` (a `gz-parity replay` server killed after 5 s, shot at
+  9 s and 68 s), compared with board 01 in crops at 2×. Region edges match
+  the board to the pixel (top bar 44, activity 56, sidebar 300, inspector
+  300, status 28); activity buttons within 2 px; inspector title row within
+  3 px; the transport sits centred between the left group and the search as
+  on the board. Differences: Bevy's text is lighter (as in M1); the search
+  placeholder clips instead of ending in "…" (no ellipsis in bevy_ui); key
+  caps are spelled ("Ctrl+K", D-26); the board's content (tree, rail,
+  cube, model inspector, message chip, badges, split view) is later
+  milestones.
+
 ## 2026-10-19: PR #28 review fixes
 
 - **NumberField:** unedited text commits nothing on Enter or blur and shows
@@ -719,3 +776,127 @@ Branch `feature/phase-5-m1` (from `feature/phase-5-ui`). Plan:
   subtree. Disabled content at 40% reads lighter in dark than a browser's
   40% because Bevy blends in linear space; matching it needs the
   background, so it's left as the spec's 40% for now.
+- **Merged into M2:** the shell's sidebar/inspector and slot splitters had
+  the same `UiScale` bug and divide by it now (D-41); `UiCommand::SetTheme`
+  uses the one-argument `Theme::set_mode`; the text field's Enter handler
+  runs on the input only and its focus look only when focus moves.
+
+## 2026-10-19: M2 owner changes
+
+- **Top bar** (D-48, spec 0.4 §3.1/§5.4): the tool and transport groups
+  have no container; their buttons (Play/Pause included, no `primary`
+  fill) use the activity buttons' look on the bar's `surface` (white in
+  light). A shell test switches theme by the Settings command both ways and
+  by the OS in System mode and checks the bar and every resting button.
+- **Tooltips** (D-49, §5.15): activity buttons' open to the right; any card
+  past an edge is shifted 8 px inside after the popover picks its side, its
+  arrow on the facing edge pointing at the trigger; titles don't wrap to the
+  trigger's width any more.
+- **Collapsed panels** (D-50, §2.1/§3.2/§3.3): a 24 px bar with a
+  chevron button ("Show sidebar · Ctrl+B", "Show inspector ·
+  Ctrl+Alt+I") restores the panel at its previous width; the bars count in
+  the floor maths and the view's placement; the collapsed panel's activity
+  button stays selected (and pressed to AccessKit), and clicking it
+  expands the sidebar.
+- **"System … has not run for N ticks"**: Bevy warns once a system's last
+  run is ~3.2 billion change ticks old. Probed headlessly (system
+  `get_last_run` after start-up): the only idle systems of ours are the
+  start-up ones (`init_layout`, `spawn_shell`); the rest are Bevy's
+  start-up systems and its run-condition-gated ones (hover maps, unused
+  asset events, dialogs). Nothing misses a change it needs, so gzweb's log
+  filter sets `bevy_ecs::system::system=error` (that module logs only this).
+- **Visual check** (release build against the `allmesh` world on
+  ws://localhost:9004; `target/shots/`): `full-light`, `full-dark`
+  (1440×900) and `w1024-light`, `w1024-dark` (1024×700, both panels
+  collapsed to their bars, Scene still selected).
+
+## 2026-10-19: gz-ui restructure (D-51)
+
+- **Layout**: feature folders (`theme/`, `assets/`, `widgets/`, `shell/`
+  with a folder per region, `panels/`, `inspectors/`, `gallery/`) instead
+  of one file per region with a 646-line `shell/mod.rs`, a 1072-line
+  gallery and central test files. Conventions in UI_PLAN §7, spec 0.4.1
+  §9.1.
+- **Panels and inspectors** are plugins registering a `PanelDef` /
+  `InspectorDef`; the sidebar's per-panel `match`, `Panel`'s
+  title/icon/binding and the per-panel badge rules moved into
+  `panels/<name>/`, the World inspector into `inspectors/world/`.
+- **Shared**: `widgets::layout` (row, column, flex_spacer, separator,
+  overlay, clip_box, group, property_row, set_shown), `widgets::text::
+  set_text`, `Tooltip::binding`, `TextButtonProps` / `SliderProps` /
+  `MenuItemProps`, one `side_panel` region. The top bar's and status bar's
+  god systems split per readout (`StatusSources`, `SlotSources`,
+  `PointerOver` SystemParams); clippy allows down from 25 to 10.
+- **API**: 345 public items in 42 modules before, 252 in 21 after
+  (rustdoc pages); `unreachable_pub` warns.
+- **Tests**: next to their modules; 83 before, 98 after (registry, each
+  panel, the World inspector, layout primitives, set_text/set_shown change
+  detection; the connection test split in two).
+- **Behaviour**: unchanged. Captures from the M2 binary and after (full UI
+  light/dark at 1440×900 and 1024×700 against `allmesh` on
+  ws://localhost:9004 with the world paused, the connect card against a
+  closed port, the gallery light/dark) are pixel-identical outside the 3D
+  view (temporal AA differs run to run) and the fps readout. Readout texts
+  and the overlays' nodes are now marked changed only when they change.
+
+## 2026-10-20: PR #29 review fixes
+
+- **Focus** (D-52): a click no longer leaves keyboard focus on a button
+  (`PressFocusless` on every `clickable` widget, `PointerLed`), and focus
+  inside a hidden or fading node is released (`release_focus`, `Hiding`
+  on the fading card). Regression tests click Connect, "Retry now", the
+  sidebar chevron, the Scene activity button, Step and Play through
+  bevy_picking's press/click events and press Space and Enter; Enter in
+  the address field followed by the world loading; a Tab-focused button
+  still takes Enter. Each fails without `release_focus`. Esc in an open
+  menu only closes it (`MenuTakesEscape`).
+- **Start-up rules** on the first real window size (D-53); **steps per
+  click** in `gz-bevy`, used by ⌘→, with the current choice marked and a
+  Custom field (D-54); **addresses**: `?url` > `?port` > remembered URL
+  (full UI only) > page host, `http(s)` → `ws(s)`, `wss` on https pages,
+  the default port for a bare host, no world name or step carried to a new
+  server, the minimum window size native only (D-55).
+- **Readouts** (D-56): the step size survives a pause in `gz-bevy` (and
+  a world paused before the connection gets sim time over iterations: the
+  live capture of the paused `allmesh` world still read "—"); the
+  shell's readouts, overlays, slot rebuilds and activity states run on
+  change; `key_scopes` doesn't allocate; `apply_view_placement` runs only
+  when placed (the main camera keeps rendering with no world: inactive, it
+  panicked in Bevy's atmosphere probe in a live capture); accessible
+  names and open tooltips follow their state; a shifted tooltip drops its
+  popover; a splitter double-click needs the primary button and no drag;
+  an interrupted fade restores opacities; the search placeholder steps
+  down instead of cutting a word; the workspace shortcut comes from the
+  input map; Reset is enabled alike in the top bar and the inspector.
+- **Docs:** DESIGN.md §9.3 and UI_PLAN's M2 entry and risk table describe
+  the view texture of D-31 instead of `Camera::viewport`.
+- **Merged into the restructure** (D-51): each fix went to its feature
+  folder (`top_bar/transport.rs`, `top_bar/search.rs`, `splitter.rs`,
+  `regions.rs`, `commands.rs`, `status_bar/`, `viewport/`,
+  `widgets/focus.rs`) and each test beside its module; the banner's
+  change gate is a `SystemParam` rather than an eighth argument.
+
+## 2026-10-20: PR #30 review fixes (D-57)
+
+- **Registry**: open `PanelId`/`InspectorId`; `PanelDef` carries the
+  activity bar group and order and `default_open`; badges and counts are
+  the panels' own systems writing the shell's `PanelStatus`;
+  `ActivityBadges`, `Panel::ALL`, the count and badge function types are
+  gone. A count changes the header's text in place (a test checks the
+  body entity survives it); `register_panel` is the only way in, warns on
+  a duplicate id or binding and panics after the shell spawned;
+  `ShellPlugins` = `ShellPlugin` + `PanelPlugins` + `InspectorPlugins`.
+- **Nits**: `widgets::format` (was `shell::format`), module trees
+  `pub(crate)` with re-exports, the last `too_many_arguments` allows
+  replaced by `SystemParam`s, the checkbox item's icon, the gallery on
+  `row`/`column` and `BAR_SEPARATOR_H`, the cursor readout chained before
+  the status texts, docs in build.rs and theme/tokens.rs, tests for
+  panel actions and `PanelDef::content`.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI
+  light/dark at 1440×900 and 1024×700, the connect card against a closed
+  port, the gallery light/dark): against M2 with the #29 fixes, identical
+  outside the 3D view (temporal AA differs run to run) but for the fps
+  digits; against the M2 binary before the fixes, the differences are the
+  search placeholder ("Search…", D-56) and the step size ("— · 1 ms" in
+  the status bar, "1 ms" in the inspector, D-56). The gallery is
+  pixel-identical to both.

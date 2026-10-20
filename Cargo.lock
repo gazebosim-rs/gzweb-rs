@@ -3179,6 +3179,7 @@ dependencies = [
  "accesskit",
  "bevy",
  "gz-bevy",
+ "gz-core",
  "png",
  "resvg",
  "serde_json",

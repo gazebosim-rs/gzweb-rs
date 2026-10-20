@@ -8,6 +8,7 @@ license = "Apache-2.0"
 
 [dependencies]
 gz-bevy.workspace = true
+gz-core.workspace = true
 bevy = "0.20"
 # AccessKit node types; the same version Bevy's bevy_a11y uses.
 accesskit = { version = "0.24", default-features = false }

@@ -67,12 +67,21 @@ cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 `wss://` works; `--ca-cert ca.pem` trusts a private CA. The client reconnects
 when the server goes away (`--no-reconnect` to turn that off).
 
-`--ui full|minimal` picks the UI mode (default `full`; until the workbench
-lands, `full` behaves like `minimal`). `--ui gallery` shows the UI widget
-gallery instead of a world (no server needed; T switches light/dark, and
-`--screenshot out.png` captures it at 1440×900). `--theme system|light|dark`
-picks the UI theme. Minimal is the 3D view with the camera
-and the viewport keys of `design/ui/shortcuts.json`:
+`--ui full|minimal` picks the UI mode. `full` (the default) is the
+workbench of `design/ui/`: top bar with the tools, transport, sim clock and
+RTF; activity bar; sidebar with two panel slots; the 3D view; inspector;
+status bar. The panels are shells until later milestones. Drag a panel's
+border to resize it (double-click resets), Ctrl+B (⌘B) toggles the sidebar
+and Ctrl+Alt+I (⌘⌥I) the inspector, Shift+click on an activity button opens
+its panel in the second slot, and the Settings button switches light/dark.
+Without a world, a card in the view asks for a server address; when the
+connection drops, a banner offers Retry now. `--window WxH` sets the window
+size (at least 1024×640 for the workbench). `--ui gallery` shows the UI
+widget gallery instead of a world (no server needed; T switches
+light/dark). `--theme system|light|dark` picks the UI theme. Minimal is the
+3D view with the camera and the viewport keys of
+`design/ui/shortcuts.json` (the workbench has the same keys while the
+pointer is over the view, or the view was clicked last):
 
 | Input | Does |
 |---|---|
@@ -91,7 +100,10 @@ and the viewport keys of `design/ui/shortcuts.json`:
 
 `--no-hud` hides the status text.
 `--quality low` trades TAA, SSAO and shadow resolution for speed.
-`--screenshot out.png` saves one frame once the scene has loaded, then exits.
+`--screenshot out.png` saves one frame once the scene has loaded, then exits;
+without `--ui` it captures the bare view at 1280×720, with `--ui full` the
+workbench at 1440×900 (or `--window WxH`), and `--capture-at-ms MS` shoots at
+that time instead (for the connect card or the disconnected banner).
 
 `--snapshot out.json` runs headless, with no window or GPU. It writes a scene
 snapshot once everything has loaded, then exits.
@@ -105,7 +117,7 @@ snapshot once everything has loaded, then exits.
 
 Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
-connects to port 9002 on its own host. `?ui=full|minimal` picks the UI mode
+connects to the last server it connected to, else port 9002 on its own host. `?ui=full|minimal` picks the UI mode
 (default `minimal` in the browser; `?ui=gallery` shows the widget gallery),
 `?theme=light|dark` the theme, and `?hud=0` hides the status text, the
 page's status lines included. On the canvas the page cancels the browser's
