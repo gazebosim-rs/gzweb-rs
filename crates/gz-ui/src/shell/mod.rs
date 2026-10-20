@@ -151,8 +151,8 @@ pub struct ExpandButton(pub Side);
 /// `line` border facing the view, and at the top a small button with a
 /// chevron pointing at the view that brings the panel back.
 pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
-    use crate::icons::{content_icon, IconId};
-    use crate::visuals::Visuals;
+    use crate::assets::icons::{content_icon, IconId};
+    use crate::theme::visuals::Visuals;
     use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
     let (region_kind, border_side, icon, title, binding, tip_side) = match side {
         Side::Sidebar => (
@@ -644,3 +644,6 @@ pub fn spawn_shell(
 pub(crate) fn region(region: Region, node: Node, fill: ColorRole) -> impl Bundle {
     (region, node, Fill(fill), Stroke(ColorRole::Line))
 }
+
+#[cfg(test)]
+mod tests;

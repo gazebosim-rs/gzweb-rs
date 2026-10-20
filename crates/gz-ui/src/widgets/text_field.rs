@@ -14,7 +14,7 @@ use bevy::ui_widgets::TextInput;
 use bevy::window::SystemCursorIcon;
 
 use super::{a11y, rounded};
-use crate::fonts::Type;
+use crate::assets::fonts::Type;
 use crate::theme::{
     border, radius, CaretRoles, ColorRole, Fill, FontFamily, Ink, Ring, Stroke, Theme, TypeStyle,
     SPACE,

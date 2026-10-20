@@ -11,9 +11,9 @@ use bevy::ui_widgets::Button as Headless;
 
 use super::badge::{badge_node, badge_parts};
 use super::{clickable, rounded, BadgeKind, Tooltip, TooltipSide};
-use crate::icons::{content_icon, IconId};
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::Visuals;
 use crate::theme::{border, radius, ColorRole, Theme, SPACE};
-use crate::visuals::Visuals;
 
 /// The activity button's state table: transparent with a `text_3` icon at
 /// rest, `hover` / `text` on hover, `accent_soft` / `accent_text` with an

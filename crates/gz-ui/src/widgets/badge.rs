@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 
 use super::rounded;
-use crate::fonts::text;
+use crate::assets::fonts::text;
 use crate::theme::{radius, ColorRole, Fill, Theme, TypeStyle};
 
 /// What a badge counts.

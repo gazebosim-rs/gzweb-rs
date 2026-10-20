@@ -14,10 +14,10 @@ use bevy::ui_widgets::{checkbox_self_update, observe, Button as Headless, Checkb
 
 use super::button::Checkedness;
 use super::{clickable, rounded};
-use crate::fonts::text;
-use crate::icons::{content_icon, IconId};
+use crate::assets::fonts::text;
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
-use crate::visuals::{Content, Visuals};
 
 /// Chip label type: Geist 12/500.
 pub const CHIP_TYPE: TypeStyle = TypeStyle::new(FontFamily::Ui, 12.0, 500);

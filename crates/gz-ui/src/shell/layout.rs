@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::icons::IconId;
+use crate::assets::icons::IconId;
 use crate::theme::{Sizes, SPACE};
 
 /// The sidebar panels with an activity button (spec §3.2), in its order.

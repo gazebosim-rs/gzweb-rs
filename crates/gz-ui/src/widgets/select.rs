@@ -8,10 +8,10 @@ use bevy::ui_widgets::Activate;
 
 use super::menu::{menu, menu_item, MenuSide};
 use super::{clickable, rounded, spacer};
-use crate::fonts::text;
-use crate::icons::{content_icon, IconId};
+use crate::assets::fonts::text;
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::{Active, Content, Visuals};
 use crate::theme::{border, radius, ColorRole, Theme, TypeStyle, SPACE};
-use crate::visuals::{Active, Content, Visuals};
 
 /// A select's options and choice (on the menu root).
 #[derive(Component, Clone, Debug, PartialEq, Eq)]

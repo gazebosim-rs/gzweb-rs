@@ -13,7 +13,8 @@ pub mod activity;
 pub mod badge;
 pub mod button;
 pub mod chip;
-pub mod expr;
+pub mod cursor;
+pub mod focus;
 pub mod menu;
 pub mod number_field;
 pub mod section;
@@ -32,9 +33,9 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
+pub use crate::theme::visuals::ForceState;
+use crate::theme::visuals::Visuals;
 use crate::theme::{radius, Fill, FocusRing};
-pub use crate::visuals::ForceState;
-use crate::visuals::Visuals;
 
 pub use activity::activity_button;
 pub use badge::{badge, BadgeKind};
@@ -104,3 +105,8 @@ pub(crate) fn build(app: &mut App) {
     tooltip::build(app);
     tree_row::build(app);
 }
+
+#[cfg(test)]
+mod layout_tests;
+#[cfg(test)]
+mod tests;

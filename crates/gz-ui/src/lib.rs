@@ -21,15 +21,10 @@
 //! rules, the 3D view's placement, and the connect card and banner
 //! ([`shell::ShellPlugin`], added with this plugin in the full mode).
 
-pub mod brand;
-pub mod cursor;
-pub mod focus;
-pub mod fonts;
+pub mod assets;
 pub mod gallery;
-pub mod icons;
 pub mod shell;
 pub mod theme;
-pub mod visuals;
 pub mod widgets;
 
 use bevy::input::InputSystems;
@@ -38,7 +33,9 @@ use bevy::input_focus::InputFocusSystems;
 use bevy::prelude::*;
 use bevy::ui::UiSystems;
 
-use theme::{OsTheme, Theme, ThemeMode};
+use assets::{brand, fonts, icons};
+use theme::{visuals, OsTheme, Theme, ThemeMode};
+use widgets::{cursor, focus};
 
 /// The UI's systems, in order. Everything a widget does to its own state
 /// runs in [`GzUiSystems::Behaviour`]; looks follow in
@@ -119,4 +116,6 @@ impl Plugin for GzUiPlugin {
 }
 
 #[cfg(test)]
-mod tests;
+mod spec_checks;
+#[cfg(test)]
+mod test_support;

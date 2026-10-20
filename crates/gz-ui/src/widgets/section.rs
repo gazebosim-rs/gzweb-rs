@@ -8,7 +8,7 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 
 use super::{a11y, spacer};
-use crate::fonts::text;
+use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 
 /// The count's type: mono 11/400.

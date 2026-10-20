@@ -6,10 +6,10 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, RadioButton};
 
 use super::{clickable, rounded, Tooltip};
-use crate::fonts::text;
-use crate::icons::{content_icon, IconId};
+use crate::assets::fonts::text;
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, radius, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
-use crate::visuals::{Content, Visuals};
 
 /// The three IconButton sizes (§5.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

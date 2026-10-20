@@ -3,9 +3,9 @@
 //!
 //! - `tokens.rs` from `tokens.json`: `Palette` (light and dark), `ColorRole`,
 //!   `Sizes`, `SPACE`, radii, borders, motion, elevation and the type styles
-//!   (DECISIONS.md D-21). Included by `src/theme.rs`.
+//!   (DECISIONS.md D-21). Included by `src/theme/mod.rs`.
 //! - `icons.rs` from `icons.json`: the `IconId` enum. Included by
-//!   `src/icons/mod.rs`.
+//!   `src/assets/icons/mod.rs`.
 //! - `icons@1x.png`, `icons@2x.png`: every icon at every size in
 //!   `layout::SIZES`, white on transparent, rasterized with resvg (build
 //!   time only, so resvg stays out of the wasm payload). Embedded with
@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 #[allow(dead_code)]
-#[path = "src/icons/layout.rs"]
+#[path = "src/assets/icons/layout.rs"]
 mod layout;
 
 fn main() {
@@ -29,7 +29,7 @@ fn main() {
     let icons_path = design.join("icons.json");
     println!("cargo:rerun-if-changed={}", tokens_path.display());
     println!("cargo:rerun-if-changed={}", icons_path.display());
-    println!("cargo:rerun-if-changed=src/icons/layout.rs");
+    println!("cargo:rerun-if-changed=src/assets/icons/layout.rs");
 
     let tokens = read_json(&tokens_path);
     write(&out.join("tokens.rs"), &tokens_rs(&tokens));
