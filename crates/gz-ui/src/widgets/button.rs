@@ -177,10 +177,10 @@ fn apply_checkedness(
     }
 }
 
-/// A borderless text button (§5.2): label 13/500, optional leading icon
-/// and trailing chevron (15).
+/// A text button's props (§5.2): label 13/500, optional leading icon and
+/// trailing chevron (15).
 #[derive(Clone, Debug, Default)]
-pub struct TextButton {
+pub struct TextButtonProps {
     pub label: String,
     pub leading: Option<IconId>,
     pub chevron: bool,
@@ -192,7 +192,7 @@ pub struct TextButton {
     pub size: Option<f32>,
 }
 
-impl TextButton {
+impl TextButtonProps {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -227,7 +227,7 @@ impl TextButton {
     }
 }
 
-/// A [`TextButton`]'s box (§5.2): text button height, padding 0 9, gap 6,
+/// A text button's box (§5.2): text button height, padding 0 9, gap 6,
 /// radius 7. The world menu button has its own content in one.
 pub(crate) fn text_button_node(theme: &Theme) -> Node {
     Node {
@@ -239,21 +239,21 @@ pub(crate) fn text_button_node(theme: &Theme) -> Node {
     }
 }
 
-/// The parts of a [`TextButton`] without the headless button, so menu and
+/// The parts of a [`text_button`] without the headless button, so menu and
 /// popover triggers can reuse the look.
-pub(crate) fn text_button_parts(theme: &Theme, spec: TextButton) -> impl Bundle {
-    let style = if spec.mono {
+pub(crate) fn text_button_parts(theme: &Theme, props: TextButtonProps) -> impl Bundle {
+    let style = if props.mono {
         TypeStyle::new(FontFamily::Mono, 12.0, 500)
     } else {
         TypeStyle::new(
             FontFamily::Ui,
-            spec.size.unwrap_or(TypeStyle::LABEL.size),
+            props.size.unwrap_or(TypeStyle::LABEL.size),
             500,
         )
     };
     let dot = theme.s.status_dot;
     let icon_px = theme.s.icon_sm;
-    let label = spec.label.clone();
+    let label = props.label.clone();
     (
         text_button_node(theme),
         clickable(
@@ -262,14 +262,14 @@ pub(crate) fn text_button_parts(theme: &Theme, spec: TextButton) -> impl Bundle 
             label.clone(),
         ),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
-            if let Some(icon) = spec.leading {
+            if let Some(icon) = props.leading {
                 p.spawn(content_icon(icon, icon_px, ColorRole::Text));
             }
             p.spawn((text(style, ColorRole::Text, label), Content));
-            if let Some(role) = spec.dot {
+            if let Some(role) = props.dot {
                 p.spawn(super::chip::dot(dot, role));
             }
-            if spec.chevron {
+            if props.chevron {
                 p.spawn(content_icon(IconId::ChevronDown, icon_px, ColorRole::Text));
             }
         })),
@@ -277,8 +277,8 @@ pub(crate) fn text_button_parts(theme: &Theme, spec: TextButton) -> impl Bundle 
 }
 
 /// A borderless text button (§5.2).
-pub fn text_button(theme: &Theme, spec: TextButton) -> impl Bundle {
-    (text_button_parts(theme, spec), Headless)
+pub fn text_button(theme: &Theme, props: TextButtonProps) -> impl Bundle {
+    (text_button_parts(theme, props), Headless)
 }
 
 /// Bordered button variants (§5.3).

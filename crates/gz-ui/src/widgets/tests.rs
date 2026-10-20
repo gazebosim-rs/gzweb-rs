@@ -204,7 +204,7 @@ fn slider_steps_and_visuals() {
     assert_eq!(format_value(3.0, -1), "3");
 
     let mut app = ui_app(ThemeMode::Light);
-    let mut spec = SliderSpec::new("Linear", 0.0, 2.0, 0.5);
+    let mut spec = SliderProps::new("Linear", 0.0, 2.0, 0.5);
     spec.step = 0.1;
     let row = app
         .world_mut()
@@ -694,7 +694,7 @@ fn chips_badges_and_buttons() {
     let tb = w
         .spawn(text_button(
             &t,
-            TextButton::new("warehouse_demo")
+            TextButtonProps::new("warehouse_demo")
                 .leading(IconId::Folder)
                 .dot(ColorRole::Warn)
                 .chevron()

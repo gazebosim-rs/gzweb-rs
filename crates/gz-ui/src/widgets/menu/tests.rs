@@ -14,13 +14,14 @@ use gz_bevy::view::input::{Chord, InputMap, Mods, Platform};
 use crate::test_support::{frames, ui_app};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, ThemeMode};
-use crate::widgets::button::{text_button_parts, TextButton};
+use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::menu::{
     menu, type_to_search, CheckItem, Menu, MenuCheckBox, MenuLabel, MenuPopupOf, MenuSide,
     MenuTrigger,
 };
 use crate::widgets::select::{Select, SelectChanged, SelectLabel, SelectOption};
 use crate::widgets::shortcut::{chord_label, key_label, shortcut_label};
+use crate::widgets::MenuItemProps;
 use crate::widgets::{menu_checkbox, menu_group_label, menu_item, menu_separator, select};
 
 struct M {
@@ -77,14 +78,18 @@ fn camera_menu() -> M {
         menu(
             &t,
             MenuSide::Below,
-            text_button_parts(&t, TextButton::new("Camera").chevron()),
+            text_button_parts(&t, TextButtonProps::new("Camera").chevron()),
             move |p: &mut ChildSpawner| {
                 p.spawn(menu_group_label("View"));
-                p.spawn(menu_item(&t2, "Focus", None, Some("F".into())));
-                p.spawn(menu_item(&t2, "Home", None, None));
+                p.spawn(menu_item(&t2, MenuItemProps::new("Focus").shortcut("F")));
+                p.spawn(menu_item(&t2, MenuItemProps::new("Home")));
                 p.spawn(menu_separator());
-                p.spawn(menu_item(&t2, "Follow", None, None));
-                p.spawn(menu_checkbox(&t2, "Grid", false, Some("G".into())));
+                p.spawn(menu_item(&t2, MenuItemProps::new("Follow")));
+                p.spawn(menu_checkbox(
+                    &t2,
+                    MenuItemProps::new("Grid").shortcut("G"),
+                    false,
+                ));
             },
         ),
     )
@@ -370,9 +375,9 @@ fn disabled_items_dim_their_shortcut_icon_and_box() {
         .spawn((
             menu_item(
                 &t,
-                "Grid",
-                Some(crate::assets::icons::IconId::Home),
-                Some("G".into()),
+                MenuItemProps::new("Grid")
+                    .icon(crate::assets::icons::IconId::Home)
+                    .shortcut("G"),
             ),
             InteractionDisabled,
         ))
@@ -380,7 +385,7 @@ fn disabled_items_dim_their_shortcut_icon_and_box() {
     let check = app
         .world_mut()
         .spawn((
-            menu_checkbox(&t, "Snap", true, Some("S".into())),
+            menu_checkbox(&t, MenuItemProps::new("Snap").shortcut("S"), true),
             InteractionDisabled,
         ))
         .id();

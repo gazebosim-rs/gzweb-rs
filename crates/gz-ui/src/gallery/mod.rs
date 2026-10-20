@@ -23,7 +23,7 @@ use gz_bevy::view::input::InputMap;
 
 use crate::assets::fonts::text;
 use crate::theme::{border, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
-use crate::widgets::button::TextButton;
+use crate::widgets::button::TextButtonProps;
 use crate::widgets::layout::{column, flex_spacer, row};
 use crate::widgets::splitter::SplitAxis;
 use crate::widgets::{
@@ -216,7 +216,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
         h.spawn(flex_spacer());
         h.spawn(text(TypeStyle::SMALL, ColorRole::Text3, "T switches theme"));
         h.spawn((
-            text_button(theme, TextButton::new("Dark theme")),
+            text_button(theme, TextButtonProps::new("Dark theme")),
             ThemeToggle,
         ));
     });

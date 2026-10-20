@@ -10,10 +10,11 @@ use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::theme::visuals::{Active, ForceState};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
-use crate::widgets::button::TextButton;
+use crate::widgets::button::TextButtonProps;
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{flex_spacer, separator, Orientation};
 use crate::widgets::shortcut::shortcut_label;
+use crate::widgets::MenuItemProps;
 use crate::widgets::{
     activity_button, button, icon_button, menu_checkbox, menu_item, menu_panel, number_field,
     primary_button, rounded, segmented_group, text_button, toggle_row, tool_button, AxisTag,
@@ -40,7 +41,7 @@ pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMa
         b.spawn(logo(theme.s.logo));
         b.spawn(text_button(
             theme,
-            TextButton::new("warehouse_demo")
+            TextButtonProps::new("warehouse_demo")
                 .dot(ColorRole::Warn)
                 .chevron()
                 .large(),
@@ -214,19 +215,28 @@ pub(super) fn static_menu(r: &mut ChildSpawnerCommands, theme: &Theme, map: &Inp
         })
         .with_children(|m| {
             m.spawn((
-                menu_item(theme, "Perspective", None, keys("view.projection")),
+                menu_item(
+                    theme,
+                    MenuItemProps::new("Perspective").shortcut_opt(keys("view.projection")),
+                ),
                 Active,
             ));
             m.spawn((
-                menu_item(theme, "Follow amr_01", None, keys("view.follow")),
+                menu_item(
+                    theme,
+                    MenuItemProps::new("Follow amr_01").shortcut_opt(keys("view.follow")),
+                ),
                 ForceState(STATES[1].1),
             ));
-            m.spawn(menu_checkbox(theme, "Grid", true, keys("overlay.grid")));
             m.spawn(menu_checkbox(
                 theme,
-                "Collisions",
+                MenuItemProps::new("Grid").shortcut_opt(keys("overlay.grid")),
+                true,
+            ));
+            m.spawn(menu_checkbox(
+                theme,
+                MenuItemProps::new("Collisions").shortcut_opt(keys("overlay.collisions")),
                 false,
-                keys("overlay.collisions"),
             ));
         });
 }

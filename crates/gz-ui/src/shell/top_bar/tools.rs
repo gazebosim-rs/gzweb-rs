@@ -10,7 +10,7 @@ use gz_bevy::view::input::InputMap;
 use crate::assets::icons::IconId;
 use crate::shell::commands::UiCommand;
 use crate::theme::Theme;
-use crate::widgets::button::{text_button_parts, TextButton};
+use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::{bar_tool_button, button_group, Tooltip};
 
 /// The top-bar tools (spec §6.1). Only the selection shows until M5.
@@ -90,7 +90,7 @@ pub(super) fn spawn_tools(b: &mut ChildSpawner, t: &Theme, map: &InputMap) {
                 ));
             }
             g.spawn((
-                text_button_parts(t, TextButton::new("Snap 0.25").mono().chevron()),
+                text_button_parts(t, TextButtonProps::new("Snap 0.25").mono().chevron()),
                 Headless,
                 Tooltip::new("Snap"),
             ));

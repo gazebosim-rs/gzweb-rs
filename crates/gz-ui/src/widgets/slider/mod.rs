@@ -36,9 +36,9 @@ pub const LABEL_W: f32 = 64.0;
 /// digits change.
 pub const READOUT_MIN_W: f32 = 40.0;
 
-/// A slider's range, value and step.
+/// A slider row's props: its label, range, value and step.
 #[derive(Clone, Debug, PartialEq)]
-pub struct SliderSpec {
+pub struct SliderProps {
     pub label: String,
     pub min: f32,
     pub max: f32,
@@ -51,7 +51,7 @@ pub struct SliderSpec {
     pub label_w: f32,
 }
 
-impl SliderSpec {
+impl SliderProps {
     pub fn new(label: impl Into<String>, min: f32, max: f32, value: f32) -> Self {
         Self {
             label: label.into(),
@@ -98,9 +98,9 @@ pub(crate) enum SliderPart {
 }
 
 /// A labelled slider row.
-pub fn slider_row(theme: &Theme, spec: SliderSpec) -> impl Bundle {
-    let frac = SliderRange::new(spec.min, spec.max).thumb_position(spec.value) * 100.0;
-    let readout = format_value(spec.value, spec.precision);
+pub fn slider_row(theme: &Theme, props: SliderProps) -> impl Bundle {
+    let frac = SliderRange::new(props.min, props.max).thumb_position(props.value) * 100.0;
+    let readout = format_value(props.value, props.precision);
     (
         Node {
             height: px(theme.s.input_h),
@@ -111,9 +111,9 @@ pub fn slider_row(theme: &Theme, spec: SliderSpec) -> impl Bundle {
         },
         children![
             (
-                text(TypeStyle::SMALL, ColorRole::Text2, spec.label.clone()),
+                text(TypeStyle::SMALL, ColorRole::Text2, props.label.clone()),
                 Node {
-                    width: px(spec.label_w),
+                    width: px(props.label_w),
                     flex_shrink: 0.0,
                     ..default()
                 },
@@ -128,15 +128,15 @@ pub fn slider_row(theme: &Theme, spec: SliderSpec) -> impl Bundle {
                     track_click: TrackClick::Snap,
                     ..default()
                 },
-                SliderValue(spec.value),
-                SliderRange::new(spec.min, spec.max),
-                SliderStep(spec.step),
-                SliderPrecision(spec.precision),
-                BaseStep(spec.step),
+                SliderValue(props.value),
+                SliderRange::new(props.min, props.max),
+                SliderStep(props.step),
+                SliderPrecision(props.precision),
+                BaseStep(props.step),
                 Hovered::default(),
                 TabIndex(0),
                 FocusRing,
-                a11y(Role::Slider, spec.label.clone()),
+                a11y(Role::Slider, props.label.clone()),
                 observe(slider_self_update),
                 children![
                     // Track, inset by half a thumb so the ends line up.
@@ -192,7 +192,7 @@ pub fn slider_row(theme: &Theme, spec: SliderSpec) -> impl Bundle {
             ),
             (
                 SliderReadout {
-                    precision: spec.precision,
+                    precision: props.precision,
                 },
                 text(VALUE_TYPE, ColorRole::Text, readout),
                 Node {

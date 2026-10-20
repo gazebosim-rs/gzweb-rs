@@ -33,7 +33,9 @@ fn widget_heights_match_the_spec() {
     };
     let _ = &mut spawn;
     let header = w.spawn(section_header(&t, "Scene", Some("14".into()))).id();
-    let item = w.spawn(menu_item(&t, "Grid", None, Some("G".into()))).id();
+    let item = w
+        .spawn(menu_item(&t, MenuItemProps::new("Grid").shortcut("G")))
+        .id();
     let row = w
         .spawn(tree_row(
             &t,

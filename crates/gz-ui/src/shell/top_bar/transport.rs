@@ -16,11 +16,12 @@ use crate::assets::icons::{Icon, IconId};
 use crate::shell::connection::{CurrentPhase, Phase};
 use crate::shell::format;
 use crate::theme::{ColorRole, Fill, Theme, TypeStyle, SPACE};
-use crate::widgets::button::{text_button_parts, TextButton};
+use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{row, separator, Orientation};
 use crate::widgets::menu::{menu, menu_item, MenuSide};
 use crate::widgets::text::set_text;
+use crate::widgets::MenuItemProps;
 use crate::widgets::{bar_button, button_group, Tooltip};
 
 /// Iterations per Step click (§3.1 "1 step ▾").
@@ -72,13 +73,16 @@ fn steps_menu(theme: &Theme) -> impl Bundle {
         theme,
         MenuSide::Below,
         (
-            text_button_parts(theme, TextButton::new("1 step").mono().chevron()),
+            text_button_parts(theme, TextButtonProps::new("1 step").mono().chevron()),
             Tooltip::new("Steps per click"),
             StepsTrigger,
         ),
         move |p: &mut ChildSpawner| {
             for n in [1, 10, 100] {
-                p.spawn((menu_item(&t, steps_label(n), None, None), StepsOption(n)));
+                p.spawn((
+                    menu_item(&t, MenuItemProps::new(steps_label(n))),
+                    StepsOption(n),
+                ));
             }
         },
     )

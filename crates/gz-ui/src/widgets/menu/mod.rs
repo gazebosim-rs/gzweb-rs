@@ -225,15 +225,51 @@ fn item_parts(label: &str, role: Role) -> impl Bundle {
     )
 }
 
+/// A menu item's (or checkbox item's) label, leading icon and shortcut
+/// text.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MenuItemProps {
+    pub label: String,
+    /// A leading icon (15 `text_2`); checkbox items have their box there.
+    pub icon: Option<IconId>,
+    /// The trailing shortcut text (mono 11 `text_3`).
+    pub shortcut: Option<String>,
+}
+
+impl MenuItemProps {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            ..default()
+        }
+    }
+
+    pub fn icon(mut self, id: IconId) -> Self {
+        self.icon = Some(id);
+        self
+    }
+
+    pub fn shortcut(mut self, keys: impl Into<String>) -> Self {
+        self.shortcut = Some(keys.into());
+        self
+    }
+
+    /// The shortcut from the input map, if the binding has keys
+    /// ([`shortcut_label`](crate::widgets::shortcut::shortcut_label)).
+    pub fn shortcut_opt(mut self, keys: Option<String>) -> Self {
+        self.shortcut = keys;
+        self
+    }
+}
+
 /// A menu item: optional leading icon, label and shortcut text. Add
 /// `Active` to mark the current choice.
-pub fn menu_item(
-    theme: &Theme,
-    label: impl Into<String>,
-    leading: Option<IconId>,
-    shortcut: Option<String>,
-) -> impl Bundle {
-    let label = label.into();
+pub fn menu_item(theme: &Theme, props: MenuItemProps) -> impl Bundle {
+    let MenuItemProps {
+        label,
+        icon: leading,
+        shortcut,
+    } = props;
     let icon_px = theme.s.icon_sm;
     let text_label = label.clone();
     (
@@ -266,13 +302,10 @@ pub const CHECK_BOX: f32 = 14.0;
 
 /// A checkbox item: a 14 px box (radius 4; off: 1.5px `text_3` border, on:
 /// `accent` fill), label and shortcut. Activating it toggles `Checked`.
-pub fn menu_checkbox(
-    theme: &Theme,
-    label: impl Into<String>,
-    checked: bool,
-    shortcut: Option<String>,
-) -> impl Bundle {
-    let label = label.into();
+pub fn menu_checkbox(theme: &Theme, props: MenuItemProps, checked: bool) -> impl Bundle {
+    let MenuItemProps {
+        label, shortcut, ..
+    } = props;
     let text_label = label.clone();
     (
         item_node(theme),

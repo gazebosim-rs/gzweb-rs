@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
 use super::layout::flex_spacer;
-use super::menu::{menu, menu_item, MenuSide};
+use super::menu::{menu, menu_item, MenuItemProps, MenuSide};
 use super::{clickable, rounded};
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
@@ -85,8 +85,10 @@ pub fn select(
             trigger,
             move |p: &mut ChildSpawner| {
                 for (i, label) in items.into_iter().enumerate() {
-                    let mut e =
-                        p.spawn((menu_item(&item_theme, label, None, None), SelectOption(i)));
+                    let mut e = p.spawn((
+                        menu_item(&item_theme, MenuItemProps::new(label)),
+                        SelectOption(i),
+                    ));
                     if i == selected {
                         e.insert(Active);
                     }

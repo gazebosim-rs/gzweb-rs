@@ -10,14 +10,15 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Theme, TypeStyle, SPACE};
-use crate::widgets::button::{text_button_parts, TextButton};
+use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::layout::flex_spacer;
 use crate::widgets::menu::{menu, menu_group_label, MenuSide};
 use crate::widgets::shortcut::shortcut_label;
+use crate::widgets::MenuItemProps;
 use crate::widgets::{
     badge, filter_chip, icon_button, menu_checkbox, menu_item, menu_separator, number_field,
     section_header, select, slider_row, status_chip, tree_row, AxisTag, BadgeKind, EntityKind,
-    IconButtonSize, NumberField, SliderSpec, StatusKind, Tooltip, TreeRowSpec, Unit,
+    IconButtonSize, NumberField, SliderProps, StatusKind, Tooltip, TreeRowSpec, Unit,
 };
 
 pub(super) fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
@@ -80,7 +81,7 @@ pub(super) fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme, map: &Inp
 }
 
 pub(super) fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
-    let mut linear = SliderSpec::new("Linear", 0.0, 2.0, 0.6);
+    let mut linear = SliderProps::new("Linear", 0.0, 2.0, 0.6);
     linear.step = 0.05;
     w.spawn(slider_row(theme, linear));
     w.spawn(sample_row(SPACE[3])).with_children(|r| {
@@ -96,7 +97,7 @@ pub(super) fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &In
         r.spawn(menu(
             theme,
             MenuSide::Below,
-            text_button_parts(theme, TextButton::new("Snap 0.25").mono().chevron()),
+            text_button_parts(theme, TextButtonProps::new("Snap 0.25").mono().chevron()),
             move |p: &mut ChildSpawner| {
                 p.spawn((
                     Node {
@@ -133,20 +134,35 @@ pub(super) fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &In
             MenuSide::Below,
             text_button_parts(
                 theme,
-                TextButton::new("Camera")
+                TextButtonProps::new("Camera")
                     .leading(IconId::CameraMode)
                     .chevron(),
             ),
             move |p: &mut ChildSpawner| {
                 p.spawn(menu_group_label("View"));
-                p.spawn(menu_item(&t, "Focus", Some(IconId::Focus), focus));
-                p.spawn(menu_item(&t, "Home", Some(IconId::Home), home));
+                p.spawn(menu_item(
+                    &t,
+                    MenuItemProps::new("Focus")
+                        .icon(IconId::Focus)
+                        .shortcut_opt(focus),
+                ));
+                p.spawn(menu_item(
+                    &t,
+                    MenuItemProps::new("Home")
+                        .icon(IconId::Home)
+                        .shortcut_opt(home),
+                ));
                 p.spawn(menu_separator());
                 p.spawn((
-                    menu_item(&t, "Follow", Some(IconId::Follow), follow),
+                    menu_item(
+                        &t,
+                        MenuItemProps::new("Follow")
+                            .icon(IconId::Follow)
+                            .shortcut_opt(follow),
+                    ),
                     Active,
                 ));
-                p.spawn(menu_checkbox(&t, "Link cameras", false, None));
+                p.spawn(menu_checkbox(&t, MenuItemProps::new("Link cameras"), false));
             },
         ));
     });

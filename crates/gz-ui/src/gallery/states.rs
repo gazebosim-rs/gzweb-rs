@@ -8,7 +8,8 @@ use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::theme::visuals::{ForceState, WidgetState};
 use crate::theme::{border, radius, ColorRole, FocusRing, Ring, Theme, TypeStyle, SPACE};
-use crate::widgets::button::TextButton;
+use crate::widgets::button::TextButtonProps;
+use crate::widgets::MenuItemProps;
 use crate::widgets::{
     activity_button, button, filter_chip, icon_button, menu_item, rounded, text_button,
     ButtonVariant, IconButtonSize, Tooltip,
@@ -87,12 +88,12 @@ impl Sample {
                 IconButtonSize::Rail,
                 Tooltip::new("Pan"),
             )),
-            Sample::Text => p.spawn(text_button(t, TextButton::new("World").chevron())),
+            Sample::Text => p.spawn(text_button(t, TextButtonProps::new("World").chevron())),
             Sample::Bordered => p.spawn(button(t, "Duplicate", ButtonVariant::Normal)),
             Sample::Destructive => p.spawn(button(t, "Delete", ButtonVariant::Destructive)),
             Sample::Chip => p.spawn(filter_chip("Models", false)),
             Sample::Item => {
-                let mut e = p.spawn(menu_item(t, "Grid", None, Some("G".into())));
+                let mut e = p.spawn(menu_item(t, MenuItemProps::new("Grid").shortcut("G")));
                 e.insert(Node {
                     width: px(84),
                     height: px(t.s.menu_item_h),
