@@ -6,12 +6,15 @@
 //! included (DECISIONS.md D-48).
 
 use accesskit::Role;
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui::{Checked, InteractionDisabled};
-use bevy::ui_widgets::{Activate, Button as Headless, ValueChange};
-use gz_bevy::connection::{GzCommand, GzStatus};
+use bevy::ui::{Checked, ComputedNode, InteractionDisabled};
+use bevy::ui_widgets::{
+    Activate, Button as Headless, MenuAction, MenuEvent, MenuPopup, ValueChange,
+};
+use gz_bevy::connection::{GzCommand, GzStatus, SimStats};
 use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::input::InputMap;
 
@@ -21,13 +24,14 @@ use crate::brand::logo;
 use crate::fonts::text;
 use crate::icons::{content_icon, Icon, IconId};
 use crate::theme::{border, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
-use crate::visuals::Visuals;
+use crate::visuals::{Active, Visuals};
 use crate::widgets::button::{text_button_parts, TextButton, ICON_BUTTON_RADIUS};
 use crate::widgets::chip::dot;
-use crate::widgets::menu::{menu, menu_item, shortcut_label, MenuSide};
+use crate::widgets::menu::{menu, menu_item, menu_separator, shortcut_label, MenuSide};
 use crate::widgets::{
     bar_button, bar_tool_button, button_group, clickable, rounded, spacer, Tooltip,
 };
+use crate::widgets::{number_field, AxisTag, NumberCommit, NumberField};
 
 /// A tool button's tool.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,7 +135,13 @@ fn world_button(theme: &Theme) -> impl Bundle {
     )
 }
 
-/// The steps-per-click menu: "1 step ▾" with 1, 10 and 100.
+/// The steps menu's choices (§3.1), before "Custom".
+pub const STEPS_CHOICES: [u32; 3] = [1, 10, 100];
+/// The most iterations a custom step count asks for.
+pub const MAX_STEPS: u32 = 100_000;
+
+/// The steps-per-click menu: "1 step ▾" with 1, 10 and 100, the current
+/// one marked, and a Custom field (§3.1, §5.14).
 fn steps_menu(theme: &Theme) -> impl Bundle {
     let t = theme.clone();
     menu(
@@ -143,9 +153,29 @@ fn steps_menu(theme: &Theme) -> impl Bundle {
             StepsTrigger,
         ),
         move |p: &mut ChildSpawner| {
-            for n in [1, 10, 100] {
-                p.spawn((menu_item(&t, steps_label(n), None, None), StepsOption(n)));
+            for n in STEPS_CHOICES {
+                let mut item = p.spawn((menu_item(&t, steps_label(n), None, None), StepsOption(n)));
+                if n == StepsPerClick::default().0 {
+                    item.insert(Active);
+                }
             }
+            p.spawn(menu_separator());
+            p.spawn(Node {
+                padding: UiRect::axes(px(SPACE[5]), px(SPACE[2])),
+                ..default()
+            })
+            .with_child((
+                number_field(
+                    &t,
+                    AxisTag::Label("Custom".into()),
+                    NumberField::new(1.0)
+                        .precision(0, 1.0)
+                        .range(1.0, f64::from(MAX_STEPS))
+                        .named("Custom steps per click"),
+                    true,
+                ),
+                CustomSteps,
+            ));
         },
     )
 }
@@ -153,6 +183,10 @@ fn steps_menu(theme: &Theme) -> impl Bundle {
 /// The steps trigger.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct StepsTrigger;
+
+/// The steps menu's Custom field.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct CustomSteps;
 
 /// "1 step", "10 steps".
 pub fn steps_label(n: u32) -> String {
@@ -202,7 +236,8 @@ fn search_trigger(theme: &Theme, map: &InputMap) -> impl Bundle {
                 ..default()
             })
             .with_child((
-                text(TypeStyle::BODY, ColorRole::Text3, "Search or run a command"),
+                text(TypeStyle::BODY, ColorRole::Text3, SEARCH_PLACEHOLDERS[0]),
+                SearchPlaceholder::default(),
                 TextLayout::no_wrap(),
                 Node {
                     flex_shrink: 0.0,
@@ -222,6 +257,57 @@ fn search_trigger(theme: &Theme, map: &InputMap) -> impl Bundle {
             ));
         })),
     )
+}
+
+/// The search trigger's placeholder, longest first: the longest that fits
+/// shows, so a narrow trigger (or a wide key cap, "Ctrl+K") never cuts a
+/// word (bevy_ui text has no ellipsis).
+pub const SEARCH_PLACEHOLDERS: [&str; 3] = ["Search or run a command", "Search…", ""];
+
+/// The search placeholder: the widths its texts measured, and which shows.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct SearchPlaceholder {
+    pub widths: [Option<f32>; SEARCH_PLACEHOLDERS.len()],
+    pub shown: usize,
+}
+
+impl SearchPlaceholder {
+    /// The text to show in `room` logical pixels: the longest known to fit,
+    /// or a longer one not measured yet (tried, then measured).
+    pub fn pick(&self, room: f32) -> usize {
+        self.widths
+            .iter()
+            .position(|w| w.is_none_or(|w| w <= room + 0.5))
+            .unwrap_or(SEARCH_PLACEHOLDERS.len() - 1)
+    }
+}
+
+/// Measures the placeholder shown (its box doesn't shrink, so its width is
+/// the text's) against the clipping box around it, and swaps texts.
+pub fn fit_search_placeholder(
+    mut texts: Query<(&mut Text, &mut SearchPlaceholder, &ComputedNode, &ChildOf)>,
+    boxes: Query<&ComputedNode>,
+) {
+    for (mut text, mut fit, node, parent) in &mut texts {
+        let Ok(room) = boxes.get(parent.parent()) else {
+            continue;
+        };
+        let k = node.inverse_scale_factor();
+        let width = node.size().x * k;
+        if width <= 0.0 && fit.shown != SEARCH_PLACEHOLDERS.len() - 1 {
+            // Not laid out yet.
+            continue;
+        }
+        let shown = fit.shown;
+        if fit.widths[shown] != Some(width) {
+            fit.widths[shown] = Some(width);
+        }
+        let pick = fit.pick(room.size().x * room.inverse_scale_factor());
+        if pick != shown {
+            fit.shown = pick;
+            set(&mut text, SEARCH_PLACEHOLDERS[pick]);
+        }
+    }
 }
 
 fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
@@ -401,6 +487,36 @@ pub fn on_steps_option(
     }
 }
 
+/// Enter in the Custom field sets the count and closes the menu. A commit
+/// from leaving the field (the menu closing on a click elsewhere, or on
+/// another choice) is dropped: dismissing a menu doesn't choose.
+pub fn on_custom_steps(
+    ev: On<NumberCommit>,
+    fields: Query<(), With<CustomSteps>>,
+    parents: Query<&ChildOf>,
+    popups: Query<&Visibility, With<MenuPopup>>,
+    mut steps: ResMut<StepsPerClick>,
+    mut commands: Commands,
+) {
+    if !ev.is_final || !fields.contains(ev.entity) {
+        return;
+    }
+    let open = parents
+        .iter_ancestors(ev.entity)
+        .any(|a| popups.get(a).is_ok_and(|v| *v == Visibility::Visible));
+    if !open {
+        return;
+    }
+    let n = ev.value.round().clamp(1.0, f64::from(MAX_STEPS)) as u32;
+    steps.set_if_neq(StepsPerClick(n));
+    for action in [MenuAction::FocusRoot, MenuAction::CloseAll] {
+        commands.trigger(MenuEvent {
+            source: ev.entity,
+            action,
+        });
+    }
+}
+
 /// The tool buttons show [`Tool`] (keys change it too).
 pub fn tool_states(
     tool: Res<Tool>,
@@ -422,8 +538,20 @@ pub fn tool_states(
     }
 }
 
-/// Play/Pause shows `pause` while running, `play` while paused; the
-/// transport is disabled without a live world, and Step while running.
+/// Whether a transport control works now (DECISIONS.md D-34, D-37): Reset
+/// needs a live world; Play/Pause also the sim's stats (they say which
+/// way to toggle); Step a paused sim. The inspector's Reset uses it too.
+pub fn transport_enabled(which: Transport, phase: Phase, sim: Option<&SimStats>) -> bool {
+    let live = phase == Phase::Live;
+    match which {
+        Transport::Reset => live,
+        Transport::PlayPause => live && sim.is_some(),
+        Transport::Step => live && sim.is_some_and(|s| s.paused),
+    }
+}
+
+/// Play/Pause shows `pause` while running, `play` while paused, and is
+/// named so to AccessKit; [`transport_enabled`] says which work.
 #[allow(clippy::type_complexity)]
 pub fn transport_states(
     status: Option<Res<GzStatus>>,
@@ -432,20 +560,20 @@ pub fn transport_states(
         Entity,
         &Transport,
         &mut Tooltip,
+        &mut AccessibilityNode,
         &Children,
         Has<InteractionDisabled>,
     )>,
     mut icons: Query<&mut Icon>,
     mut commands: Commands,
 ) {
+    if !phase.is_changed() && !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let sim = status.and_then(|s| s.sim);
-    let live = phase.0 == Phase::Live && sim.is_some();
     let running = sim.is_some_and(|s| !s.paused);
-    for (e, which, mut tip, children, disabled) in &mut buttons {
-        let enabled = match which {
-            Transport::Step => live && !running,
-            _ => live,
-        };
+    for (e, which, mut tip, mut access, children, disabled) in &mut buttons {
+        let enabled = transport_enabled(*which, phase.0, sim.as_ref());
         if enabled == disabled {
             if enabled {
                 commands.entity(e).remove::<InteractionDisabled>();
@@ -461,6 +589,9 @@ pub fn transport_states(
             };
             if tip.title != title {
                 tip.title = title.into();
+            }
+            if access.label() != Some(title) {
+                access.set_label(title);
             }
             for &c in children {
                 if let Ok(mut icon) = icons.get_mut(c) {
@@ -485,7 +616,9 @@ fn set_span(text: &mut TextSpan, want: &str) {
     }
 }
 
-/// The world name, clock, RTF and steps label.
+/// The world name, clock, RTF and its tooltip (live while open), and the
+/// steps label, its accessible name and the menu's current choice; run
+/// when the stats, the scene or the count change.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn top_bar_texts(
     status: Option<Res<GzStatus>>,
@@ -494,9 +627,45 @@ pub fn top_bar_texts(
     mut texts: Query<(&TopText, Option<&mut Text>, Option<&mut TextSpan>)>,
     mut dots: Query<&mut Fill, With<RtfDot>>,
     mut readouts: Query<&mut Tooltip, With<RtfReadout>>,
-    triggers: Query<&Children, With<StepsTrigger>>,
+    mut triggers: Query<(&Children, &mut AccessibilityNode), With<StepsTrigger>>,
     mut labels: Query<&mut Text, Without<TopText>>,
+    mut options: Query<(Entity, &StepsOption, Has<Active>)>,
+    mut custom: Query<&mut NumberField, With<CustomSteps>>,
+    mut commands: Commands,
 ) {
+    if steps.is_changed() {
+        let label = steps_label(steps.0);
+        for (children, mut access) in &mut triggers {
+            for &c in children {
+                if let Ok(mut t) = labels.get_mut(c) {
+                    set(&mut t, &label);
+                }
+            }
+            if access.label() != Some(label.as_str()) {
+                access.set_label(label.as_str());
+            }
+        }
+        for (e, option, active) in &mut options {
+            if (option.0 == steps.0) != active {
+                if active {
+                    commands.entity(e).remove::<Active>();
+                } else {
+                    commands.entity(e).insert(Active);
+                }
+            }
+        }
+        for mut field in &mut custom {
+            let v = f64::from(steps.0);
+            if field.value != v {
+                field.value = v;
+            }
+        }
+    }
+    let changed =
+        status.as_ref().is_some_and(Res::is_changed) || index.as_ref().is_some_and(Res::is_changed);
+    if !changed {
+        return;
+    }
     let status = status.as_deref();
     let world = world_name(status, index.as_deref());
     let sim = status.and_then(|s| s.sim);
@@ -524,16 +693,6 @@ pub fn top_bar_texts(
             tip.detail = Some(detail.clone());
         }
     }
-    if steps.is_changed() {
-        let label = steps_label(steps.0);
-        for children in &triggers {
-            for &c in children {
-                if let Ok(mut t) = labels.get_mut(c) {
-                    set(&mut t, &label);
-                }
-            }
-        }
-    }
 }
 
 /// The world's name: the server's world, else the scene's.
@@ -545,5 +704,7 @@ pub fn world_name(status: Option<&GzStatus>, index: Option<&GzIndex>) -> Option<
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_observer(on_transport).add_observer(on_steps_option);
+    app.add_observer(on_transport)
+        .add_observer(on_steps_option)
+        .add_observer(on_custom_steps);
 }

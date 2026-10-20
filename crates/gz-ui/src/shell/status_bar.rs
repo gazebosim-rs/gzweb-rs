@@ -11,6 +11,7 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::view::controls::ViewRouting;
+use gz_bevy::view::input::InputMap;
 use gz_bevy::view::{cursor_on_ground, ViewOrigin};
 
 use super::connection::{dot_role, CurrentPhase};
@@ -22,6 +23,7 @@ use crate::theme::{border, ColorRole, Fill, FontFamily, Theme, TypeStyle, SPACE}
 use crate::visuals::{Content, Visuals};
 use crate::widgets::button::ICON_BUTTON_RADIUS;
 use crate::widgets::chip::dot;
+use crate::widgets::menu::shortcut_label;
 use crate::widgets::{clickable, rounded, spacer, Tooltip, TooltipSide};
 
 /// The status bar's items, numbered as in §3.6.
@@ -94,8 +96,9 @@ fn item(which: StatusItem, style: TypeStyle, role: ColorRole, value: &str) -> im
 }
 
 /// The status bar.
-pub fn status_bar(theme: &Theme) -> impl Bundle {
+pub fn status_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
     let t = theme.clone();
+    let tip = workspace_tooltip(map);
     (
         region(
             Region::StatusBar,
@@ -165,14 +168,32 @@ pub fn status_bar(theme: &Theme) -> impl Bundle {
                 ColorRole::Text2,
                 "cursor —",
             ));
-            b.spawn(workspace_button(&t));
+            b.spawn(workspace_button(&t, tip));
         })),
     )
 }
 
+/// The workspace button's tooltip: its shortcuts from the input map
+/// ("Alt+1–4", "Opt+1–4" on macOS).
+pub fn workspace_tooltip(map: &InputMap) -> Tooltip {
+    let first = shortcut_label(map, "ui.workspace_1");
+    let last = shortcut_label(map, "ui.workspace_4");
+    let keys = match (first, last) {
+        (Some(a), Some(b)) => Some(match (a.strip_suffix('1'), b.strip_suffix('4')) {
+            (Some(p), Some(q)) if p == q => format!("{p}1–4"),
+            _ => format!("{a}–{b}"),
+        }),
+        (a, b) => a.or(b),
+    };
+    Tooltip::new("Workspace: Build")
+        .detail("Click to switch")
+        .shortcut_opt(keys)
+        .side(TooltipSide::Above)
+}
+
 /// The workspace button: icon, name and chevron_up, 22 tall (§3.6 item
 /// 10). It opens the switcher in M8.
-fn workspace_button(theme: &Theme) -> impl Bundle {
+fn workspace_button(theme: &Theme, tip: Tooltip) -> impl Bundle {
     let _ = theme;
     let label = TypeStyle::new(FontFamily::Ui, 12.0, 500);
     (
@@ -192,10 +213,7 @@ fn workspace_button(theme: &Theme) -> impl Bundle {
             accesskit::Role::Button,
             "Workspace",
         ),
-        Tooltip::new("Workspace: Build")
-            .detail("Click to switch")
-            .shortcut("Alt+1–4")
-            .side(TooltipSide::Above),
+        tip,
         children![
             content_icon(IconId::ActivityWorkspaces, 12.0, ColorRole::Text2),
             (text(label, ColorRole::Text2, "Build"), Content),
@@ -210,7 +228,8 @@ fn set(text: &mut Text, want: &str) {
     }
 }
 
-/// Every item's text and the connection dot.
+/// Every item's text and the connection dot, when what they show changes
+/// (the frame rate when its whole number does).
 #[allow(clippy::too_many_arguments)]
 pub fn status_texts(
     status: Option<Res<GzStatus>>,
@@ -218,16 +237,30 @@ pub fn status_texts(
     tool: Res<Tool>,
     cursor: Res<CursorReadout>,
     diagnostics: Option<Res<DiagnosticsStore>>,
+    mut shown_fps: Local<Option<Option<i64>>>,
     mut texts: Query<(&StatusText, &mut Text)>,
     mut dots: Query<&mut Fill, With<ConnectionDot>>,
 ) {
-    let status = status.as_deref();
-    let sim = status.and_then(|s| s.sim);
     let fps = diagnostics
         .as_ref()
         .and_then(|d| d.get(&FrameTimeDiagnosticsPlugin::FPS))
         .and_then(|d| d.smoothed());
+    let whole = fps.map(|f| f.round() as i64);
+    let fps_changed = *shown_fps != Some(whole);
+    *shown_fps = Some(whole);
+    let changed = phase.is_changed()
+        || tool.is_changed()
+        || cursor.is_changed()
+        || status.as_ref().is_some_and(Res::is_changed);
+    if !changed && !fps_changed {
+        return;
+    }
+    let status = status.as_deref();
+    let sim = status.and_then(|s| s.sim);
     for (which, mut t) in &mut texts {
+        if !changed && which.0 != StatusItem::Fps {
+            continue;
+        }
         let want = match which.0 {
             StatusItem::Connection => status.map_or_else(String::new, |s| format::address(&s.url)),
             StatusItem::Physics => format::physics(None, sim.map(|s| s.step_size)),

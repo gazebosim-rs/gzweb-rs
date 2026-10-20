@@ -145,6 +145,9 @@ pub fn activity_states(
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
+    if !layout.is_changed() && !badges.is_changed() {
+        return;
+    }
     for (e, a, active, children, mut access) in &mut buttons {
         let want = layout.is_active(a.0);
         if want != active {

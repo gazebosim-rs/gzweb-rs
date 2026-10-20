@@ -23,6 +23,7 @@ use bevy::camera::visibility::VisibilitySystems;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::picking::events::{PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
 use bevy::picking::hover::Hovered;
+use bevy::picking::pointer::PointerButton;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::ui::UiSystems;
@@ -85,15 +86,9 @@ impl Tool {
     }
 }
 
-/// Iterations per Step click (§3.1 "1 step ▾").
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct StepsPerClick(pub u32);
-
-impl Default for StepsPerClick {
-    fn default() -> Self {
-        StepsPerClick(1)
-    }
-}
+/// Iterations per Step click and ⌘→ (§3.1 "1 step ▾"); `gz-bevy`'s, since
+/// its key handling steps by it too.
+pub use gz_bevy::connection::StepsPerClick;
 
 /// What the shell's controls and keys ask for.
 #[derive(Message, Clone, Debug, PartialEq)]
@@ -237,6 +232,12 @@ pub struct ShellSplitter(pub Side);
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct SplitDrag(pub f32);
 
+/// Whether a splitter's last click ended a drag: bevy_picking sends a click
+/// on every release, drags included, and counts on across them, so a drag
+/// followed by a quick grab would read as a double-click.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LastClickDragged(pub bool);
+
 /// Adds the shell. `camera` spawns the UI camera (tests bring their own).
 pub struct ShellPlugin {
     pub camera: bool,
@@ -286,6 +287,7 @@ impl Plugin for ShellPlugin {
                     top_bar::tool_states,
                     top_bar::transport_states,
                     top_bar::top_bar_texts,
+                    top_bar::fit_search_placeholder,
                     inspector::inspector_texts,
                     status_bar::status_texts,
                     status_bar::narrow_rules,
@@ -358,12 +360,23 @@ pub fn init_layout(
     commands.insert_resource(ShellLayout::for_width(width));
 }
 
-/// Refits the layout when the window's width changes (the floor rule).
+/// Refits the layout when the window's width changes: the start-up rules
+/// while start-up lasts ([`ShellLayout::startup`]: the window's first real
+/// size may come a few frames late), then the floor rule.
 pub fn fit_to_window(
     windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
+    time: Res<Time<Real>>,
+    mut frames: Local<u32>,
     mut layout: ResMut<ShellLayout>,
 ) {
+    *frames = frames.saturating_add(1);
+    if layout.startup
+        && *frames > layout::STARTUP_FRAMES
+        && time.elapsed_secs_f64() > layout::STARTUP_SECS
+    {
+        layout.startup = false;
+    }
     let Ok(window) = windows.single() else {
         return;
     };
@@ -374,19 +387,31 @@ pub fn fit_to_window(
 }
 
 /// ⌘B, ⌘⌥I and the tool keys, from the input map, in the scopes live now
-/// (none while typing; viewport keys only when the view has them).
+/// (none while typing; viewport keys only when the view has them). An Esc
+/// that closes a menu does only that (§13: one step per Esc).
 pub fn shortcut_keys(
     keys: Res<ButtonInput<KeyCode>>,
     map: Option<Res<InputMap>>,
     scopes: Option<Res<ActiveScopes>>,
     routing: Res<ViewRouting>,
+    menu_esc: Res<crate::focus::MenuTakesEscape>,
     mut out: MessageWriter<UiCommand>,
 ) {
     let (Some(map), Some(scopes)) = (map, scopes) else {
         return;
     };
+    if keys.get_just_pressed().next().is_none() {
+        return;
+    }
     let scopes = routing.key_scopes(&scopes.0);
     for b in map.just_pressed(&keys, &scopes) {
+        if menu_esc.0
+            && b.chords(map.platform)
+                .iter()
+                .any(|c| c.key == KeyCode::Escape)
+        {
+            continue;
+        }
         let cmd = match b.id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
@@ -504,6 +529,7 @@ pub fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
     (
         node,
         ShellSplitter(side),
+        LastClickDragged::default(),
         Hovered::default(),
         GlobalZIndex(10),
         bevy::picking::cursor::EntityCursor::System(SystemCursorIcon::ColResize),
@@ -553,16 +579,20 @@ pub fn on_splitter_drag_end(
     }
 }
 
-/// A double-click resets the width (§2.1).
+/// A double-click with the primary button resets the width (§2.1): two
+/// clicks in a row, neither of them the end of a drag (a release after a
+/// drag is a click too, still [`SplitDrag`] then).
 pub fn on_splitter_click(
     ev: On<PointerClick>,
-    splitters: Query<&ShellSplitter>,
+    mut splitters: Query<(&ShellSplitter, &mut LastClickDragged, Has<SplitDrag>)>,
     mut out: MessageWriter<UiCommand>,
 ) {
-    if let Ok(s) = splitters.get(ev.entity) {
-        if ev.count >= 2 {
-            out.write(UiCommand::ResetWidth(s.0));
-        }
+    let Ok((s, mut last, dragged)) = splitters.get_mut(ev.entity) else {
+        return;
+    };
+    let after_drag = std::mem::replace(&mut last.0, dragged);
+    if ev.button == PointerButton::Primary && ev.count >= 2 && !dragged && !after_drag {
+        out.write(UiCommand::ResetWidth(s.0));
     }
 }
 
@@ -635,7 +665,7 @@ pub fn spawn_shell(
                 body.spawn(collapsed_bar(&t, Side::Inspector, &map));
                 body.spawn(inspector::inspector(&t, &l, &map));
             });
-            root.spawn(status_bar::status_bar(&t));
+            root.spawn(status_bar::status_bar(&t, &map));
         })),
     ));
 }

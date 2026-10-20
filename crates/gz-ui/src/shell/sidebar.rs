@@ -238,6 +238,11 @@ pub fn rebuild_slots(
     mut shown: Local<[Option<SlotContent>; 2]>,
     mut commands: Commands,
 ) {
+    let changed =
+        layout.is_changed() || phase.is_changed() || index.as_ref().is_some_and(Res::is_changed);
+    if !changed {
+        return;
+    }
     let two = layout.secondary.is_some();
     for (e, slot) in &slots {
         let (panel, i) = match slot.0 {

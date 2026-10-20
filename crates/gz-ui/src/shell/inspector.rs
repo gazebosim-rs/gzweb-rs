@@ -11,8 +11,8 @@ use gz_bevy::connection::{GzCommand, GzStatus};
 use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::input::InputMap;
 
-use super::connection::{CurrentPhase, Phase};
-use super::top_bar::world_name;
+use super::connection::CurrentPhase;
+use super::top_bar::{transport_enabled, world_name, Transport};
 use super::{format, region, side_splitter, Region, ShellLayout, Side, UiCommand};
 use crate::fonts::text;
 use crate::icons::IconId;
@@ -336,7 +336,8 @@ pub fn on_inspector_button(
 }
 
 /// The world's name, its source (the server) and the step size; Reset
-/// needs a live world.
+/// works when the top bar's does ([`transport_enabled`]). Runs when the
+/// connection or the scene changes.
 #[allow(clippy::type_complexity)]
 pub fn inspector_texts(
     status: Option<Res<GzStatus>>,
@@ -346,6 +347,12 @@ pub fn inspector_texts(
     buttons: Query<(Entity, &InspectorButton, Has<InteractionDisabled>)>,
     mut commands: Commands,
 ) {
+    let changed = phase.is_changed()
+        || status.as_ref().is_some_and(Res::is_changed)
+        || index.as_ref().is_some_and(Res::is_changed);
+    if !changed {
+        return;
+    }
     let status = status.as_deref();
     let name = world_name(status, index.as_deref());
     let step = status
@@ -372,7 +379,11 @@ pub fn inspector_texts(
         }
         ink.set_if_neq(crate::theme::Ink(role));
     }
-    let live = phase.0 == Phase::Live;
+    let live = transport_enabled(
+        Transport::Reset,
+        phase.0,
+        status.and_then(|s| s.sim.as_ref()),
+    );
     for (e, which, disabled) in &buttons {
         if *which == InspectorButton::Reset && live == disabled {
             if live {

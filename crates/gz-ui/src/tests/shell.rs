@@ -10,7 +10,10 @@ use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::ButtonState;
 use bevy::picking::backend::HitData;
-use bevy::picking::events::{Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
+use bevy::picking::events::{
+    Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerPress,
+    PointerRelease,
+};
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use bevy::prelude::*;
@@ -341,6 +344,7 @@ fn collapsed_panels_leave_a_bar_that_expands_them() {
 #[test]
 fn the_floor_rule_collapses_the_inspector_then_the_sidebar() {
     let mut l = ShellLayout::for_width(1440.0);
+    l.startup = false;
     l.sidebar_w = 480.0;
     l.inspector_w = 480.0;
     // 1440 − 56 − 960 = 424 ≥ 240: both stay.
@@ -1062,8 +1066,24 @@ fn formatting() {
     }))
     .ends_with("step —"));
     assert_eq!(format::rtf_detail(None), "No statistics yet");
-    assert_eq!(normalize_address(" gz:9002 "), "ws://gz:9002");
-    assert_eq!(normalize_address("wss://gz"), "wss://gz");
+    let port = gz_bevy::DEFAULT_PORT;
+    assert_eq!(normalize_address(" gz:9002 ", false), "ws://gz:9002");
+    assert_eq!(normalize_address("wss://gz", false), "wss://gz");
+    // The page's http scheme names the websocket's.
+    assert_eq!(normalize_address("http://gz:9002", false), "ws://gz:9002");
+    assert_eq!(normalize_address("HTTPS://gz/ws", false), "wss://gz/ws");
+    // A bare host gets the default port; from an https page, wss://.
+    assert_eq!(normalize_address("gz", false), format!("ws://gz:{port}"));
+    assert_eq!(normalize_address("gz", true), format!("wss://gz:{port}"));
+    assert_eq!(
+        normalize_address("gz/sim", false),
+        format!("ws://gz:{port}/sim")
+    );
+    assert_eq!(normalize_address("[::1]:9004", true), "wss://[::1]:9004");
+    assert_eq!(
+        normalize_address("[::1]", false),
+        format!("ws://[::1]:{port}")
+    );
     for t in Tool::ALL {
         assert!(!t.hint().is_empty() && !t.name().is_empty());
     }
@@ -1545,4 +1565,722 @@ fn the_address_field_connects_on_enter_and_the_cursor_is_read_off_the_ground() {
         .expect("on the ground");
     assert!(Vec2::from(at).length() < 0.05, "{at:?}");
     assert!(all_text(&mut app).contains("cursor 0.0"));
+}
+
+// ---- Keyboard focus (DECISIONS.md D-52) ----
+
+fn pointer() -> Pointer {
+    Pointer::new(
+        PointerId::Mouse,
+        Location {
+            target: bevy::camera::NormalizedRenderTarget::None {
+                width: 1,
+                height: 1,
+            },
+            position: Vec2::ZERO,
+        },
+    )
+}
+
+fn hit() -> HitData {
+    HitData::new(Entity::PLACEHOLDER, 0.0, None, None)
+}
+
+/// A left click on `e` as bevy_picking delivers it: the mouse button goes
+/// down with a pointer press (which focuses a tab stop), then the click
+/// (which activates a button) and the release.
+fn click(app: &mut App, e: Entity) {
+    mouse(app, ButtonState::Pressed);
+    app.world_mut().trigger(PointerPress {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+        count: 1,
+    });
+    app.update();
+    app.world_mut().trigger(PointerClick {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+        duration: Duration::from_millis(80),
+        count: 1,
+    });
+    app.world_mut().trigger(PointerRelease {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+    });
+    mouse(app, ButtonState::Released);
+    app.update();
+}
+
+fn focused(app: &App) -> Option<Entity> {
+    app.world()
+        .resource::<bevy::input_focus::InputFocus>()
+        .get()
+}
+
+/// Focus `e` as Tab would: no pointer press involved.
+fn tab_to(app: &mut App, e: Entity) {
+    let world = app.world_mut();
+    world.resource_mut::<crate::focus::PointerLed>().0 = false;
+    world
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(e, bevy::input_focus::FocusCause::Navigated);
+}
+
+fn connect_button(app: &mut App, which: ConnectButton) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ConnectButton)>()
+        .iter(world)
+        .find(|(_, b)| **b == which)
+        .unwrap()
+        .0
+}
+
+/// The review's scenario: click Connect, the world loads and the card
+/// fades, Space (to pause). The clicked button didn't keep focus, so Space
+/// doesn't press it again (which would drop the live connection).
+#[test]
+fn space_after_clicking_connect_doesnt_reconnect() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
+    frames(&mut app, 2);
+    let connect = connect_button(&mut app, ConnectButton::Connect);
+    click(&mut app, connect);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1, "clicked");
+    assert_eq!(
+        focused(&app),
+        None,
+        "a click doesn't leave focus on a button"
+    );
+    go_live(&mut app, false);
+    frames(&mut app, 3);
+    let card = find::<ConnectCard>(&mut app);
+    assert!(!displayed(&app, card));
+    chord(&mut app, &[KeyCode::Space]);
+    chord(&mut app, &[KeyCode::Enter]);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1, "no reconnect");
+}
+
+/// "Retry now", then the connection comes back and the banner hides:
+/// Space doesn't retry again.
+#[test]
+fn space_after_retry_now_doesnt_retry_again() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    {
+        let mut s = app.world_mut().resource_mut::<GzStatus>();
+        s.status = Status::Error("closed".into());
+        s.sim = None;
+    }
+    frames(&mut app, 2);
+    let banner = find::<DisconnectBanner>(&mut app);
+    assert!(displayed(&app, banner));
+    let retry = connect_button(&mut app, ConnectButton::Retry);
+    click(&mut app, retry);
+    assert_eq!(
+        app.world().resource::<Sent>().1,
+        [GzReconnect { url: None }]
+    );
+    assert_eq!(focused(&app), None);
+    // Even focused from the keyboard, it loses focus when the banner hides.
+    tab_to(&mut app, retry);
+    go_live(&mut app, false);
+    assert!(!displayed(&app, banner));
+    assert_eq!(focused(&app), None, "hidden: focus released");
+    chord(&mut app, &[KeyCode::Space]);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1);
+}
+
+/// Enter in the address field connects; the world loads and the card
+/// fades with the field still focused. The field lets go as the fade
+/// starts, so the shortcuts come back instead of going into an invisible
+/// field.
+#[test]
+fn a_world_loading_takes_focus_from_the_hidden_address_field() {
+    use crate::widgets::text_field::TextFieldInput;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        50,
+    )));
+    frames(&mut app, 2);
+    let input = find::<TextFieldInput>(&mut app);
+    tab_to(&mut app, input);
+    frames(&mut app, 2);
+    assert!(
+        app.world().resource::<ActiveScopes>().0.is_empty(),
+        "typing"
+    );
+    let window = find::<Window>(&mut app);
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state,
+            text: None,
+            repeat: false,
+            window,
+        });
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1);
+    assert_eq!(focused(&app), Some(input), "Enter doesn't blur the field");
+    go_live(&mut app, false);
+    let card = find::<ConnectCard>(&mut app);
+    assert!(displayed(&app, card), "still fading");
+    assert_eq!(focused(&app), None, "the fade releases focus at once");
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<ActiveScopes>().0.is_empty());
+    // The shortcuts work again.
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+fn slot_action(app: &mut App, which: crate::shell::sidebar::SlotAction) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &crate::shell::sidebar::SlotAction)>()
+        .iter(world)
+        .find(|(_, a)| **a == which)
+        .unwrap()
+        .0
+}
+
+/// The sidebar header's collapse chevron: clicked, then Space; or focused
+/// from the keyboard and hidden by ⌘B, then Space. Neither reopens the
+/// sidebar.
+#[test]
+fn space_after_a_header_chevron_doesnt_reopen_the_panel() {
+    use crate::shell::sidebar::SlotAction;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let chevron = slot_action(&mut app, SlotAction::Collapse);
+    click(&mut app, chevron);
+    frames(&mut app, 1);
+    assert!(!layout(&app).sidebar_open);
+    chord(&mut app, &[KeyCode::Space]);
+    assert!(!layout(&app).sidebar_open);
+    // From the keyboard: focus stays on a visible control…
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(layout(&app).sidebar_open);
+    tab_to(&mut app, chevron);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(chevron), "Tab focus stays");
+    // …and leaves it when it hides.
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+    assert_eq!(focused(&app), None);
+    chord(&mut app, &[KeyCode::Space]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// Click the active Scene button (collapsing the sidebar), then Space:
+/// the button isn't pressed again.
+#[test]
+fn space_after_an_activity_button_doesnt_press_it_again() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let world = app.world_mut();
+    let scene = world
+        .query::<(Entity, &ActivityFor)>()
+        .iter(world)
+        .find(|(_, a)| a.0 == Panel::Scene)
+        .unwrap()
+        .0;
+    click(&mut app, scene);
+    frames(&mut app, 1);
+    assert!(!layout(&app).sidebar_open);
+    for key in [KeyCode::Space, KeyCode::Enter] {
+        chord(&mut app, &[key]);
+        assert!(!layout(&app).sidebar_open, "{key:?}");
+    }
+}
+
+/// Click Play, then Space (which gz-bevy turns into play/pause): Play
+/// isn't pressed a second time. The same for Step.
+#[test]
+fn space_after_play_or_step_doesnt_press_them_again() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    let world = app.world_mut();
+    let buttons: Vec<(Entity, Transport)> = world
+        .query::<(Entity, &Transport)>()
+        .iter(world)
+        .map(|(e, t)| (e, *t))
+        .collect();
+    let button = |t: Transport| buttons.iter().find(|b| b.1 == t).unwrap().0;
+    for (which, want) in [
+        (Transport::Step, GzCommand::Step(1)),
+        (Transport::PlayPause, GzCommand::Play),
+    ] {
+        click(&mut app, button(which));
+        assert_eq!(sent(&mut app), [want], "{which:?}");
+        assert_eq!(focused(&app), None);
+        chord(&mut app, &[KeyCode::Space]);
+        chord(&mut app, &[KeyCode::Enter]);
+        assert!(sent(&mut app).is_empty(), "{which:?}");
+    }
+}
+
+/// A focused control takes Enter and Space from the keyboard (Tab focus is
+/// kept for M10's keyboard navigation).
+#[test]
+fn a_tab_focused_button_still_takes_enter() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let chevron = slot_action(&mut app, crate::shell::sidebar::SlotAction::Collapse);
+    tab_to(&mut app, chevron);
+    frames(&mut app, 1);
+    chord(&mut app, &[KeyCode::Enter]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+// ---- PR #29 review fixes ----
+
+fn sidebar_splitter(app: &mut App) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ShellSplitter)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == Side::Sidebar)
+        .unwrap()
+        .0
+}
+
+fn splitter_click(app: &mut App, bar: Entity, button: PointerButton, count: u8) {
+    app.world_mut().trigger(PointerClick {
+        entity: bar,
+        pointer: pointer(),
+        button,
+        hit: hit(),
+        duration: Duration::from_millis(80),
+        count,
+    });
+    frames(app, 1);
+}
+
+/// A drag, released and grabbed again within the double-click time, is
+/// no double-click: bevy_picking's click count runs on across drags.
+/// Nor is a right-button double-click.
+#[test]
+fn a_splitter_resets_only_on_a_primary_double_click_without_a_drag() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let bar = sidebar_splitter(&mut app);
+    let drag = |app: &mut App, dx: f32| {
+        let world = app.world_mut();
+        world.trigger(PointerDragStart {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            hit: hit(),
+        });
+        world.flush();
+        world.trigger(PointerDrag {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            distance: Vec2::new(dx, 0.0),
+            delta: Vec2::new(dx, 0.0),
+        });
+        frames(app, 1);
+    };
+    let drag_end = |app: &mut App| {
+        app.world_mut().trigger(PointerDragEnd {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            distance: Vec2::ZERO,
+        });
+        frames(app, 1);
+    };
+    // Drag and release (the release's click comes before the drag end).
+    drag(&mut app, 40.0);
+    splitter_click(&mut app, bar, PointerButton::Primary, 1);
+    drag_end(&mut app);
+    // Grab again at once to fine-tune: the second click counts 2.
+    drag(&mut app, 10.0);
+    splitter_click(&mut app, bar, PointerButton::Primary, 2);
+    drag_end(&mut app);
+    assert_eq!(layout(&app).sidebar_w, 350.0, "no reset after drags");
+    // A plain click right after a drag isn't a double-click either.
+    splitter_click(&mut app, bar, PointerButton::Primary, 3);
+    assert_eq!(layout(&app).sidebar_w, 350.0);
+    // Right-button double-click: nothing.
+    splitter_click(&mut app, bar, PointerButton::Secondary, 1);
+    splitter_click(&mut app, bar, PointerButton::Secondary, 2);
+    assert_eq!(layout(&app).sidebar_w, 350.0);
+    // Two plain primary clicks: reset.
+    splitter_click(&mut app, bar, PointerButton::Primary, 1);
+    splitter_click(&mut app, bar, PointerButton::Primary, 2);
+    assert_eq!(layout(&app).sidebar_w, 300.0);
+}
+
+fn transport_button(app: &mut App, which: Transport) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &Transport)>()
+        .iter(world)
+        .find(|(_, t)| **t == which)
+        .unwrap()
+        .0
+}
+
+fn label(app: &App, e: Entity) -> Option<String> {
+    app.world()
+        .get::<bevy::a11y::AccessibilityNode>(e)
+        .and_then(|a| a.label().map(str::to_string))
+}
+
+/// Play/Pause's accessible name follows its icon; the steps trigger's its
+/// label; the menu marks the current choice, and Custom sets any count.
+#[test]
+fn the_transport_names_and_the_steps_menu_follow_their_state() {
+    use crate::shell::top_bar::{CustomSteps, StepsOption, StepsTrigger};
+    use crate::widgets::NumberField;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let play = transport_button(&mut app, Transport::PlayPause);
+    go_live(&mut app, true);
+    assert_eq!(label(&app, play).as_deref(), Some("Play"));
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(false));
+    frames(&mut app, 1);
+    assert_eq!(label(&app, play).as_deref(), Some("Pause"));
+    let trigger = find::<StepsTrigger>(&mut app);
+    let current = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&StepsOption, With<Active>>()
+            .iter(world)
+            .map(|o| o.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(current(&mut app), [1]);
+    app.world_mut().resource_mut::<StepsPerClick>().0 = 10;
+    frames(&mut app, 2);
+    assert_eq!(label(&app, trigger).as_deref(), Some("10 steps"));
+    assert!(all_text(&mut app).contains("10 steps"));
+    assert_eq!(current(&mut app), [10]);
+    // Custom: open the menu, type 25, Enter.
+    app.world_mut().trigger(bevy::ui_widgets::MenuEvent {
+        source: trigger,
+        action: bevy::ui_widgets::MenuAction::Open(
+            bevy::input_focus::tab_navigation::NavAction::First,
+        ),
+    });
+    frames(&mut app, 2);
+    let field = find::<CustomSteps>(&mut app);
+    assert_eq!(app.world().get::<NumberField>(field).unwrap().value, 10.0);
+    let input = descendants(app.world(), field)
+        .into_iter()
+        .find(|e| app.world().get::<bevy::ui_widgets::TextInput>(*e).is_some())
+        .unwrap();
+    tab_to(&mut app, input);
+    frames(&mut app, 1);
+    app.world_mut()
+        .get_mut::<bevy::text::EditableText>(input)
+        .unwrap()
+        .editor
+        .set_text("25");
+    let window = find::<Window>(&mut app);
+    app.world_mut().write_message(KeyboardInput {
+        key_code: KeyCode::Enter,
+        logical_key: Key::Enter,
+        state: ButtonState::Pressed,
+        text: None,
+        repeat: false,
+        window,
+    });
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<StepsPerClick>().0, 25);
+    assert_eq!(current(&mut app), Vec::<u32>::new());
+    assert_eq!(label(&app, trigger).as_deref(), Some("25 steps"));
+    let popup = descendants(
+        app.world(),
+        app.world().get::<ChildOf>(trigger).unwrap().parent(),
+    )
+    .into_iter()
+    .find(|e| app.world().get::<bevy::ui_widgets::MenuPopup>(*e).is_some())
+    .unwrap();
+    assert_eq!(
+        app.world().get::<Visibility>(popup),
+        Some(&Visibility::Hidden),
+        "Enter closes the menu"
+    );
+    // A commit while the menu is closed (leaving the field) changes nothing.
+    app.world_mut().trigger(crate::widgets::NumberCommit {
+        entity: field,
+        value: 7.0,
+        is_final: true,
+    });
+    frames(&mut app, 1);
+    assert_eq!(app.world().resource::<StepsPerClick>().0, 25);
+    // The Step button steps by it.
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(true));
+    frames(&mut app, 1);
+    sent(&mut app);
+    let step = transport_button(&mut app, Transport::Step);
+    app.world_mut().trigger(Activate { entity: step });
+    frames(&mut app, 1);
+    assert_eq!(sent(&mut app), [GzCommand::Step(25)]);
+}
+
+/// The RTF tooltip shows the stats as they change while it is open.
+#[test]
+fn the_rtf_tooltip_is_live() {
+    use crate::shell::top_bar::RtfReadout;
+    use crate::widgets::tooltip::{TooltipCard, TooltipLine};
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    let rtf = find::<RtfReadout>(&mut app);
+    app.world_mut()
+        .entity_mut(rtf)
+        .insert(bevy::picking::hover::Hovered(true));
+    frames(&mut app, 3);
+    let line = |app: &mut App| {
+        let world = app.world_mut();
+        let card = world
+            .query_filtered::<(Entity, &ChildOf), With<TooltipCard>>()
+            .iter(world)
+            .find(|(_, p)| p.parent() == rtf)
+            .expect("the tooltip is open")
+            .0;
+        descendants(world, card)
+            .into_iter()
+            .find_map(|e| {
+                world
+                    .get::<TooltipLine>(e)
+                    .and(world.get::<Text>(e))
+                    .map(|t| t.0.clone())
+            })
+            .unwrap()
+    };
+    assert!(line(&mut app).contains("134,380 iterations"));
+    app.world_mut()
+        .resource_mut::<GzStatus>()
+        .sim
+        .as_mut()
+        .unwrap()
+        .iterations = 200_000;
+    frames(&mut app, 2);
+    assert!(
+        line(&mut app).contains("200,000 iterations"),
+        "{}",
+        line(&mut app)
+    );
+}
+
+/// The start-up collapse rules apply to the window's first real size
+/// (it can come a few frames late); afterwards only the floor rule.
+#[test]
+fn the_start_up_rules_follow_the_first_real_window_size() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        10,
+    )));
+    frames(&mut app, 2);
+    assert!(layout(&app).inspector_open);
+    let window = find::<Window>(&mut app);
+    let resize = |app: &mut App, w: f32| {
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(w, 900.0);
+        frames(app, 1);
+    };
+    // The browser's canvas turns out 1200 wide: as if it had started so.
+    resize(&mut app, 1200.0);
+    let l = layout(&app);
+    assert!(l.startup && l.sidebar_open && !l.inspector_open);
+    // Start-up ends (30 frames and a second); then the floor rule only:
+    // 1279 − 56 − 300 − 24 leaves room, and the inspector stays shut.
+    frames(&mut app, 100);
+    assert!(!layout(&app).startup);
+    resize(&mut app, 1279.0);
+    assert!(!layout(&app).inspector_open);
+    resize(&mut app, 1440.0);
+    assert!(
+        !layout(&app).inspector_open,
+        "not reopened by the floor rule"
+    );
+    // A user's change ends start-up at once.
+    let mut l = ShellLayout::for_width(1440.0);
+    l.show(Side::Inspector, true);
+    l.fit(1200.0);
+    assert!(
+        l.inspector_open,
+        "the floor rule keeps it: 1200 − 656 ≥ 240"
+    );
+}
+
+/// Esc in an open menu closes the menu and nothing else (spec §13).
+#[test]
+fn esc_closes_a_menu_before_it_changes_the_tool() {
+    use crate::shell::top_bar::StepsTrigger;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Translate));
+    let trigger = find::<StepsTrigger>(&mut app);
+    app.world_mut().trigger(bevy::ui_widgets::MenuEvent {
+        source: trigger,
+        action: bevy::ui_widgets::MenuAction::Open(
+            bevy::input_focus::tab_navigation::NavAction::First,
+        ),
+    });
+    frames(&mut app, 2);
+    // The pointer is over the view, so its Esc (Navigate) is live.
+    let window = find::<Window>(&mut app);
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .set_cursor_position(Some(Vec2::new(700.0, 400.0)));
+    frames(&mut app, 1);
+    assert!(app.world().resource::<ViewRouting>().keys);
+    let esc = |app: &mut App| {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::Escape,
+                logical_key: Key::Escape,
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+            app.update();
+        }
+    };
+    esc(&mut app);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Translate);
+    esc(&mut app);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+}
+
+/// The workspace button's shortcut comes from the input map.
+#[test]
+fn the_workspace_tooltip_reads_the_input_map() {
+    use crate::shell::status_bar::workspace_tooltip;
+    let mut map = InputMap::builtin();
+    map.platform = Platform::Linux;
+    assert_eq!(workspace_tooltip(&map).shortcut.as_deref(), Some("Alt+1–4"));
+    map.platform = Platform::Mac;
+    assert_eq!(workspace_tooltip(&map).shortcut.as_deref(), Some("Opt+1–4"));
+}
+
+/// The search placeholder never cuts a word: the longest text that fits.
+#[test]
+fn the_search_placeholder_fits_its_room() {
+    use crate::shell::top_bar::{SearchPlaceholder, SEARCH_PLACEHOLDERS};
+    let fit = SearchPlaceholder {
+        widths: [Some(150.0), Some(50.0), Some(0.0)],
+        shown: 0,
+    };
+    assert_eq!(fit.pick(160.0), 0);
+    assert_eq!(fit.pick(120.0), 1);
+    assert_eq!(fit.pick(20.0), 2);
+    let unmeasured = SearchPlaceholder {
+        widths: [Some(150.0), None, None],
+        shown: 0,
+    };
+    assert_eq!(unmeasured.pick(120.0), 1, "tried, then measured");
+    for (w, scale) in [(1440, 1.0), (1024, 1.0), (1440, 1.5)] {
+        let mut app = shell_app((w, 700), scale);
+        frames(&mut app, 8);
+        let world = app.world_mut();
+        let (text, fit, node, parent) = world
+            .query::<(&Text, &SearchPlaceholder, &ComputedNode, &ChildOf)>()
+            .single(world)
+            .unwrap();
+        let room = world.get::<ComputedNode>(parent.parent()).unwrap();
+        let k = node.inverse_scale_factor();
+        assert_eq!(text.0, SEARCH_PLACEHOLDERS[fit.shown], "{w}");
+        assert!(
+            node.size().x * k <= room.size().x * k + 0.5,
+            "{w}: {} in {}",
+            node.size().x * k,
+            room.size().x * k
+        );
+    }
+}
+
+/// A card fade interrupted by the world dropping again puts every
+/// opacity back; a finished fade too.
+#[test]
+fn an_interrupted_card_fade_restores_its_opacities() {
+    use crate::shell::viewport::{Fading, PreFade};
+    use crate::theme::Opacity;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        40,
+    )));
+    frames(&mut app, 2);
+    let card = find::<ConnectCard>(&mut app);
+    let opacities = |app: &mut App| {
+        descendants(app.world(), card)
+            .into_iter()
+            .chain([card])
+            .filter_map(|e| app.world().get::<Opacity>(e).map(|o| o.0))
+            .collect::<Vec<f32>>()
+    };
+    go_live(&mut app, false);
+    assert!(app.world().get::<Fading>(card).is_some());
+    assert!(opacities(&mut app).iter().any(|o| *o < 1.0), "fading");
+    // The world drops before the fade ends: the card comes back whole.
+    {
+        let mut s = app.world_mut().resource_mut::<GzStatus>();
+        s.status = Status::Connected;
+    }
+    app.world_mut().resource_mut::<GzIndex>().scene = None;
+    app.world_mut().insert_resource(ConnectionView::default());
+    frames(&mut app, 3);
+    assert!(displayed(&app, card));
+    assert!(app.world().get::<Fading>(card).is_none());
+    assert!(app.world().get::<PreFade>(card).is_none());
+    assert!(
+        opacities(&mut app).iter().all(|o| *o == 1.0),
+        "{:?}",
+        opacities(&mut app)
+    );
+}
+
+/// Reset works in the top bar and the inspector alike: with a live world,
+/// stats or not. Play/Pause needs the stats.
+#[test]
+fn reset_is_enabled_alike_in_the_top_bar_and_the_inspector() {
+    use crate::shell::inspector::InspectorButton;
+    use crate::shell::top_bar::transport_enabled;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    app.world_mut().resource_mut::<GzStatus>().sim = None;
+    frames(&mut app, 1);
+    let world = app.world_mut();
+    let reset = world
+        .query::<(Entity, &InspectorButton)>()
+        .iter(world)
+        .find(|(_, b)| **b == InspectorButton::Reset)
+        .unwrap()
+        .0;
+    let top = transport_button(&mut app, Transport::Reset);
+    let play = transport_button(&mut app, Transport::PlayPause);
+    let enabled = |app: &App, e| app.world().get::<InteractionDisabled>(e).is_none();
+    assert!(enabled(&app, reset) && enabled(&app, top));
+    assert!(!enabled(&app, play));
+    let s = stats(true);
+    assert!(transport_enabled(Transport::Step, Phase::Live, Some(&s)));
+    assert!(!transport_enabled(
+        Transport::Reset,
+        Phase::Loading,
+        Some(&s)
+    ));
 }
