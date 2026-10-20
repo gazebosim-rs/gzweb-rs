@@ -28,6 +28,7 @@ use bevy::ui_widgets::{
     observe, Activate, MenuAction, MenuEvent, MenuFocusState, MenuItem, MenuPopup,
 };
 
+use super::layout::flex_spacer;
 use super::{a11y, rounded};
 use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
@@ -35,7 +36,6 @@ use crate::theme::visuals::{Content, HoverOnFocus, OwnInk, Visuals};
 use crate::theme::{
     border, elevation, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
 };
-use crate::widgets::layout::flex_spacer;
 
 /// Shortcut text type: mono 11/400.
 pub const SHORTCUT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);

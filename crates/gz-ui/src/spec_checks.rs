@@ -1,6 +1,6 @@
 //! The spec's own checks, computed from its data files (DESIGN.md §4.4,
 //! §13): the generated tables match `tokens.json`, the §13 contrast pairs
-//! pass in both themes, no colour literals outside `theme/`, and the
+//! pass in both themes, no colour literals outside `theme/tokens.rs`, and the
 //! embedded fonts and icons are the ones the spec lists.
 
 use std::path::{Path, PathBuf};
@@ -314,13 +314,13 @@ fn colour_tokens(code: &str) -> Vec<String> {
 }
 
 #[test]
-fn no_colour_literals_outside_theme_rs() {
+fn no_colour_literals_outside_the_theme_tokens() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
     assert!(files.len() > 20);
     let mut found = Vec::new();
-    for file in files.iter().filter(|f| !f.ends_with("src/theme/mod.rs")) {
+    for file in files.iter().filter(|f| !f.ends_with("src/theme/tokens.rs")) {
         let code = strip_comments(&std::fs::read_to_string(file).unwrap());
         for (n, line) in code.lines().enumerate() {
             if has_hex_literal(line) {

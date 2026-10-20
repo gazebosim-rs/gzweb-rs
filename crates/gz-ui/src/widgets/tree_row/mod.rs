@@ -14,12 +14,12 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button as Headless};
 
+use super::layout::flex_spacer;
 use super::{a11y, clickable, rounded};
 use crate::assets::fonts::{text, Type};
 use crate::assets::icons::{icon, Icon, IconId};
 use crate::theme::visuals::{Active, Visuals};
 use crate::theme::{radius, ColorRole, Fill, Ink, Opacity, Theme, TypeStyle, SPACE};
-use crate::widgets::layout::flex_spacer;
 use crate::GzUiSystems;
 
 /// The caret column's width (§5.7: "caret 14 wide").

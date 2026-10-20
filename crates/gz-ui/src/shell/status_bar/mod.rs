@@ -18,8 +18,7 @@ use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 use crate::widgets::button::ICON_BUTTON_RADIUS;
 use crate::widgets::chip::dot;
-use crate::widgets::layout::flex_spacer;
-use crate::widgets::layout::{row, set_shown};
+use crate::widgets::layout::{flex_spacer, row, set_shown};
 use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
 pub use readouts::{ConnectionDot, CursorReadout, StatusText};
 
