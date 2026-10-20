@@ -62,6 +62,13 @@ impl std::str::FromStr for UiMode {
     }
 }
 
+/// The Gazebo websocket server's port when an address names none:
+/// `GZ_WEBSOCKET_PORT` at build time, else 9002.
+pub const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
+    Some(p) => p,
+    None => "9002",
+};
+
 /// Connection and behaviour options.
 #[derive(Resource, Clone, Debug)]
 pub struct GzConfig {

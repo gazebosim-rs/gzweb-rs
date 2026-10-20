@@ -28,7 +28,7 @@ use super::{
     apply_view_commands, apply_view_placement, view_rect, DragAction, Selection, ViewCamera,
     ViewCommand, ViewOp, ViewOrigin, ViewPlacement, ZOOM_STEP,
 };
-use crate::connection::{GzCommand, GzStatus};
+use crate::connection::{GzCommand, GzStatus, StepsPerClick};
 use crate::render::GzGrid;
 use crate::UiMode;
 
@@ -114,13 +114,42 @@ impl Default for ViewRouting {
 
 impl ViewRouting {
     /// The scopes that apply to keys right now: `active` without the
-    /// view's own scopes when the view doesn't have the keys.
-    pub fn key_scopes(&self, active: &[Scope]) -> Vec<Scope> {
-        active
-            .iter()
-            .copied()
-            .filter(|s| self.keys || !matches!(s, Scope::Viewport | Scope::Minimal))
-            .collect()
+    /// view's own scopes when the view doesn't have the keys. Several
+    /// systems ask every frame, so this doesn't allocate.
+    pub fn key_scopes(&self, active: &[Scope]) -> KeyScopes {
+        let mut out = KeyScopes::default();
+        for &s in active {
+            let live = self.keys || !matches!(s, Scope::Viewport | Scope::Minimal);
+            if live && !out.contains(&s) {
+                out.scopes[out.len] = s;
+                out.len += 1;
+            }
+        }
+        out
+    }
+}
+
+/// A set of [`Scope`]s on the stack (there are five), as a slice.
+#[derive(Clone, Copy, Debug)]
+pub struct KeyScopes {
+    scopes: [Scope; 5],
+    len: usize,
+}
+
+impl Default for KeyScopes {
+    fn default() -> Self {
+        Self {
+            scopes: [Scope::Global; 5],
+            len: 0,
+        }
+    }
+}
+
+impl std::ops::Deref for KeyScopes {
+    type Target = [Scope];
+
+    fn deref(&self) -> &[Scope] {
+        &self.scopes[..self.len]
     }
 }
 
@@ -170,6 +199,7 @@ impl Plugin for ViewerControls {
             .init_resource::<BrowserWheel>()
             .init_resource::<ViewRouting>()
             .init_resource::<ViewPlacement>()
+            .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
             .insert_resource(ActiveScopes(Self::scopes(self.mode)))
@@ -195,7 +225,10 @@ impl Plugin for ViewerControls {
         )
         .add_systems(
             PostUpdate,
-            apply_view_placement.in_set(ViewPlacementSystems),
+            // Only a placed view (the full UI) touches `Assets<Image>`.
+            apply_view_placement
+                .run_if(|p: Res<ViewPlacement>| p.rect.is_some())
+                .in_set(ViewPlacementSystems),
         );
         #[cfg(target_arch = "wasm32")]
         super::web::install(app);
@@ -473,6 +506,7 @@ pub fn key_input(
     routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
     status: Option<Res<GzStatus>>,
+    steps: Option<Res<StepsPerClick>>,
     mut focus_lost: MessageReader<KeyboardFocusLost>,
     mut state: ResMut<ControlState>,
     mut grid: ResMut<GzGrid>,
@@ -522,7 +556,8 @@ pub fn key_input(
             }
             Action::Step => {
                 if sim.is_some_and(|s| s.paused) {
-                    sim_out.write(GzCommand::Step(1));
+                    let n = steps.as_deref().copied().unwrap_or_default().0;
+                    sim_out.write(GzCommand::Step(n));
                 }
                 continue;
             }

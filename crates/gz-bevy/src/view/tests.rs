@@ -1173,6 +1173,13 @@ fn ctrl_right_steps_a_paused_sim() {
     // N no longer steps.
     r.chord(&[KeyCode::KeyN]);
     assert!(r.sent().is_empty());
+    // The steps-per-click setting applies to the key too, as to the Step
+    // button whose tooltip shows it.
+    r.app
+        .world_mut()
+        .insert_resource(crate::connection::StepsPerClick(10));
+    r.chord(&[KeyCode::ControlLeft, KeyCode::ArrowRight]);
+    assert_eq!(r.sent(), [GzCommand::Step(10)]);
 }
 
 #[test]
@@ -1793,7 +1800,13 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
         pointer: true,
         keys: false,
     };
-    assert_eq!(off.key_scopes(&all), [Scope::Global]);
+    assert_eq!(*off.key_scopes(&all), [Scope::Global]);
+    // With the keys: every active scope, once each.
+    let on = controls::ViewRouting { keys: true, ..off };
+    assert_eq!(
+        *on.key_scopes(&[Scope::Global, Scope::Viewport, Scope::Global]),
+        [Scope::Global, Scope::Viewport]
+    );
 }
 
 #[test]
