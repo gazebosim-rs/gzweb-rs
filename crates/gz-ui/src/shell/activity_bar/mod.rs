@@ -1,10 +1,9 @@
 //! The activity bar (spec §3.2): a button for each registered panel, by
-//! group and order with a separator between groups (Scene and Assets,
-//! then Topics, Plot, Sensors, Teleop and Console), a spacer, then
+//! group and order with a separator between groups, a spacer, then
 //! Settings. Each button's badge is what its panel wrote into
-//! [`PanelStatus`]. A click
-//! opens the panel in the sidebar's primary slot, Shift+click in the
-//! secondary; clicking the active button collapses the sidebar.
+//! [`PanelStatus`]. A click opens the panel in the sidebar's primary slot,
+//! Shift+click in the secondary; clicking the active button collapses the
+//! sidebar.
 
 use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
