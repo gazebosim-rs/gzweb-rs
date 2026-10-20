@@ -1,5 +1,5 @@
 {
-  "$note": "Icon set used in the designs. All icons: viewBox 0 0 24 24, stroke = currentColor, fill = none, stroke-width 1.75, round caps and joins, unless 'fill' is true. Rasterize at build time (e.g. resvg) into an atlas at 1x and 2x for sizes 15, 17, 18, 20 px, tinted at runtime with the button's ColorRole. Do not use emoji or text glyphs as icons. v0.2: Scene is a hierarchy glyph (not three bars), Reset is return-to-start (mirror of Step), Revert/Undo is a curved arrow, Teleop is a d-pad, Workspaces is one-plus-two panes, Track/eye is an eye; added ~30 glyphs the spec references.",
+  "$note": "Icon set used in the designs. All icons: viewBox 0 0 24 24, stroke = currentColor, fill = none, stroke-width 1.75, round caps and joins, unless 'fill' is true. Rasterize at build time (e.g. resvg) into an atlas at 1x and 2x for sizes 15, 17, 18, 20 px (and every other size the spec draws icons at: 10, 12, 13, 14, 24; DECISIONS.md D-44), tinted at runtime with the button's ColorRole. Do not use emoji or text glyphs as icons. v0.2: Scene is a hierarchy glyph (not three bars), Reset is return-to-start (mirror of Step), Revert/Undo is a curved arrow, Teleop is a d-pad, Workspaces is one-plus-two panes, Track/eye is an eye; added ~30 glyphs the spec references.",
   "stroke_width": 1.75,
   "icons": {
     "navigate": {

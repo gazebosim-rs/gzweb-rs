@@ -68,7 +68,10 @@ cargo run -p gzweb -- --url ws://localhost:9002 [--key KEY]
 when the server goes away (`--no-reconnect` to turn that off).
 
 `--ui full|minimal` picks the UI mode (default `full`; until the workbench
-lands, `full` behaves like `minimal`). Minimal is the 3D view with the camera
+lands, `full` behaves like `minimal`). `--ui gallery` shows the UI widget
+gallery instead of a world (no server needed; T switches light/dark, and
+`--screenshot out.png` captures it at 1440×900). `--theme system|light|dark`
+picks the UI theme. Minimal is the 3D view with the camera
 and the viewport keys of `design/ui/shortcuts.json`:
 
 | Input | Does |
@@ -103,12 +106,13 @@ snapshot once everything has loaded, then exits.
 Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
 connects to port 9002 on its own host. `?ui=full|minimal` picks the UI mode
-(default `minimal` in the browser) and `?hud=0` hides the status text, the
+(default `minimal` in the browser; `?ui=gallery` shows the widget gallery),
+`?theme=light|dark` the theme, and `?hud=0` hides the status text, the
 page's status lines included. On the canvas the page cancels the browser's
 context menu (so right-drag pans), Ctrl+wheel and pinch page zoom, and the
 chords `shortcuts.json` lists for it (Space, Tab, ⌘/Ctrl+K, S, O, F, P and
-⌘/Ctrl+→ step, which is Forward in Chrome on macOS); everywhere else the
-browser keeps its shortcuts.
+⌘/Ctrl+→ step, which is Forward in Chrome on macOS); everywhere else, and
+while one of the UI's text fields has focus, the browser keeps its shortcuts.
 
 ## Development
 

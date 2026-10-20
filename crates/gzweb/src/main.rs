@@ -8,13 +8,16 @@
 //! - `--quality low|high|ultra` picks the rendering level (`render::Quality`).
 //! - `--ui full|minimal` picks the UI mode (`gz_bevy::UiMode`, default
 //!   full); the capture modes run without UI. `--no-hud` hides the status
-//!   text.
+//!   text. `--ui gallery` shows the widget gallery instead of a world (no
+//!   connection); `--screenshot` captures it at 1440x900.
+//! - `--theme system|light|dark` picks the UI theme (default system).
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
-//! plus `ui=full|minimal` (default minimal) and `hud=0`.
+//! plus `ui=full|minimal|gallery` (default minimal), `theme=` and `hud=0`.
 
 use bevy::prelude::*;
 use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode};
+use gz_ui::theme::ThemeMode;
 
 const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
     Some(p) => p,
@@ -28,14 +31,18 @@ struct Args {
     snapshot: Option<gz_bevy::snapshot::SnapshotRequest>,
     /// Fetch HTTPS assets through a `gz-parity mirror`.
     http_mirror: Option<String>,
+    /// `--ui gallery`: the widget gallery instead of a world.
+    gallery: bool,
+    theme: ThemeMode,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
-                     [--ui full|minimal] [--no-hud] \
+                     [--ui full|minimal|gallery] [--theme system|light|dark] [--no-hud] \
                      [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] [--timeout-ms MS]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
-                     sim keys only; --snapshot/--screenshot run with no UI.\n\
+                     sim keys only, gallery the widget gallery (no server; --screenshot works); \
+                     --snapshot/--screenshot otherwise run with no UI.\n\
                      Reconnecting is on by default, except in --snapshot/--screenshot mode.";
 
 /// The browser's UI mode from `?ui=`: minimal unless it says otherwise
@@ -43,6 +50,11 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn web_ui(value: Option<&str>) -> Result<UiMode, String> {
     value.map_or(Ok(UiMode::Minimal), str::parse)
+}
+
+/// `--ui gallery` / `?ui=gallery`.
+fn is_gallery(value: Option<&str>) -> bool {
+    value.is_some_and(|v| v.eq_ignore_ascii_case("gallery"))
 }
 
 /// `?hud=0` (or `false`, `off`, `no`) hides the status text.
@@ -92,6 +104,8 @@ fn parse_args(
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
     let mut ui = UiMode::Full;
+    let mut gallery = false;
+    let mut theme = ThemeMode::System;
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut timeout_ms = 60000.0;
@@ -113,7 +127,16 @@ fn parse_args(
             "--reconnect" => reconnect = Some(true),
             "--no-reconnect" => reconnect = Some(false),
             "--quality" => quality = value()?.parse()?,
-            "--ui" => ui = value()?.parse().map_err(|e| format!("--ui: {e}"))?,
+            "--ui" => {
+                let v = value()?;
+                gallery = is_gallery(Some(&v));
+                if !gallery {
+                    ui = v.parse().map_err(|_| {
+                        format!("--ui: unknown UI mode '{v}' (full, minimal or gallery)")
+                    })?;
+                }
+            }
+            "--theme" => theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?,
             "--no-hud" => hud = false,
             "--snapshot" => snapshot = Some(std::path::PathBuf::from(value()?)),
             "--screenshot" => {
@@ -133,6 +156,9 @@ fn parse_args(
         }
     }
 
+    if gallery && snapshot.is_some() {
+        return Err("--snapshot doesn't apply to --ui gallery (use --screenshot)".into());
+    }
     let capture = snapshot.is_some() || screenshot.is_some();
     Ok(Command::Run(Args {
         config: GzConfig {
@@ -160,6 +186,8 @@ fn parse_args(
             timeout_secs: timeout_ms / 1000.0,
         }),
         http_mirror,
+        gallery,
+        theme,
     }))
 }
 
@@ -198,7 +226,12 @@ fn command() -> Result<Command, String> {
                         .ok()
                 })
                 .unwrap_or_default(),
-            ui: web_ui(get("ui").as_deref()).unwrap_or_else(|e| {
+            ui: web_ui(
+                get("ui")
+                    .filter(|v| !is_gallery(Some(v.as_str())))
+                    .as_deref(),
+            )
+            .unwrap_or_else(|e| {
                 bevy::log::warn!("?ui: {e}");
                 UiMode::Minimal
             }),
@@ -208,6 +241,10 @@ fn command() -> Result<Command, String> {
         mode: Mode::Interactive,
         snapshot: None,
         http_mirror: get("http_mirror"),
+        gallery: is_gallery(get("ui").as_deref()),
+        theme: get("theme")
+            .and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok())
+            .unwrap_or_default(),
     }))
 }
 
@@ -266,6 +303,49 @@ fn default_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
     }
 }
 
+/// The gallery's window: 1440x900 at scale 1 for `--screenshot`, else a
+/// normal window (or the page's canvas).
+fn gallery_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
+    let (w, h) = gz_ui::gallery::SIZE;
+    let window = match mode {
+        Mode::Capture => Window {
+            title: "gzweb gallery (capture)".into(),
+            resolution: bevy::window::WindowResolution::new(w, h).with_scale_factor_override(1.0),
+            resizable: false,
+            ..default()
+        },
+        _ => Window {
+            title: "gzweb gallery".into(),
+            resolution: bevy::window::WindowResolution::new(w, h),
+            canvas: Some("#bevy-canvas".into()),
+            fit_canvas_to_parent: true,
+            prevent_default_event_handling: false,
+            ..default()
+        },
+    };
+    default_plugins(mode).set(WindowPlugin {
+        primary_window: Some(window),
+        ..default()
+    })
+}
+
+/// `--ui gallery`: the widget gallery, with no world or connection.
+fn run_gallery(args: Args) -> AppExit {
+    let mut app = App::new();
+    app.add_plugins(gallery_plugins(args.mode)).add_plugins((
+        gz_ui::GzUiPlugin { theme: args.theme },
+        gz_ui::gallery::GalleryPlugin,
+    ));
+    // The canvas key listener, as in the app: Tab stays in the gallery and
+    // Space doesn't scroll the page.
+    #[cfg(target_arch = "wasm32")]
+    gz_bevy::view::web::install(&mut app);
+    if let Some(path) = args.snapshot.and_then(|s| s.screenshot) {
+        app.insert_resource(gz_ui::gallery::GalleryCapture::new(path));
+    }
+    app.run()
+}
+
 fn main() -> AppExit {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
@@ -282,6 +362,10 @@ fn main() -> AppExit {
         }
     };
 
+    if args.gallery {
+        return run_gallery(args);
+    }
+
     let mut app = App::new();
     app.add_plugins(GzAssetSourcesPlugin {
         http_mirror: args.http_mirror.clone(),
@@ -294,9 +378,13 @@ fn main() -> AppExit {
         ));
     }
 
+    let full = args.config.ui == UiMode::Full;
     app.add_plugins(GzWebPlugin {
         config: args.config,
     });
+    if full {
+        app.add_plugins(gz_ui::GzUiPlugin { theme: args.theme });
+    }
     if let Some(req) = args.snapshot {
         app.insert_resource(req)
             .add_systems(Last, gz_bevy::snapshot::snapshot_when_settled);
@@ -432,10 +520,37 @@ mod tests {
         }
         assert_eq!(
             parse(&["--ui", "none"], None).unwrap_err(),
-            "--ui: unknown UI mode 'none' (full or minimal)"
+            "--ui: unknown UI mode 'none' (full, minimal or gallery)"
         );
         assert_eq!(parse(&["--ui"], None).unwrap_err(), "--ui needs a value");
-        assert!(USAGE.contains("[--ui full|minimal] [--no-hud]"));
+        assert!(USAGE.contains("[--ui full|minimal|gallery] [--theme system|light|dark]"));
+    }
+
+    #[test]
+    fn gallery_and_theme_flags() {
+        let a = run_args(&["--ui", "gallery", "--theme", "dark"], None);
+        assert!(a.gallery);
+        assert_eq!(a.theme, ThemeMode::Dark);
+        assert_eq!(a.mode, Mode::Interactive);
+        let shot = run_args(&["--ui", "Gallery", "--screenshot", "g.png"], None);
+        assert!(shot.gallery);
+        assert_eq!(shot.mode, Mode::Capture);
+        let d = run_args(&[], None);
+        assert!(!d.gallery);
+        assert_eq!(d.theme, ThemeMode::System);
+        assert_eq!(
+            parse(&["--ui", "gallery", "--snapshot", "o.json"], None).unwrap_err(),
+            "--snapshot doesn't apply to --ui gallery (use --screenshot)"
+        );
+        assert_eq!(
+            parse(&["--theme", "blue"], None).unwrap_err(),
+            "--theme: unknown theme 'blue' (system, light or dark)"
+        );
+        assert!(is_gallery(Some("GALLERY")) && !is_gallery(Some("full")) && !is_gallery(None));
+        for mode in [Mode::Interactive, Mode::Capture] {
+            let plugins = gallery_plugins(mode);
+            assert!(plugins.enabled::<WindowPlugin>());
+        }
     }
 
     #[test]

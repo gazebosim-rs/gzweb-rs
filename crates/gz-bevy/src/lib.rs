@@ -34,8 +34,9 @@ pub enum UiMode {
     /// The 3D view with [`view::ViewerControls`]: camera, viewport and sim
     /// keys, and the status text.
     Minimal,
-    /// The whole workbench. TODO(M1): add the `gz-ui` plugin; until then
-    /// this is [`UiMode::Minimal`].
+    /// The whole workbench: the app adds `gz_ui::GzUiPlugin` on top of
+    /// [`UiMode::Minimal`] (gz-ui depends on this crate, not the other way
+    /// round). Until its shell lands (M2) it shows nothing more.
     #[default]
     Full,
 }
@@ -172,7 +173,7 @@ impl Plugin for GzWebPlugin {
         );
 
         if self.config.interactive() {
-            // TODO(M1): `UiMode::Full` adds `gz_ui::GzUiPlugin` on top.
+            // `UiMode::Full`: the app adds `gz_ui::GzUiPlugin` on top.
             app.add_plugins(view::ViewerControls {
                 mode: self.config.ui,
             });

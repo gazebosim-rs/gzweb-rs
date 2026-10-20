@@ -12,7 +12,9 @@
 default_install_hook_types: [pre-commit, pre-push]
 default_stages: [pre-commit]
 
-# Vendored upstream sources and recorded binary fixtures are left as they are.
+# Vendored upstream protos and recorded binary fixtures are left as they
+# are. The vendored Geist fonts and their licence only skip the text fixers
+# below (the other checks, such as large files, still apply).
 exclude: ^(crates/gz-proto/proto/|tests/corpus/.*\.bin$|spikes/collada/synthetic/)
 
 repos:
@@ -20,9 +22,12 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^crates/gz-ui/assets/fonts/
       - id: end-of-file-fixer
+        exclude: ^crates/gz-ui/assets/fonts/
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: ^crates/gz-ui/assets/fonts/
       - id: check-yaml
       - id: check-toml
       - id: check-json

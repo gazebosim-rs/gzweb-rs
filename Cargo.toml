@@ -8,6 +8,7 @@ gz-proto = { path = "crates/gz-proto", version = "0.1.0" }
 gz-core = { path = "crates/gz-core", version = "0.1.0" }
 gz-bevy = { path = "crates/gz-bevy", version = "0.1.0" }
 gz-collada = { path = "crates/gz-collada", version = "0.1.0" }
+gz-ui = { path = "crates/gz-ui", version = "0.1.0" }
 prost = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

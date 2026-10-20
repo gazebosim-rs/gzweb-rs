@@ -118,7 +118,7 @@ From `shortcuts.json`, viewport and sim scopes only:
 7. **Fonts.** The Geist and Geist Mono TTFs (OFL-1.1) aren't in the zip. They get vendored from the
    upstream release, with the licence file, and embedded with `include_bytes!` for wasm.
 8. **Icons.** `icons.json` holds 89 SVG path icons. A `build.rs` in `gz-ui` rasterizes them with
-   `resvg` into an atlas (1× and 2×, at 15/17/18/20 px) and generates the `IconId` enum. Icons
+   `resvg` into an atlas (1× and 2×, at 15/17/18/20 px and the other drawn sizes, D-44) and generates the `IconId` enum. Icons
    are tinted at runtime by `ColorRole`. Build-time rasterizing keeps `resvg` out of the wasm
    payload.
 
@@ -161,7 +161,7 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Load `shortcuts.json` into an `InputMap` resource. Add the CI conflict test.
 - Tests: unit tests for every `ViewCommand`; a headless `minimal` app driven by synthetic input.
 
-### M1 — Theme, icons, fonts, widgets (`gz-ui` crate)
+### M1 — Theme, icons, fonts, widgets (`gz-ui` crate) — **done 2026-10-19**
 - Generate `theme.rs` from `tokens.json` in `build.rs`, or keep the spec's
   hand-written mirror plus a test that it matches. Add the WCAG contrast test over the §13 pairs.
 - Icon atlas build step, fonts, `ColorRole` + `apply_theme_system` + `button_visuals_system`.
@@ -170,6 +170,12 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   Slider, Chip, Badge, Menu/MenuItem, Tooltip, Popover, Splitter.
 - A `--ui gallery` debug screen. Accept: both themes render, and runtime theme switch re-colours
   everything.
+- Notes: `build.rs` generates the token tables and the icon atlases (DECISIONS.md D-21, D-24);
+  fonts are Geist 1.8.1, embedded (+0.9 MB gzipped to the wasm with the atlases and logos).
+  Text input is Bevy's (selection, clipboard, IME) behind the NumberField wrapper (D-27); no
+  undo or ellipsis yet. Text fields stand the viewer's keys down and, in the browser, stop
+  the canvas preventing defaults. The gallery shows one theme at a time (D-28). Bevy's text
+  looks lighter than the boards' (linear-space glyph blending). See WORKLOG.
 
 ### M2 — Shell layout
 - Top bar, activity bar, sidebar with two slots, viewport area, inspector, status bar, splitters,
@@ -229,8 +235,8 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
-  the page's status lines. M10 still owns text-field focus inside the canvas (bevy_ui text
-  inputs must keep the browser's chords) and layout-aware letters.
+  the page's status lines. Text-field focus inside the canvas was done in M1 (bevy_ui text
+  inputs keep the browser's chords). M10 still owns layout-aware letters.
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 
