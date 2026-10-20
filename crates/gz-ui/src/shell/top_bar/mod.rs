@@ -20,8 +20,9 @@ use super::format;
 use super::regions::{pass_through, region, Region};
 use crate::assets::brand::logo;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
-use crate::widgets::menu::shortcut_label;
-use crate::widgets::{spacer, Tooltip};
+use crate::widgets::layout::{flex_spacer, row, separator, Orientation};
+use crate::widgets::text::set_text;
+use crate::widgets::Tooltip;
 use transport::{steps_label, RtfDot, RtfReadout, StepsPerClick, StepsTrigger};
 use world_button::world_name;
 
@@ -34,22 +35,8 @@ pub enum TopText {
     Rtf,
 }
 
-fn tip(map: &InputMap, id: &str, name: &str) -> Tooltip {
-    Tooltip::new(name).shortcut_opt(shortcut_label(map, id))
-}
-
-fn separator() -> impl Bundle {
-    (
-        Node {
-            width: px(1),
-            height: px(18),
-            flex_shrink: 0.0,
-            margin: UiRect::horizontal(px(SPACE[2])),
-            ..default()
-        },
-        Fill(ColorRole::Line),
-    )
-}
+/// The length of the top bar's separators between its groups.
+const BAR_SEPARATOR_H: f32 = 18.0;
 
 /// The top bar.
 pub fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
@@ -66,36 +53,22 @@ pub fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
                     right: px(SPACE[5]),
                     ..default()
                 },
-                column_gap: px(SPACE[4]),
-                align_items: AlignItems::Center,
                 border: UiRect::bottom(px(border::HAIRLINE)),
-                ..default()
+                ..row(SPACE[4])
             },
             ColorRole::Surface,
         ),
         Children::spawn(SpawnWith(move |b: &mut ChildSpawner| {
             b.spawn((logo(t.s.logo), pass_through()));
             b.spawn(world_button::world_button(&t));
-            b.spawn(separator());
+            b.spawn(separator(Orientation::Vertical, BAR_SEPARATOR_H, SPACE[2]));
             tools::spawn_tools(b, &t, &map);
-            b.spawn((spacer(), pass_through()));
+            b.spawn((flex_spacer(), pass_through()));
             b.spawn(transport::transport_group(&t, &map));
-            b.spawn((spacer(), pass_through()));
+            b.spawn((flex_spacer(), pass_through()));
             b.spawn(search::search_trigger(&t, &map));
         })),
     )
-}
-
-fn set(text: &mut Text, want: &str) {
-    if text.0 != want {
-        text.0 = want.to_string();
-    }
-}
-
-fn set_span(text: &mut TextSpan, want: &str) {
-    if text.0 != want {
-        text.0 = want.to_string();
-    }
 }
 
 /// The world name, clock, RTF and steps label.
@@ -122,10 +95,10 @@ pub fn top_bar_texts(
             TopText::Rtf => rtf.clone(),
         };
         if let Some(mut t) = text {
-            set(&mut t, &want);
+            set_text(&mut t, &want);
         }
         if let Some(mut s) = span {
-            set_span(&mut s, &want);
+            set_text(&mut s, &want);
         }
     }
     for mut fill in &mut dots {
@@ -142,7 +115,7 @@ pub fn top_bar_texts(
         for children in &triggers {
             for &c in children {
                 if let Ok(mut t) = labels.get_mut(c) {
-                    set(&mut t, &label);
+                    set_text(&mut t, &label);
                 }
             }
         }

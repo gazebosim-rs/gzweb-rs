@@ -14,6 +14,7 @@ use crate::assets::icons::{icon, IconId};
 use crate::shell::connection::Phase;
 use crate::shell::Panel;
 use crate::theme::{radius, ColorRole, Fill, Theme, TypeStyle, SPACE};
+use crate::widgets::layout::{column, row};
 use crate::widgets::{button, rounded, ButtonVariant, Tooltip};
 
 /// What a panel's body shows (§3.3.1).
@@ -121,9 +122,7 @@ pub(super) fn panel_body(theme: &Theme, panel: Panel, view: PanelView) -> impl B
         Node {
             flex_grow: 1.0,
             min_height: px(0),
-            flex_direction: FlexDirection::Column,
             padding: UiRect::all(px(SPACE[4])),
-            row_gap: px(if centred { SPACE[5] } else { SPACE[1] }),
             justify_content: if centred {
                 JustifyContent::Center
             } else {
@@ -135,7 +134,7 @@ pub(super) fn panel_body(theme: &Theme, panel: Panel, view: PanelView) -> impl B
                 AlignItems::Stretch
             },
             overflow: Overflow::clip(),
-            ..default()
+            ..column(if centred { SPACE[5] } else { SPACE[1] })
         },
         Children::spawn(SpawnWith(move |b: &mut ChildSpawner| match view {
             PanelView::Ready => {}
@@ -143,9 +142,8 @@ pub(super) fn panel_body(theme: &Theme, panel: Panel, view: PanelView) -> impl B
                 for width in [72.0, 56.0, 64.0] {
                     b.spawn(Node {
                         height: px(t.s.tree_row_h),
-                        align_items: AlignItems::Center,
                         padding: UiRect::horizontal(px(SPACE[3])),
-                        ..default()
+                        ..row(0.0)
                     })
                     .with_child((
                         SkeletonRow,
@@ -171,11 +169,7 @@ pub(super) fn panel_body(theme: &Theme, panel: Panel, view: PanelView) -> impl B
                     TextLayout::justify(Justify::Center),
                 ));
                 if !actions.is_empty() {
-                    b.spawn(Node {
-                        column_gap: px(SPACE[4]),
-                        ..default()
-                    })
-                    .with_children(|row| {
+                    b.spawn(row(SPACE[4])).with_children(|row| {
                         for a in actions {
                             let mut e =
                                 row.spawn((button(&t, a.label(), ButtonVariant::Normal), a));

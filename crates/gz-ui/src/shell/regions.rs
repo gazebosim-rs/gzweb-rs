@@ -10,7 +10,8 @@ use gz_bevy::view::input::InputMap;
 use super::collapsed_bar::collapsed_bar;
 use super::layout::{self, ShellLayout, Side, Slot};
 use super::{activity_bar, inspector, sidebar, status_bar, top_bar, viewport};
-use crate::theme::{ColorRole, Fill, Stroke, Theme};
+use crate::theme::{border, ColorRole, Fill, Stroke, Theme};
+use crate::widgets::layout::{column, display, fill_parent};
 
 /// Marks the shell's regions (spec §2.1).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +33,26 @@ pub enum Region {
 /// A plain region node with its background and one border.
 pub(crate) fn region(region: Region, node: Node, fill: ColorRole) -> impl Bundle {
     (region, node, Fill(fill), Stroke(ColorRole::Line))
+}
+
+/// A side panel's region (§2.1): its width and open state from the
+/// layout, a column on `surface` with a 1px `line` border facing the view.
+pub(crate) fn side_panel(side: Side, layout: &ShellLayout) -> impl Bundle {
+    let (kind, border) = match side {
+        Side::Sidebar => (Region::Sidebar, UiRect::right(px(border::HAIRLINE))),
+        Side::Inspector => (Region::Inspector, UiRect::left(px(border::HAIRLINE))),
+    };
+    region(
+        kind,
+        Node {
+            width: px(layout.width(side)),
+            flex_shrink: 0.0,
+            border,
+            display: display(layout.is_open(side)),
+            ..column(0.0)
+        },
+        ColorRole::Surface,
+    )
 }
 
 /// A container the pointer passes through: not a hit for picking, so
@@ -112,19 +133,18 @@ pub fn apply_layout(
     if !layout.is_changed() {
         return;
     }
-    let shown = |open: bool| if open { Display::Flex } else { Display::None };
     for (region, mut node) in &mut regions {
         match region {
             Region::Sidebar => {
                 node.width = px(layout.sidebar_w);
-                node.display = shown(layout.sidebar_open);
+                node.display = display(layout.sidebar_open);
             }
             Region::Inspector => {
                 node.width = px(layout.inspector_w);
-                node.display = shown(layout.inspector_open);
+                node.display = display(layout.inspector_open);
             }
-            Region::SidebarBar => node.display = shown(!layout.sidebar_open),
-            Region::InspectorBar => node.display = shown(!layout.inspector_open),
+            Region::SidebarBar => node.display = display(!layout.sidebar_open),
+            Region::InspectorBar => node.display = display(!layout.inspector_open),
             _ => {}
         }
     }
@@ -140,7 +160,7 @@ pub fn apply_layout(
         node.display = display;
     }
     for mut node in &mut row_splitters {
-        node.display = shown(two);
+        node.display = display(two);
     }
 }
 
@@ -158,10 +178,8 @@ pub fn spawn_shell(
     commands.spawn((
         Region::Root,
         Node {
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
-            ..default()
+            ..fill_parent()
         },
         pass_through(),
         Children::spawn(SpawnWith(move |root: &mut ChildSpawner| {

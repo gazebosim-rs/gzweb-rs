@@ -15,12 +15,12 @@ use gz_bevy::view::input::InputMap;
 use super::commands::UiCommand;
 use super::connection::CurrentPhase;
 use super::layout::DEFAULT_SPLIT;
-use super::regions::{region, Region};
+use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::{Panel, ShellLayout, Side, Slot};
 use crate::assets::icons::IconId;
-use crate::theme::{border, ColorRole, Theme};
-use crate::widgets::menu::shortcut_label;
+use crate::theme::Theme;
+use crate::widgets::layout::column;
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 use body::panel_body;
 pub use body::{panel_count, panel_view, PanelAction, PanelBody, PanelView, SkeletonRow};
@@ -45,22 +45,7 @@ pub enum SlotAction {
 pub fn sidebar(theme: &Theme, layout: &ShellLayout) -> impl Bundle {
     let t = theme.clone();
     (
-        region(
-            Region::Sidebar,
-            Node {
-                width: px(layout.sidebar_w),
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
-                border: UiRect::right(px(border::HAIRLINE)),
-                display: if layout.sidebar_open {
-                    Display::Flex
-                } else {
-                    Display::None
-                },
-                ..default()
-            },
-            ColorRole::Surface,
-        ),
+        side_panel(Side::Sidebar, layout),
         Children::spawn(SpawnWith(move |s: &mut ChildSpawner| {
             s.spawn(slot_node(Slot::Primary));
             s.spawn(slot_splitter::slot_splitter(&t));
@@ -74,7 +59,6 @@ fn slot_node(slot: Slot) -> impl Bundle {
     (
         SlotView(slot),
         Node {
-            flex_direction: FlexDirection::Column,
             flex_basis: px(0),
             flex_grow: match slot {
                 Slot::Primary => DEFAULT_SPLIT,
@@ -82,7 +66,7 @@ fn slot_node(slot: Slot) -> impl Bundle {
             },
             min_height: px(0),
             overflow: Overflow::clip(),
-            ..default()
+            ..column(0.0)
         },
     )
 }
@@ -166,8 +150,7 @@ fn header_buttons(
                     theme,
                     IconId::ChevronLeft,
                     small,
-                    Tooltip::new("Collapse sidebar")
-                        .shortcut_opt(shortcut_label(map, "ui.sidebar")),
+                    Tooltip::new("Collapse sidebar").binding(map, "ui.sidebar"),
                 ),
                 SlotAction::Collapse,
             ));

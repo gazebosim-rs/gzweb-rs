@@ -27,15 +27,15 @@ use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, Popover
 use bevy::ui_widgets::{
     observe, Activate, MenuAction, MenuEvent, MenuFocusState, MenuItem, MenuPopup,
 };
-use gz_bevy::view::input::{Chord, InputMap, Platform};
 
-use super::{a11y, rounded, spacer};
+use super::{a11y, rounded};
 use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
 use crate::theme::visuals::{Content, HoverOnFocus, OwnInk, Visuals};
 use crate::theme::{
     border, elevation, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
 };
+use crate::widgets::layout::flex_spacer;
 
 /// Shortcut text type: mono 11/400.
 pub const SHORTCUT_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
@@ -244,7 +244,7 @@ pub fn menu_item(
                 p.spawn((icon(id, icon_px, ColorRole::Text2), Content, OwnInk));
             }
             p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
-            p.spawn(spacer());
+            p.spawn(flex_spacer());
             if let Some(keys) = shortcut {
                 p.spawn(shortcut_text(keys));
             }
@@ -297,7 +297,7 @@ pub fn menu_checkbox(
                 OwnInk,
             ));
             p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
-            p.spawn(spacer());
+            p.spawn(flex_spacer());
             if let Some(keys) = shortcut {
                 p.spawn(shortcut_text(keys));
             }
@@ -442,82 +442,6 @@ pub(crate) fn on_menu_typing(
         ev.propagate(false);
         focus.set(list[i].0, FocusCause::Navigated);
     }
-}
-
-/// The text a menu or tooltip shows for a key binding (`shortcuts.json`
-/// id), on this platform: `⇧F` for Shift chords, else
-/// `Ctrl+Shift+E` (`Cmd+…` on macOS). Geist has no ⌘ or ⌥ glyphs
-/// (DECISIONS.md D-26).
-pub fn shortcut_label(map: &InputMap, id: &str) -> Option<String> {
-    let binding = map.binding(id)?;
-    let chord = binding.chords(map.platform).first()?;
-    Some(chord_label(chord, map.platform))
-}
-
-/// One chord as text.
-pub fn chord_label(chord: &Chord, platform: Platform) -> String {
-    let key = key_label(chord.key);
-    let m = chord.mods;
-    if !(m.cmd || m.ctrl || m.alt) {
-        return if m.shift { format!("⇧{key}") } else { key };
-    }
-    let mut parts = Vec::new();
-    if m.cmd {
-        parts.push(if platform == Platform::Mac {
-            "Cmd"
-        } else {
-            "Ctrl"
-        });
-    }
-    if m.ctrl && !(m.cmd && platform != Platform::Mac) {
-        parts.push("Ctrl");
-    }
-    if m.alt {
-        parts.push(if platform == Platform::Mac {
-            "Opt"
-        } else {
-            "Alt"
-        });
-    }
-    if m.shift {
-        parts.push("Shift");
-    }
-    parts.push(&key);
-    parts.join("+")
-}
-
-/// A key's name as printed on a key cap.
-pub fn key_label(key: KeyCode) -> String {
-    let name = format!("{key:?}");
-    let short = match key {
-        KeyCode::Escape => "Esc",
-        KeyCode::Space => "Space",
-        KeyCode::Enter | KeyCode::NumpadEnter => "⏎",
-        KeyCode::Backspace => "⌫",
-        KeyCode::Delete => "Del",
-        KeyCode::Tab => "Tab",
-        KeyCode::ArrowLeft => "←",
-        KeyCode::ArrowRight => "→",
-        KeyCode::ArrowUp => "↑",
-        KeyCode::ArrowDown => "↓",
-        KeyCode::Comma => ",",
-        KeyCode::Period => ".",
-        KeyCode::Slash => "/",
-        KeyCode::Minus => "-",
-        KeyCode::Equal => "=",
-        KeyCode::BracketLeft => "[",
-        KeyCode::BracketRight => "]",
-        _ => "",
-    };
-    if !short.is_empty() {
-        return short.to_string();
-    }
-    for prefix in ["Key", "Digit", "Numpad"] {
-        if let Some(rest) = name.strip_prefix(prefix) {
-            return rest.to_string();
-        }
-    }
-    name
 }
 
 pub(crate) fn build(app: &mut App) {

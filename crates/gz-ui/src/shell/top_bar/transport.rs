@@ -10,7 +10,7 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::connection::{GzCommand, GzStatus};
 use gz_bevy::view::input::InputMap;
 
-use super::{separator, tip, TopText};
+use super::{TopText, BAR_SEPARATOR_H};
 use crate::assets::fonts::text;
 use crate::assets::icons::{Icon, IconId};
 use crate::shell::connection::{CurrentPhase, Phase};
@@ -18,6 +18,7 @@ use crate::shell::format;
 use crate::theme::{ColorRole, Theme, TypeStyle, SPACE};
 use crate::widgets::button::{text_button_parts, TextButton};
 use crate::widgets::chip::dot;
+use crate::widgets::layout::{row, separator, Orientation};
 use crate::widgets::menu::{menu, menu_item, MenuSide};
 use crate::widgets::{bar_button, button_group, Tooltip};
 
@@ -90,29 +91,39 @@ pub(super) fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
         button_group("Simulation", false),
         Children::spawn(SpawnWith(move |g: &mut ChildSpawner| {
             g.spawn((
-                bar_button(&t, IconId::Reset, tip(&map, "sim.reset", "Reset world")),
+                bar_button(
+                    &t,
+                    IconId::Reset,
+                    Tooltip::new("Reset world").binding(&map, "sim.reset"),
+                ),
                 Transport::Reset,
             ));
             g.spawn((
-                bar_button(&t, IconId::Play, tip(&map, "sim.play_pause", "Play")),
+                bar_button(
+                    &t,
+                    IconId::Play,
+                    Tooltip::new("Play").binding(&map, "sim.play_pause"),
+                ),
                 Transport::PlayPause,
             ));
             g.spawn((
-                bar_button(&t, IconId::Step, tip(&map, "sim.step", "Step")),
+                bar_button(
+                    &t,
+                    IconId::Step,
+                    Tooltip::new("Step").binding(&map, "sim.step"),
+                ),
                 Transport::Step,
             ));
             g.spawn(steps_menu(&t));
-            g.spawn(separator());
+            g.spawn(separator(Orientation::Vertical, BAR_SEPARATOR_H, SPACE[2]));
             g.spawn(Node {
                 padding: UiRect {
                     left: px(SPACE[3]),
                     right: px(SPACE[5]),
                     ..default()
                 },
-                column_gap: px(SPACE[6]),
-                align_items: AlignItems::Center,
                 flex_shrink: 0.0,
-                ..default()
+                ..row(SPACE[6])
             })
             .with_children(|r| {
                 r.spawn((
@@ -123,11 +134,7 @@ pub(super) fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
                     RtfReadout,
                     Hovered::default(),
                     Tooltip::new("Real-time factor").detail(format::rtf_detail(None)),
-                    Node {
-                        column_gap: px(SPACE[2] + 1.0),
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
+                    row(SPACE[2] + 1.0),
                 ))
                 .with_children(|r| {
                     r.spawn((dot(t.s.status_dot, ColorRole::Disabled), RtfDot));

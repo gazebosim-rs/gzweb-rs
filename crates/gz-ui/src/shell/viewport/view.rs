@@ -8,6 +8,7 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::view::ViewPlacement;
 
 use crate::shell::connection::CurrentPhase;
+use crate::widgets::layout::node_rect;
 
 /// The 3D view's placeholder node: the main camera renders into its rect.
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -19,11 +20,6 @@ pub const DIM_OPACITY: f32 = 0.3;
 /// The dimming over the last frame.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct DimOverlay;
-
-/// The physical rect of a laid-out node.
-pub fn node_rect(node: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
-    Rect::from_center_size(transform.translation, node.size())
-}
 
 /// Places the 3D view on the view node (spec §9.3): its rect, in window
 /// logical pixels, goes to `gz-bevy`, which renders the main camera into a

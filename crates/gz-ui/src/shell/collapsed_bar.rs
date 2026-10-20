@@ -9,6 +9,7 @@ use super::commands::UiCommand;
 use super::layout::{self, Side};
 use super::regions::{region, Region};
 use crate::theme::{border, ColorRole, Theme, SPACE};
+use crate::widgets::layout::column;
 
 /// A collapsed panel's bar button: shows that side again.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,9 +42,7 @@ pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
             TooltipSide::Left,
         ),
     };
-    let tip = Tooltip::new(title)
-        .shortcut_opt(crate::widgets::menu::shortcut_label(map, binding))
-        .side(tip_side);
+    let tip = Tooltip::new(title).binding(map, binding).side(tip_side);
     let button = EXPAND_BUTTON;
     (
         region(
@@ -51,12 +50,11 @@ pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
             Node {
                 width: px(layout::COLLAPSED_BAR_W),
                 flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 padding: UiRect::top(px(SPACE[3])),
                 border: border_side,
                 display: Display::None,
-                ..default()
+                ..column(0.0)
             },
             ColorRole::Surface,
         ),

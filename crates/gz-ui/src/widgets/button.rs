@@ -5,6 +5,7 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, RadioButton};
 
+use super::layout::row;
 use super::{clickable, rounded, Tooltip};
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
@@ -226,6 +227,18 @@ impl TextButton {
     }
 }
 
+/// A [`TextButton`]'s box (§5.2): text button height, padding 0 9, gap 6,
+/// radius 7. The world menu button has its own content in one.
+pub(crate) fn text_button_node(theme: &Theme) -> Node {
+    Node {
+        height: px(theme.s.text_btn_h),
+        padding: UiRect::horizontal(px(9)),
+        flex_shrink: 0.0,
+        border_radius: rounded(ICON_BUTTON_RADIUS),
+        ..row(SPACE[3])
+    }
+}
+
 /// The parts of a [`TextButton`] without the headless button, so menu and
 /// popover triggers can reuse the look.
 pub(crate) fn text_button_parts(theme: &Theme, spec: TextButton) -> impl Bundle {
@@ -242,15 +255,7 @@ pub(crate) fn text_button_parts(theme: &Theme, spec: TextButton) -> impl Bundle 
     let icon_px = theme.s.icon_sm;
     let label = spec.label.clone();
     (
-        Node {
-            height: px(theme.s.text_btn_h),
-            padding: UiRect::horizontal(px(9)),
-            column_gap: px(SPACE[3]),
-            align_items: AlignItems::Center,
-            flex_shrink: 0.0,
-            border_radius: rounded(ICON_BUTTON_RADIUS),
-            ..default()
-        },
+        text_button_node(theme),
         clickable(
             Visuals::new(ColorRole::Clear, ColorRole::Text),
             Role::Button,

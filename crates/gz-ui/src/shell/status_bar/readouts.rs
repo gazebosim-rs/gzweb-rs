@@ -15,6 +15,7 @@ use crate::shell::connection::{dot_role, CurrentPhase};
 use crate::shell::format;
 use crate::shell::Tool;
 use crate::theme::Fill;
+use crate::widgets::text::set_text;
 
 /// The text of an item.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,12 +28,6 @@ pub struct ConnectionDot;
 /// The ground point under the cursor, Gazebo x, y (§3.6 item 9).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CursorReadout(pub Option<[f32; 2]>);
-
-fn set(text: &mut Text, want: &str) {
-    if text.0 != want {
-        text.0 = want.to_string();
-    }
-}
 
 /// Every item's text and the connection dot.
 #[allow(clippy::too_many_arguments)]
@@ -62,7 +57,7 @@ pub fn status_texts(
             StatusItem::Cursor => format::cursor(cursor.0),
             StatusItem::Message | StatusItem::Workspace => continue,
         };
-        set(&mut t, &want);
+        set_text(&mut t, &want);
     }
     let role = dot_role(phase.0, status);
     for mut fill in &mut dots {

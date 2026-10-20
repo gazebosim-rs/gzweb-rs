@@ -10,7 +10,8 @@ use super::connect_card::ConnectButton;
 use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
 use crate::theme::{ColorRole, Fill, Theme, TypeStyle, SPACE};
-use crate::widgets::{button, spacer, ButtonVariant};
+use crate::widgets::layout::{flex_spacer, row};
+use crate::widgets::{button, ButtonVariant};
 
 /// The banner's height (§7.10).
 pub const BANNER_H: f32 = 36.0;
@@ -36,10 +37,8 @@ pub(super) fn disconnect_banner(theme: &Theme) -> impl Bundle {
             top: px(0),
             height: px(BANNER_H),
             padding: UiRect::horizontal(px(SPACE[6])),
-            column_gap: px(SPACE[4]),
-            align_items: AlignItems::Center,
             display: Display::None,
-            ..default()
+            ..row(SPACE[4])
         },
         Fill(ColorRole::WarnSoft),
         Children::spawn(SpawnWith(move |b: &mut ChildSpawner| {
@@ -53,7 +52,7 @@ pub(super) fn disconnect_banner(theme: &Theme) -> impl Bundle {
                 BannerText,
                 TextLayout::no_wrap(),
             ));
-            b.spawn(spacer());
+            b.spawn(flex_spacer());
             b.spawn((
                 button(&t, "Connect to another server…", ButtonVariant::Normal),
                 ConnectButton::Elsewhere,

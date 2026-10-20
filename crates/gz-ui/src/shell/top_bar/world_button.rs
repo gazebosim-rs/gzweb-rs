@@ -14,8 +14,9 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::Visuals;
 use crate::theme::{ColorRole, FontFamily, Theme, TypeStyle, SPACE};
-use crate::widgets::button::ICON_BUTTON_RADIUS;
-use crate::widgets::{clickable, rounded, Tooltip};
+use crate::widgets::button::text_button_node;
+use crate::widgets::layout::row;
+use crate::widgets::{clickable, Tooltip};
 
 /// The world menu button (opens the World menu in M8).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -29,15 +30,7 @@ pub(super) fn world_button(theme: &Theme) -> impl Bundle {
     let icon_px = theme.s.icon_sm;
     (
         WorldButton,
-        Node {
-            height: px(theme.s.text_btn_h),
-            padding: UiRect::horizontal(px(9)),
-            column_gap: px(SPACE[3]),
-            align_items: AlignItems::Center,
-            flex_shrink: 0.0,
-            border_radius: rounded(ICON_BUTTON_RADIUS),
-            ..default()
-        },
+        text_button_node(theme),
         Headless,
         clickable(
             Visuals::new(ColorRole::Clear, ColorRole::Text),
@@ -47,9 +40,8 @@ pub(super) fn world_button(theme: &Theme) -> impl Bundle {
         Tooltip::new("World").detail("World menu"),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             p.spawn(Node {
-                column_gap: px(SPACE[2] + 1.0),
                 align_items: AlignItems::Baseline,
-                ..default()
+                ..row(SPACE[2] + 1.0)
             })
             .with_children(|n| {
                 n.spawn((text(name, ColorRole::Text, "No world"), TopText::WorldName));

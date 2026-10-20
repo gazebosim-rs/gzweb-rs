@@ -12,7 +12,8 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::Visuals;
 use crate::theme::{border, radius, ColorRole, FontFamily, Stroke, Theme, TypeStyle, SPACE};
-use crate::widgets::menu::shortcut_label;
+use crate::widgets::layout::{clip_box, row};
+use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::{clickable, rounded};
 
 /// The search / command bar trigger (opens ⌘K in M8).
@@ -43,26 +44,17 @@ pub(super) fn search_trigger(theme: &Theme, map: &InputMap) -> impl Bundle {
                 right: px(SPACE[3]),
                 ..default()
             },
-            column_gap: px(SPACE[4]),
             border: UiRect::all(px(border::HAIRLINE)),
-            align_items: AlignItems::Center,
             overflow: Overflow::clip(),
             border_radius: rounded(radius::MD),
-            ..default()
+            ..row(SPACE[4])
         },
         Headless,
         clickable(visuals, Role::Button, "Search or run a command"),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             p.spawn(content_icon(IconId::Search, icon_px, ColorRole::Text3));
             // Text can't clip itself: a clipping box around it.
-            p.spawn(Node {
-                flex_grow: 1.0,
-                flex_basis: px(0),
-                min_width: px(0),
-                overflow: Overflow::clip(),
-                ..default()
-            })
-            .with_child((
+            p.spawn(clip_box()).with_child((
                 text(TypeStyle::BODY, ColorRole::Text3, "Search or run a command"),
                 TextLayout::no_wrap(),
                 Node {

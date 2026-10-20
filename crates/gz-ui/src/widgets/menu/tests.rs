@@ -16,10 +16,11 @@ use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, ThemeMode};
 use crate::widgets::button::{text_button_parts, TextButton};
 use crate::widgets::menu::{
-    chord_label, key_label, menu, shortcut_label, type_to_search, CheckItem, Menu, MenuCheckBox,
-    MenuLabel, MenuPopupOf, MenuSide, MenuTrigger,
+    menu, type_to_search, CheckItem, Menu, MenuCheckBox, MenuLabel, MenuPopupOf, MenuSide,
+    MenuTrigger,
 };
 use crate::widgets::select::{Select, SelectChanged, SelectLabel, SelectOption};
+use crate::widgets::shortcut::{chord_label, key_label, shortcut_label};
 use crate::widgets::{menu_checkbox, menu_group_label, menu_item, menu_separator, select};
 
 struct M {

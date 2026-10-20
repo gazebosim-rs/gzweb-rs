@@ -15,13 +15,16 @@ pub mod button;
 pub mod chip;
 pub mod cursor;
 pub mod focus;
+pub mod layout;
 pub mod menu;
 pub mod number_field;
 pub mod section;
 pub mod segmented;
 pub mod select;
+pub mod shortcut;
 pub mod slider;
 pub mod splitter;
+pub mod text;
 pub mod text_field;
 pub mod toggle;
 pub mod tooltip;
@@ -79,14 +82,6 @@ pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl
 /// A rounded rectangle node.
 pub fn rounded(r: f32) -> BorderRadius {
     BorderRadius::all(px(r))
-}
-
-/// A flexible spacer.
-pub fn spacer() -> Node {
-    Node {
-        flex_grow: 1.0,
-        ..default()
-    }
 }
 
 /// Default radius for small controls.

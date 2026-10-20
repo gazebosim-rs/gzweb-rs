@@ -11,7 +11,8 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
 use gz_bevy::view::controls::ViewRouting;
 
-use super::viewport::view::{node_rect, ViewNode};
+use super::viewport::view::ViewNode;
+use crate::widgets::layout::node_rect;
 
 /// The view had the last pointer press (its keys apply while the pointer
 /// is elsewhere). True at start, so keys work before the first click.

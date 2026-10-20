@@ -10,7 +10,6 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::connection::{GzReconnect, GzStatus};
 use gz_core::transport::Status;
 
-use super::set_display;
 use crate::assets::brand::logo;
 use crate::assets::fonts::text;
 use crate::shell::connection::{ConnectionView, Phase};
@@ -19,6 +18,7 @@ use crate::theme::{
     elevation, motion, radius, ColorRole, Fill, Ink, Opacity, Shadow, Stroke, Theme, TypeStyle,
     SPACE,
 };
+use crate::widgets::layout::{column, row, set_shown};
 use crate::widgets::text_field::TextFieldInput;
 use crate::widgets::{button, rounded, text_field, ButtonVariant, TextSubmit};
 
@@ -63,25 +63,18 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
         ConnectCard,
         Node {
             width: px(CARD_W),
-            flex_direction: FlexDirection::Column,
             align_items: AlignItems::Stretch,
-            row_gap: px(SPACE[6]),
             padding: UiRect::all(px(SPACE[10])),
             border: UiRect::all(px(crate::theme::border::HAIRLINE)),
             border_radius: rounded(radius::XL),
-            ..default()
+            ..column(SPACE[6])
         },
         Fill(ColorRole::Surface),
         Stroke(ColorRole::Line),
         elevation::MENU.box_shadow(),
         Shadow(ColorRole::Shadow),
         Children::spawn(SpawnWith(move |c: &mut ChildSpawner| {
-            c.spawn(Node {
-                column_gap: px(SPACE[6]),
-                align_items: AlignItems::Center,
-                ..default()
-            })
-            .with_children(|r| {
+            c.spawn(row(SPACE[6])).with_children(|r| {
                 r.spawn(logo(40.0));
                 r.spawn(text(
                     TypeStyle::new(crate::theme::FontFamily::Ui, 17.0, 600),
@@ -94,12 +87,7 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
                 ColorRole::Text2,
                 "Address of a running Gazebo websocket server",
             ));
-            c.spawn(Node {
-                column_gap: px(SPACE[4]),
-                align_items: AlignItems::Center,
-                ..default()
-            })
-            .with_children(|r| {
+            c.spawn(row(SPACE[4])).with_children(|r| {
                 r.spawn((text_field(&t, "Server address", ""), AddressField));
                 r.spawn((
                     button(&t, "Connect", ButtonVariant::Normal),
@@ -174,7 +162,7 @@ pub fn fade_card(
             }
         }
         if done {
-            set_display(&mut node, false);
+            set_shown(&mut node, false);
             commands.entity(card).remove::<Fading>();
         }
     }

@@ -18,7 +18,9 @@ use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 use crate::widgets::button::ICON_BUTTON_RADIUS;
 use crate::widgets::chip::dot;
-use crate::widgets::{clickable, rounded, spacer, Tooltip, TooltipSide};
+use crate::widgets::layout::flex_spacer;
+use crate::widgets::layout::{row, set_shown};
+use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
 pub use readouts::{cursor_readout, status_texts, ConnectionDot, CursorReadout, StatusText};
 
 /// The status bar's items, numbered as in §3.6.
@@ -66,9 +68,7 @@ fn item(which: StatusItem, style: TypeStyle, role: ColorRole, value: &str) -> im
         which,
         Node {
             flex_shrink: 0.0,
-            align_items: AlignItems::Center,
-            column_gap: px(SPACE[3]),
-            ..default()
+            ..row(SPACE[3])
         },
         children![(
             text(style, role, value.to_string()),
@@ -88,11 +88,9 @@ pub fn status_bar(theme: &Theme) -> impl Bundle {
                 height: px(theme.s.status_bar_h),
                 flex_shrink: 0.0,
                 padding: UiRect::horizontal(px(SPACE[6])),
-                column_gap: px(SPACE[8]),
-                align_items: AlignItems::Center,
                 border: UiRect::top(px(border::HAIRLINE)),
                 overflow: Overflow::clip(),
-                ..default()
+                ..row(SPACE[8])
             },
             ColorRole::Surface,
         ),
@@ -101,9 +99,7 @@ pub fn status_bar(theme: &Theme) -> impl Bundle {
                 StatusItem::Connection,
                 Node {
                     flex_shrink: 0.0,
-                    align_items: AlignItems::Center,
-                    column_gap: px(SPACE[3]),
-                    ..default()
+                    ..row(SPACE[3])
                 },
             ))
             .with_children(|c| {
@@ -131,7 +127,7 @@ pub fn status_bar(theme: &Theme) -> impl Bundle {
                     ..default()
                 },
             ));
-            b.spawn(spacer());
+            b.spawn(flex_spacer());
             b.spawn(item(
                 StatusItem::Hint,
                 HINT_TYPE,
@@ -165,11 +161,9 @@ fn workspace_button(theme: &Theme) -> impl Bundle {
         Node {
             height: px(22),
             padding: UiRect::horizontal(px(SPACE[3])),
-            column_gap: px(SPACE[2] + 1.0),
-            align_items: AlignItems::Center,
             flex_shrink: 0.0,
             border_radius: rounded(ICON_BUTTON_RADIUS - 2.0),
-            ..default()
+            ..row(SPACE[2] + 1.0)
         },
         Headless,
         clickable(
@@ -195,13 +189,6 @@ pub fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusItem, &mu
         return;
     }
     for (which, mut node) in &mut items {
-        let display = if which.shown_at(layout.window_w) {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        if node.display != display {
-            node.display = display;
-        }
+        set_shown(&mut node, which.shown_at(layout.window_w));
     }
 }

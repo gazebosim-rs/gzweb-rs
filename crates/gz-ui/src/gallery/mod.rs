@@ -28,13 +28,17 @@ use crate::theme::{
 use crate::widgets::button::{text_button_parts, TextButton};
 use crate::widgets::chip::dot;
 use crate::widgets::focus::TextFocus;
-use crate::widgets::menu::{menu, menu_group_label, shortcut_label, MenuSide};
+use crate::widgets::layout::flex_spacer;
+use crate::widgets::layout::{column, row, separator, Orientation};
+use crate::widgets::menu::{menu, menu_group_label, MenuSide};
 use crate::widgets::number_field::NumberInput;
+use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::splitter::SplitAxis;
+use crate::widgets::text::set_text;
 use crate::widgets::{
     activity_button, badge, button, filter_chip, icon_button, menu_checkbox, menu_item, menu_panel,
     menu_separator, number_field, primary_button, rounded, section_header, segmented_group, select,
-    slider_row, spacer, splitter, status_chip, text_button, toggle_row, tool_button, tooltip_card,
+    slider_row, splitter, status_chip, text_button, toggle_row, tool_button, tooltip_card,
     tree_row, AxisTag, BadgeKind, ButtonVariant, EntityKind, IconButtonSize, NumberField,
     SliderSpec, Splitter, StatusKind, Tooltip, TooltipSide, TreeRowSpec, Unit,
 };
@@ -188,22 +192,20 @@ fn card_node(node: Node) -> impl Bundle {
     )
 }
 
-fn column(width: f32, gap: f32) -> Node {
+/// A column of the page, `width` wide.
+fn page_column(width: f32, gap: f32) -> Node {
     Node {
         width: px(width),
-        flex_direction: FlexDirection::Column,
-        row_gap: px(gap),
         flex_shrink: 0.0,
-        ..default()
+        ..column(gap)
     }
 }
 
-fn row(gap: f32) -> Node {
+/// A row of samples that keeps its size.
+fn sample_row(gap: f32) -> Node {
     Node {
-        column_gap: px(gap),
-        align_items: AlignItems::Center,
         flex_shrink: 0.0,
-        ..default()
+        ..row(gap)
     }
 }
 
@@ -225,9 +227,9 @@ pub(crate) fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Opti
             Fill(ColorRole::Bg),
         ))
         .with_children(|p| {
-            p.spawn(column(COLUMN_W, SPACE[8]))
+            p.spawn(page_column(COLUMN_W, SPACE[8]))
                 .with_children(|c| left_column(c, &theme, &map));
-            p.spawn(column(COLUMN_W + 20.0, SPACE[8]))
+            p.spawn(page_column(COLUMN_W + 20.0, SPACE[8]))
                 .with_children(|c| right_column(c, &theme, &map));
         });
 }
@@ -246,7 +248,7 @@ fn header(c: &mut ChildSpawnerCommands) {
     })
     .with_children(|h| {
         h.spawn((ThemeText::Name, text(TITLE_TYPE, ColorRole::Text, "")));
-        h.spawn(spacer());
+        h.spawn(flex_spacer());
         h.spawn((
             ThemeText::Caption,
             text(TypeStyle::CAPS, ColorRole::Text2, ""),
@@ -269,7 +271,7 @@ fn left_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
         static_menu(r, theme, map);
         inspector_card(r, theme);
     });
-    c.spawn(row(SPACE[8])).with_children(|r| {
+    c.spawn(sample_row(SPACE[8])).with_children(|r| {
         r.spawn(status_chip(
             theme,
             StatusKind::Warning,
@@ -289,10 +291,6 @@ fn left_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
         ));
     });
     states_grid(c, theme);
-}
-
-fn tip(map: &InputMap, id: &str, name: &str) -> Tooltip {
-    Tooltip::new(name).shortcut_opt(shortcut_label(map, id))
 }
 
 fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
@@ -316,44 +314,36 @@ fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 .chevron()
                 .large(),
         ));
-        b.spawn((
-            Node {
-                width: px(1),
-                height: px(18),
-                margin: UiRect::horizontal(px(SPACE[2])),
-                ..default()
-            },
-            Fill(ColorRole::Line),
-        ));
+        b.spawn(separator(Orientation::Vertical, 18.0, SPACE[2]));
         b.spawn(segmented_group("Tools", true, false))
             .with_children(|g| {
                 g.spawn(tool_button(
                     theme,
                     IconId::Navigate,
-                    tip(map, "tool.navigate", "Navigate"),
+                    Tooltip::new("Navigate").binding(map, "tool.navigate"),
                     true,
                 ));
                 g.spawn(tool_button(
                     theme,
                     IconId::Plus,
-                    tip(map, "tool.translate", "Translate"),
+                    Tooltip::new("Translate").binding(map, "tool.translate"),
                     false,
                 ));
                 g.spawn(tool_button(
                     theme,
                     IconId::Rotate,
-                    tip(map, "tool.rotate", "Rotate"),
+                    Tooltip::new("Rotate").binding(map, "tool.rotate"),
                     false,
                 ));
             });
-        b.spawn(spacer());
+        b.spawn(flex_spacer());
         b.spawn(primary_button(
             theme,
             IconId::Pause,
-            tip(map, "sim.play_pause", "Pause"),
+            Tooltip::new("Pause").binding(map, "sim.play_pause"),
         ));
         b.spawn(text(TypeStyle::CLOCK, ColorRole::Text, "00:02:14.380"));
-        b.spawn(row(SPACE[2] + 1.0)).with_children(|r| {
+        b.spawn(sample_row(SPACE[2] + 1.0)).with_children(|r| {
             r.spawn(dot(theme.s.status_dot, ColorRole::Ok));
             r.spawn(text(TypeStyle::MONO_SMALL, ColorRole::Text2, "RTF 98%"));
         });
@@ -372,7 +362,7 @@ fn activity_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             activity_button(
                 theme,
                 IconId::ActivityScene,
-                tip(map, "panel.scene", "Scene"),
+                Tooltip::new("Scene").binding(map, "panel.scene"),
                 None,
             ),
             Active,
@@ -381,7 +371,7 @@ fn activity_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             activity_button(
                 theme,
                 IconId::ActivityAssets,
-                tip(map, "panel.assets", "Assets"),
+                Tooltip::new("Assets").binding(map, "panel.assets"),
                 None,
             ),
             ForceState(STATES[1].1),
@@ -389,33 +379,20 @@ fn activity_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
         a.spawn(activity_button(
             theme,
             IconId::ActivityPlot,
-            tip(map, "panel.plot", "Plot"),
+            Tooltip::new("Plot").binding(map, "panel.plot"),
             Some((BadgeKind::Count, 2)),
         ));
         a.spawn(activity_button(
             theme,
             IconId::ActivityConsole,
-            tip(map, "panel.console", "Console"),
+            Tooltip::new("Console").binding(map, "panel.console"),
             Some((BadgeKind::Warning, 2)),
         ));
     });
 }
 
-fn rail_separator() -> impl Bundle {
-    (
-        Node {
-            width: px(22),
-            height: px(1),
-            margin: UiRect::axes(px(0), px(3)),
-            align_self: AlignSelf::Center,
-            ..default()
-        },
-        Fill(ColorRole::Line),
-    )
-}
-
 fn rail_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
-    let tip = |id: &str, name: &str| tip(map, id, name).side(TooltipSide::Left);
+    let tip = |id: &str, name: &str| Tooltip::new(name).binding(map, id).side(TooltipSide::Left);
     // The rail floats over a view: show it on a patch of `bg`.
     r.spawn((
         Node {
@@ -457,7 +434,7 @@ fn rail_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 IconButtonSize::Rail,
                 tip("", "Pan"),
             ));
-            rail.spawn(rail_separator());
+            rail.spawn(separator(Orientation::Horizontal, 22.0, 3.0));
             rail.spawn((
                 icon_button(
                     theme,
@@ -532,7 +509,7 @@ fn inspector_card(r: &mut ChildSpawnerCommands, theme: &Theme) {
         ..default()
     }))
     .with_children(|i| {
-        i.spawn(row(SPACE[3])).with_children(|f| {
+        i.spawn(sample_row(SPACE[3])).with_children(|f| {
             f.spawn(number_field(
                 theme,
                 AxisTag::X,
@@ -660,7 +637,7 @@ fn states_grid(c: &mut ChildSpawnerCommands, theme: &Theme) {
         ..default()
     }))
     .with_children(|g| {
-        g.spawn(row(0.0)).with_children(|h| {
+        g.spawn(sample_row(0.0)).with_children(|h| {
             h.spawn(caps("State", LABEL_W));
             for (name, _) in STATES {
                 h.spawn(caps(name, CELL_W));
@@ -725,7 +702,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     })
     .with_children(|h| {
         h.spawn(text(TypeStyle::CAPS, ColorRole::Text2, "Color tokens"));
-        h.spawn(spacer());
+        h.spawn(flex_spacer());
         h.spawn(text(TypeStyle::SMALL, ColorRole::Text3, "T switches theme"));
         h.spawn((
             text_button(theme, TextButton::new("Dark theme")),
@@ -808,7 +785,7 @@ fn token_list(c: &mut ChildSpawnerCommands) {
                     .with_children(|t| {
                         t.spawn(span(DESC_TYPE, ColorRole::Text2, format!(" · {what}")));
                     });
-                r.spawn(spacer());
+                r.spawn(flex_spacer());
                 r.spawn((TokenHex(role), text(HEX_TYPE, ColorRole::Text2, "")));
             });
         }
@@ -822,13 +799,13 @@ fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 theme,
                 IconId::ExpandAll,
                 IconButtonSize::Small,
-                tip(map, "tree.expand_all", "Expand all"),
+                Tooltip::new("Expand all").binding(map, "tree.expand_all"),
             ));
             h.spawn(icon_button(
                 theme,
                 IconId::CollapseAll,
                 IconButtonSize::Small,
-                tip(map, "tree.collapse_all", "Collapse all"),
+                Tooltip::new("Collapse all").binding(map, "tree.collapse_all"),
             ));
         });
     t.spawn(Node {
@@ -878,7 +855,7 @@ fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     let mut linear = SliderSpec::new("Linear", 0.0, 2.0, 0.6);
     linear.step = 0.05;
     w.spawn(slider_row(theme, linear));
-    w.spawn(row(SPACE[3])).with_children(|r| {
+    w.spawn(sample_row(SPACE[3])).with_children(|r| {
         r.spawn(select(
             theme,
             "Camera mode",
@@ -945,16 +922,16 @@ fn more_widgets(w: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             },
         ));
     });
-    w.spawn(row(SPACE[3])).with_children(|r| {
+    w.spawn(sample_row(SPACE[3])).with_children(|r| {
         r.spawn(filter_chip("All", true));
         r.spawn(filter_chip("Models", false));
         r.spawn(filter_chip("Lights", false));
-        r.spawn(spacer());
+        r.spawn(flex_spacer());
         r.spawn(badge(theme, BadgeKind::Count, 3));
         r.spawn(badge(theme, BadgeKind::Warning, 12));
         r.spawn(badge(theme, BadgeKind::Error, 1));
     });
-    w.spawn(row(SPACE[3])).with_children(|r| {
+    w.spawn(sample_row(SPACE[3])).with_children(|r| {
         r.spawn(status_chip(
             theme,
             StatusKind::Error,
@@ -990,12 +967,6 @@ pub(crate) fn on_theme_button(
 ) {
     if toggles.contains(activate.entity) {
         theme.toggle();
-    }
-}
-
-fn set_text(t: &mut Text, want: &str) {
-    if t.0 != want {
-        t.0 = want.to_string();
     }
 }
 

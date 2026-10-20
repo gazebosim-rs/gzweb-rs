@@ -7,7 +7,8 @@ use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 
-use super::{a11y, spacer};
+use super::a11y;
+use super::layout::flex_spacer;
 use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 
@@ -43,7 +44,7 @@ pub fn section_header(
             if let Some(count) = count {
                 p.spawn(text(COUNT_TYPE, ColorRole::Text3, count));
             }
-            p.spawn(spacer());
+            p.spawn(flex_spacer());
         })),
     )
 }

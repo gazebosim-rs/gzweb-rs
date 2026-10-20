@@ -6,8 +6,9 @@ use accesskit::Role;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
+use super::layout::flex_spacer;
 use super::menu::{menu, menu_item, MenuSide};
-use super::{clickable, rounded, spacer};
+use super::{clickable, rounded};
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Active, Content, Visuals};
@@ -70,7 +71,7 @@ pub fn select(
                 text(TypeStyle::BODY, ColorRole::Text, current),
                 Content
             ),
-            spacer(),
+            flex_spacer(),
             content_icon(IconId::ChevronDown, icon_px, ColorRole::Text2),
         ],
     );

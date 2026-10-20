@@ -7,7 +7,6 @@ use bevy::ui::Checked;
 use bevy::ui_widgets::{Button as Headless, ValueChange};
 use gz_bevy::view::input::InputMap;
 
-use super::tip;
 use crate::assets::icons::IconId;
 use crate::shell::commands::UiCommand;
 use crate::theme::Theme;
@@ -84,7 +83,7 @@ pub(super) fn spawn_tools(b: &mut ChildSpawner, t: &Theme, map: &InputMap) {
                     bar_tool_button(
                         t,
                         tool.icon(),
-                        tip(map, tool.binding(), tool.name()),
+                        Tooltip::new(tool.name()).binding(map, tool.binding()),
                         tool == Tool::Navigate,
                     ),
                     ToolChoice(tool),

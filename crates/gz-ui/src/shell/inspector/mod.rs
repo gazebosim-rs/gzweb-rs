@@ -12,7 +12,7 @@ use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::input::InputMap;
 
 use super::connection::{CurrentPhase, Phase};
-use super::regions::{region, Region};
+use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::top_bar::world_button::world_name;
 use super::{format, ShellLayout, Side, UiCommand};
@@ -20,9 +20,10 @@ use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
-use crate::widgets::menu::shortcut_label;
+use crate::widgets::layout::{self, column, flex_spacer, group_header, property_row, row};
+use crate::widgets::text::set_text;
 use crate::widgets::{
-    button, icon_button, rounded, section_header, spacer, ButtonVariant, IconButtonSize, Tooltip,
+    button, icon_button, rounded, section_header, ButtonVariant, IconButtonSize, Tooltip,
 };
 
 /// The type tag's type: mono 11/500 (§3.5).
@@ -55,22 +56,7 @@ pub fn inspector(theme: &Theme, layout: &ShellLayout, map: &InputMap) -> impl Bu
     let t = theme.clone();
     let map = map.clone();
     (
-        region(
-            Region::Inspector,
-            Node {
-                width: px(layout.inspector_w),
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
-                border: UiRect::left(px(border::HAIRLINE)),
-                display: if layout.inspector_open {
-                    Display::Flex
-                } else {
-                    Display::None
-                },
-                ..default()
-            },
-            ColorRole::Surface,
-        ),
+        side_panel(Side::Inspector, layout),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
             p.spawn(section_header(&t, "Inspector", None))
                 .with_children(|h| {
@@ -90,18 +76,16 @@ pub fn inspector(theme: &Theme, layout: &ShellLayout, map: &InputMap) -> impl Bu
                             &t,
                             IconId::ChevronRight,
                             small,
-                            Tooltip::new("Collapse inspector")
-                                .shortcut_opt(shortcut_label(&map, "ui.inspector")),
+                            Tooltip::new("Collapse inspector").binding(&map, "ui.inspector"),
                         ),
                         InspectorButton::Collapse,
                     ));
                 });
             p.spawn(Node {
-                flex_direction: FlexDirection::Column,
                 flex_grow: 1.0,
                 min_height: px(0),
                 overflow: Overflow::clip(),
-                ..default()
+                ..column(0.0)
             })
             .with_children(|body| world_inspector(body, &t));
             p.spawn(side_splitter(&t, Side::Inspector));
@@ -118,10 +102,8 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
             top: px(SPACE[7]),
             bottom: px(SPACE[2]),
         },
-        column_gap: px(SPACE[4]),
-        align_items: AlignItems::Center,
         flex_shrink: 0.0,
-        ..default()
+        ..row(SPACE[4])
     })
     .with_children(|r| {
         r.spawn((
@@ -145,7 +127,7 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
                 ..default()
             },
         ));
-        r.spawn(spacer());
+        r.spawn(flex_spacer());
         r.spawn(icon_button(
             t,
             IconId::More,
@@ -175,10 +157,9 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
                 bottom: px(SPACE[7]),
                 ..default()
             },
-            column_gap: px(SPACE[3]),
             flex_shrink: 0.0,
             border: UiRect::bottom(px(border::HAIRLINE)),
-            ..default()
+            ..row(SPACE[3])
         },
         Stroke(ColorRole::Line),
     ))
@@ -210,7 +191,6 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
     group(
         body,
         "Physics",
-        None,
         &[
             ("Engine", None),
             ("Step size", Some(InspectorText::Step)),
@@ -221,7 +201,6 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
     group(
         body,
         "Scene",
-        None,
         &[
             ("Ambient", None),
             ("Background", None),
@@ -229,12 +208,11 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
             ("Grid", None),
         ],
     );
-    group(body, "Plugins", None, &[("—", None)]);
+    group(body, "Plugins", &[("—", None)]);
     body.spawn(Node {
-        flex_direction: FlexDirection::Column,
         padding: UiRect::axes(px(SPACE[8]), px(SPACE[4])),
         flex_shrink: 0.0,
-        ..default()
+        ..column(0.0)
     })
     .with_children(|links| {
         for name in [
@@ -245,13 +223,12 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
             links
                 .spawn(Node {
                     height: px(36),
-                    align_items: AlignItems::Center,
                     flex_shrink: 0.0,
-                    ..default()
+                    ..row(0.0)
                 })
                 .with_children(|row| {
                     row.spawn(text(TypeStyle::ROW, ColorRole::Text, name));
-                    row.spawn(spacer());
+                    row.spawn(flex_spacer());
                     row.spawn(text(TypeStyle::ROW, ColorRole::Text3, "›"));
                 });
         }
@@ -259,48 +236,15 @@ fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
 }
 
 /// A group (§3.5 item 5): heading 13/600, rows of label and a "—" value.
-fn group(
-    body: &mut ChildSpawner,
-    title: &str,
-    hint: Option<&str>,
-    rows: &[(&str, Option<InspectorText>)],
-) {
-    body.spawn((
-        Node {
-            flex_direction: FlexDirection::Column,
-            padding: UiRect::axes(px(SPACE[8]), px(SPACE[7])),
-            row_gap: px(SPACE[5]),
-            flex_shrink: 0.0,
-            border: UiRect::bottom(px(border::HAIRLINE)),
-            ..default()
-        },
-        Stroke(ColorRole::Line),
-    ))
-    .with_children(|g| {
-        g.spawn(Node {
-            align_items: AlignItems::Center,
-            ..default()
-        })
-        .with_children(|h| {
-            h.spawn(text(TypeStyle::HEADING, ColorRole::Text, title));
-            h.spawn(spacer());
-            if let Some(hint) = hint {
-                h.spawn(text(TypeStyle::SMALL, ColorRole::Text3, hint));
-            }
-        });
-        for (label, which) in rows {
-            g.spawn(Node {
-                align_items: AlignItems::Center,
-                ..default()
-            })
-            .with_children(|r| {
-                r.spawn(text(TypeStyle::ROW, ColorRole::Text2, *label));
-                r.spawn(spacer());
-                let mut v = r.spawn(text(TypeStyle::MONO_SMALL, ColorRole::Text3, "—"));
-                if let Some(w) = which {
-                    v.insert(*w);
-                }
-            });
+fn group(body: &mut ChildSpawner, title: &str, rows: &[(&str, Option<InspectorText>)]) {
+    body.spawn(layout::group()).with_children(|g| {
+        g.spawn(group_header(title, None));
+        for &(label, which) in rows {
+            let value = text(TypeStyle::MONO_SMALL, ColorRole::Text3, "—");
+            match which {
+                Some(w) => g.spawn(property_row(label, (value, w))),
+                None => g.spawn(property_row(label, value)),
+            };
         }
     });
 }
@@ -369,9 +313,7 @@ pub fn inspector_texts(
                 None => ("—".into(), ColorRole::Text3),
             },
         };
-        if t.0 != want {
-            t.0 = want;
-        }
+        set_text(&mut t, &want);
         ink.set_if_neq(crate::theme::Ink(role));
     }
     let live = phase.0 == Phase::Live;

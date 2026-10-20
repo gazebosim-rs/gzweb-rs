@@ -9,10 +9,11 @@ use bevy::ui::Checked;
 use bevy::ui_widgets::{checkbox_self_update, observe, Checkbox};
 
 use super::button::Checkedness;
-use super::{clickable, rounded, spacer};
+use super::{clickable, rounded};
 use crate::assets::fonts::text;
 use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{ColorRole, Fill, Theme, TypeStyle};
+use crate::widgets::layout::flex_spacer;
 use crate::GzUiSystems;
 
 /// Row height for a toggle (§5.9: 30–32).
@@ -56,7 +57,7 @@ pub fn toggle_row(theme: &Theme, label: impl Into<String>, on: bool) -> impl Bun
         observe(checkbox_self_update),
         children![
             (text(TypeStyle::BODY, ColorRole::Text, label), Content),
-            spacer(),
+            flex_spacer(),
             (
                 TogglePart::Track,
                 Node {

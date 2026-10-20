@@ -13,6 +13,8 @@ use gz_bevy::connection::GzStatus;
 use super::connection::{banner, ConnectionView, CurrentPhase, Phase};
 use super::regions::{pass_through, Region};
 use crate::theme::{ColorRole, Fill, Ink, Opacity, Theme};
+use crate::widgets::layout::{overlay, row, set_shown};
+use crate::widgets::text::set_text;
 use banner::{BannerIcon, BannerText, DisconnectBanner};
 use connect_card::{card_status, fade_secs, CardStatus, ConnectButton, ConnectCard, Fading};
 use view::{DimOverlay, ViewNode, DIM_OPACITY};
@@ -26,35 +28,18 @@ pub fn viewport_area(theme: &Theme) -> impl Bundle {
             flex_grow: 1.0,
             min_width: px(0),
             justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
+            ..row(0.0)
         },
         // `bg` (§2.1) shows while no world is loaded; the view covers it.
         Fill(ColorRole::Bg),
         pass_through(),
         Children::spawn(SpawnWith(move |a: &mut ChildSpawner| {
-            a.spawn((
-                ViewNode,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    right: px(0),
-                    top: px(0),
-                    bottom: px(0),
-                    ..default()
-                },
-                pass_through(),
-            ));
+            a.spawn((ViewNode, overlay(), pass_through()));
             a.spawn((
                 DimOverlay,
                 Node {
-                    position_type: PositionType::Absolute,
-                    left: px(0),
-                    right: px(0),
-                    top: px(0),
-                    bottom: px(0),
                     display: Display::None,
-                    ..default()
+                    ..overlay()
                 },
                 Fill(ColorRole::Bg),
                 Opacity(DIM_OPACITY),
@@ -64,13 +49,6 @@ pub fn viewport_area(theme: &Theme) -> impl Bundle {
             a.spawn(connect_card::connect_card(&t));
         })),
     )
-}
-
-pub(crate) fn set_display(node: &mut Node, show: bool) {
-    let d = if show { Display::Flex } else { Display::None };
-    if node.display != d {
-        node.display = d;
-    }
 }
 
 /// The banner, the dimming and the card, from the connection phase.
@@ -107,7 +85,7 @@ pub fn overlays(
     let now = time.elapsed_secs_f64();
     let b = banner(phase.0, status, now);
     for (mut node, mut fill) in &mut banners {
-        set_display(&mut node, b.is_some());
+        set_shown(&mut node, b.is_some());
         if let Some(b) = &b {
             fill.set_if_neq(Fill(b.roles().0));
         }
@@ -115,9 +93,7 @@ pub fn overlays(
     if let Some(b) = &b {
         let ink = b.roles().1;
         for (mut t, mut i) in &mut banner_texts {
-            if t.0 != b.text {
-                t.0.clone_from(&b.text);
-            }
+            set_text(&mut t, &b.text);
             i.set_if_neq(Ink(ink));
         }
         for mut i in &mut banner_icons {
@@ -127,12 +103,12 @@ pub fn overlays(
     let long = b.as_ref().is_some_and(|b| b.long);
     for (which, mut node) in &mut elsewhere {
         if *which == ConnectButton::Elsewhere {
-            set_display(&mut node, long);
+            set_shown(&mut node, long);
         }
     }
     let lost = matches!(phase.0, Phase::Lost { .. });
     for mut node in &mut dims {
-        set_display(&mut node, lost);
+        set_shown(&mut node, lost);
     }
     let card = phase.0.no_world() || (lost && view.card_requested);
     for (e, mut node, fading) in &mut cards {
@@ -141,16 +117,14 @@ pub fn overlays(
             if fading.is_some() {
                 commands.entity(e).remove::<Fading>();
             }
-            set_display(&mut node, true);
+            set_shown(&mut node, true);
         } else if shown && fading.is_none() {
             commands.entity(e).insert(Fading(fade_secs()));
         }
     }
     let line = card_status(phase.0, status);
     for mut t in &mut card_status_q {
-        if t.0 != line {
-            t.0.clone_from(&line);
-        }
+        set_text(&mut t, &line);
     }
 }
 

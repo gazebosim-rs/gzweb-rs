@@ -14,8 +14,10 @@ use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
 use crate::widgets::badge::Badge;
-use crate::widgets::menu::shortcut_label;
-use crate::widgets::{activity_button, spacer, BadgeKind, Tooltip};
+use crate::widgets::layout::{column, flex_spacer, separator, set_shown, Orientation};
+use crate::widgets::shortcut::shortcut_label;
+use crate::widgets::text::set_text;
+use crate::widgets::{activity_button, BadgeKind, Tooltip};
 
 /// An activity button's panel.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,18 +54,8 @@ impl ActivityBadges {
     }
 }
 
-fn activity_separator() -> impl Bundle {
-    (
-        Node {
-            width: px(24),
-            height: px(1),
-            flex_shrink: 0.0,
-            margin: UiRect::vertical(px(SPACE[3])),
-            ..default()
-        },
-        Fill(ColorRole::Line),
-    )
-}
+/// The length of the separator after Assets.
+const SEPARATOR_W: f32 = 24.0;
 
 /// The bar.
 pub fn activity_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
@@ -75,12 +67,10 @@ pub fn activity_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
             Node {
                 width: px(theme.s.activity_bar_w),
                 flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: px(SPACE[1]),
                 padding: UiRect::vertical(px(SPACE[4])),
                 border: UiRect::right(px(border::HAIRLINE)),
-                ..default()
+                ..column(SPACE[1])
             },
             ColorRole::Bg,
         ),
@@ -97,10 +87,10 @@ pub fn activity_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
                     ActivityFor(panel),
                 ));
                 if panel == Panel::Assets {
-                    bar.spawn(activity_separator());
+                    bar.spawn(separator(Orientation::Horizontal, SEPARATOR_W, SPACE[3]));
                 }
             }
-            bar.spawn(spacer());
+            bar.spawn(flex_spacer());
             bar.spawn((
                 activity_button(
                     &t,
@@ -170,22 +160,12 @@ pub fn activity_states(
             let Ok((mut node, mut fill, kids)) = badge_nodes.get_mut(c) else {
                 continue;
             };
-            let display = if badge.is_some() {
-                Display::Flex
-            } else {
-                Display::None
-            };
-            if node.display != display {
-                node.display = display;
-            }
+            set_shown(&mut node, badge.is_some());
             if let Some((kind, count)) = badge {
                 fill.set_if_neq(Fill(kind.fill()));
                 for &k in kids {
                     if let Ok(mut t) = texts.get_mut(k) {
-                        let s = count.to_string();
-                        if t.0 != s {
-                            t.0 = s;
-                        }
+                        set_text(&mut t, &count.to_string());
                     }
                 }
             }

@@ -17,7 +17,10 @@ use bevy::ui::{
 };
 use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 
+use gz_bevy::view::input::InputMap;
+
 use super::rounded;
+use super::shortcut::shortcut_label;
 use crate::assets::fonts::{span, text};
 use crate::theme::{
     border, elevation, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
@@ -107,6 +110,12 @@ impl Tooltip {
     pub fn shortcut_opt(mut self, keys: Option<String>) -> Self {
         self.shortcut = keys;
         self
+    }
+
+    /// The keys of the `shortcuts.json` binding `id` in `map`, if it has
+    /// any ("Ctrl+B"; [`shortcut_label`]).
+    pub fn binding(self, map: &InputMap, id: &str) -> Self {
+        self.shortcut_opt(shortcut_label(map, id))
     }
 
     pub fn detail(mut self, line: impl Into<String>) -> Self {
