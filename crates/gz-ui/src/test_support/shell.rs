@@ -24,7 +24,7 @@ use gz_core::transport::Status;
 use super::{frames, ui_app_with};
 use crate::shell::regions::Region;
 use crate::shell::viewport::connect_card::ConnectButton;
-use crate::shell::{ShellLayout, ShellPlugin};
+use crate::shell::{ShellLayout, ShellPlugin, ShellPlugins};
 use crate::theme::ThemeMode;
 
 /// GzCommands and reconnects sent so far.
@@ -48,7 +48,7 @@ pub(crate) fn shell_app(size: (u32, u32), scale: f32) -> App {
             crate::GzUiPlugin {
                 theme: ThemeMode::Light,
             },
-            ShellPlugin { camera: false },
+            ShellPlugins.set(ShellPlugin { camera: false }),
         ));
     });
     let mut map = InputMap::builtin();

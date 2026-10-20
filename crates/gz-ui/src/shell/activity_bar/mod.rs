@@ -1,5 +1,8 @@
-//! The activity bar (spec §3.2): Scene and Assets, a separator, Topics,
-//! Plot, Sensors, Teleop and Console, a spacer, then Settings. A click
+//! The activity bar (spec §3.2): a button for each registered panel, by
+//! group and order with a separator between groups (Scene and Assets,
+//! then Topics, Plot, Sensors, Teleop and Console), a spacer, then
+//! Settings. Each button's badge is what its panel wrote into
+//! [`PanelStatus`]. A click
 //! opens the panel in the sidebar's primary slot, Shift+click in the
 //! secondary; clicking the active button collapses the sidebar.
 
@@ -10,9 +13,9 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use super::regions::{region, Region};
-use super::{Panel, ShellLayout, ShellSystems, UiCommand};
+use super::{PanelStatus, ShellLayout, ShellSystems, UiCommand};
 use crate::assets::icons::IconId;
-use crate::panels::PanelRegistry;
+use crate::panels::{PanelId, PanelRegistry};
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
 use crate::widgets::badge::Badge;
@@ -23,25 +26,14 @@ use crate::widgets::{activity_button, BadgeKind, Tooltip};
 
 /// An activity button's panel.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ActivityFor(pub Panel);
+pub(crate) struct ActivityFor(pub PanelId);
 
 /// The Settings button (opens the Settings dialog later; for now it
 /// switches the theme, DECISIONS.md).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct SettingsButton;
 
-/// Badge counts (§3.2): active charts on Plot, unread warnings and errors
-/// on Console. Filled by the panels (M7); each panel's
-/// [`PanelDef::badge`](crate::panels::PanelDef::badge) says what its
-/// button shows of them (zero hides the badge).
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ActivityBadges {
-    pub plot: u32,
-    pub console_warnings: u32,
-    pub console_errors: u32,
-}
-
-/// The length of the separator after Assets.
+/// The length of the separators between the groups.
 const SEPARATOR_W: f32 = 24.0;
 
 /// The bar, with a button for each registered panel.
@@ -63,19 +55,21 @@ pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry
             ColorRole::Bg,
         ),
         Children::spawn(SpawnWith(move |bar: &mut ChildSpawner| {
+            let mut group = None;
             for panel in panels.iter() {
+                if group.is_some_and(|g| g != panel.group) {
+                    bar.spawn(separator(Orientation::Horizontal, SEPARATOR_W, SPACE[3]));
+                }
+                group = Some(panel.group);
                 let tip = Tooltip::new(panel.title)
                     .shortcut_opt(panel.binding.and_then(|id| shortcut_label(&map, id)))
                     .detail("Shift+click: second slot");
-                // Badged buttons get a hidden badge for `activity_badges`.
-                let badge = panel.badge.is_some().then_some((BadgeKind::Count, 0));
+                // Every button has a badge, hidden until its panel sets one
+                // (`activity_badges`).
                 bar.spawn((
-                    activity_button(&t, panel.icon, tip, badge),
+                    activity_button(&t, panel.icon, tip, Some((BadgeKind::Count, 0))),
                     ActivityFor(panel.id),
                 ));
-                if panel.separator_after {
-                    bar.spawn(separator(Orientation::Horizontal, SEPARATOR_W, SPACE[3]));
-                }
             }
             bar.spawn(flex_spacer());
             bar.spawn((
@@ -139,19 +133,18 @@ pub(crate) fn activity_active(
     }
 }
 
-/// The badges show their counts and hide at zero (§3.2).
+/// The badges show what their panels set, and hide without one (§3.2).
 pub(crate) fn activity_badges(
-    badges: Res<ActivityBadges>,
-    panels: Res<PanelRegistry>,
+    status: Res<PanelStatus>,
     buttons: Query<(&ActivityFor, &Children)>,
     mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
     mut texts: Query<&mut Text>,
 ) {
-    if !badges.is_changed() && !panels.is_changed() {
+    if !status.is_changed() {
         return;
     }
     for (a, children) in &buttons {
-        let badge = panels.badge(a.0, &badges);
+        let badge = status.badge(a.0);
         for &c in children {
             let Ok((mut node, mut fill, kids)) = badge_nodes.get_mut(c) else {
                 continue;
@@ -170,12 +163,11 @@ pub(crate) fn activity_badges(
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.init_resource::<ActivityBadges>()
-        .add_systems(
-            Update,
-            (activity_active, activity_badges).in_set(ShellSystems::Readouts),
-        )
-        .add_observer(on_activity);
+    app.add_systems(
+        Update,
+        (activity_active, activity_badges).in_set(ShellSystems::Readouts),
+    )
+    .add_observer(on_activity);
 }
 
 #[cfg(test)]

@@ -38,12 +38,15 @@ pub mod widgets;
 /// registries, and the theme.
 pub mod prelude {
     pub use crate::inspectors::{
-        InspectorDef, InspectorKind, InspectorRegistry, RegisterInspector,
+        InspectorDef, InspectorId, InspectorPlugins, InspectorRegistry, RegisterInspector,
     };
     pub use crate::panels::{
-        Panel, PanelAction, PanelDef, PanelRegistry, PanelView, RegisterPanel,
+        PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
     };
-    pub use crate::shell::{ShellLayout, ShellPlugin, ShellSystems, Side, Slot, Tool, UiCommand};
+    pub use crate::shell::{
+        PanelState, PanelStatus, ShellLayout, ShellPlugin, ShellPlugins, ShellSystems, Side, Slot,
+        Tool, UiCommand,
+    };
     pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
     pub use crate::{GzUiPlugin, GzUiSystems};
 }

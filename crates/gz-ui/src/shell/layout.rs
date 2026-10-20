@@ -5,33 +5,8 @@
 
 use bevy::prelude::*;
 
+use crate::panels::PanelId;
 use crate::theme::{Sizes, SPACE};
-
-/// The sidebar panels with an activity button (spec §3.2), in its order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
-pub enum Panel {
-    Scene,
-    Assets,
-    Topics,
-    Plot,
-    Sensors,
-    Teleop,
-    Console,
-}
-
-impl Panel {
-    /// Every panel, in the activity bar's order (each registers itself:
-    /// [`PanelRegistry`](crate::panels::PanelRegistry)).
-    pub const ALL: [Panel; 7] = [
-        Panel::Scene,
-        Panel::Assets,
-        Panel::Topics,
-        Panel::Plot,
-        Panel::Sensors,
-        Panel::Teleop,
-        Panel::Console,
-    ];
-}
 
 /// The sidebar's two stacked slots (spec §3.3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
@@ -75,8 +50,8 @@ pub struct ShellLayout {
     pub inspector_w: f32,
     pub sidebar_open: bool,
     pub inspector_open: bool,
-    pub primary: Option<Panel>,
-    pub secondary: Option<Panel>,
+    pub primary: Option<PanelId>,
+    pub secondary: Option<PanelId>,
     /// The primary slot's share of the sidebar's height when both slots
     /// are open.
     pub split: f32,
@@ -102,15 +77,16 @@ fn index(side: Side) -> usize {
 impl ShellLayout {
     /// The layout a window `width` wide starts with: both panels at their
     /// default widths, the inspector collapsed below 1280, the sidebar too
-    /// below 1100, Scene in the primary slot, then the floor rule.
-    pub fn for_width(width: f32) -> Self {
+    /// below 1100, `open` (the registry's default panel) in the primary
+    /// slot, then the floor rule.
+    pub fn for_width(width: f32, open: Option<PanelId>) -> Self {
         let s = Sizes::default();
         let mut l = Self {
             sidebar_w: s.sidebar_w,
             inspector_w: s.inspector_w,
             sidebar_open: width >= SIDEBAR_START_W,
             inspector_open: width >= INSPECTOR_START_W,
-            primary: Some(Panel::Scene),
+            primary: open,
             secondary: None,
             split: DEFAULT_SPLIT,
             window_w: width,
@@ -271,8 +247,16 @@ impl ShellLayout {
         (start + dy / height).clamp(lo, 1.0 - lo)
     }
 
+    /// The panel in `slot`.
+    pub fn slot(&self, slot: Slot) -> Option<PanelId> {
+        match slot {
+            Slot::Primary => self.primary,
+            Slot::Secondary => self.secondary,
+        }
+    }
+
     /// The slot holding `panel`.
-    pub fn slot_of(&self, panel: Panel) -> Option<Slot> {
+    pub fn slot_of(&self, panel: PanelId) -> Option<Slot> {
         if self.primary == Some(panel) {
             Some(Slot::Primary)
         } else if self.secondary == Some(panel) {
@@ -285,14 +269,14 @@ impl ShellLayout {
     /// The panel's activity button shows the active state: its panel is in
     /// either slot, whether the sidebar is open or collapsed (§3.2; the
     /// selection survives a collapse, DECISIONS.md D-50).
-    pub fn is_active(&self, panel: Panel) -> bool {
+    pub fn is_active(&self, panel: PanelId) -> bool {
         self.slot_of(panel).is_some()
     }
 
     /// An activity button click (§3.2): an inactive panel opens in the
     /// primary slot (Shift: the secondary); the active one collapses the
     /// sidebar, or expands it again if it's collapsed.
-    pub fn activity_click(&mut self, panel: Panel, shift: bool) {
+    pub fn activity_click(&mut self, panel: PanelId, shift: bool) {
         if shift {
             self.open_in(panel, Slot::Secondary);
         } else if self.is_active(panel) {
@@ -305,7 +289,7 @@ impl ShellLayout {
     /// Opens `panel` in `slot` and shows the sidebar. A panel is in one
     /// slot only: one already in the other slot swaps places with what
     /// `slot` held. A secondary with an empty primary moves up.
-    pub fn open_in(&mut self, panel: Panel, slot: Slot) {
+    pub fn open_in(&mut self, panel: PanelId, slot: Slot) {
         let (target, other) = match slot {
             Slot::Primary => (self.primary, self.secondary),
             Slot::Secondary => (self.secondary, self.primary),

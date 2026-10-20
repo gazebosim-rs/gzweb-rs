@@ -5,8 +5,11 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{Panel, PanelDef, RegisterPanel};
+use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
 use crate::assets::icons::IconId;
+
+/// The Sensors panel's id.
+pub const SENSORS: PanelId = PanelId::new("sensors");
 
 /// Registers the Sensors panel.
 pub struct SensorsPanelPlugin;
@@ -14,7 +17,8 @@ pub struct SensorsPanelPlugin;
 impl Plugin for SensorsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(Panel::Sensors, "Sensors", IconId::ActivitySensors, 40).view(view::state),
+            PanelDef::new(SENSORS, "Sensors", IconId::ActivitySensors, DATA_GROUP, 40)
+                .view(view::state),
         );
     }
 }

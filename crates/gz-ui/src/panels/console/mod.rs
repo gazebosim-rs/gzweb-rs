@@ -6,20 +6,32 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{Panel, PanelDef, RegisterPanel};
+use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
 use crate::assets::icons::IconId;
+use crate::shell::ShellSystems;
 
-/// Registers the Console panel.
+/// The Console panel's id.
+pub const CONSOLE: PanelId = PanelId::new("console");
+
+/// Unread messages (M7 keeps them); the activity badge counts them.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ConsoleUnread {
+    pub warnings: u32,
+    pub errors: u32,
+}
+
+/// Registers the Console panel and its badge.
 pub struct ConsolePanelPlugin;
 
 impl Plugin for ConsolePanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(Panel::Console, "Console", IconId::ActivityConsole, 60)
+            PanelDef::new(CONSOLE, "Console", IconId::ActivityConsole, DATA_GROUP, 60)
                 .binding("panel.console")
-                .view(view::state)
-                .badge(view::badge),
-        );
+                .view(view::state),
+        )
+        .init_resource::<ConsoleUnread>()
+        .add_systems(Update, view::unread_badge.in_set(ShellSystems::PanelStatus));
     }
 }
 

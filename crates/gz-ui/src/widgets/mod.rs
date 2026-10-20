@@ -58,7 +58,7 @@ pub use menu::{
 };
 pub use number_field::expr::{eval, ExprError, MAX_DEPTH};
 pub use number_field::{number_field, AxisTag, Invalid, NumberCommit, NumberField, Unit};
-pub use section::section_header;
+pub use section::{section_header, SectionCount};
 pub use segmented::{button_group, segmented_group};
 pub use select::{select, Select, SelectChanged};
 pub use slider::{slider_row, SliderProps};

@@ -10,14 +10,14 @@ use gz_bevy::connection::GzReconnect;
 
 use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
-use crate::panels::{Panel, PanelAction, PanelDef, PanelView};
+use crate::panels::{PanelAction, PanelDef, PanelId, PanelView};
 use crate::theme::{radius, ColorRole, Fill, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, row};
 use crate::widgets::{button, rounded, ButtonVariant, Tooltip};
 
 /// Marks a panel body.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PanelBody(pub Panel);
+pub(crate) struct PanelBody(pub PanelId);
 
 /// A skeleton row (§3.3.1 loading: `hover` fill).
 #[derive(Component, Clone, Copy, Debug, Default)]

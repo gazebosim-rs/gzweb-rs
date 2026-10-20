@@ -8,8 +8,11 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{InspectorDef, InspectorKind, RegisterInspector};
+use super::{InspectorDef, InspectorId, RegisterInspector};
 use crate::shell::ShellSystems;
+
+/// The World inspector's id.
+pub const WORLD: InspectorId = InspectorId::new("world");
 
 /// Registers the World inspector and its systems.
 pub struct WorldInspectorPlugin;
@@ -17,7 +20,7 @@ pub struct WorldInspectorPlugin;
 impl Plugin for WorldInspectorPlugin {
     fn build(&self, app: &mut App) {
         app.register_inspector(InspectorDef {
-            kind: InspectorKind::World,
+            id: WORLD,
             body: view::world_inspector,
         })
         .add_systems(

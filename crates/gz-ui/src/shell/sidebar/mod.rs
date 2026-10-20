@@ -12,7 +12,6 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
-use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::input::InputMap;
 
 use super::commands::UiCommand;
@@ -20,11 +19,13 @@ use super::connection::CurrentPhase;
 use super::layout::DEFAULT_SPLIT;
 use super::regions::side_panel;
 use super::splitter::side_splitter;
-use super::{Panel, ShellLayout, Side, Slot};
+use super::{PanelStatus, ShellLayout, ShellSystems, Side, Slot};
 use crate::assets::icons::IconId;
-use crate::panels::{PanelRegistry, PanelView};
+use crate::panels::{PanelId, PanelRegistry, PanelView};
 use crate::theme::Theme;
 use crate::widgets::layout::{self, column};
+use crate::widgets::text::set_text;
+use crate::widgets::SectionCount;
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 use body::panel_body;
 use slot_splitter::SlotSplitter;
@@ -74,55 +75,49 @@ fn slot_node(slot: Slot) -> impl Bundle {
     )
 }
 
-/// What a slot shows; rebuilt when it changes.
+/// What a slot is built from; rebuilt only when it changes. The header's
+/// count isn't part of it: a count changes in place ([`slot_counts`]), so
+/// the body (M4's tree, with its scroll and expansion) survives it.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SlotContent {
-    pub panel: Option<Panel>,
+    pub panel: Option<PanelId>,
     pub view: Option<PanelView>,
-    pub count: Option<String>,
     pub two: bool,
 }
 
-/// What the slots are built from: the layout, the registered panels, and
-/// the connection and scene their states follow.
+/// What the slots are built from: the layout, the registered panels, the
+/// connection their states follow, and the panels' counts.
 #[derive(SystemParam)]
 pub(crate) struct SlotSources<'w> {
     layout: Res<'w, ShellLayout>,
     panels: Res<'w, PanelRegistry>,
     phase: Res<'w, CurrentPhase>,
-    index: Option<Res<'w, GzIndex>>,
+    status: Res<'w, PanelStatus>,
     theme: Res<'w, Theme>,
     map: Option<Res<'w, InputMap>>,
 }
 
 impl SlotSources<'_> {
-    /// Whether anything a slot shows may have changed since the system's
-    /// last run.
+    /// Whether what a slot is built from may have changed since the
+    /// system's last run.
     fn changed(&self) -> bool {
-        self.layout.is_changed()
-            || self.panels.is_changed()
-            || self.phase.is_changed()
-            || self.index.as_ref().is_some_and(Res::is_changed)
+        self.layout.is_changed() || self.panels.is_changed() || self.phase.is_changed()
     }
 
     /// What `slot` should show now.
     fn content(&self, slot: Slot) -> SlotContent {
-        let panel = match slot {
-            Slot::Primary => self.layout.primary,
-            Slot::Secondary => self.layout.secondary,
-        };
+        let panel = self.layout.slot(slot);
         let def = panel.and_then(|p| self.panels.get(p));
         SlotContent {
             panel,
             view: def.map(|d| (d.view)(self.phase.0)),
-            count: def.and_then(|d| (d.count)(self.phase.0, self.index.as_deref())),
             two: self.layout.secondary.is_some(),
         }
     }
 }
 
-/// Rebuilds a slot's header and body when its panel, state or count
-/// changes.
+/// Rebuilds a slot's header and body when its panel, state or the number
+/// of slots changes.
 pub(crate) fn rebuild_slots(
     sources: SlotSources,
     slots: Query<(Entity, &SlotView)>,
@@ -150,7 +145,7 @@ pub(crate) fn rebuild_slots(
                 .as_deref()
                 .cloned()
                 .unwrap_or_else(InputMap::builtin);
-            let count = want.count.clone();
+            let count = sources.status.count(def.id).map(str::to_string);
             let (which, two) = (slot.0, want.two);
             commands.entity(e).with_children(|p| {
                 p.spawn(section_header(&t, def.title, count))
@@ -159,6 +154,30 @@ pub(crate) fn rebuild_slots(
             });
         }
         shown[i] = Some(want);
+    }
+}
+
+/// Each slot's header count follows its panel's [`PanelStatus`] in place.
+pub(crate) fn slot_counts(
+    layout: Res<ShellLayout>,
+    status: Res<PanelStatus>,
+    mut counts: Query<(Entity, Ref<SectionCount>, &mut Text)>,
+    parents: Query<&ChildOf>,
+    slots: Query<&SlotView>,
+) {
+    let added = counts.iter().any(|(_, c, _)| c.is_added());
+    if !layout.is_changed() && !status.is_changed() && !added {
+        return;
+    }
+    for (e, _, mut text) in &mut counts {
+        let Some(slot) = parents.iter_ancestors(e).find_map(|a| slots.get(a).ok()) else {
+            continue;
+        };
+        let want = layout
+            .slot(slot.0)
+            .and_then(|p| status.count(p))
+            .unwrap_or_default();
+        set_text(&mut text, want);
     }
 }
 
@@ -250,11 +269,19 @@ pub(crate) fn on_slot_action(
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_observer(on_slot_action)
-        .add_observer(body::on_panel_action)
-        .add_observer(slot_splitter::on_slot_drag_start)
-        .add_observer(slot_splitter::on_slot_drag)
-        .add_observer(slot_splitter::on_slot_drag_end);
+    app.add_systems(
+        Update,
+        (apply_slots, rebuild_slots)
+            .chain()
+            .in_set(ShellSystems::Layout)
+            .after(super::regions::apply_layout),
+    )
+    .add_systems(Update, slot_counts.in_set(ShellSystems::Readouts))
+    .add_observer(on_slot_action)
+    .add_observer(body::on_panel_action)
+    .add_observer(slot_splitter::on_slot_drag_start)
+    .add_observer(slot_splitter::on_slot_drag)
+    .add_observer(slot_splitter::on_slot_drag_end);
 }
 
 #[cfg(test)]

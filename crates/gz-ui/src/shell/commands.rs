@@ -7,9 +7,9 @@ use bevy::prelude::*;
 use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
-use super::layout::{Panel, ShellLayout, Side, Slot};
+use super::layout::{ShellLayout, Side, Slot};
 use super::top_bar::tools::Tool;
-use crate::panels::PanelRegistry;
+use crate::panels::{PanelId, PanelRegistry};
 use crate::theme::{Theme, ThemeMode};
 use crate::widgets::focus::MenuTakesEscape;
 
@@ -22,11 +22,11 @@ pub enum UiCommand {
     ToggleInspector,
     /// An activity button: plain click or Shift+click (§3.2).
     Activity {
-        panel: Panel,
+        panel: PanelId,
         shift: bool,
     },
     OpenPanel {
-        panel: Panel,
+        panel: PanelId,
         slot: Slot,
     },
     SwapSlots,

@@ -5,8 +5,11 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{Panel, PanelDef, RegisterPanel};
+use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
 use crate::assets::icons::IconId;
+
+/// The Topics panel's id.
+pub const TOPICS: PanelId = PanelId::new("topics");
 
 /// Registers the Topics panel.
 pub struct TopicsPanelPlugin;
@@ -14,7 +17,7 @@ pub struct TopicsPanelPlugin;
 impl Plugin for TopicsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(Panel::Topics, "Topics", IconId::ActivityTopics, 20)
+            PanelDef::new(TOPICS, "Topics", IconId::ActivityTopics, DATA_GROUP, 20)
                 .binding("panel.topics")
                 .view(view::state),
         );

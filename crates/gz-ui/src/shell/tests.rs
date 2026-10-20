@@ -31,7 +31,8 @@ use super::status_bar::StatusItem;
 use super::top_bar::tools::ToolChoice;
 use super::viewport::connect_card::normalize_address;
 use super::viewport::view::ViewNode;
-use crate::shell::{format, Panel, ShellLayout, Side, Tool, UiCommand};
+use crate::panels::{PanelId, CONSOLE, SCENE};
+use crate::shell::{format, ShellLayout, Side, Tool, UiCommand};
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
@@ -79,14 +80,14 @@ fn every_region_has_its_size_at_1440_by_900() {
     }
     // Panels and slots: Scene alone in the primary slot.
     let l = layout(&app);
-    assert_eq!((l.primary, l.secondary), (Some(Panel::Scene), None));
+    assert_eq!((l.primary, l.secondary), (Some(SCENE), None));
     let world = app.world_mut();
-    let bodies: Vec<Panel> = world
+    let bodies: Vec<PanelId> = world
         .query::<&PanelBody>()
         .iter(world)
         .map(|b| b.0)
         .collect();
-    assert_eq!(bodies, [Panel::Scene]);
+    assert_eq!(bodies, [SCENE]);
 }
 
 #[test]
@@ -196,7 +197,7 @@ fn collapsed_panels_leave_a_bar_that_expands_them() {
     let scene = world
         .query::<(Entity, &ActivityFor)>()
         .iter(world)
-        .find(|(_, a)| a.0 == Panel::Scene)
+        .find(|(_, a)| a.0 == SCENE)
         .unwrap()
         .0;
     assert!(app.world().get::<Active>(scene).is_some());
@@ -228,7 +229,7 @@ fn collapsed_panels_leave_a_bar_that_expands_them() {
 
 #[test]
 fn the_floor_rule_collapses_the_inspector_then_the_sidebar() {
-    let mut l = ShellLayout::for_width(1440.0);
+    let mut l = ShellLayout::for_width(1440.0, Some(SCENE));
     l.startup = false;
     l.sidebar_w = 480.0;
     l.inspector_w = 480.0;
@@ -252,12 +253,12 @@ fn the_floor_rule_collapses_the_inspector_then_the_sidebar() {
     assert!(!l.sidebar_open);
     // Never below the floor at the minimum window.
     for w in [1024.0, 1100.0, 1279.0] {
-        let mut l = ShellLayout::for_width(w);
+        let mut l = ShellLayout::for_width(w, Some(SCENE));
         l.show(Side::Sidebar, true);
         l.show(Side::Inspector, true);
         assert!(l.viewport_w() >= 240.0, "{w}");
     }
-    let mut tiny = ShellLayout::for_width(400.0);
+    let mut tiny = ShellLayout::for_width(400.0, Some(SCENE));
     tiny.show(Side::Sidebar, true);
     assert!(tiny.sidebar_open && !tiny.inspector_open);
 }
@@ -307,7 +308,7 @@ fn splitter_drags_follow_the_pointer_at_any_ui_scale() {
 
 #[test]
 fn splitter_drags_clamp_and_double_click_resets() {
-    let l = ShellLayout::for_width(1440.0);
+    let l = ShellLayout::for_width(1440.0, Some(SCENE));
     // The sidebar widens dragging right, the inspector dragging left.
     assert_eq!(l.drag_width(Side::Sidebar, 300.0, 50.0), 350.0);
     assert_eq!(l.drag_width(Side::Inspector, 300.0, -50.0), 350.0);
@@ -449,14 +450,14 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     assert_eq!(*app.world().resource::<Tool>(), Tool::BoxSelect);
     chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
     assert!(!layout(&app).sidebar_open);
-    // Panel shortcuts open their panel.
+    // PanelId shortcuts open their panel.
     chord(
         &mut app,
         &[KeyCode::ControlLeft, KeyCode::ShiftLeft, KeyCode::KeyC],
     );
     let l = layout(&app);
     assert!(l.sidebar_open);
-    assert_eq!(l.primary, Some(Panel::Console));
+    assert_eq!(l.primary, Some(CONSOLE));
 }
 
 #[test]
@@ -618,7 +619,7 @@ fn formatting() {
 /// The connection phases and the status dot (the panels' states per
 /// phase are tested in each panel, the card's line in the viewport).
 #[test]
-fn panel_states_follow_the_connection() {
+fn the_connection_phases_and_the_status_dot() {
     use Phase::*;
     let lost = Lost { since: 0.0 };
 
@@ -784,7 +785,7 @@ fn the_start_up_rules_follow_the_first_real_window_size() {
         "not reopened by the floor rule"
     );
     // A user's change ends start-up at once.
-    let mut l = ShellLayout::for_width(1440.0);
+    let mut l = ShellLayout::for_width(1440.0, Some(SCENE));
     l.show(Side::Inspector, true);
     l.fit(1200.0);
     assert!(
@@ -884,7 +885,7 @@ fn space_after_an_activity_button_doesnt_press_it_again() {
     let scene = world
         .query::<(Entity, &ActivityFor)>()
         .iter(world)
-        .find(|(_, a)| a.0 == Panel::Scene)
+        .find(|(_, a)| a.0 == SCENE)
         .unwrap()
         .0;
     click(&mut app, scene);

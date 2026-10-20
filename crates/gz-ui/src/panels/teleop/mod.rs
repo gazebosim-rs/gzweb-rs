@@ -5,8 +5,11 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{Panel, PanelDef, RegisterPanel};
+use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
 use crate::assets::icons::IconId;
+
+/// The Teleop panel's id.
+pub const TELEOP: PanelId = PanelId::new("teleop");
 
 /// Registers the Teleop panel.
 pub struct TeleopPanelPlugin;
@@ -14,7 +17,8 @@ pub struct TeleopPanelPlugin;
 impl Plugin for TeleopPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(Panel::Teleop, "Teleop", IconId::ActivityTeleop, 50).view(view::state),
+            PanelDef::new(TELEOP, "Teleop", IconId::ActivityTeleop, DATA_GROUP, 50)
+                .view(view::state),
         );
     }
 }

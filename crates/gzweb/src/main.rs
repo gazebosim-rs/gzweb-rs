@@ -490,7 +490,7 @@ fn main() -> AppExit {
     if full {
         app.add_plugins((
             gz_ui::GzUiPlugin { theme: args.theme },
-            gz_ui::shell::ShellPlugin::default(),
+            gz_ui::shell::ShellPlugins,
         ));
     }
     if let Some(req) = args.snapshot {

@@ -88,6 +88,7 @@ pub(crate) fn init_layout(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
     theme: Option<Res<Theme>>,
+    panels: Res<PanelRegistry>,
     existing: Option<Res<ShellLayout>>,
 ) {
     if existing.is_some() {
@@ -97,7 +98,7 @@ pub(crate) fn init_layout(
     let width = windows
         .single()
         .map_or(layout::MIN_WINDOW.0, |w| ui_width(w, scale));
-    commands.insert_resource(ShellLayout::for_width(width));
+    commands.insert_resource(ShellLayout::for_width(width, panels.default_open()));
 }
 
 /// Refits the layout when the window's width changes: the start-up rules
@@ -152,14 +153,18 @@ pub(crate) fn apply_layout(layout: Res<ShellLayout>, mut regions: Query<(&Region
 
 /// Spawns the shell (spec §2.1): a column of top bar, body and status bar;
 /// the body a row of activity bar, sidebar, viewport area and inspector.
+/// It closes the panel and inspector registries (DECISIONS.md D-57).
 pub(crate) fn spawn_shell(
     mut commands: Commands,
     theme: Res<Theme>,
     layout: Res<ShellLayout>,
     map: Option<Res<InputMap>>,
-    panels: Res<PanelRegistry>,
-    inspectors: Res<InspectorRegistry>,
+    mut panels: ResMut<PanelRegistry>,
+    mut inspectors: ResMut<InspectorRegistry>,
 ) {
+    // The activity bar and the inspector are built from the registries once.
+    panels.close();
+    inspectors.close();
     let map = map.map_or_else(InputMap::builtin, |m| m.clone());
     let t = theme.clone();
     let l = layout.clone();
