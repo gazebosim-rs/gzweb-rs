@@ -146,7 +146,7 @@ pub(crate) fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Optio
         return None;
     };
     let status = status?;
-    let addr = crate::widgets::format::address(&status.url);
+    let addr = crate::format::address(&status.url);
     let trying = status.attempting || status.reconnect_at.is_some();
     let text = if trying {
         format!(

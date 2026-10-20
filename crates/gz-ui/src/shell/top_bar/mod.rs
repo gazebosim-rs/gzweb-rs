@@ -18,7 +18,11 @@ use super::regions::{pass_through, region, Region};
 use super::ShellSystems;
 use crate::assets::brand::logo;
 use crate::theme::{border, ColorRole, Theme, SPACE};
-use crate::widgets::layout::{flex_spacer, row, separator, Orientation, BAR_SEPARATOR_H};
+use crate::widgets::layout::{flex_spacer, row, separator, Orientation};
+
+/// The length of the top bar's vertical separators between its groups
+/// (and of the gallery's copy of them).
+pub(crate) const BAR_SEPARATOR_H: f32 = 18.0;
 
 /// The top bar.
 pub(crate) fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {

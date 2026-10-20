@@ -12,10 +12,10 @@ use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::{cursor_on_ground, ViewOrigin};
 
 use super::StatusItem;
+use crate::format;
 use crate::shell::connection::{dot_role, CurrentPhase};
 use crate::shell::Tool;
 use crate::theme::Fill;
-use crate::widgets::format;
 use crate::widgets::text::set_text;
 
 /// The text of an item.

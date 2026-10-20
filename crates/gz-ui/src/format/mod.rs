@@ -1,6 +1,7 @@
 //! How sim and connection state reads (spec §3.1, §3.6, §7.10): the
 //! clock, RTF, iterations, step, frame rate, addresses and coordinates,
 //! for the shell's readouts and any panel or inspector that shows them.
+//! Domain formatting, so it sits beside the widgets rather than in them.
 
 use gz_bevy::connection::SimStats;
 
@@ -138,3 +139,6 @@ pub fn rtf_detail(stats: Option<&SimStats>) -> String {
         },
     )
 }
+
+#[cfg(test)]
+mod tests;

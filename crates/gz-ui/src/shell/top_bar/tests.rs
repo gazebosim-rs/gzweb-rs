@@ -372,3 +372,10 @@ fn the_search_placeholder_fits_its_room() {
         );
     }
 }
+
+#[test]
+fn every_tool_has_a_name_and_a_hint() {
+    for t in Tool::ALL {
+        assert!(!t.hint().is_empty() && !t.name().is_empty());
+    }
+}

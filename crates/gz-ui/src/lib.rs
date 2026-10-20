@@ -20,13 +20,15 @@
 //!
 //! Milestone M2 adds [`shell`]: the workbench's regions, their layout
 //! rules, the 3D view's placement, and the connect card and banner
-//! ([`shell::ShellPlugin`], added with this plugin in the full mode). The
+//! ([`shell::ShellPlugin`], added with this plugin in the full mode), and
+//! [`format`](mod@format), how sim and connection state reads (clock, RTF, step). The
 //! sidebar's [`panels`] and the [`inspectors`] are plugins of their own
 //! that register into a registry the shell hosts (DECISIONS.md D-51).
 
 #![warn(unreachable_pub)]
 
 pub mod assets;
+pub mod format;
 pub mod gallery;
 pub mod inspectors;
 pub mod panels;

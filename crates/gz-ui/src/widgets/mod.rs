@@ -21,7 +21,6 @@ pub(crate) mod button;
 pub(crate) mod chip;
 pub(crate) mod cursor;
 pub(crate) mod focus;
-pub mod format;
 pub mod layout;
 pub(crate) mod menu;
 pub(crate) mod number_field;
@@ -101,7 +100,6 @@ pub const CONTROL_RADIUS: f32 = radius::SM;
 
 /// Registers every widget's systems and observers.
 pub(crate) fn build(app: &mut App) {
-    button::build(app);
     menu::build(app);
     number_field::build(app);
     select::build(app);

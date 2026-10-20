@@ -321,5 +321,3 @@ pub fn button(theme: &Theme, label: impl Into<String>, variant: ButtonVariant) -
         children![(text(BUTTON_TYPE, ink, label), Content)],
     )
 }
-
-pub(crate) fn build(_app: &mut App) {}

@@ -12,13 +12,13 @@ use gz_core::transport::Status;
 
 use crate::assets::brand::logo;
 use crate::assets::fonts::text;
+use crate::format;
 use crate::shell::connection::{ConnectionView, CurrentPhase, Phase};
 use crate::theme::{
     elevation, motion, radius, ColorRole, Fill, Ink, Opacity, Shadow, Stroke, Theme, TypeStyle,
     SPACE,
 };
 use crate::widgets::focus::Hiding;
-use crate::widgets::format;
 use crate::widgets::layout::{column, row, set_shown};
 use crate::widgets::text::set_text;
 use crate::widgets::text_field::TextFieldInput;

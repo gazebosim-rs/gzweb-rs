@@ -7,9 +7,9 @@ use gz_bevy::connection::{GzCommand, GzStatus};
 use gz_bevy::spawn::GzIndex;
 
 use super::view::{WorldAction, WorldField};
+use crate::format;
 use crate::shell::{world_name, CurrentPhase, Phase};
 use crate::theme::{ColorRole, Ink};
-use crate::widgets::format;
 use crate::widgets::text::set_text;
 
 /// The world's name, its source (the server) and the step size, when the

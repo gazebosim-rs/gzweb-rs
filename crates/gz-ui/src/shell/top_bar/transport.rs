@@ -11,15 +11,16 @@ use bevy::ui_widgets::{Activate, MenuAction, MenuEvent, MenuPopup};
 use gz_bevy::connection::{GzCommand, GzStatus, SimStats};
 use gz_bevy::view::input::InputMap;
 
+use super::BAR_SEPARATOR_H;
 use crate::assets::fonts::text;
 use crate::assets::icons::{Icon, IconId};
+use crate::format;
 use crate::shell::connection::{CurrentPhase, Phase};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, TypeStyle, SPACE};
 use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::chip::dot;
-use crate::widgets::format;
-use crate::widgets::layout::{row, separator, Orientation, BAR_SEPARATOR_H};
+use crate::widgets::layout::{row, separator, Orientation};
 use crate::widgets::menu::{menu, menu_item, menu_separator, MenuSide};
 use crate::widgets::text::set_text;
 use crate::widgets::MenuItemProps;
