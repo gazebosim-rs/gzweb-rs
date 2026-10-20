@@ -229,7 +229,7 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
                 overflow: Overflow::clip(),
                 ..column(0.0)
             }))
-            .with_children(|t| widgets::scene_panel(t, theme, map))
+            .with_children(|t| widgets::scene_panel(t, theme))
             .id();
         bottom.spawn(splitter(
             theme,

@@ -420,3 +420,104 @@ fn icon_ids_follow_icons_json() {
         assert_eq!(id.index(), i);
     }
 }
+
+/// The string literals in `code`, in order (escapes left as written).
+fn string_literals(code: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let b = code.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' && (i == 0 || b[i - 1] != b'\'') {
+            let start = i + 1;
+            let mut j = start;
+            while j < b.len() && b[j] != b'"' {
+                j += if b[j] == b'\\' { 2 } else { 1 };
+            }
+            out.push((start, &code[start..j.min(b.len())]));
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// A binding id's shape: `group.name`, lowercase (`panel.scene`).
+fn binding_shaped(s: &str) -> bool {
+    let Some((group, name)) = s.split_once('.') else {
+        return false;
+    };
+    let word = |w: &str, digits: bool| {
+        w.starts_with(|c: char| c.is_ascii_lowercase())
+            && w.chars()
+                .all(|c| c.is_ascii_lowercase() || c == '_' || (digits && c.is_ascii_digit()))
+    };
+    word(group, false) && word(name, true) && !["json", "png", "rs", "ttf", "svg"].contains(&name)
+}
+
+/// Every shortcut binding the code names is one `shortcuts.json` has: a
+/// wrong id gives no shortcut and no tooltip hint, silently. The panels'
+/// bindings (activity bar, header actions) and the tools' are checked
+/// from the registry and `Tool::ALL`; every other one from the source:
+/// any `group.name` literal outside the tests is a binding id, except an
+/// action id (`ActionId::new("…")`).
+#[test]
+fn every_binding_id_is_in_shortcuts_json() {
+    use gz_bevy::view::input::InputMap;
+
+    use crate::panels::{PanelPlugins, PanelRegistry};
+    use crate::shell::Tool;
+
+    let map = InputMap::builtin();
+    let mut app = App::new();
+    app.add_plugins(PanelPlugins);
+    let panels = app.world().resource::<PanelRegistry>();
+    let mut ids: Vec<String> = Vec::new();
+    for p in panels.iter() {
+        ids.extend(p.binding.map(str::to_string));
+        ids.extend(
+            p.header_actions
+                .iter()
+                .filter_map(|a| a.binding)
+                .map(str::to_string),
+        );
+    }
+    ids.extend(Tool::ALL.into_iter().map(|t| t.binding().to_string()));
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+    let test_code = |f: &Path| {
+        f.ends_with("tests.rs")
+            || f.ends_with("spec_checks.rs")
+            || f.components().any(|c| c.as_os_str() == "test_support")
+    };
+    let mut found = 0;
+    for file in files.iter().filter(|f| !test_code(f)) {
+        let code = strip_comments(&std::fs::read_to_string(file).unwrap());
+        for (at, lit) in string_literals(&code) {
+            let action = code[..at].trim_end_matches('"').ends_with("ActionId::new(");
+            if binding_shaped(lit) && !action {
+                ids.push(format!("{lit} ({})", file.display()));
+                found += 1;
+            }
+        }
+    }
+    assert!(found > 10, "the scan finds the bindings ({found})");
+    let unknown: Vec<&String> = ids
+        .iter()
+        .filter(|id| map.binding(id.split(' ').next().unwrap()).is_none())
+        .collect();
+    assert!(unknown.is_empty(), "not in shortcuts.json: {unknown:?}");
+
+    // The scanner itself.
+    assert_eq!(
+        string_literals(r#"a("x.y", '"', "q\"r") ActionId::new("p.q")"#)
+            .iter()
+            .map(|l| l.1)
+            .collect::<Vec<_>>(),
+        ["x.y", r#"q\"r"#, "p.q"]
+    );
+    assert!(binding_shaped("ui.workspace_1") && binding_shaped("tree.expand_all"));
+    assert!(!binding_shaped("tokens.json") && !binding_shaped("2.457"));
+    assert!(!binding_shaped("Open world…") && !binding_shaped("a.b.c"));
+}

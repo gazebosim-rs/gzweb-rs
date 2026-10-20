@@ -21,20 +21,20 @@ use crate::widgets::{
     IconButtonSize, NumberField, SliderProps, StatusKind, Tooltip, TreeRowSpec, Unit,
 };
 
-pub(super) fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
+pub(super) fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme) {
     t.spawn(section_header(theme, "Scene", Some("14 entities".into())))
         .with_children(|h| {
             h.spawn(icon_button(
                 theme,
                 IconId::ExpandAll,
                 IconButtonSize::Small,
-                Tooltip::new("Expand all").binding(map, "tree.expand_all"),
+                Tooltip::new("Expand all"),
             ));
             h.spawn(icon_button(
                 theme,
                 IconId::CollapseAll,
                 IconButtonSize::Small,
-                Tooltip::new("Collapse all").binding(map, "tree.collapse_all"),
+                Tooltip::new("Collapse all"),
             ));
         });
     t.spawn(Node {
