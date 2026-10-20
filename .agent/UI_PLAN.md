@@ -302,16 +302,19 @@ crates/gz-ui/src/
   assets/           fonts, icons/ (atlas), brand (logo)
   widgets/          the §5 components, flat under widgets::; layout.rs (row, column,
                     flex_spacer, overlay, clip_box, separator, group/group_header/
-                    property_row, set_shown), text.rs (set_text), shortcut.rs; a folder per
-                    widget with more than one file or its own tests (menu/, number_field/,
-                    slider/, splitter/, toggle/, tooltip/, tree_row/)
-  shell/            mod.rs: ShellPlugin and ShellSystems only; commands, layout (ShellLayout),
-                    regions, routing, splitter, collapsed_bar, connection, format, inspector
-                    (the frame); top_bar/ activity_bar/ sidebar/ status_bar/ viewport/
-  panels/           PanelRegistry, PanelDef, RegisterPanel, PanelsPlugin; one folder per
-                    panel: scene/ assets/ topics/ plot/ sensors/ teleop/ console/
-  inspectors/       InspectorRegistry, InspectorDef; one folder per kind: world/ (M5 adds
-                    model, link, joint, light, sensor, multi)
+                    property_row, set_shown), text.rs (set_text), format.rs (how sim and
+                    connection state reads), shortcut.rs; a folder per widget with more
+                    than one file or its own tests (menu/, number_field/, slider/,
+                    splitter/, toggle/, tooltip/, tree_row/)
+  shell/            mod.rs: ShellPlugin, ShellPlugins and ShellSystems only; commands, layout
+                    (ShellLayout), regions, routing, splitter, collapsed_bar, connection,
+                    panel_status (PanelStatus), inspector (the frame); top_bar/
+                    activity_bar/ sidebar/ status_bar/ viewport/
+  panels/           PanelId, PanelDef, PanelRegistry, RegisterPanel, PanelPlugins; one
+                    folder per panel: scene/ assets/ topics/ plot/ sensors/ teleop/ console/
+  inspectors/       InspectorId, InspectorDef, InspectorRegistry, InspectorPlugins; one
+                    folder per kind: world/ (M5 adds model, link, joint, light, sensor,
+                    multi)
   gallery/          the --ui gallery page, one file per section
 ```
 
@@ -320,13 +323,20 @@ Rules:
 - **Feature folders.** A shell region, panel, inspector or widget with more than one file or
   tests of its own is a folder: `mod.rs` (the plugin or builder and the module's docs), a
   file per job (`view.rs`, `systems.rs`, …) and `tests.rs`. One-file widgets stay files.
-- **Panels and inspectors are plugins in a registry.** A panel's plugin calls
-  `app.register_panel(PanelDef::new(id, title, icon, order).binding(..).view(..).count(..)
-  .badge(..))`; its body per connection phase, header count, badge and later its systems live
-  in its folder. The activity bar, the sidebar's slots and the panel shortcuts only host what
-  `PanelRegistry` holds; nothing outside `panels/<name>/` matches on one panel. `Panel` is
-  the id `ShellLayout` stores (adding a panel adds a variant). Inspectors work the same way
-  (`register_inspector`, `InspectorKind`); `shell::inspector` is the frame.
+- **Panels and inspectors are plugins in a registry.** A panel declares its id as a
+  constant (`pub const SCENE: PanelId = PanelId::new("scene")`; open, so a panel in another
+  crate brings its own) and its plugin calls `app.register_panel(PanelDef::new(id, title,
+  icon, group, order).binding(..).default_open().view(..).content(..))`. What changes at run
+  time its own systems write into the shell's `PanelStatus` (badge, header count; compare
+  first, write a change only), in `ShellSystems::PanelStatus`. The activity bar (by group,
+  then order, a separator between groups), the sidebar's slots and the panel shortcuts only
+  host what `PanelRegistry` holds and draw `PanelStatus`; nothing outside `panels/<name>/`
+  matches on one panel. `ShellLayout` stores ids. Panels register while the app is built:
+  the shell closes the registry when it spawns, and a later `register_panel` panics; an id
+  or binding registered twice warns, the later registration winning. The built-in panels
+  are `PanelPlugins` inside `ShellPlugins`: to replace one, disable its plugin there and
+  register your own under its id. Inspectors work the same way (`InspectorId`,
+  `register_inspector`, `InspectorPlugins`); `shell::inspector` is the frame.
 - **Crates later.** A panel moves to its own crate when it grows heavy or compile times ask
   for it; it depends only on `gz-ui`'s public API (prelude, widgets, theme, registries), so
   the move is mechanical.
@@ -343,14 +353,20 @@ Rules:
   `SPACE`, colours only through roles: no colour literals (`spec_checks` greps; only
   `theme/tokens.rs` is exempt).
 - **Systems.** A system updates one thing; one that needs more than seven parameters reads
-  through a `#[derive(SystemParam)]` struct (`StatusSources`, `SlotSources`, `PointerOver`)
-  instead of a `clippy::too_many_arguments` allow. Each region's `build()` (each panel's
-  plugin) registers its own systems: the layout chain in `ShellSystems::Layout`, everything
-  that shows state in `ShellSystems::Readouts`.
+  through a `#[derive(SystemParam)]` struct (`StatusSources`, `SlotSources`, `PointerOver`,
+  `LookTargets`) instead of a `clippy::too_many_arguments` allow. That is for clarity, not
+  speed: readouts that all write `Text` still run one after another. A readout returns early
+  unless what it shows changed. Each region's `build()` (each panel's plugin) registers its
+  own systems: the layout chain in `ShellSystems::Layout` (the sidebar's after the regions'
+  `apply_layout`), the panels' status in `ShellSystems::PanelStatus`, everything that shows
+  state in `ShellSystems::Readouts`.
 - **Visibility.** `pub` is the crate's API only: the plugins and sets, `UiCommand`,
-  `ShellLayout`/`Panel`/`Slot`/`Side`/`Tool`, the registries, the theme, the fonts' and
-  icons' builders, and the widgets (constructors, props, markers, events). Everything else
-  is `pub(crate)` or private, and module trees are `pub(crate)` with re-exports. The crate
+  `ShellLayout`/`Slot`/`Side`/`Tool`/`Phase`, `PanelStatus`, the ids and registries, the
+  theme and its looks, the fonts' and icons' builders, and the widgets (constructors, props,
+  markers, events). Everything else is `pub(crate)` or private, and module trees are
+  `pub(crate)` with re-exports (`shell::MIN_WINDOW`, `theme::Active`, `assets::icon`). Four
+  leaf modules stay public because their items read better qualified:
+  `widgets::{layout, text, format, shortcut}` (`layout::row`, `format::clock`). The crate
   warns on `unreachable_pub`, so check.sh rejects a stray `pub`.
 - **Tests** sit next to their module (`#[cfg(test)] mod tests;`, a sibling `tests.rs`);
   shared harness code goes in `test_support`. A region's and widget's tests import it through

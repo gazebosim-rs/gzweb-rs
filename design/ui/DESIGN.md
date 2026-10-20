@@ -524,9 +524,11 @@ gz-ui/src/
   theme/                 Theme; tokens.rs (generated from tokens.json), roles.rs, visuals/
   assets/                fonts, icons/ (atlas generated from icons.json), brand
   widgets/               §5 components; layout.rs (row, column, flex_spacer, separator,
-                         group/property_row), text.rs, shortcut.rs; a folder per larger widget
-  shell/                 ShellPlugin; commands, layout (ShellLayout), regions, routing,
-                         splitter, collapsed_bar, connection, inspector (frame)
+                         group/property_row), text.rs, format.rs, shortcut.rs; a folder per
+                         larger widget
+  shell/                 ShellPlugin, ShellPlugins; commands, layout (ShellLayout), regions,
+                         routing, splitter, collapsed_bar, connection, panel_status,
+                         inspector (frame)
     top_bar/             tools, transport, world_button, search
     activity_bar/ sidebar/ status_bar/
     viewport/            view, banner, connect_card (§3.4 rail and cube come in M3)
@@ -537,7 +539,7 @@ gz-ui/src/
   gallery/               the widget gallery (§12 item 1)
 ```
 
-Each panel and inspector is a Bevy plugin that registers a definition (title, icon, shortcut binding, body per connection phase, header count, badge) in a registry resource; the activity bar, the sidebar's slots and the inspector frame show whatever is registered and never name a panel. A panel can move to its own crate when it grows heavy; the plugin is its whole interface. Shell regions and panels are built from `widgets/` and its layout primitives, with colours only through roles (§4.1).
+Each panel and inspector is a Bevy plugin that registers a definition (an open id, title, icon, shortcut binding, activity bar group and order, whether it opens at start, body per connection phase) in a registry resource while the app is built; its own systems write what changes at run time (activity badge, header count) into the shell's panel status. The activity bar, the sidebar's slots and the inspector frame show whatever is registered and never name a panel. The built-in panels and inspectors are plugin groups inside `ShellPlugins`, so an app can leave one out or replace it under the same id (DECISIONS.md D-57). A panel can move to its own crate when it grows heavy; the plugin is its whole interface. Shell regions and panels are built from `widgets/` and its layout primitives, with colours only through roles (§4.1).
 
 ### 9.2 State resources
 `Selection { entities: Vec<GzEntityId> }`, `ActiveTool { Navigate | BoxSelect | Translate | Rotate }`, `ViewLayout { preset, ratios, views: Vec<ViewState> }`, `ViewState { camera_pose, projection, camera_mode, drag_action, overlays }`, `ActiveView(usize)`, `Workspace`, `SimStatus { running, sim_time, real_time, rtf, iterations, step_size, connection }`, `MessageLog`, `UndoStack`.
