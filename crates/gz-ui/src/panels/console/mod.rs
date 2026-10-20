@@ -2,11 +2,11 @@
 //! messages and log topics. Its activity button counts the unread
 //! warnings and errors.
 
-mod view;
+mod systems;
 
 use bevy::prelude::*;
 
-use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
+use super::{PanelDef, PanelId, PanelView, RegisterPanel, DATA_GROUP};
 use crate::assets::IconId;
 use crate::shell::ShellSystems;
 
@@ -29,10 +29,10 @@ impl Plugin for ConsolePanelPlugin {
             PanelDef::new(CONSOLE, "Console", IconId::ActivityConsole)
                 .place(DATA_GROUP, 60)
                 .binding("panel.console")
-                .view(view::state),
+                .view(PanelView::empty("No messages")),
         )
         .init_resource::<ConsoleUnread>()
-        .add_systems(Update, view::unread_badge.in_set(ShellSystems::PanelStatus));
+        .add_systems(Update, systems::unread_badge.in_set(ShellSystems::Panels));
     }
 }
 

@@ -1,4 +1,6 @@
-//! The sidebar's slots: the header buttons and the row splitter.
+//! The sidebar's slots: the header and slot buttons, the row splitter,
+//! and what a slot rebuilds (headers and bodies, DECISIONS.md D-58), on
+//! the test probe panel.
 
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{Pointer, PointerDrag, PointerDragEnd, PointerDragStart};
@@ -9,12 +11,13 @@ use bevy::ui_widgets::Activate;
 use bevy::app::PluginGroupBuilder;
 
 use crate::inspectors::InspectorPlugins;
-use crate::panels::{PanelId, ScenePanelPlugin, ASSETS, PLOT, SCENE};
+use crate::panels::{PanelBody, PanelId, PanelView, ScenePanelPlugin, ASSETS, PLOT, SCENE};
 use crate::shell::layout::MIN_SLOT_H;
-use crate::shell::sidebar::body::PanelBody;
+use crate::shell::sidebar::{PanelHeader, SlotView};
 use crate::shell::{ShellPlugin, ShellPlugins};
 use crate::shell::{Slot, UiCommand};
 use crate::test_support::frames;
+use crate::test_support::probe::*;
 use crate::test_support::shell::*;
 
 #[test]
@@ -114,96 +117,6 @@ fn the_row_splitter_resizes_the_slots_within_their_minimum() {
         .is_none());
 }
 
-/// A count change rewrites the header's count only: the body (M4's tree,
-/// its scroll and expansion) stays the same entity.
-#[test]
-fn a_count_change_keeps_the_panel_body() {
-    use crate::shell::sidebar::body::PanelBody;
-    use crate::widgets::SectionCount;
-    let mut app = shell_app((1440, 900), 1.0);
-    frames(&mut app, 2);
-    go_live(&mut app, false);
-    frames(&mut app, 1);
-    let body = find::<PanelBody>(&mut app);
-    let count = |app: &mut App| {
-        let world = app.world_mut();
-        world
-            .query_filtered::<&Text, With<SectionCount>>()
-            .iter(world)
-            .map(|t| t.0.clone())
-            .filter(|t| !t.is_empty())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(count(&mut app), ["0 entities"]);
-    let entity = app.world_mut().spawn_empty().id();
-    app.world_mut()
-        .resource_mut::<gz_bevy::spawn::GzIndex>()
-        .order
-        .push(entity);
-    frames(&mut app, 2);
-    assert_eq!(count(&mut app), ["1 entity"]);
-    assert_eq!(find::<PanelBody>(&mut app), body, "the body wasn't rebuilt");
-}
-
-/// A panel's content fills its body once it's ready, and an error state's
-/// Reconnect retries the server (Open world stays disabled).
-#[test]
-fn panel_content_and_actions() {
-    use crate::assets::icons::IconId;
-    use crate::panels::{PanelAction, PanelDef, PanelId, PanelView, RegisterPanel};
-    use crate::shell::connection::Phase;
-    use crate::shell::sidebar::body::PanelBody;
-    use bevy::ui::InteractionDisabled;
-    use gz_bevy::connection::GzReconnect;
-
-    #[derive(Component)]
-    struct Probe;
-    const PROBE: PanelId = PanelId::new("probe");
-    let mut app = shell_app((1440, 900), 1.0);
-    app.register_panel(
-        PanelDef::new(PROBE, "Probe", IconId::ActivityPlot)
-            .view(|phase| match phase {
-                Phase::Live => PanelView::Ready,
-                _ => PanelView::Error {
-                    message: "down",
-                    actions: vec![PanelAction::Reconnect, PanelAction::OpenWorld],
-                },
-            })
-            .content(|b, _| {
-                b.spawn(Probe);
-            }),
-    );
-    frames(&mut app, 2);
-    app.world_mut().write_message(UiCommand::OpenPanel {
-        panel: PROBE,
-        slot: Slot::Primary,
-    });
-    frames(&mut app, 2);
-    let world = app.world_mut();
-    let actions: Vec<(Entity, PanelAction, bool)> = world
-        .query::<(Entity, &PanelAction, Has<InteractionDisabled>)>()
-        .iter(world)
-        .map(|(e, a, d)| (e, *a, d))
-        .collect();
-    assert_eq!(actions.len(), 2);
-    for (e, action, disabled) in actions {
-        assert_eq!(disabled, action == PanelAction::OpenWorld);
-        app.world_mut().trigger(Activate { entity: e });
-    }
-    frames(&mut app, 1);
-    assert_eq!(
-        app.world().resource::<Sent>().1,
-        [GzReconnect { url: None }]
-    );
-    go_live(&mut app, false);
-    let body = find::<PanelBody>(&mut app);
-    let probe = find::<Probe>(&mut app);
-    assert_eq!(
-        app.world().get::<ChildOf>(probe).map(ChildOf::parent),
-        Some(body)
-    );
-}
-
 fn bodies(app: &mut App) -> Vec<(Entity, PanelId)> {
     let world = app.world_mut();
     world
@@ -255,4 +168,210 @@ fn without_the_default_panel_the_first_one_opens() {
     frames(&mut app, 2);
     let l = layout(&app);
     assert_eq!((l.primary, l.sidebar_open), (None, false));
+}
+
+/// The probe panel opened in `slot` (Scene is live in the primary).
+fn probe_app(slot: Slot) -> App {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.add_plugins(ProbePanelPlugin);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    app.world_mut()
+        .write_message(UiCommand::OpenPanel { panel: PROBE, slot });
+    frames(&mut app, 2);
+    app
+}
+
+fn body_of(app: &mut App, panel: PanelId) -> Entity {
+    bodies(app)
+        .into_iter()
+        .find(|b| b.1 == panel)
+        .expect("a body")
+        .0
+}
+
+fn slot_of(app: &App, e: Entity) -> Slot {
+    let parent = app.world().get::<ChildOf>(e).unwrap().parent();
+    app.world().get::<SlotView>(parent).unwrap().0
+}
+
+fn rows(app: &mut App) -> Vec<(u32, Entity)> {
+    let world = app.world_mut();
+    let mut rows: Vec<(u32, Entity)> = world
+        .query::<(&ProbeRow, &ChildOf)>()
+        .iter(world)
+        .map(|(r, p)| (r.0, p.parent()))
+        .collect();
+    rows.sort();
+    rows
+}
+
+/// Opening, swapping and closing the second slot keeps each body: the
+/// first slot's isn't rebuilt when the second opens or closes, and a swap
+/// moves both (the reviewer's XP1 and XP3 rebuilt them).
+#[test]
+fn bodies_survive_the_second_slot_opening_swapping_and_closing() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.add_plugins(ProbePanelPlugin);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    frames(&mut app, 1);
+    let scene = body_of(&mut app, SCENE);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PROBE,
+        slot: Slot::Secondary,
+    });
+    frames(&mut app, 2);
+    assert_eq!(body_of(&mut app, SCENE), scene, "opening the second slot");
+    let probe = body_of(&mut app, PROBE);
+    assert_eq!(slot_of(&app, probe), Slot::Secondary);
+    let content = rows(&mut app);
+    app.world_mut().write_message(UiCommand::SwapSlots);
+    frames(&mut app, 2);
+    assert_eq!(body_of(&mut app, SCENE), scene, "a swap moves the body");
+    assert_eq!(body_of(&mut app, PROBE), probe);
+    assert_eq!(
+        (slot_of(&app, scene), slot_of(&app, probe)),
+        (Slot::Secondary, Slot::Primary)
+    );
+    assert_eq!(rows(&mut app), content, "and keeps its content");
+    // Each slot is its header, then its body.
+    for body in [scene, probe] {
+        let slot = app.world().get::<ChildOf>(body).unwrap().parent();
+        let kids: Vec<Entity> = app.world().get::<Children>(slot).unwrap().to_vec();
+        assert_eq!(kids.len(), 2);
+        assert!(app.world().get::<PanelHeader>(kids[0]).is_some());
+        assert_eq!(kids[1], body);
+    }
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    frames(&mut app, 2);
+    assert_eq!(body_of(&mut app, PROBE), probe, "closing the second slot");
+    assert_eq!(bodies(&mut app).len(), 1, "Scene's body went with its slot");
+    // The header's count follows its panel after the swap.
+    app.world_mut().resource_mut::<Probe>().count = Some("3 things".into());
+    frames(&mut app, 1);
+    assert!(all_text(&mut app).contains("3 things"));
+}
+
+/// A count or badge change rewrites the header or the activity button in
+/// place; a change of the panel's own state doesn't touch its body; a
+/// view change rebuilds that body alone, and its content is built again
+/// from the panel's state, so nothing is lost (bodies are disposable
+/// views). Content is full-bleed; the other states are padded.
+#[test]
+fn a_body_is_rebuilt_only_for_its_view_and_built_from_panel_state() {
+    use crate::theme::SPACE;
+    let mut app = probe_app(Slot::Secondary);
+    let (scene, probe) = (body_of(&mut app, SCENE), body_of(&mut app, PROBE));
+    assert_eq!(rows(&mut app), [(0, probe), (1, probe)]);
+    let padding = |app: &App, e: Entity| app.world().get::<Node>(e).unwrap().padding;
+    assert_eq!(padding(&app, probe), UiRect::ZERO, "content is full-bleed");
+    {
+        let mut p = app.world_mut().resource_mut::<Probe>();
+        p.count = Some("2 rows".into());
+        p.rows = 3;
+    }
+    frames(&mut app, 2);
+    assert!(all_text(&mut app).contains("2 rows"));
+    assert_eq!(
+        body_of(&mut app, PROBE),
+        probe,
+        "a count change keeps the body"
+    );
+    assert_eq!(rows(&mut app).len(), 2, "the content isn't rebuilt either");
+    app.world_mut().resource_mut::<Probe>().view = PanelView::Loading;
+    frames(&mut app, 2);
+    let loading = body_of(&mut app, PROBE);
+    assert_ne!(loading, probe);
+    assert!(app.world().get_entity(probe).is_err());
+    assert_eq!(padding(&app, loading), UiRect::all(px(SPACE[4])));
+    assert!(rows(&mut app).is_empty());
+    assert_eq!(body_of(&mut app, SCENE), scene, "the other body stays");
+    app.world_mut().resource_mut::<Probe>().view = PanelView::Ready;
+    frames(&mut app, 2);
+    let ready = body_of(&mut app, PROBE);
+    assert_eq!(rows(&mut app), [(0, ready), (1, ready), (2, ready)]);
+    // A message the panel computes (`Cow`), not only a literal.
+    let n = 4;
+    app.world_mut().resource_mut::<Probe>().view = PanelView::empty(format!("{n} hidden"));
+    frames(&mut app, 2);
+    assert!(all_text(&mut app).contains("4 hidden"));
+    let empty = body_of(&mut app, PROBE);
+    assert_eq!(padding(&app, empty), UiRect::all(px(SPACE[4])));
+}
+
+/// Header actions and an empty or error state's actions trigger
+/// `PanelActionActivated` for their panel; disabled ones don't, and say
+/// they're not available yet. Reconnect is the shell's: it retries the
+/// server from any panel.
+#[test]
+fn panel_actions_reach_their_panel_and_reconnect_retries() {
+    use crate::panels::{ActionId, PanelAction};
+    use crate::shell::sidebar::body::ActionButton;
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::connection::GzReconnect;
+
+    let retry = ActionId::new("retry");
+    let later = ActionId::new("later_too");
+    let mut app = probe_app(Slot::Primary);
+    app.world_mut().resource_mut::<Probe>().view = PanelView::error("down")
+        .action(PanelAction::new(retry, "Retry"))
+        .action(PanelAction::reconnect())
+        .action(PanelAction::new(later, "Later").disabled());
+    frames(&mut app, 2);
+    let world = app.world_mut();
+    let buttons: Vec<(Entity, ActionButton, bool)> = world
+        .query::<(Entity, &ActionButton, Has<InteractionDisabled>)>()
+        .iter(world)
+        .filter(|(_, b, _)| b.panel == PROBE)
+        .map(|(e, b, d)| (e, *b, d))
+        .collect();
+    let mut ids: Vec<(ActionId, bool)> = buttons.iter().map(|b| (b.1.action, b.2)).collect();
+    ids.sort();
+    let mut want = [
+        (POKE, false),
+        (LATER, true),
+        (retry, false),
+        (crate::panels::RECONNECT, false),
+        (later, true),
+    ];
+    want.sort();
+    assert_eq!(ids, want);
+    for (e, ..) in &buttons {
+        app.world_mut().trigger(Activate { entity: *e });
+    }
+    frames(&mut app, 1);
+    let mut seen = app.world().resource::<ProbeActions>().0.clone();
+    seen.sort();
+    let mut want: Vec<(ActionId, Entity)> = buttons
+        .iter()
+        .filter(|b| !b.2)
+        .map(|b| (b.1.action, b.0))
+        .collect();
+    want.sort();
+    // Each event names its button, to anchor a popover on.
+    assert_eq!(seen, want);
+    assert_eq!(seen.len(), 3);
+    assert_eq!(
+        app.world().resource::<Sent>().1,
+        [GzReconnect { url: None }]
+    );
+    let text = all_text(&mut app);
+    assert!(text.contains("down") && text.contains("Retry"));
+}
+
+/// `panel_shown` is true while the panel is in a slot of the open
+/// sidebar.
+#[test]
+fn panel_shown_follows_the_slots_and_the_sidebar() {
+    use crate::shell::panel_shown;
+    use bevy::ecs::system::RunSystemOnce;
+    let mut app = probe_app(Slot::Secondary);
+    let shown =
+        |app: &mut App, p: PanelId| app.world_mut().run_system_once(panel_shown(p)).unwrap();
+    assert!(shown(&mut app, PROBE) && shown(&mut app, SCENE));
+    assert!(!shown(&mut app, PLOT));
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 1);
+    assert!(!shown(&mut app, PROBE));
 }

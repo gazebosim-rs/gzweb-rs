@@ -1,12 +1,11 @@
 use bevy::prelude::*;
 
 use super::{
-    PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
-    ScenePanelPlugin, ASSETS, CONSOLE, DATA_GROUP, PLOT, SCENE, SENSORS, TELEOP, TOPICS,
-    WORLD_GROUP,
+    ActionId, HeaderAction, PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView,
+    RegisterPanel, ScenePanelPlugin, ASSETS, CONSOLE, DATA_GROUP, PLOT, RECONNECT, SCENE, SENSORS,
+    TELEOP, TOPICS, WORLD_GROUP,
 };
 use crate::assets::IconId;
-use crate::shell::Phase;
 
 fn registry(plugins: impl PluginGroup) -> PanelRegistry {
     let mut app = App::new();
@@ -21,7 +20,6 @@ fn every_panel_registers_once_in_activity_bar_order() {
     assert_eq!(ids, [SCENE, ASSETS, TOPICS, PLOT, SENSORS, TELEOP, CONSOLE]);
     for p in r.iter() {
         assert!(!p.title.is_empty());
-        let _ = (p.view)(Phase::Live);
         assert_eq!(r.get(p.id).map(|d| d.title), Some(p.title));
         assert_eq!(p.id.to_string(), p.id.name());
     }
@@ -87,13 +85,12 @@ fn groups_then_order_sort_and_unknown_ids_resolve_to_the_first() {
     // An id nothing registered stands for the first panel.
     assert_eq!(r.resolve(PanelId::new("nope")), Some(SCENE));
     assert_eq!(r.resolve(PLOT), Some(PLOT));
-    // The defaults: ready, closed at start, no binding or content.
+    // The defaults: ready, closed at start, no binding, header actions or
+    // content.
     let d = r.get(CONSOLE).unwrap();
-    assert_eq!((d.view)(Phase::Idle), PanelView::Ready);
+    assert_eq!(d.view, PanelView::Ready);
     assert!(d.binding.is_none() && d.content.is_none() && !d.default_open);
-    // Content is the panel's body once ready.
-    let d = def(PLOT, "Plot", IconId::ActivityPlot).content(|_, _| {});
-    assert!(d.content.is_some());
+    assert!(d.header_actions.is_empty());
 }
 
 /// Replacing a built-in panel means disabling its plugin: registering its
@@ -115,15 +112,33 @@ fn registering_after_the_shell_spawned_panics() {
     app.register_panel(PanelDef::new(PLOT, "Plot", IconId::ActivityPlot));
 }
 
+/// Views and actions as panels build them: a message from a literal or
+/// computed, buttons only in the empty and error states.
 #[test]
-fn panel_actions_say_what_they_do() {
-    for a in [
-        PanelAction::Reconnect,
-        PanelAction::OpenWorld,
-        PanelAction::NewWorld,
-        PanelAction::AddField,
-    ] {
-        assert_eq!(a.available(), a == PanelAction::Reconnect);
-        assert!(!a.label().is_empty());
-    }
+fn views_and_actions_build() {
+    let a = ActionId::new("a");
+    let n = 3;
+    let v = PanelView::empty(format!("{n} hidden")).action(PanelAction::new(a, "A"));
+    assert_eq!(
+        v,
+        PanelView::Empty {
+            message: "3 hidden".into(),
+            actions: vec![PanelAction::new(a, "A")]
+        }
+    );
+    assert_eq!(
+        PanelView::Loading.action(PanelAction::reconnect()),
+        PanelView::Loading
+    );
+    let e = PanelView::error("down").action(PanelAction::new(a, "A").disabled());
+    let PanelView::Error { actions, .. } = e else {
+        panic!("{e:?}");
+    };
+    assert!(!actions[0].enabled);
+    assert_eq!(PanelAction::reconnect().id, RECONNECT);
+    let h = HeaderAction::new(a, IconId::Copy, "Copy")
+        .binding("edit.copy")
+        .disabled();
+    assert_eq!((h.binding, h.enabled), (Some("edit.copy"), false));
+    assert_eq!(a.to_string(), "a");
 }

@@ -25,10 +25,10 @@ use super::collapsed_bar::ExpandButton;
 use super::connection::{dot_role, ConnectionView, Phase};
 use super::layout::MIN_SLOT_H;
 use super::regions::Region;
-use super::sidebar::body::PanelBody;
 use super::splitter::ShellSplitter;
 use super::status_bar::StatusItem;
 use super::top_bar::tools::ToolChoice;
+use crate::panels::PanelBody;
 
 use super::viewport::view::ViewNode;
 use crate::panels::{PanelId, CONSOLE, SCENE};
@@ -874,4 +874,14 @@ fn reset_is_enabled_alike_in_the_top_bar_and_the_inspector() {
     let s = stats(true);
     assert!(Transport::Step.enabled(Phase::Live, Some(&s)));
     assert!(!Transport::Reset.enabled(Phase::Loading, Some(&s)));
+}
+
+/// The shell is built from the UI's theme, fonts and widgets: without
+/// `GzUiPlugin` it says so rather than failing later.
+#[test]
+#[should_panic(expected = "ShellPlugin needs GzUiPlugin")]
+fn the_shell_needs_the_ui_plugin() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, crate::shell::ShellPlugins));
+    app.finish();
 }

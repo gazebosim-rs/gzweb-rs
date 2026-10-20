@@ -1,11 +1,11 @@
 //! The Assets panel (spec §3.3; M7): shapes, lights and Fuel models to
-//! insert. Until then its body says what it will do.
-
-mod view;
+//! insert. Until then its body says what it will do. (§3.3.1's "Fuel is
+//! unreachable" + Retry needs the Fuel client, M7: its systems will write
+//! that view.)
 
 use bevy::prelude::*;
 
-use super::{PanelDef, PanelId, RegisterPanel, WORLD_GROUP};
+use super::{PanelDef, PanelId, PanelView, RegisterPanel, WORLD_GROUP};
 use crate::assets::IconId;
 
 /// The Assets panel's id.
@@ -20,10 +20,7 @@ impl Plugin for AssetsPanelPlugin {
             PanelDef::new(ASSETS, "Assets", IconId::ActivityAssets)
                 .place(WORLD_GROUP, 10)
                 .binding("panel.assets")
-                .view(view::state),
+                .view(PanelView::empty("Search Fuel for models and worlds")),
         );
     }
 }
-
-#[cfg(test)]
-mod tests;

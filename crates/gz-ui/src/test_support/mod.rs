@@ -2,6 +2,7 @@
 //! renderer, no winit, a 1440×900 window entity and a UI camera), and in
 //! [`shell`] the full UI on it.
 
+pub(crate) mod probe;
 pub(crate) mod shell;
 
 use bevy::a11y::AccessibilityPlugin;

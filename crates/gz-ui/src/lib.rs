@@ -47,11 +47,12 @@ pub mod prelude {
         InspectorDef, InspectorId, InspectorPlugins, InspectorRegistry, RegisterInspector,
     };
     pub use crate::panels::{
-        PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
+        ActionId, HeaderAction, PanelAction, PanelActionActivated, PanelBody, PanelDef, PanelId,
+        PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
     };
     pub use crate::shell::{
-        PanelState, PanelStatus, ShellLayout, ShellPlugin, ShellPlugins, ShellSystems, Side, Slot,
-        Tool, UiCommand,
+        panel_shown, PanelState, PanelStatus, SetPanelStatus, ShellLayout, ShellPlugin,
+        ShellPlugins, ShellSystems, Side, Slot, Tool, UiCommand,
     };
     pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
     pub use crate::{GzUiPlugin, GzUiSystems};
