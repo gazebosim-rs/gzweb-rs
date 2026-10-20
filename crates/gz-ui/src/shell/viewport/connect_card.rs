@@ -18,6 +18,7 @@ use crate::theme::{
     elevation, motion, radius, ColorRole, Fill, Ink, Opacity, Shadow, Stroke, Theme, TypeStyle,
     SPACE,
 };
+use crate::widgets::focus::Hiding;
 use crate::widgets::layout::{column, row, set_shown};
 use crate::widgets::text::set_text;
 use crate::widgets::text_field::TextFieldInput;
@@ -49,9 +50,15 @@ pub(crate) struct AddressField;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct CardStatus;
 
-/// A fade-out in progress (§7.10: 160 ms), seconds left.
+/// A fade-out in progress (§7.10: 160 ms), seconds left. The card also
+/// gets [`Hiding`], so focus in it goes at once (DECISIONS.md D-52).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Fading(pub f32);
+
+/// An entity's own opacity before the card's fade, restored when the fade
+/// ends or is interrupted (a world that drops again while the card fades).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PreFade(pub f32);
 
 /// The fade's length: `panel_slide_ms` (160).
 pub(crate) fn fade_secs() -> f32 {
@@ -102,7 +109,7 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
 
 /// The card shows while no world has loaded, or when asked for while
 /// lost; it fades out once a world loads. Its status line follows the
-/// connection.
+/// connection. Runs when the connection changes.
 pub(crate) fn card_state(
     phase: Res<CurrentPhase>,
     status: Option<Res<GzStatus>>,
@@ -111,17 +118,23 @@ pub(crate) fn card_state(
     mut lines: Query<&mut Text, With<CardStatus>>,
     mut commands: Commands,
 ) {
+    let changed =
+        phase.is_changed() || view.is_changed() || status.as_ref().is_some_and(Res::is_changed);
+    if !changed {
+        return;
+    }
     let lost = matches!(phase.0, Phase::Lost { .. });
     let card = phase.0.no_world() || (lost && view.card_requested);
     for (e, mut node, fading) in &mut cards {
         let shown = node.display != Display::None;
         if card {
             if fading.is_some() {
-                commands.entity(e).remove::<Fading>();
+                // `fade_card` puts the opacities back.
+                commands.entity(e).remove::<(Fading, Hiding)>();
             }
             set_shown(&mut node, true);
         } else if shown && fading.is_none() {
-            commands.entity(e).insert(Fading(fade_secs()));
+            commands.entity(e).insert((Fading(fade_secs()), Hiding));
         }
     }
     let line = card_status(phase.0, status.as_deref());
@@ -160,34 +173,43 @@ pub(crate) fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
 /// Anything with a colour role (what the fade's opacity applies to).
 type WithRole = Or<(With<Fill>, With<Stroke>, With<Ink>, With<Shadow>)>;
 
+/// The card's node, its fade, and whether it has opacities to put back.
+type CardFade = (
+    Entity,
+    &'static mut Node,
+    Option<&'static mut Fading>,
+    Has<PreFade>,
+);
+
 /// Fades the card out (after the widgets' own looks, so the fade wins),
-/// then hides it.
+/// then hides it. Each faded entity keeps its own opacity in [`PreFade`]
+/// (a disabled widget's 40%), which comes back when the fade ends or is
+/// interrupted.
 pub(crate) fn fade_card(
     time: Res<Time<Real>>,
-    mut cards: Query<(Entity, &mut Node, &mut Fading), With<ConnectCard>>,
+    mut cards: Query<CardFade, With<ConnectCard>>,
     children: Query<&Children>,
     roles: Query<(), WithRole>,
-    mut opacities: Query<&mut Opacity>,
+    mut opacities: Query<(Option<&mut Opacity>, Option<&PreFade>)>,
     mut commands: Commands,
 ) {
-    for (card, mut node, mut fading) in &mut cards {
-        fading.0 -= time.delta_secs();
-        let done = fading.0 <= 0.0;
-        let alpha = if done {
-            1.0
-        } else {
-            (fading.0 / fade_secs()).clamp(0.0, 1.0)
+    for (card, mut node, fading, faded) in &mut cards {
+        let (alpha, done) = match fading {
+            Some(mut fading) => {
+                fading.0 -= time.delta_secs();
+                let done = fading.0 <= 0.0;
+                let alpha = (!done).then(|| (fading.0 / fade_secs()).clamp(0.0, 1.0));
+                (alpha, done)
+            }
+            // Not fading: put back what an interrupted fade left.
+            None if faded => (None, false),
+            None => continue,
         };
         let mut stack = vec![card];
         while let Some(e) = stack.pop() {
             if roles.contains(e) {
-                match opacities.get_mut(e) {
-                    Ok(mut o) => {
-                        o.set_if_neq(Opacity(alpha));
-                    }
-                    Err(_) => {
-                        commands.entity(e).insert(Opacity(alpha));
-                    }
+                if let Ok((opacity, pre)) = opacities.get_mut(e) {
+                    fade_one(&mut commands, e, opacity, pre, alpha);
                 }
             }
             if let Ok(c) = children.get(e) {
@@ -196,8 +218,37 @@ pub(crate) fn fade_card(
         }
         if done {
             set_shown(&mut node, false);
-            commands.entity(card).remove::<Fading>();
+            commands.entity(card).remove::<(Fading, Hiding)>();
         }
+    }
+}
+
+/// One entity's opacity at `alpha` of its own (`None`: its own again).
+fn fade_one(
+    commands: &mut Commands,
+    e: Entity,
+    opacity: Option<Mut<Opacity>>,
+    pre: Option<&PreFade>,
+    alpha: Option<f32>,
+) {
+    let base = pre.map_or_else(|| opacity.as_deref().map_or(1.0, |o| o.0), |p| p.0);
+    let want = Opacity(alpha.map_or(base, |a| base * a));
+    match opacity {
+        Some(mut o) => {
+            o.set_if_neq(want);
+        }
+        None => {
+            commands.entity(e).insert(want);
+        }
+    }
+    match (alpha, pre) {
+        (Some(_), None) => {
+            commands.entity(e).insert(PreFade(base));
+        }
+        (None, Some(_)) => {
+            commands.entity(e).remove::<PreFade>();
+        }
+        _ => {}
     }
 }
 
@@ -234,14 +285,42 @@ fn address(
         .filter(|s| !s.is_empty())
 }
 
-/// The address to connect to: `ws://` added when no scheme is given.
-pub(crate) fn normalize_address(s: &str) -> String {
+/// The address to connect to (DECISIONS.md D-55). `http://` and
+/// `https://` become `ws://` and `wss://` (the websocket server shares
+/// the page's scheme); a bare host gets `ws://`, or `wss://` from a
+/// `secure` (https) page, which can't open `ws://` sockets, and the
+/// default port when it names none. A URL with its own scheme keeps its
+/// port, or lack of one.
+pub(crate) fn normalize_address(s: &str, secure: bool) -> String {
     let s = s.trim();
-    if s.contains("://") {
-        s.to_string()
-    } else {
-        format!("ws://{s}")
+    if let Some((scheme, rest)) = s.split_once("://") {
+        let scheme = match scheme.to_ascii_lowercase().as_str() {
+            "http" => "ws".to_string(),
+            "https" => "wss".to_string(),
+            other => other.to_string(),
+        };
+        return format!("{scheme}://{rest}");
     }
+    let scheme = if secure { "wss" } else { "ws" };
+    let (host, path) = s.split_at(s.find('/').unwrap_or(s.len()));
+    // An IPv6 literal's colons are inside its brackets.
+    let has_port = match host.rfind(']') {
+        Some(end) => host[end..].contains(':'),
+        None => host.contains(':'),
+    };
+    if has_port {
+        format!("{scheme}://{s}")
+    } else {
+        format!("{scheme}://{host}:{}{path}", gz_bevy::DEFAULT_PORT)
+    }
+}
+
+/// The page was served over https (only ever in the browser).
+fn page_is_secure() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return gz_bevy::view::web::page_is_secure();
+    #[cfg(not(target_arch = "wasm32"))]
+    false
 }
 
 /// Banner and card buttons.
@@ -261,7 +340,7 @@ pub(crate) fn on_connect_button(
         ConnectButton::Retry => crate::shell::connection::retry(&mut out),
         ConnectButton::Elsewhere => view.card_requested = true,
         ConnectButton::Connect => {
-            let url = address(&fields, &inputs).map(|a| normalize_address(&a));
+            let url = address(&fields, &inputs).map(|a| normalize_address(&a, page_is_secure()));
             connect_to(url, status.as_deref(), &mut view, &mut out);
         }
     }
@@ -293,7 +372,7 @@ pub(crate) fn on_address_submit(
     if fields.contains(ev.entity) {
         let url = Some(ev.value.trim())
             .filter(|s| !s.is_empty())
-            .map(normalize_address);
+            .map(|a| normalize_address(a, page_is_secure()));
         connect_to(url, status.as_deref(), &mut view, &mut out);
     }
 }

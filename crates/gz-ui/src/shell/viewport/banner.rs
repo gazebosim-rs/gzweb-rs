@@ -4,13 +4,14 @@
 //! "Connect to another server…".
 
 use bevy::ecs::spawn::SpawnWith;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gz_bevy::connection::GzStatus;
 
 use super::connect_card::ConnectButton;
 use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
-use crate::shell::connection::{banner, CurrentPhase};
+use crate::shell::connection::{banner, Banner, CurrentPhase, Phase, LOST_LONG_SECS};
 use crate::theme::{ColorRole, Fill, Ink, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{flex_spacer, row, set_shown};
 use crate::widgets::text::set_text;
@@ -29,18 +30,43 @@ pub(crate) struct BannerText;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct BannerIcon;
 
+/// When the banner last changed: the connection, or the minute after
+/// which it turns red.
+#[derive(SystemParam)]
+pub(crate) struct BannerSource<'w, 's> {
+    phase: Res<'w, CurrentPhase>,
+    status: Option<Res<'w, GzStatus>>,
+    time: Res<'w, Time<Real>>,
+    was_long: Local<'s, bool>,
+}
+
+impl BannerSource<'_, '_> {
+    /// The banner now, if it changed since the last call (`None` inside
+    /// means it hides).
+    fn changed(&mut self) -> Option<Option<Banner>> {
+        let now = self.time.elapsed_secs_f64();
+        let long = matches!(self.phase.0, Phase::Lost { since } if now - since >= LOST_LONG_SECS);
+        let changed = self.phase.is_changed()
+            || self.status.as_ref().is_some_and(Res::is_changed)
+            || long != *self.was_long;
+        *self.was_long = long;
+        changed.then(|| banner(self.phase.0, self.status.as_deref(), now))
+    }
+}
+
 /// The banner shows while lost (§7.10): its text, `warn_soft` then
 /// `danger_soft` after a minute, and then "Connect to another server…".
+/// Runs when the connection changes or the banner turns red.
 pub(crate) fn banner_state(
-    phase: Res<CurrentPhase>,
-    status: Option<Res<GzStatus>>,
-    time: Res<Time<Real>>,
+    mut source: BannerSource,
     mut banners: Query<(&mut Node, &mut Fill), With<DisconnectBanner>>,
     mut texts: Query<(&mut Text, &mut Ink), With<BannerText>>,
     mut icons: Query<&mut Ink, (With<BannerIcon>, Without<BannerText>)>,
     mut buttons: Query<(&ConnectButton, &mut Node), Without<DisconnectBanner>>,
 ) {
-    let b = banner(phase.0, status.as_deref(), time.elapsed_secs_f64());
+    let Some(b) = source.changed() else {
+        return;
+    };
     for (mut node, mut fill) in &mut banners {
         set_shown(&mut node, b.is_some());
         if let Some(b) = &b {

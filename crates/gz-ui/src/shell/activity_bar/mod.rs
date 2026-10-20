@@ -114,6 +114,9 @@ pub(crate) fn activity_active(
     mut buttons: Query<(Entity, &ActivityFor, Has<Active>, &mut AccessibilityNode)>,
     mut commands: Commands,
 ) {
+    if !layout.is_changed() {
+        return;
+    }
     for (e, a, active, mut access) in &mut buttons {
         let want = layout.is_active(a.0);
         if want != active {
@@ -144,6 +147,9 @@ pub(crate) fn activity_badges(
     mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
     mut texts: Query<&mut Text>,
 ) {
+    if !badges.is_changed() && !panels.is_changed() {
+        return;
+    }
     for (a, children) in &buttons {
         let badge = panels.badge(a.0, &badges);
         for &c in children {

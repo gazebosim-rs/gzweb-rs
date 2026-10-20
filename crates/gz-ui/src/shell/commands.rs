@@ -11,6 +11,7 @@ use super::layout::{Panel, ShellLayout, Side, Slot};
 use super::top_bar::tools::Tool;
 use crate::panels::PanelRegistry;
 use crate::theme::{Theme, ThemeMode};
+use crate::widgets::focus::MenuTakesEscape;
 
 /// What the shell's controls and keys ask for.
 #[derive(Message, Clone, Debug, PartialEq)]
@@ -42,20 +43,32 @@ pub enum UiCommand {
 }
 
 /// ⌘B, ⌘⌥I and the tool keys, from the input map, in the scopes live now
-/// (none while typing; viewport keys only when the view has them).
+/// (none while typing; viewport keys only when the view has them). An Esc
+/// that closes a menu does only that (§13: one step per Esc).
 pub(crate) fn shortcut_keys(
     keys: Res<ButtonInput<KeyCode>>,
     map: Option<Res<InputMap>>,
     scopes: Option<Res<ActiveScopes>>,
     routing: Res<ViewRouting>,
     panels: Res<PanelRegistry>,
+    menu_esc: Res<MenuTakesEscape>,
     mut out: MessageWriter<UiCommand>,
 ) {
     let (Some(map), Some(scopes)) = (map, scopes) else {
         return;
     };
+    if keys.get_just_pressed().next().is_none() {
+        return;
+    }
     let scopes = routing.key_scopes(&scopes.0);
     for b in map.just_pressed(&keys, &scopes) {
+        if menu_esc.0
+            && b.chords(map.platform)
+                .iter()
+                .any(|c| c.key == KeyCode::Escape)
+        {
+            continue;
+        }
         let cmd = match b.id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,

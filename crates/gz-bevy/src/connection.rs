@@ -30,6 +30,9 @@ pub struct GzConnection {
     fatal: Option<String>,
     /// When the socket opened, for the handshake timeout.
     opened_at: Option<f64>,
+    /// The last non-zero step size this server reported (Gazebo reports 0
+    /// while paused).
+    last_step: Option<f64>,
 }
 
 /// Simulation state from `/world/<world>/stats` (interactive mode only).
@@ -41,7 +44,10 @@ pub struct SimStats {
     pub real_time: f64,
     pub real_time_factor: f64,
     pub iterations: u64,
-    /// Seconds per iteration; Gazebo reports 0 while paused.
+    /// Seconds per iteration. Gazebo reports 0 while paused; this keeps
+    /// the last non-zero step the server reported, or for a world paused
+    /// since before the connection, sim time over iterations (0 before the
+    /// first iteration), so a paused world still shows its step.
     pub step_size: f64,
 }
 
@@ -102,6 +108,19 @@ pub enum GzCommand {
         msg_type: String,
         payload: Vec<u8>,
     },
+}
+
+/// Iterations one step request takes: the top bar's Step button and the
+/// `sim.step` key (⌘→) both use it, so the button's tooltip tells the
+/// truth about its shortcut (spec §3.1 "Steps per click"). The full UI's
+/// steps menu sets it; minimal mode steps 1.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StepsPerClick(pub u32);
+
+impl Default for StepsPerClick {
+    fn default() -> Self {
+        StepsPerClick(1)
+    }
 }
 
 /// A message on a topic subscribed with [`GzCommand::Subscribe`]; the payload
@@ -171,6 +190,7 @@ pub fn connect(world: &mut World) {
                 url: config.url.clone(),
                 fatal: None,
                 opened_at: None,
+                last_step: None,
             });
         }
         Err(e) => {
@@ -218,6 +238,9 @@ pub fn pump(
                 conn.url.clone_from(url);
                 status.url.clone_from(url);
                 status.attempts = 0;
+                // Another server: its world and step are not this one's.
+                status.world = None;
+                conn.last_step = None;
             }
             _ => status.attempts += 1,
         }
@@ -354,7 +377,16 @@ pub fn pump(
                 }
                 Some(WorldTopic::Stats) => {
                     match msgs::WorldStatistics::decode(payload.as_slice()) {
-                        Ok(s) => status.sim = Some(sim_stats(&s)),
+                        Ok(s) => {
+                            let mut stats = sim_stats(&s);
+                            if stats.step_size > 0.0 {
+                                conn.last_step = Some(stats.step_size);
+                            } else {
+                                stats.step_size =
+                                    conn.last_step.unwrap_or_else(|| mean_step(&stats));
+                            }
+                            status.sim = Some(stats);
+                        }
                         Err(e) => warn!("bad WorldStatistics on {topic}: {e}"),
                     }
                 }
@@ -480,6 +512,16 @@ fn send_command(t: &mut Transport, cmd: &GzCommand) -> Result<(), SendError> {
         .try_for_each(|r| t.request(&r.service, r.msg_type, &r.payload))
 }
 
+/// A paused world's step when it hasn't reported one on this connection:
+/// sim time over iterations (exact while the step has been constant),
+/// to the nanosecond; 0 before the first iteration.
+fn mean_step(s: &SimStats) -> f64 {
+    if s.iterations == 0 || s.sim_time <= 0.0 {
+        return 0.0;
+    }
+    (s.sim_time / s.iterations as f64 * 1e9).round() / 1e9
+}
+
 fn sim_stats(s: &msgs::WorldStatistics) -> SimStats {
     let secs = |t: &Option<msgs::Time>| {
         t.as_ref()
@@ -545,6 +587,7 @@ mod tests {
                 url: "ws://test".into(),
                 fatal: None,
                 opened_at: None,
+                last_step: None,
             });
             world.insert_resource(config);
             world.insert_resource(WsAssetStore::default());
@@ -810,13 +853,41 @@ mod tests {
             "gz.msgs.WorldStatistics",
             &[0xff],
         ));
-        // Stats without a sim time read as 0.
+        // Stats without a sim time read as 0; a paused world reports a
+        // zero step, and the last real one is kept (DECISIONS.md D-37).
         h.msg(publish(
             "/world/w/stats",
             "gz.msgs.WorldStatistics",
             &msgs::WorldStatistics::default().encode_to_vec(),
         ));
-        assert_eq!(h.world.resource::<GzStatus>().sim.unwrap().sim_time, 0.0);
+        let sim = h.world.resource::<GzStatus>().sim.unwrap();
+        assert_eq!((sim.sim_time, sim.step_size), (0.0, 0.5));
+        // A world paused before this connection never reports its step:
+        // sim time over iterations stands in.
+        let mut fresh = Harness::with(GzConfig {
+            ui: crate::UiMode::Minimal,
+            reconnect: false,
+            ..Default::default()
+        });
+        fresh.ready();
+        let paused = |iterations, sec| msgs::WorldStatistics {
+            paused: true,
+            iterations,
+            sim_time: Some(msgs::Time {
+                sec,
+                nsec: 52_000_000,
+            }),
+            ..Default::default()
+        };
+        for (iterations, sec, step) in [(126_081_052, 126_081, 0.001), (0, 0, 0.0)] {
+            fresh.msg(publish(
+                "/world/w/stats",
+                "gz.msgs.WorldStatistics",
+                &paused(iterations, sec).encode_to_vec(),
+            ));
+            let sim = fresh.world.resource::<GzStatus>().sim.unwrap();
+            assert_eq!(sim.step_size, step, "{iterations}");
+        }
         // A close forgets them.
         h.feed(DriverEvent::Closed(None));
         assert_eq!(h.world.resource::<GzStatus>().sim, None);
@@ -1078,6 +1149,7 @@ mod tests {
         h.feed(DriverEvent::Closed(Some("refused".into())));
         assert!(h.world.resource::<GzStatus>().reconnect_at.is_some());
         // Another server: the count restarts and the backoff is cancelled.
+        h.world.resource_mut::<GzStatus>().world = Some("w".into());
         h.world.write_message(GzReconnect {
             url: Some("ws://other:9002".into()),
         });
@@ -1089,6 +1161,8 @@ mod tests {
             (0, "ws://other:9002")
         );
         assert_eq!(status.reconnect_at, None);
+        // The old server's world name doesn't show for the new one.
+        assert_eq!(status.world, None);
         assert_eq!(h.status(), Status::Disconnected);
         h.world.resource_mut::<Messages<GzReconnect>>().clear();
         h.ready();

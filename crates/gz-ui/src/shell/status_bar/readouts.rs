@@ -40,6 +40,22 @@ pub(crate) struct StatusSources<'w> {
 }
 
 impl StatusSources<'_> {
+    /// Whether anything but the frame rate changed since the system's last
+    /// run.
+    fn changed(&self) -> bool {
+        self.tool.is_changed()
+            || self.cursor.is_changed()
+            || self.status.as_ref().is_some_and(Res::is_changed)
+    }
+
+    /// The frame rate, smoothed.
+    fn fps(&self) -> Option<f64> {
+        self.diagnostics
+            .as_ref()
+            .and_then(|d| d.get(&FrameTimeDiagnosticsPlugin::FPS))
+            .and_then(|d| d.smoothed())
+    }
+
     /// The text `item` shows now, if it has one.
     pub(crate) fn text(&self, item: StatusItem) -> Option<String> {
         let status = self.status.as_deref();
@@ -47,12 +63,7 @@ impl StatusSources<'_> {
         Some(match item {
             StatusItem::Connection => status.map_or_else(String::new, |s| format::address(&s.url)),
             StatusItem::Physics => format::physics(None, sim.map(|s| s.step_size)),
-            StatusItem::Fps => format::fps(
-                self.diagnostics
-                    .as_ref()
-                    .and_then(|d| d.get(&FrameTimeDiagnosticsPlugin::FPS))
-                    .and_then(|d| d.smoothed()),
-            ),
+            StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
             StatusItem::Hint => self.tool.hint().into(),
             StatusItem::Selection => "sel: —".into(),
@@ -62,9 +73,24 @@ impl StatusSources<'_> {
     }
 }
 
-/// Every item's text.
-pub(crate) fn status_texts(sources: StatusSources, mut texts: Query<(&StatusText, &mut Text)>) {
+/// Every item's text, when what it shows changes (the frame rate when its
+/// whole number does).
+pub(crate) fn status_texts(
+    sources: StatusSources,
+    mut shown_fps: Local<Option<Option<i64>>>,
+    mut texts: Query<(&StatusText, &mut Text)>,
+) {
+    let whole = sources.fps().map(|f| f.round() as i64);
+    let fps_changed = *shown_fps != Some(whole);
+    *shown_fps = Some(whole);
+    let changed = sources.changed();
+    if !changed && !fps_changed {
+        return;
+    }
     for (which, mut t) in &mut texts {
+        if !changed && which.0 != StatusItem::Fps {
+            continue;
+        }
         if let Some(want) = sources.text(which.0) {
             set_text(&mut t, &want);
         }
@@ -77,6 +103,9 @@ pub(crate) fn connection_dot(
     phase: Res<CurrentPhase>,
     mut dots: Query<&mut Fill, With<ConnectionDot>>,
 ) {
+    if !phase.is_changed() && !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let role = dot_role(phase.0, status.as_deref());
     for mut fill in &mut dots {
         fill.set_if_neq(Fill(role));

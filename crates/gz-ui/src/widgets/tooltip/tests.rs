@@ -311,4 +311,18 @@ fn tooltips_stay_inside_the_window() {
     };
     assert!((card.min.x + 1.0 + left + GAP / 2.0 - button.center().x).abs() < 0.5);
     assert_eq!(arrow.top, px(-GAP / 2.0));
+    // Shifted once, it stays put: no popover moving it back each frame.
+    let w = app.world_mut();
+    let shifted = w
+        .query_filtered::<(Entity, &ChildOf), With<TooltipCard>>()
+        .iter(w)
+        .find(|(_, p)| p.parent() == right)
+        .unwrap()
+        .0;
+    assert!(w
+        .get::<bevy::ui_widgets::popover::Popover>(shifted)
+        .is_none());
+    let before = *w.get::<UiTransform>(shifted).unwrap();
+    frames(&mut app, 3);
+    assert_eq!(*app.world().get::<UiTransform>(shifted).unwrap(), before);
 }

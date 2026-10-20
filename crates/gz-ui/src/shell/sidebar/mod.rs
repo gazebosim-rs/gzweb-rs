@@ -96,6 +96,15 @@ pub(crate) struct SlotSources<'w> {
 }
 
 impl SlotSources<'_> {
+    /// Whether anything a slot shows may have changed since the system's
+    /// last run.
+    fn changed(&self) -> bool {
+        self.layout.is_changed()
+            || self.panels.is_changed()
+            || self.phase.is_changed()
+            || self.index.as_ref().is_some_and(Res::is_changed)
+    }
+
     /// What `slot` should show now.
     fn content(&self, slot: Slot) -> SlotContent {
         let panel = match slot {
@@ -120,6 +129,9 @@ pub(crate) fn rebuild_slots(
     mut shown: Local<[Option<SlotContent>; 2]>,
     mut commands: Commands,
 ) {
+    if !sources.changed() {
+        return;
+    }
     for (e, slot) in &slots {
         let i = match slot.0 {
             Slot::Primary => 0,

@@ -6,12 +6,15 @@
 
 use std::time::Duration;
 
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::connection::{GzStatus, SimStats};
 use gz_bevy::view::controls::ViewRouting;
@@ -29,8 +32,8 @@ use super::top_bar::tools::ToolChoice;
 use super::viewport::connect_card::normalize_address;
 use super::viewport::view::ViewNode;
 use crate::shell::{format, Panel, ShellLayout, Side, Tool, UiCommand};
-use crate::test_support::frames;
 use crate::test_support::shell::*;
+use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Theme, ThemeMode};
 
@@ -226,6 +229,7 @@ fn collapsed_panels_leave_a_bar_that_expands_them() {
 #[test]
 fn the_floor_rule_collapses_the_inspector_then_the_sidebar() {
     let mut l = ShellLayout::for_width(1440.0);
+    l.startup = false;
     l.sidebar_w = 480.0;
     l.inspector_w = 480.0;
     // 1440 − 56 − 960 = 424 ≥ 240: both stay.
@@ -588,8 +592,24 @@ fn formatting() {
     }))
     .ends_with("step —"));
     assert_eq!(format::rtf_detail(None), "No statistics yet");
-    assert_eq!(normalize_address(" gz:9002 "), "ws://gz:9002");
-    assert_eq!(normalize_address("wss://gz"), "wss://gz");
+    let port = gz_bevy::DEFAULT_PORT;
+    assert_eq!(normalize_address(" gz:9002 ", false), "ws://gz:9002");
+    assert_eq!(normalize_address("wss://gz", false), "wss://gz");
+    // The page's http scheme names the websocket's.
+    assert_eq!(normalize_address("http://gz:9002", false), "ws://gz:9002");
+    assert_eq!(normalize_address("HTTPS://gz/ws", false), "wss://gz/ws");
+    // A bare host gets the default port; from an https page, wss://.
+    assert_eq!(normalize_address("gz", false), format!("ws://gz:{port}"));
+    assert_eq!(normalize_address("gz", true), format!("wss://gz:{port}"));
+    assert_eq!(
+        normalize_address("gz/sim", false),
+        format!("ws://gz:{port}/sim")
+    );
+    assert_eq!(normalize_address("[::1]:9004", true), "wss://[::1]:9004");
+    assert_eq!(
+        normalize_address("[::1]", false),
+        format!("ws://[::1]:{port}")
+    );
     for t in Tool::ALL {
         assert!(!t.hint().is_empty() && !t.name().is_empty());
     }
@@ -646,4 +666,283 @@ fn the_theme_command_recolours_the_shell() {
     app.world_mut().write_message(UiCommand::ToggleTheme);
     frames(&mut app, 2);
     assert_eq!(app.world().get::<BackgroundColor>(top).unwrap().0, light);
+}
+
+// ---- PR #29 review fixes (DECISIONS.md D-52, D-53, D-56) ----
+
+fn sidebar_splitter(app: &mut App) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ShellSplitter)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == Side::Sidebar)
+        .unwrap()
+        .0
+}
+
+fn splitter_click(app: &mut App, bar: Entity, button: PointerButton, count: u8) {
+    app.world_mut().trigger(PointerClick {
+        entity: bar,
+        pointer: pointer(),
+        button,
+        hit: hit(),
+        duration: Duration::from_millis(80),
+        count,
+    });
+    frames(app, 1);
+}
+
+/// A drag, released and grabbed again within the double-click time, is
+/// no double-click: bevy_picking's click count runs on across drags.
+/// Nor is a right-button double-click.
+#[test]
+fn a_splitter_resets_only_on_a_primary_double_click_without_a_drag() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let bar = sidebar_splitter(&mut app);
+    let drag = |app: &mut App, dx: f32| {
+        let world = app.world_mut();
+        world.trigger(PointerDragStart {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            hit: hit(),
+        });
+        world.flush();
+        world.trigger(PointerDrag {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            distance: Vec2::new(dx, 0.0),
+            delta: Vec2::new(dx, 0.0),
+        });
+        frames(app, 1);
+    };
+    let drag_end = |app: &mut App| {
+        app.world_mut().trigger(PointerDragEnd {
+            entity: bar,
+            pointer: pointer(),
+            button: PointerButton::Primary,
+            distance: Vec2::ZERO,
+        });
+        frames(app, 1);
+    };
+    // Drag and release (the release's click comes before the drag end).
+    drag(&mut app, 40.0);
+    splitter_click(&mut app, bar, PointerButton::Primary, 1);
+    drag_end(&mut app);
+    // Grab again at once to fine-tune: the second click counts 2.
+    drag(&mut app, 10.0);
+    splitter_click(&mut app, bar, PointerButton::Primary, 2);
+    drag_end(&mut app);
+    assert_eq!(layout(&app).sidebar_w, 350.0, "no reset after drags");
+    // A plain click right after a drag isn't a double-click either.
+    splitter_click(&mut app, bar, PointerButton::Primary, 3);
+    assert_eq!(layout(&app).sidebar_w, 350.0);
+    // Right-button double-click: nothing.
+    splitter_click(&mut app, bar, PointerButton::Secondary, 1);
+    splitter_click(&mut app, bar, PointerButton::Secondary, 2);
+    assert_eq!(layout(&app).sidebar_w, 350.0);
+    // Two plain primary clicks: reset.
+    splitter_click(&mut app, bar, PointerButton::Primary, 1);
+    splitter_click(&mut app, bar, PointerButton::Primary, 2);
+    assert_eq!(layout(&app).sidebar_w, 300.0);
+}
+
+/// The start-up collapse rules apply to the window's first real size
+/// (it can come a few frames late); afterwards only the floor rule.
+#[test]
+fn the_start_up_rules_follow_the_first_real_window_size() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        10,
+    )));
+    frames(&mut app, 2);
+    assert!(layout(&app).inspector_open);
+    let window = find::<Window>(&mut app);
+    let resize = |app: &mut App, w: f32| {
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set(w, 900.0);
+        frames(app, 1);
+    };
+    // The browser's canvas turns out 1200 wide: as if it had started so.
+    resize(&mut app, 1200.0);
+    let l = layout(&app);
+    assert!(l.startup && l.sidebar_open && !l.inspector_open);
+    // Start-up ends (30 frames and a second); then the floor rule only:
+    // 1279 − 56 − 300 − 24 leaves room, and the inspector stays shut.
+    frames(&mut app, 100);
+    assert!(!layout(&app).startup);
+    resize(&mut app, 1279.0);
+    assert!(!layout(&app).inspector_open);
+    resize(&mut app, 1440.0);
+    assert!(
+        !layout(&app).inspector_open,
+        "not reopened by the floor rule"
+    );
+    // A user's change ends start-up at once.
+    let mut l = ShellLayout::for_width(1440.0);
+    l.show(Side::Inspector, true);
+    l.fit(1200.0);
+    assert!(
+        l.inspector_open,
+        "the floor rule keeps it: 1200 − 656 ≥ 240"
+    );
+}
+
+/// Esc in an open menu closes the menu and nothing else (spec §13).
+#[test]
+fn esc_closes_a_menu_before_it_changes_the_tool() {
+    use crate::shell::top_bar::transport::StepsTrigger;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Translate));
+    let trigger = find::<StepsTrigger>(&mut app);
+    app.world_mut().trigger(bevy::ui_widgets::MenuEvent {
+        source: trigger,
+        action: bevy::ui_widgets::MenuAction::Open(
+            bevy::input_focus::tab_navigation::NavAction::First,
+        ),
+    });
+    frames(&mut app, 2);
+    // The pointer is over the view, so its Esc (Navigate) is live.
+    let window = find::<Window>(&mut app);
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .set_cursor_position(Some(Vec2::new(700.0, 400.0)));
+    frames(&mut app, 1);
+    assert!(app.world().resource::<ViewRouting>().keys);
+    let esc = |app: &mut App| {
+        for state in [ButtonState::Pressed, ButtonState::Released] {
+            app.world_mut().write_message(KeyboardInput {
+                key_code: KeyCode::Escape,
+                logical_key: Key::Escape,
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+            app.update();
+        }
+    };
+    esc(&mut app);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Translate);
+    esc(&mut app);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+}
+
+fn slot_action(app: &mut App, which: crate::shell::sidebar::SlotAction) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &crate::shell::sidebar::SlotAction)>()
+        .iter(world)
+        .find(|(_, a)| **a == which)
+        .unwrap()
+        .0
+}
+
+/// The sidebar header's collapse chevron: clicked, then Space; or focused
+/// from the keyboard and hidden by ⌘B, then Space. Neither reopens the
+/// sidebar.
+#[test]
+fn space_after_a_header_chevron_doesnt_reopen_the_panel() {
+    use crate::shell::sidebar::SlotAction;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let chevron = slot_action(&mut app, SlotAction::Collapse);
+    click(&mut app, chevron);
+    frames(&mut app, 1);
+    assert!(!layout(&app).sidebar_open);
+    chord(&mut app, &[KeyCode::Space]);
+    assert!(!layout(&app).sidebar_open);
+    // From the keyboard: focus stays on a visible control…
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(layout(&app).sidebar_open);
+    tab_to(&mut app, chevron);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(chevron), "Tab focus stays");
+    // …and leaves it when it hides.
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+    assert_eq!(focused(&app), None);
+    chord(&mut app, &[KeyCode::Space]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// Click the active Scene button (collapsing the sidebar), then Space:
+/// the button isn't pressed again.
+#[test]
+fn space_after_an_activity_button_doesnt_press_it_again() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let world = app.world_mut();
+    let scene = world
+        .query::<(Entity, &ActivityFor)>()
+        .iter(world)
+        .find(|(_, a)| a.0 == Panel::Scene)
+        .unwrap()
+        .0;
+    click(&mut app, scene);
+    frames(&mut app, 1);
+    assert!(!layout(&app).sidebar_open);
+    for key in [KeyCode::Space, KeyCode::Enter] {
+        chord(&mut app, &[key]);
+        assert!(!layout(&app).sidebar_open, "{key:?}");
+    }
+}
+
+/// A focused control takes Enter and Space from the keyboard (Tab focus is
+/// kept for M10's keyboard navigation).
+#[test]
+fn a_tab_focused_button_still_takes_enter() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let chevron = slot_action(&mut app, crate::shell::sidebar::SlotAction::Collapse);
+    tab_to(&mut app, chevron);
+    frames(&mut app, 1);
+    chord(&mut app, &[KeyCode::Enter]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// Reset works in the top bar and the inspector alike: with a live world,
+/// stats or not. Play/Pause needs the stats.
+#[test]
+fn reset_is_enabled_alike_in_the_top_bar_and_the_inspector() {
+    use crate::shell::top_bar::transport::Transport;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    app.world_mut().resource_mut::<GzStatus>().sim = None;
+    frames(&mut app, 1);
+    // The World inspector's Reset, by its name inside the inspector.
+    let inspector = region(&mut app, Region::Inspector);
+    let reset = descendants(app.world(), inspector)
+        .into_iter()
+        .find(|e| {
+            app.world()
+                .get::<bevy::a11y::AccessibilityNode>(*e)
+                .is_some_and(|a| a.label() == Some("Reset"))
+        })
+        .expect("the inspector's Reset");
+    let mut transport = |which: Transport| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &Transport)>()
+            .iter(world)
+            .find(|(_, t)| **t == which)
+            .unwrap()
+            .0
+    };
+    let (top, play) = (transport(Transport::Reset), transport(Transport::PlayPause));
+    let enabled = |app: &App, e| app.world().get::<InteractionDisabled>(e).is_none();
+    assert!(enabled(&app, reset) && enabled(&app, top));
+    assert!(!enabled(&app, play));
+    let s = stats(true);
+    assert!(Transport::Step.enabled(Phase::Live, Some(&s)));
+    assert!(!Transport::Reset.enabled(Phase::Loading, Some(&s)));
 }

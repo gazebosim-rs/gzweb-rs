@@ -6,6 +6,11 @@ use bevy::camera::visibility::VisibilitySystems;
 use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::ButtonState;
+use std::time::Duration;
+
+use bevy::picking::backend::HitData;
+use bevy::picking::events::{Pointer, PointerClick, PointerPress, PointerRelease};
+use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use gz_bevy::camera::MainCamera;
@@ -18,6 +23,7 @@ use gz_core::transport::Status;
 
 use super::{frames, ui_app_with};
 use crate::shell::regions::Region;
+use crate::shell::viewport::connect_card::ConnectButton;
 use crate::shell::{ShellLayout, ShellPlugin};
 use crate::theme::ThemeMode;
 
@@ -197,4 +203,79 @@ pub(crate) fn all_text(app: &mut App) -> String {
         .collect();
     out.extend(world.query::<&TextSpan>().iter(world).map(|t| t.0.clone()));
     out.join("\n")
+}
+
+// Pointer clicks and keyboard focus (DECISIONS.md D-52).
+
+pub(crate) fn pointer() -> Pointer {
+    Pointer::new(
+        PointerId::Mouse,
+        Location {
+            target: bevy::camera::NormalizedRenderTarget::None {
+                width: 1,
+                height: 1,
+            },
+            position: Vec2::ZERO,
+        },
+    )
+}
+
+pub(crate) fn hit() -> HitData {
+    HitData::new(Entity::PLACEHOLDER, 0.0, None, None)
+}
+
+/// A left click on `e` as bevy_picking delivers it: the mouse button goes
+/// down with a pointer press (which focuses a tab stop), then the click
+/// (which activates a button) and the release.
+pub(crate) fn click(app: &mut App, e: Entity) {
+    mouse(app, ButtonState::Pressed);
+    app.world_mut().trigger(PointerPress {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+        count: 1,
+    });
+    app.update();
+    app.world_mut().trigger(PointerClick {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+        duration: Duration::from_millis(80),
+        count: 1,
+    });
+    app.world_mut().trigger(PointerRelease {
+        entity: e,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+    });
+    mouse(app, ButtonState::Released);
+    app.update();
+}
+
+pub(crate) fn focused(app: &App) -> Option<Entity> {
+    app.world()
+        .resource::<bevy::input_focus::InputFocus>()
+        .get()
+}
+
+/// Focus `e` as Tab would: no pointer press involved.
+pub(crate) fn tab_to(app: &mut App, e: Entity) {
+    let world = app.world_mut();
+    world.resource_mut::<crate::widgets::focus::PointerLed>().0 = false;
+    world
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(e, bevy::input_focus::FocusCause::Navigated);
+}
+
+pub(crate) fn connect_button(app: &mut App, which: ConnectButton) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ConnectButton)>()
+        .iter(world)
+        .find(|(_, b)| **b == which)
+        .unwrap()
+        .0
 }

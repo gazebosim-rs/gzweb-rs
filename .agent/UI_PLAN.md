@@ -182,9 +182,10 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Top bar, activity bar, sidebar with two slots, viewport area, inspector, status bar, splitters,
   collapse rules, minimum-size and floor rules (§2.1). Panels are empty shells with their
   empty/loading/error states.
-- The single 3D view renders into the viewport-area node (`Camera::viewport` synced each frame to
-  the node rect, scale-factor aware). The no-world card and the disconnected banner (§7.10) are
-  driven by `GzStatus`.
+- The single 3D view renders into the viewport-area node (a texture of the node's physical
+  size that the node shows, resized with it in the same frame, scale-factor aware;
+  DECISIONS.md D-31). The no-world card and the disconnected banner (§7.10) are driven by
+  `GzStatus`.
 - Notes: `gz_ui::shell` (`ShellPlugin`, `ShellLayout`, `UiCommand`). The view renders into a
   texture the size of the view node instead of a `Camera::viewport` (DECISIONS.md D-31: Bevy
   0.20's TAA ignores viewports), placed after UI layout in the same frame. Pointer routing
@@ -193,7 +194,9 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   play/pause, step, steps per click), clock, RTF and status readouts are wired to the existing
   stats, so part of M4's transport and status work is done; the World menu, Snap popover,
   search and workspace button open nothing yet. Settings switches the theme until ⌘K (D-35).
-  `--ui full --screenshot`, `--window WxH`, `--capture-at-ms`. See WORKLOG.
+  `--ui full --screenshot`, `--window WxH`, `--capture-at-ms`. PR #29 review fixes: focus
+  (D-52), start-up rules on the first real size (D-53), steps per click everywhere with a
+  Custom field (D-54), server address rules (D-55), readouts on change (D-56). See WORKLOG.
 - Restructured after M2 (DECISIONS.md D-51): feature folders, panels and inspectors as
   plugins in registries, shared layout primitives, a small public API and tests next to
   their modules. Later milestones follow §7.
@@ -276,7 +279,7 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 | Risk | Mitigation |
 |---|---|
 | `bevy_ui_widgets` 0.20 is new; gaps in text input (IME, selection) or scroll | Wrap every widget in our own builder (spec §9.5) so a crate or an upstream fix can replace internals |
-| Viewport/UI coordinate drift on resize, scale factor and splitter drag | One system syncs `Camera::viewport` from `ComputedNode` after layout. Test it at scale factors 1, 1.5 and 2 |
+| Viewport/UI coordinate drift on resize, scale factor and splitter drag | One system sizes the view's texture and camera from `ComputedNode` after layout (D-31). Test it at scale factors 1, 1.5 and 2 |
 | Input conflicts between UI, camera and teleop | One input map with scopes, focus tracking, and the CI conflict test |
 | Editing services missing from the websocket server | Verify each service against Harmonic in M4/M5 before building UI on it. Fall back to read-only with a disabled control and tooltip |
 | Large scope | Milestones are independent PRs. `minimal` mode is usable and shippable after M0 |

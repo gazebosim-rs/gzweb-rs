@@ -545,7 +545,7 @@ Each panel and inspector is a Bevy plugin that registers a definition (title, ic
 UI systems read state and write `Event`s / `Message`s (`SetTool`, `Select`, `SetPose`, `PlayPause`, `Step(n)`, `ResetWorld`, `OpenPanel`, …). Only `sim/` systems talk to the backend.
 
 ### 9.3 Viewports
-Each view is a UI `Node` placeholder in the viewport area plus a `Camera3d` whose `Camera::viewport` is synced every frame to the node's computed position and size (physical pixels, accounting for scale factor). Overlays (cube, rail, chip, labels) are UI children of the placeholder node. One render layer for the scene; gizmos and selection outlines on a second layer drawn by all scene cameras.
+Each view is a UI `Node` placeholder in the viewport area plus a `Camera3d` that renders into a texture of the node's physical size (scale factor applied), which the node shows; the texture and the camera's target size and projection follow the node's computed position and size in the same frame, after UI layout (DECISIONS.md D-31: a `Camera::viewport` of the window breaks TAA and SSAO in Bevy 0.20). Overlays (cube, rail, chip, labels) are UI children of the placeholder node. One render layer for the scene; gizmos and selection outlines on a second layer drawn by all scene cameras.
 
 ### 9.4 Backend
 `trait SimBackend { connect, subscribe(topic), publish(topic, msg), request(service, req), world_control(cmd) }`.

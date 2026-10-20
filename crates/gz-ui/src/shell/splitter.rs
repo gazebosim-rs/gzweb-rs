@@ -5,6 +5,7 @@
 
 use bevy::picking::events::{PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
 use bevy::picking::hover::Hovered;
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::window::SystemCursorIcon;
 
@@ -22,6 +23,12 @@ pub(crate) struct ShellSplitter(pub Side);
 /// A splitter drag in progress: the width it started from.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SplitDrag(pub f32);
+
+/// Whether a splitter's last click ended a drag: bevy_picking sends a click
+/// on every release, drags included, and counts on across them, so a drag
+/// followed by a quick grab would read as a double-click.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct LastClickDragged(pub bool);
 
 /// A side splitter: absolute, 6 px wide, centred on the panel's 1 px
 /// border (`right` for the sidebar, `left` for the inspector).
@@ -44,6 +51,7 @@ pub(crate) fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
     (
         node,
         ShellSplitter(side),
+        LastClickDragged::default(),
         Hovered::default(),
         GlobalZIndex(10),
         bevy::picking::cursor::EntityCursor::System(SystemCursorIcon::ColResize),
@@ -93,16 +101,20 @@ pub(crate) fn on_splitter_drag_end(
     }
 }
 
-/// A double-click resets the width (§2.1).
+/// A double-click with the primary button resets the width (§2.1): two
+/// clicks in a row, neither of them the end of a drag (a release after a
+/// drag is a click too, still [`SplitDrag`] then).
 pub(crate) fn on_splitter_click(
     ev: On<PointerClick>,
-    splitters: Query<&ShellSplitter>,
+    mut splitters: Query<(&ShellSplitter, &mut LastClickDragged, Has<SplitDrag>)>,
     mut out: MessageWriter<UiCommand>,
 ) {
-    if let Ok(s) = splitters.get(ev.entity) {
-        if ev.count >= 2 {
-            out.write(UiCommand::ResetWidth(s.0));
-        }
+    let Ok((s, mut last, dragged)) = splitters.get_mut(ev.entity) else {
+        return;
+    };
+    let after_drag = std::mem::replace(&mut last.0, dragged);
+    if ev.button == PointerButton::Primary && ev.count >= 2 && !dragged && !after_drag {
+        out.write(UiCommand::ResetWidth(s.0));
     }
 }
 

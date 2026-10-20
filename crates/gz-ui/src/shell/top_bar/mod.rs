@@ -69,11 +69,13 @@ pub(crate) fn build(app: &mut App) {
                 transport::rtf_readout,
                 transport::steps_label_text,
                 world_button::world_texts,
+                search::fit_search_placeholder,
             )
                 .in_set(ShellSystems::Readouts),
         )
         .add_observer(transport::on_transport)
-        .add_observer(transport::on_steps_option);
+        .add_observer(transport::on_steps_option)
+        .add_observer(transport::on_custom_steps);
 }
 
 #[cfg(test)]

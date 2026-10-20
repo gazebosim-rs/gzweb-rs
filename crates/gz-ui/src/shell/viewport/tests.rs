@@ -10,16 +10,18 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::{GzReconnect, GzStatus};
+use gz_bevy::spawn::GzIndex;
+use gz_bevy::view::controls::ActiveScopes;
 use gz_bevy::view::{ViewOrigin, ViewPlacement};
 use gz_core::transport::Status;
 
 use super::banner::DisconnectBanner;
 use super::connect_card::{card_status, AddressField, ConnectButton, ConnectCard};
 use super::view::{DimOverlay, ViewNode};
-use crate::shell::connection::{banner, Phase, LOST_LONG_SECS};
+use crate::shell::connection::{banner, ConnectionView, Phase, LOST_LONG_SECS};
 use crate::shell::UiCommand;
-use crate::test_support::frames;
 use crate::test_support::shell::*;
+use crate::test_support::{descendants, frames};
 use crate::theme::{ColorRole, Fill, Theme};
 
 /// The placed view: its window rect (logical), texture size, and whether
@@ -297,4 +299,146 @@ fn the_address_field_connects_on_enter_and_the_cursor_is_read_off_the_ground() {
         .expect("on the ground");
     assert!(Vec2::from(at).length() < 0.05, "{at:?}");
     assert!(all_text(&mut app).contains("cursor 0.0"));
+}
+
+// ---- PR #29 review fixes (DECISIONS.md D-52, D-56) ----
+
+/// The review's scenario: click Connect, the world loads and the card
+/// fades, Space (to pause). The clicked button didn't keep focus, so Space
+/// doesn't press it again (which would drop the live connection).
+#[test]
+fn space_after_clicking_connect_doesnt_reconnect() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)));
+    frames(&mut app, 2);
+    let connect = connect_button(&mut app, ConnectButton::Connect);
+    click(&mut app, connect);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1, "clicked");
+    assert_eq!(
+        focused(&app),
+        None,
+        "a click doesn't leave focus on a button"
+    );
+    go_live(&mut app, false);
+    frames(&mut app, 3);
+    let card = find::<ConnectCard>(&mut app);
+    assert!(!displayed(&app, card));
+    chord(&mut app, &[KeyCode::Space]);
+    chord(&mut app, &[KeyCode::Enter]);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1, "no reconnect");
+}
+
+/// "Retry now", then the connection comes back and the banner hides:
+/// Space doesn't retry again.
+#[test]
+fn space_after_retry_now_doesnt_retry_again() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    {
+        let mut s = app.world_mut().resource_mut::<GzStatus>();
+        s.status = Status::Error("closed".into());
+        s.sim = None;
+    }
+    frames(&mut app, 2);
+    let banner = find::<DisconnectBanner>(&mut app);
+    assert!(displayed(&app, banner));
+    let retry = connect_button(&mut app, ConnectButton::Retry);
+    click(&mut app, retry);
+    assert_eq!(
+        app.world().resource::<Sent>().1,
+        [GzReconnect { url: None }]
+    );
+    assert_eq!(focused(&app), None);
+    // Even focused from the keyboard, it loses focus when the banner hides.
+    tab_to(&mut app, retry);
+    go_live(&mut app, false);
+    assert!(!displayed(&app, banner));
+    assert_eq!(focused(&app), None, "hidden: focus released");
+    chord(&mut app, &[KeyCode::Space]);
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1);
+}
+
+/// Enter in the address field connects; the world loads and the card
+/// fades with the field still focused. The field lets go as the fade
+/// starts, so the shortcuts come back instead of going into an invisible
+/// field.
+#[test]
+fn a_world_loading_takes_focus_from_the_hidden_address_field() {
+    use crate::widgets::text_field::TextFieldInput;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        50,
+    )));
+    frames(&mut app, 2);
+    let input = find::<TextFieldInput>(&mut app);
+    tab_to(&mut app, input);
+    frames(&mut app, 2);
+    assert!(
+        app.world().resource::<ActiveScopes>().0.is_empty(),
+        "typing"
+    );
+    let window = find::<Window>(&mut app);
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Enter,
+            logical_key: Key::Enter,
+            state,
+            text: None,
+            repeat: false,
+            window,
+        });
+        app.update();
+    }
+    assert_eq!(app.world().resource::<Sent>().1.len(), 1);
+    assert_eq!(focused(&app), Some(input), "Enter doesn't blur the field");
+    go_live(&mut app, false);
+    let card = find::<ConnectCard>(&mut app);
+    assert!(displayed(&app, card), "still fading");
+    assert_eq!(focused(&app), None, "the fade releases focus at once");
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<ActiveScopes>().0.is_empty());
+    // The shortcuts work again.
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// A card fade interrupted by the world dropping again puts every
+/// opacity back; a finished fade too.
+#[test]
+fn an_interrupted_card_fade_restores_its_opacities() {
+    use super::connect_card::{Fading, PreFade};
+    use crate::theme::Opacity;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        40,
+    )));
+    frames(&mut app, 2);
+    let card = find::<ConnectCard>(&mut app);
+    let opacities = |app: &mut App| {
+        descendants(app.world(), card)
+            .into_iter()
+            .chain([card])
+            .filter_map(|e| app.world().get::<Opacity>(e).map(|o| o.0))
+            .collect::<Vec<f32>>()
+    };
+    go_live(&mut app, false);
+    assert!(app.world().get::<Fading>(card).is_some());
+    assert!(opacities(&mut app).iter().any(|o| *o < 1.0), "fading");
+    // The world drops before the fade ends: the card comes back whole.
+    {
+        let mut s = app.world_mut().resource_mut::<GzStatus>();
+        s.status = Status::Connected;
+    }
+    app.world_mut().resource_mut::<GzIndex>().scene = None;
+    app.world_mut().insert_resource(ConnectionView::default());
+    frames(&mut app, 3);
+    assert!(displayed(&app, card));
+    assert!(app.world().get::<Fading>(card).is_none());
+    assert!(app.world().get::<PreFade>(card).is_none());
+    assert!(
+        opacities(&mut app).iter().all(|o| *o == 1.0),
+        "{:?}",
+        opacities(&mut app)
+    );
 }

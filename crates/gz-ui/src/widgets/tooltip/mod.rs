@@ -9,6 +9,7 @@
 //! shifted to stay [`GAP`] inside the window's edges (DECISIONS.md D-49).
 
 use bevy::ecs::spawn::SpawnWith;
+use bevy::ecs::system::SystemParam;
 use bevy::picking::hover::Hovered;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -25,6 +26,7 @@ use crate::assets::fonts::{span, text};
 use crate::theme::{
     border, elevation, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE,
 };
+use crate::widgets::text::set_text;
 use crate::GzUiSystems;
 
 /// Hover time before a tooltip shows, in seconds (`tooltip_delay_ms`).
@@ -184,28 +186,48 @@ pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
             // to its trigger's width (the card is the trigger's child).
             p.spawn((
                 text(TITLE_TYPE, ColorRole::TooltipText, title),
+                TooltipTitle,
                 TextLayout::no_wrap(),
                 Pickable::IGNORE,
             ));
             // The second line: "detail · keys", the keys a mono span.
             if detail.is_some() || keys.is_some() {
-                let lead = match (&detail, &keys) {
-                    (Some(d), Some(_)) => format!("{d} · "),
-                    (Some(d), None) => d.clone(),
-                    (None, _) => String::new(),
-                };
                 let mut line = p.spawn((
-                    text(DETAIL_TYPE, ColorRole::TooltipText2, lead),
+                    text(DETAIL_TYPE, ColorRole::TooltipText2, lead(&detail, &keys)),
+                    TooltipLine,
                     TextLayout::no_wrap(),
                     Pickable::IGNORE,
                 ));
                 if let Some(keys) = keys {
-                    line.with_child(span(KEYS_TYPE, ColorRole::TooltipText2, keys));
+                    line.with_child((span(KEYS_TYPE, ColorRole::TooltipText2, keys), TooltipKeys));
                 }
             }
         })),
     )
 }
+
+/// The second line's text before the keys: "detail · ", the detail alone,
+/// or nothing.
+fn lead(detail: &Option<String>, keys: &Option<String>) -> String {
+    match (detail, keys) {
+        (Some(d), Some(_)) => format!("{d} · "),
+        (Some(d), None) => d.clone(),
+        (None, _) => String::new(),
+    }
+}
+
+/// A card's title text.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct TooltipTitle;
+
+/// A card's second line (the detail; the keys are its [`TooltipKeys`]
+/// span).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct TooltipLine;
+
+/// The keys on a card's second line.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct TooltipKeys;
 
 /// Light: no border (the fill is dark). Dark: 1px `line` (§4.2).
 fn card_stroke(theme: &Theme) -> ColorRole {
@@ -311,6 +333,68 @@ pub(crate) fn tooltip_system(
     }
 }
 
+/// Keeps an open card in step with its trigger's [`Tooltip`] (a live
+/// readout's numbers, Play turning into Pause): the texts change in place,
+/// and a card whose second line appears or goes is spawned again.
+pub(crate) fn refresh_tooltips(
+    theme: Res<Theme>,
+    timer: Res<TooltipTimer>,
+    triggers: Query<(Entity, Ref<Tooltip>)>,
+    cards: Query<(Entity, &ChildOf, &Children), With<TooltipCard>>,
+    mut texts: CardTexts,
+    mut commands: Commands,
+) {
+    let CardTexts {
+        titles,
+        lines,
+        keys,
+    } = &mut texts;
+    let Some((trigger, tip)) = timer.shown.and_then(|t| triggers.get(t).ok()) else {
+        return;
+    };
+    if !tip.is_changed() || tip.is_added() {
+        return;
+    }
+    let Some((card, _, children)) = cards.iter().find(|(_, p, _)| p.parent() == trigger) else {
+        return;
+    };
+    let want_line = tip.detail.is_some() || tip.shortcut.is_some();
+    let mut has_line = false;
+    let mut same = true;
+    for c in children.iter() {
+        if let Ok(mut t) = titles.get_mut(c) {
+            set_text(&mut t, &tip.title);
+        }
+        if let Ok((mut t, spans)) = lines.get_mut(c) {
+            has_line = true;
+            set_text(&mut t, &lead(&tip.detail, &tip.shortcut));
+            let span = spans.and_then(|s| s.iter().find(|e| keys.contains(*e)));
+            match (span, &tip.shortcut) {
+                (Some(e), Some(k)) => {
+                    if let Ok(mut s) = keys.get_mut(e) {
+                        set_text(&mut s, k);
+                    }
+                }
+                (None, None) => {}
+                _ => same = false,
+            }
+        }
+    }
+    if !same || has_line != want_line {
+        commands.entity(card).despawn();
+        show_tooltip(&mut commands, &theme, trigger, &tip);
+    }
+}
+
+/// A tooltip card's texts: title, second line and its keys.
+#[derive(SystemParam)]
+#[allow(clippy::type_complexity)]
+pub(crate) struct CardTexts<'w, 's> {
+    titles: Query<'w, 's, &'static mut Text, (With<TooltipTitle>, Without<TooltipLine>)>,
+    lines: Query<'w, 's, (&'static mut Text, Option<&'static Children>), With<TooltipLine>>,
+    keys: Query<'w, 's, &'static mut TextSpan, With<TooltipKeys>>,
+}
+
 /// Spawns `tip`'s floating card on `trigger`.
 pub(crate) fn show_tooltip(commands: &mut Commands, theme: &Theme, trigger: Entity, tip: &Tooltip) {
     commands.entity(trigger).with_child((
@@ -388,6 +472,8 @@ pub(crate) fn shift_inside(rect: Rect, bounds: Rect) -> Vec2 {
 /// popover has picked the side (flipping if needed), a card still past an
 /// edge (centred on a trigger near it) is shifted in, the same way the
 /// popover moves it, so the frame being drawn already shows it inside.
+/// A shifted card then stays where it is: its `Popover` goes, which would
+/// otherwise move it back every frame for this system to shift again.
 pub(crate) fn keep_tooltips_inside(
     mut cards: Query<
         (
@@ -401,6 +487,7 @@ pub(crate) fn keep_tooltips_inside(
     >,
     children: Query<&Children>,
     mut transforms: Query<&mut UiGlobalTransform, Without<TooltipCard>>,
+    mut commands: Commands,
 ) {
     for (card, node, target, mut transform, mut global) in &mut cards {
         let window = Rect::from_corners(Vec2::ZERO, target.logical_size()).inflate(-GAP);
@@ -412,6 +499,7 @@ pub(crate) fn keep_tooltips_inside(
             continue;
         };
         transform.translation = Val2::px(x + shift.x, y + shift.y);
+        commands.entity(card).remove::<Popover>();
         let physical = shift * target.scale_factor();
         let mut affine = global.affine();
         affine.translation += physical;
@@ -501,7 +589,12 @@ pub(crate) fn build(app: &mut App) {
     app.init_resource::<TooltipTimer>()
         .add_systems(
             Update,
-            (tooltip_system, tooltip_border_system).in_set(GzUiSystems::Behaviour),
+            (
+                tooltip_system,
+                refresh_tooltips.after(tooltip_system),
+                tooltip_border_system,
+            )
+                .in_set(GzUiSystems::Behaviour),
         )
         .add_systems(
             PostUpdate,

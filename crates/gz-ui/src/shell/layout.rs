@@ -56,6 +56,12 @@ pub const MIN_WINDOW: (f32, f32) = (1024.0, 640.0);
 /// A collapsed side panel leaves a bar this wide with the button that
 /// brings it back (DECISIONS.md D-50).
 pub const COLLAPSED_BAR_W: f32 = SPACE[10];
+/// Start-up lasts this many frames and real seconds, whichever is later:
+/// the start-up rules follow the window's size until then
+/// ([`ShellLayout::startup`]).
+pub const STARTUP_FRAMES: u32 = 30;
+/// See [`STARTUP_FRAMES`].
+pub const STARTUP_SECS: f64 = 1.0;
 /// The primary slot's default share of the sidebar (§3.3.2).
 pub const DEFAULT_SPLIT: f32 = 0.55;
 /// A slot is never shorter than this (§3.3.2).
@@ -79,6 +85,11 @@ pub struct ShellLayout {
     /// Panels the floor rule closed, reopened when space returns (a user
     /// toggle forgets them).
     pub floor_closed: [bool; 2],
+    /// The start-up collapse rules still apply to width changes: the
+    /// window's first real size can arrive after start (a browser canvas
+    /// fitting its page, a tiling window manager). Ends with the user's
+    /// first layout change, or once start-up is over (DECISIONS.md D-53).
+    pub startup: bool,
 }
 
 fn index(side: Side) -> usize {
@@ -104,6 +115,7 @@ impl ShellLayout {
             split: DEFAULT_SPLIT,
             window_w: width,
             floor_closed: [false; 2],
+            startup: true,
         };
         l.enforce_floor(None);
         l
@@ -177,9 +189,18 @@ impl ShellLayout {
         }
     }
 
-    /// Fits the layout to a new window width: the floor rule, then panels
-    /// it closed come back (sidebar first) once they fit again.
+    /// Fits the layout to a new window width: during start-up the start-up
+    /// rules again; afterwards the floor rule, then panels it closed come
+    /// back (sidebar first) once they fit again.
     pub fn fit(&mut self, window_w: f32) {
+        if self.startup {
+            self.window_w = window_w;
+            self.sidebar_open = window_w >= SIDEBAR_START_W;
+            self.inspector_open = window_w >= INSPECTOR_START_W;
+            self.floor_closed = [false; 2];
+            self.enforce_floor(None);
+            return;
+        }
         self.window_w = window_w;
         self.enforce_floor(None);
         let min = Sizes::default().viewport_min;
@@ -202,6 +223,7 @@ impl ShellLayout {
 
     /// Opens (or collapses) a side on the user's request.
     pub fn show(&mut self, side: Side, open: bool) {
+        self.startup = false;
         self.floor_closed[index(side)] = false;
         self.set_open(side, open);
         if open {
@@ -225,6 +247,7 @@ impl ShellLayout {
 
     /// Applies a splitter drag.
     pub fn drag(&mut self, side: Side, start: f32, dx: f32) {
+        self.startup = false;
         let w = self.drag_width(side, start, dx);
         self.set_width(side, w);
     }
@@ -232,6 +255,7 @@ impl ShellLayout {
     /// A splitter double-click: back to the default width (then the floor
     /// rule, keeping this side).
     pub fn reset_width(&mut self, side: Side) {
+        self.startup = false;
         self.set_width(side, Self::limits(side).0);
         self.enforce_floor(Some(side));
     }

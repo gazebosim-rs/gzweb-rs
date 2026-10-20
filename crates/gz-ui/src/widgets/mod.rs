@@ -75,12 +75,14 @@ pub fn a11y(role: Role, label: impl Into<String>) -> AccessibilityNode {
     AccessibilityNode(node)
 }
 
-/// What every clickable widget carries: pointer hover tracking, a tab stop,
-/// the focus ring, its state visuals and an accessible name.
+/// What every clickable widget carries: pointer hover tracking, a tab stop
+/// (that a pointer press doesn't keep: `PressFocusless`, DECISIONS.md
+/// D-52), the focus ring, its state visuals and an accessible name.
 pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl Bundle {
     (
         Hovered::default(),
         TabIndex(0),
+        focus::PressFocusless,
         FocusRing,
         visuals,
         Fill(visuals.fill),

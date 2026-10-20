@@ -62,12 +62,18 @@ pub(crate) enum WorldText {
     Ext,
 }
 
-/// The world's name and its extension follow the server.
+/// The world's name and its extension follow the server (when it or the
+/// scene changes).
 pub(crate) fn world_texts(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     mut texts: Query<(&WorldText, &mut Text)>,
 ) {
+    let changed =
+        status.as_ref().is_some_and(Res::is_changed) || index.as_ref().is_some_and(Res::is_changed);
+    if !changed {
+        return;
+    }
     let world = world_name(status.as_deref(), index.as_deref());
     for (which, mut t) in &mut texts {
         let want = match which {

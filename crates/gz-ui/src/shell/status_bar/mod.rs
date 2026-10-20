@@ -8,6 +8,7 @@ pub(crate) mod readouts;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui_widgets::Button as Headless;
+use gz_bevy::view::input::InputMap;
 
 use super::layout::{INSPECTOR_START_W, SIDEBAR_START_W};
 use super::regions::{region, Region};
@@ -19,6 +20,7 @@ use crate::theme::{border, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 use crate::widgets::button::ICON_BUTTON_RADIUS;
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{flex_spacer, row, set_shown};
+use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
 pub(crate) use readouts::{ConnectionDot, CursorReadout, StatusText};
 
@@ -78,8 +80,9 @@ fn item(which: StatusItem, style: TypeStyle, role: ColorRole, value: &str) -> im
 }
 
 /// The status bar.
-pub(crate) fn status_bar(theme: &Theme) -> impl Bundle {
+pub(crate) fn status_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
     let t = theme.clone();
+    let tip = workspace_tooltip(map);
     (
         region(
             Region::StatusBar,
@@ -145,14 +148,32 @@ pub(crate) fn status_bar(theme: &Theme) -> impl Bundle {
                 ColorRole::Text2,
                 "cursor —",
             ));
-            b.spawn(workspace_button(&t));
+            b.spawn(workspace_button(&t, tip));
         })),
     )
 }
 
+/// The workspace button's tooltip: its shortcuts from the input map
+/// ("Alt+1–4", "Opt+1–4" on macOS).
+pub(crate) fn workspace_tooltip(map: &InputMap) -> Tooltip {
+    let first = shortcut_label(map, "ui.workspace_1");
+    let last = shortcut_label(map, "ui.workspace_4");
+    let keys = match (first, last) {
+        (Some(a), Some(b)) => Some(match (a.strip_suffix('1'), b.strip_suffix('4')) {
+            (Some(p), Some(q)) if p == q => format!("{p}1–4"),
+            _ => format!("{a}–{b}"),
+        }),
+        (a, b) => a.or(b),
+    };
+    Tooltip::new("Workspace: Build")
+        .detail("Click to switch")
+        .shortcut_opt(keys)
+        .side(TooltipSide::Above)
+}
+
 /// The workspace button: icon, name and chevron_up, 22 tall (§3.6 item
 /// 10). It opens the switcher in M8.
-fn workspace_button(theme: &Theme) -> impl Bundle {
+fn workspace_button(theme: &Theme, tip: Tooltip) -> impl Bundle {
     let _ = theme;
     let label = TypeStyle::new(FontFamily::Ui, 12.0, 500);
     (
@@ -170,10 +191,7 @@ fn workspace_button(theme: &Theme) -> impl Bundle {
             accesskit::Role::Button,
             "Workspace",
         ),
-        Tooltip::new("Workspace: Build")
-            .detail("Click to switch")
-            .shortcut("Alt+1–4")
-            .side(TooltipSide::Above),
+        tip,
         children![
             content_icon(IconId::ActivityWorkspaces, 12.0, ColorRole::Text2),
             (text(label, ColorRole::Text2, "Build"), Content),
@@ -204,3 +222,6 @@ pub(crate) fn build(app: &mut App) {
             .in_set(ShellSystems::Readouts),
     );
 }
+
+#[cfg(test)]
+mod tests;

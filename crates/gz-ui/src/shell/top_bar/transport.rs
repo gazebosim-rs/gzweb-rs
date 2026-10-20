@@ -2,12 +2,13 @@
 //! click, then the sim clock and the RTF readout. Play/Pause follows the
 //! stats; Step steps a paused sim. Disabled without a live world.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::Activate;
-use gz_bevy::connection::{GzCommand, GzStatus};
+use bevy::ui_widgets::{Activate, MenuAction, MenuEvent, MenuPopup};
+use gz_bevy::connection::{GzCommand, GzStatus, SimStats};
 use gz_bevy::view::input::InputMap;
 
 use super::BAR_SEPARATOR_H;
@@ -15,24 +16,20 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{Icon, IconId};
 use crate::shell::connection::{CurrentPhase, Phase};
 use crate::shell::format;
+use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, TypeStyle, SPACE};
 use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{row, separator, Orientation};
-use crate::widgets::menu::{menu, menu_item, MenuSide};
+use crate::widgets::menu::{menu, menu_item, menu_separator, MenuSide};
 use crate::widgets::text::set_text;
 use crate::widgets::MenuItemProps;
 use crate::widgets::{bar_button, button_group, Tooltip};
+use crate::widgets::{number_field, AxisTag, NumberCommit, NumberField};
 
-/// Iterations per Step click (§3.1 "1 step ▾").
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StepsPerClick(pub u32);
-
-impl Default for StepsPerClick {
-    fn default() -> Self {
-        StepsPerClick(1)
-    }
-}
+/// Iterations per Step click and ⌘→ (§3.1 "1 step ▾"); `gz-bevy`'s, since
+/// its key handling steps by it too (DECISIONS.md D-54).
+pub(crate) use gz_bevy::connection::StepsPerClick;
 
 /// The transport's buttons.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +39,20 @@ pub(crate) enum Transport {
     Step,
 }
 
+impl Transport {
+    /// Whether the control works now (DECISIONS.md D-34, D-56): Reset needs
+    /// a live world (as the World inspector's Reset); Play/Pause also the
+    /// sim's stats (they say which way to toggle); Step a paused sim.
+    pub(crate) fn enabled(self, phase: Phase, sim: Option<&SimStats>) -> bool {
+        let live = phase == Phase::Live;
+        match self {
+            Transport::Reset => live,
+            Transport::PlayPause => live && sim.is_some(),
+            Transport::Step => live && sim.is_some_and(|s| s.paused),
+        }
+    }
+}
+
 /// A "Steps per click" menu item.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StepsOption(pub u32);
@@ -49,6 +60,15 @@ pub(crate) struct StepsOption(pub u32);
 /// The steps trigger.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct StepsTrigger;
+
+/// The steps menu's Custom field.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct CustomSteps;
+
+/// The steps menu's choices (§3.1), before "Custom".
+pub(crate) const STEPS_CHOICES: [u32; 3] = [1, 10, 100];
+/// The most iterations a custom step count asks for.
+pub(crate) const MAX_STEPS: u32 = 100_000;
 
 /// The sim clock's text.
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -66,7 +86,8 @@ pub(crate) struct RtfDot;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct RtfReadout;
 
-/// The steps-per-click menu: "1 step ▾" with 1, 10 and 100.
+/// The steps-per-click menu: "1 step ▾" with 1, 10 and 100, the current
+/// one marked, and a Custom field (§3.1, §5.14; DECISIONS.md D-54).
 fn steps_menu(theme: &Theme) -> impl Bundle {
     let t = theme.clone();
     menu(
@@ -78,12 +99,32 @@ fn steps_menu(theme: &Theme) -> impl Bundle {
             StepsTrigger,
         ),
         move |p: &mut ChildSpawner| {
-            for n in [1, 10, 100] {
-                p.spawn((
+            for n in STEPS_CHOICES {
+                let mut item = p.spawn((
                     menu_item(&t, MenuItemProps::new(steps_label(n))),
                     StepsOption(n),
                 ));
+                if n == StepsPerClick::default().0 {
+                    item.insert(Active);
+                }
             }
+            p.spawn(menu_separator());
+            p.spawn(Node {
+                padding: UiRect::axes(px(SPACE[5]), px(SPACE[2])),
+                ..default()
+            })
+            .with_child((
+                number_field(
+                    &t,
+                    AxisTag::Label("Custom".into()),
+                    NumberField::new(1.0)
+                        .precision(0, 1.0)
+                        .range(1.0, f64::from(MAX_STEPS))
+                        .named("Custom steps per click"),
+                    true,
+                ),
+                CustomSteps,
+            ));
         },
     )
 }
@@ -209,22 +250,50 @@ pub(crate) fn on_steps_option(
     }
 }
 
-/// The transport is disabled without a live world, and Step while the
-/// sim runs.
+/// Enter in the Custom field sets the count and closes the menu. A commit
+/// from leaving the field (the menu closing on a click elsewhere, or on
+/// another choice) is dropped: dismissing a menu doesn't choose.
+pub(crate) fn on_custom_steps(
+    ev: On<NumberCommit>,
+    fields: Query<(), With<CustomSteps>>,
+    parents: Query<&ChildOf>,
+    popups: Query<&Visibility, With<MenuPopup>>,
+    mut steps: ResMut<StepsPerClick>,
+    mut commands: Commands,
+) {
+    if !ev.is_final || !fields.contains(ev.entity) {
+        return;
+    }
+    let open = parents
+        .iter_ancestors(ev.entity)
+        .any(|a| popups.get(a).is_ok_and(|v| *v == Visibility::Visible));
+    if !open {
+        return;
+    }
+    let n = ev.value.round().clamp(1.0, f64::from(MAX_STEPS)) as u32;
+    steps.set_if_neq(StepsPerClick(n));
+    for action in [MenuAction::FocusRoot, MenuAction::CloseAll] {
+        commands.trigger(MenuEvent {
+            source: ev.entity,
+            action,
+        });
+    }
+}
+
+/// Which transport controls work ([`Transport::enabled`]), when the
+/// connection or the stats change.
 pub(crate) fn transport_enabled(
     status: Option<Res<GzStatus>>,
     phase: Res<CurrentPhase>,
     buttons: Query<(Entity, &Transport, Has<InteractionDisabled>)>,
     mut commands: Commands,
 ) {
+    if !phase.is_changed() && !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let sim = status.and_then(|s| s.sim);
-    let live = phase.0 == Phase::Live && sim.is_some();
-    let running = sim.is_some_and(|s| !s.paused);
     for (e, which, disabled) in &buttons {
-        let enabled = match which {
-            Transport::Step => live && !running,
-            _ => live,
-        };
+        let enabled = which.enabled(phase.0, sim.as_ref());
         if enabled == disabled {
             if enabled {
                 commands.entity(e).remove::<InteractionDisabled>();
@@ -235,25 +304,31 @@ pub(crate) fn transport_enabled(
     }
 }
 
-/// Play/Pause shows `pause` (and says Pause) while running, `play` while
-/// paused.
+/// Play/Pause shows `pause` (and says Pause, in its tooltip and to
+/// AccessKit) while running, `play` while paused.
 pub(crate) fn play_pause_look(
     status: Option<Res<GzStatus>>,
-    mut buttons: Query<(&Transport, &mut Tooltip, &Children)>,
+    mut buttons: Query<(&Transport, &mut Tooltip, &mut AccessibilityNode, &Children)>,
     mut icons: Query<&mut Icon>,
 ) {
+    if !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let running = status.and_then(|s| s.sim).is_some_and(|s| !s.paused);
     let (id, title) = if running {
         (IconId::Pause, "Pause")
     } else {
         (IconId::Play, "Play")
     };
-    for (which, mut tip, children) in &mut buttons {
+    for (which, mut tip, mut access, children) in &mut buttons {
         if *which != Transport::PlayPause {
             continue;
         }
         if tip.title != title {
             tip.title = title.into();
+        }
+        if access.label() != Some(title) {
+            access.set_label(title);
         }
         for &c in children {
             if let Ok(mut icon) = icons.get_mut(c) {
@@ -270,6 +345,9 @@ pub(crate) fn clock_text(
     status: Option<Res<GzStatus>>,
     mut clocks: Query<&mut Text, With<SimClock>>,
 ) {
+    if !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let sim = status.and_then(|s| s.sim);
     let want = format::clock(sim.map_or(0.0, |s| s.sim_time));
     for mut t in &mut clocks {
@@ -278,13 +356,16 @@ pub(crate) fn clock_text(
 }
 
 /// The RTF readout (§3.1): its text, its dot's colour and its tooltip's
-/// stats.
+/// stats (live while the tooltip is open).
 pub(crate) fn rtf_readout(
     status: Option<Res<GzStatus>>,
     mut texts: Query<&mut Text, With<RtfText>>,
     mut dots: Query<&mut Fill, With<RtfDot>>,
     mut readouts: Query<&mut Tooltip, With<RtfReadout>>,
 ) {
+    if !status.as_ref().is_some_and(Res::is_changed) {
+        return;
+    }
     let sim = status.and_then(|s| s.sim);
     let (rtf, role) = format::rtf(sim.as_ref());
     for mut t in &mut texts {
@@ -301,21 +382,43 @@ pub(crate) fn rtf_readout(
     }
 }
 
-/// The steps trigger says the steps per click ("10 steps").
+/// The steps trigger says the steps per click ("10 steps"), as text and
+/// to AccessKit; the menu marks the choice and its Custom field shows it.
 pub(crate) fn steps_label_text(
     steps: Res<StepsPerClick>,
-    triggers: Query<&Children, With<StepsTrigger>>,
+    mut triggers: Query<(&Children, &mut AccessibilityNode), With<StepsTrigger>>,
     mut labels: Query<&mut Text>,
+    options: Query<(Entity, &StepsOption, Has<Active>)>,
+    mut custom: Query<&mut NumberField, With<CustomSteps>>,
+    mut commands: Commands,
 ) {
     if !steps.is_changed() {
         return;
     }
     let label = steps_label(steps.0);
-    for children in &triggers {
+    for (children, mut access) in &mut triggers {
         for &c in children {
             if let Ok(mut t) = labels.get_mut(c) {
                 set_text(&mut t, &label);
             }
+        }
+        if access.label() != Some(label.as_str()) {
+            access.set_label(label.as_str());
+        }
+    }
+    for (e, option, active) in &options {
+        if (option.0 == steps.0) != active {
+            if active {
+                commands.entity(e).remove::<Active>();
+            } else {
+                commands.entity(e).insert(Active);
+            }
+        }
+    }
+    for mut field in &mut custom {
+        let v = f64::from(steps.0);
+        if field.value != v {
+            field.value = v;
         }
     }
 }

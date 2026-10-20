@@ -100,12 +100,23 @@ pub(crate) fn init_layout(
     commands.insert_resource(ShellLayout::for_width(width));
 }
 
-/// Refits the layout when the window's width changes (the floor rule).
+/// Refits the layout when the window's width changes: the start-up rules
+/// while start-up lasts ([`ShellLayout::startup`]: the window's first real
+/// size may come a few frames late), then the floor rule.
 pub(crate) fn fit_to_window(
     windows: Query<&Window, With<PrimaryWindow>>,
     ui_scale: Res<UiScale>,
+    time: Res<Time<Real>>,
+    mut frames: Local<u32>,
     mut layout: ResMut<ShellLayout>,
 ) {
+    *frames = frames.saturating_add(1);
+    if layout.startup
+        && *frames > layout::STARTUP_FRAMES
+        && time.elapsed_secs_f64() > layout::STARTUP_SECS
+    {
+        layout.startup = false;
+    }
     let Ok(window) = windows.single() else {
         return;
     };
@@ -180,7 +191,7 @@ pub(crate) fn spawn_shell(
                 body.spawn(collapsed_bar(&t, Side::Inspector, &map));
                 body.spawn(inspector::inspector(&t, &l, &map, &inspectors));
             });
-            root.spawn(status_bar::status_bar(&t));
+            root.spawn(status_bar::status_bar(&t, &map));
         })),
     ));
 }

@@ -60,6 +60,14 @@ pub fn remember_url(url: &str) {
     }
 }
 
+/// The page was loaded over https, so its websockets must be `wss://`
+/// (browsers block a `ws://` socket from a secure page as mixed content).
+pub fn page_is_secure() -> bool {
+    web_sys::window()
+        .and_then(|w| w.location().protocol().ok())
+        .is_some_and(|p| p == "https:")
+}
+
 /// Tells the canvas listener that a UI text field has (or lost) keyboard
 /// focus. While one has, no key's default is prevented but Tab's: the
 /// viewport doesn't have focus (spec §9.6), and Tab belongs to the UI.
