@@ -295,3 +295,6 @@ pub(crate) fn build(app: &mut App) {
         .add_systems(PreUpdate, modifier_steps.in_set(GzUiSystems::Input))
         .add_systems(Update, slider_visuals_system.in_set(GzUiSystems::Behaviour));
 }
+
+#[cfg(test)]
+mod tests;

@@ -105,6 +105,4 @@ pub(crate) fn build(app: &mut App) {
 }
 
 #[cfg(test)]
-mod layout_tests;
-#[cfg(test)]
 mod tests;

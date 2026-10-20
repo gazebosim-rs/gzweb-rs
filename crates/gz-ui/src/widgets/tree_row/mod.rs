@@ -292,3 +292,6 @@ pub(crate) fn build(app: &mut App) {
     app.add_observer(on_eye_activate)
         .add_systems(Update, tree_row_system.in_set(GzUiSystems::Visuals));
 }
+
+#[cfg(test)]
+mod tests;

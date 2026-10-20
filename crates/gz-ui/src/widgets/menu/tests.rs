@@ -9,18 +9,16 @@ use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{Activate, MenuAction, MenuEvent};
 use bevy::window::PrimaryWindow;
-use gz_bevy::view::input::{Chord, InputMap, Mods, Platform};
 
+use super::{
+    menu, type_to_search, CheckItem, Menu, MenuCheckBox, MenuLabel, MenuPopupOf, MenuSide,
+    MenuTrigger,
+};
 use crate::test_support::{frames, ui_app};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, ThemeMode};
 use crate::widgets::button::{text_button_parts, TextButtonProps};
-use crate::widgets::menu::{
-    menu, type_to_search, CheckItem, Menu, MenuCheckBox, MenuLabel, MenuPopupOf, MenuSide,
-    MenuTrigger,
-};
 use crate::widgets::select::{Select, SelectChanged, SelectLabel, SelectOption};
-use crate::widgets::shortcut::{chord_label, key_label, shortcut_label};
 use crate::widgets::MenuItemProps;
 use crate::widgets::{menu_checkbox, menu_group_label, menu_item, menu_separator, select};
 
@@ -280,85 +278,6 @@ fn type_to_search_wraps() {
     assert_eq!(type_to_search(&labels, Some(0), 'F'), Some(2));
     assert_eq!(type_to_search(&labels, Some(2), 'f'), Some(0));
     assert_eq!(type_to_search(&labels, Some(1), 'x'), None);
-}
-
-#[test]
-fn shortcut_text() {
-    let chord = |key, cmd, ctrl, shift, alt| Chord {
-        key,
-        mods: Mods {
-            cmd,
-            ctrl,
-            shift,
-            alt,
-        },
-    };
-    let l = Platform::Linux;
-    assert_eq!(
-        chord_label(&chord(KeyCode::KeyF, false, false, true, false), l),
-        "⇧F"
-    );
-    assert_eq!(
-        chord_label(&chord(KeyCode::Digit5, false, false, false, false), l),
-        "5"
-    );
-    assert_eq!(
-        chord_label(&chord(KeyCode::KeyE, true, false, true, false), l),
-        "Ctrl+Shift+E"
-    );
-    assert_eq!(
-        chord_label(
-            &chord(KeyCode::KeyE, true, false, true, false),
-            Platform::Mac
-        ),
-        "Cmd+Shift+E"
-    );
-    assert_eq!(
-        chord_label(
-            &chord(KeyCode::Digit1, false, false, false, true),
-            Platform::Mac
-        ),
-        "Opt+1"
-    );
-    assert_eq!(
-        chord_label(&chord(KeyCode::KeyK, false, true, false, true), l),
-        "Ctrl+Alt+K"
-    );
-    for (key, want) in [
-        (KeyCode::Escape, "Esc"),
-        (KeyCode::Space, "Space"),
-        (KeyCode::Enter, "⏎"),
-        (KeyCode::Backspace, "⌫"),
-        (KeyCode::Delete, "Del"),
-        (KeyCode::Tab, "Tab"),
-        (KeyCode::ArrowLeft, "←"),
-        (KeyCode::ArrowRight, "→"),
-        (KeyCode::ArrowUp, "↑"),
-        (KeyCode::ArrowDown, "↓"),
-        (KeyCode::Comma, ","),
-        (KeyCode::Period, "."),
-        (KeyCode::Slash, "/"),
-        (KeyCode::Minus, "-"),
-        (KeyCode::Equal, "="),
-        (KeyCode::BracketLeft, "["),
-        (KeyCode::BracketRight, "]"),
-        (KeyCode::Numpad7, "7"),
-        (KeyCode::F2, "F2"),
-    ] {
-        assert_eq!(key_label(key), want);
-    }
-    let map = InputMap::parse(gz_bevy::view::input::SHORTCUTS_JSON, Platform::Linux).unwrap();
-    assert_eq!(
-        shortcut_label(&map, "view.projection").as_deref(),
-        Some("5")
-    );
-    assert_eq!(shortcut_label(&map, "view.follow").as_deref(), Some("⇧F"));
-    assert_eq!(shortcut_label(&map, "overlay.grid").as_deref(), Some("G"));
-    assert_eq!(shortcut_label(&map, "no.such.binding"), None);
-    let mac = InputMap::parse(gz_bevy::view::input::SHORTCUTS_JSON, Platform::Mac).unwrap();
-    assert!(shortcut_label(&mac, "panel.scene")
-        .unwrap()
-        .starts_with("Cmd+"));
 }
 
 /// A disabled item dims everything in it, its shortcut, icon and checkbox

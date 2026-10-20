@@ -8,10 +8,10 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::window::PrimaryWindow;
 
+use super::expr::{eval, ExprError, Unit};
+use super::{Invalid, NumberInput, NumberTag, Scrub, TAG_TYPE, VALUE_TYPE};
 use crate::test_support::{frames, ui_app};
 use crate::theme::{ColorRole, Ring, Stroke, Theme, ThemeMode};
-use crate::widgets::number_field::expr::{eval, ExprError, Unit};
-use crate::widgets::number_field::{Invalid, NumberInput, NumberTag, Scrub, TAG_TYPE, VALUE_TYPE};
 use crate::widgets::{number_field, AxisTag, NumberCommit, NumberField};
 
 fn close(a: f64, b: f64) -> bool {

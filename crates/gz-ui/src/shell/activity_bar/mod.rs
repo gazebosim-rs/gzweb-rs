@@ -171,3 +171,6 @@ pub(crate) fn build(app: &mut App) {
         )
         .add_observer(on_activity);
 }
+
+#[cfg(test)]
+mod tests;

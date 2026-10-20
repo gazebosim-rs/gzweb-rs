@@ -136,3 +136,6 @@ pub(crate) fn toggle_system(
 pub(crate) fn build(app: &mut App) {
     app.add_systems(Update, toggle_system.in_set(GzUiSystems::Visuals));
 }
+
+#[cfg(test)]
+mod tests;

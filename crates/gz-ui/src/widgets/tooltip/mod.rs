@@ -513,3 +513,6 @@ pub(crate) fn build(app: &mut App) {
             ),
         );
 }
+
+#[cfg(test)]
+mod tests;

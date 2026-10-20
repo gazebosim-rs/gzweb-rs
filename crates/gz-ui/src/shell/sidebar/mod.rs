@@ -244,3 +244,6 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(slot_splitter::on_slot_drag)
         .add_observer(slot_splitter::on_slot_drag_end);
 }
+
+#[cfg(test)]
+mod tests;

@@ -232,3 +232,6 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(on_splitter_key)
         .add_systems(Update, splitter_line_system.in_set(GzUiSystems::Visuals));
 }
+
+#[cfg(test)]
+mod tests;

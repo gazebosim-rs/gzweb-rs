@@ -78,3 +78,6 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(connect_card::on_connect_button)
         .add_observer(connect_card::on_address_submit);
 }
+
+#[cfg(test)]
+mod tests;

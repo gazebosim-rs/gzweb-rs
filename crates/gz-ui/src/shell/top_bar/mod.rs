@@ -75,3 +75,6 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(transport::on_transport)
         .add_observer(transport::on_steps_option);
 }
+
+#[cfg(test)]
+mod tests;
