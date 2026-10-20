@@ -809,3 +809,35 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   ws://localhost:9004; `target/shots/`): `full-light`, `full-dark`
   (1440×900) and `w1024-light`, `w1024-dark` (1024×700, both panels
   collapsed to their bars, Scene still selected).
+
+## 2026-10-20: PR #29 review fixes
+
+- **Focus** (D-52): a click no longer leaves keyboard focus on a button
+  (`PressFocusless` on every `clickable` widget, `PointerLed`), and focus
+  inside a hidden or fading node is released (`release_focus`, `Hiding`
+  on the fading card). Regression tests click Connect, "Retry now", the
+  sidebar chevron, the Scene activity button, Step and Play through
+  bevy_picking's press/click events and press Space and Enter; Enter in
+  the address field followed by the world loading; a Tab-focused button
+  still takes Enter. Each fails without `release_focus`. Esc in an open
+  menu only closes it (`MenuTakesEscape`).
+- **Start-up rules** on the first real window size (D-53); **steps per
+  click** in `gz-bevy`, used by ⌘→, with the current choice marked and a
+  Custom field (D-54); **addresses**: `?url` > `?port` > remembered URL
+  (full UI only) > page host, `http(s)` → `ws(s)`, `wss` on https pages,
+  the default port for a bare host, no world name or step carried to a new
+  server, the minimum window size native only (D-55).
+- **Readouts** (D-56): the step size survives a pause in `gz-bevy` (and
+  a world paused before the connection gets sim time over iterations: the
+  live capture of the paused `allmesh` world still read "—"); the
+  shell's readouts, overlays, slot rebuilds and activity states run on
+  change; `key_scopes` doesn't allocate; `apply_view_placement` runs only
+  when placed (the main camera keeps rendering with no world: inactive, it
+  panicked in Bevy's atmosphere probe in a live capture); accessible
+  names and open tooltips follow their state; a shifted tooltip drops its
+  popover; a splitter double-click needs the primary button and no drag;
+  an interrupted fade restores opacities; the search placeholder steps
+  down instead of cutting a word; the workspace shortcut comes from the
+  input map; Reset is enabled alike in the top bar and the inspector.
+- **Docs:** DESIGN.md §9.3 and UI_PLAN's M2 entry and risk table describe
+  the view texture of D-31 instead of `Camera::viewport`.
