@@ -8,7 +8,8 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
-use super::{region, Panel, Region, ShellLayout, UiCommand};
+use super::regions::{region, Region};
+use super::{Panel, ShellLayout, UiCommand};
 use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};

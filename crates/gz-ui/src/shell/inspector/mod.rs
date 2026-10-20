@@ -12,8 +12,10 @@ use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::input::InputMap;
 
 use super::connection::{CurrentPhase, Phase};
-use super::top_bar::world_name;
-use super::{format, region, side_splitter, Region, ShellLayout, Side, UiCommand};
+use super::regions::{region, Region};
+use super::splitter::side_splitter;
+use super::top_bar::world_button::world_name;
+use super::{format, ShellLayout, Side, UiCommand};
 use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;

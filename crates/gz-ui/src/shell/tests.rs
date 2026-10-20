@@ -30,11 +30,13 @@ use crate::shell::connection::{banner, dot_role, ConnectionView, Phase, LOST_LON
 use crate::shell::layout::MIN_SLOT_H;
 use crate::shell::sidebar::{panel_count, panel_view, PanelAction, PanelBody, PanelView, SlotView};
 use crate::shell::status_bar::StatusItem;
-use crate::shell::top_bar::{steps_label, ToolChoice, Transport};
-use crate::shell::viewport::{
-    card_status, normalize_address, ConnectButton, ConnectCard, DimOverlay, DisconnectBanner,
-    ViewNode,
+use crate::shell::top_bar::tools::ToolChoice;
+use crate::shell::top_bar::transport::{steps_label, StepsOption, Transport};
+use crate::shell::viewport::banner::DisconnectBanner;
+use crate::shell::viewport::connect_card::{
+    card_status, normalize_address, AddressField, ConnectButton, ConnectCard,
 };
+use crate::shell::viewport::view::{DimOverlay, ViewNode};
 use crate::shell::{
     format, Panel, Region, ShellLayout, ShellPlugin, ShellSplitter, Side, Slot, StepsPerClick,
     Tool, UiCommand,
@@ -577,7 +579,7 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     };
     // Routing is rewritten each frame from the pointer: hold it off.
     app.world_mut()
-        .resource_mut::<crate::shell::viewport::ViewFocus>()
+        .resource_mut::<crate::shell::routing::ViewFocus>()
         .0 = false;
     chord(&mut app, &[KeyCode::KeyT]);
     assert_eq!(*app.world().resource::<Tool>(), Tool::BoxSelect);
@@ -960,7 +962,7 @@ fn transport_buttons_send_sim_commands() {
     // The steps menu.
     let world = app.world_mut();
     let option = world
-        .query::<(Entity, &crate::shell::top_bar::StepsOption)>()
+        .query::<(Entity, &StepsOption)>()
         .iter(world)
         .find(|(_, o)| o.0 == 100)
         .unwrap()
@@ -1476,7 +1478,7 @@ fn the_address_field_connects_on_enter_and_the_cursor_is_read_off_the_ground() {
     use bevy::input_focus::InputFocus;
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 3);
-    let field = find::<crate::shell::viewport::AddressField>(&mut app);
+    let field = find::<AddressField>(&mut app);
     let input = find::<TextFieldInput>(&mut app);
     // Prefilled with the server's address.
     let text = app
