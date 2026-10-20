@@ -278,7 +278,6 @@ impl TooltipTimer {
 
 /// Shows and hides tooltip cards from hover. The triggers are searched
 /// only when one's hover changed; otherwise the timer's target stands.
-#[allow(clippy::type_complexity)]
 pub(crate) fn tooltip_system(
     time: Res<Time<Real>>,
     theme: Res<Theme>,
@@ -389,7 +388,6 @@ pub fn shift_inside(rect: Rect, bounds: Rect) -> Vec2 {
 /// popover has picked the side (flipping if needed), a card still past an
 /// edge (centred on a trigger near it) is shifted in, the same way the
 /// popover moves it, so the frame being drawn already shows it inside.
-#[allow(clippy::type_complexity)]
 pub(crate) fn keep_tooltips_inside(
     mut cards: Query<
         (

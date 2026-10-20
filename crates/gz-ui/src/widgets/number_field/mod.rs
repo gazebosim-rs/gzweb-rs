@@ -464,7 +464,6 @@ pub(crate) fn on_scrub_end(
 
 /// Shows a changed value in an unfocused field (scrubs, programmatic sets)
 /// and gives it to AccessKit. A focused field's text stays as it is.
-#[allow(clippy::type_complexity)]
 pub(crate) fn sync_number_text(
     focus: Res<InputFocus>,
     fields: Query<(&NumberField, &Children), Changed<NumberField>>,

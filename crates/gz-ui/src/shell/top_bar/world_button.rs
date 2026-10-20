@@ -9,13 +9,13 @@ use bevy::ui_widgets::Button as Headless;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::spawn::GzIndex;
 
-use super::TopText;
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::Visuals;
 use crate::theme::{ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 use crate::widgets::button::text_button_node;
 use crate::widgets::layout::row;
+use crate::widgets::text::set_text;
 use crate::widgets::{clickable, Tooltip};
 
 /// The world menu button (opens the World menu in M8).
@@ -44,12 +44,37 @@ pub(super) fn world_button(theme: &Theme) -> impl Bundle {
                 ..row(SPACE[2] + 1.0)
             })
             .with_children(|n| {
-                n.spawn((text(name, ColorRole::Text, "No world"), TopText::WorldName));
-                n.spawn((text(ext, ColorRole::Text3, ""), TopText::WorldExt));
+                n.spawn((text(name, ColorRole::Text, "No world"), WorldText::Name));
+                n.spawn((text(ext, ColorRole::Text3, ""), WorldText::Ext));
             });
             p.spawn(content_icon(IconId::ChevronDown, icon_px, ColorRole::Text));
         })),
     )
+}
+
+/// The world button's two texts.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorldText {
+    /// The world's name, "No world" without one.
+    Name,
+    /// ".sdf" after the name.
+    Ext,
+}
+
+/// The world's name and its extension follow the server.
+pub fn world_texts(
+    status: Option<Res<GzStatus>>,
+    index: Option<Res<GzIndex>>,
+    mut texts: Query<(&WorldText, &mut Text)>,
+) {
+    let world = world_name(status.as_deref(), index.as_deref());
+    for (which, mut t) in &mut texts {
+        let want = match which {
+            WorldText::Name => world.clone().unwrap_or_else(|| "No world".into()),
+            WorldText::Ext => world.as_ref().map_or_else(String::new, |_| ".sdf".into()),
+        };
+        set_text(&mut t, &want);
+    }
 }
 
 /// The world's name: the server's world, else the scene's.

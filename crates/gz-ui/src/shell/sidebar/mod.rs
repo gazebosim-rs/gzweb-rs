@@ -20,7 +20,7 @@ use super::splitter::side_splitter;
 use super::{Panel, ShellLayout, Side, Slot};
 use crate::assets::icons::IconId;
 use crate::theme::Theme;
-use crate::widgets::layout::column;
+use crate::widgets::layout::{self, column};
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 use body::panel_body;
 pub use body::{panel_count, panel_view, PanelAction, PanelBody, PanelView, SkeletonRow};
@@ -166,6 +166,32 @@ fn header_buttons(
                 SlotAction::Close,
             ));
         }
+    }
+}
+
+/// Writes the slot split into the slots: one slot takes the sidebar; with
+/// two, the primary takes `split` of it and the row splitter shows.
+pub fn apply_slots(
+    layout: Res<ShellLayout>,
+    mut slots: Query<(&SlotView, &mut Node)>,
+    mut splitters: Query<&mut Node, (With<SlotSplitter>, Without<SlotView>)>,
+) {
+    if !layout.is_changed() {
+        return;
+    }
+    let two = layout.secondary.is_some();
+    for (slot, mut node) in &mut slots {
+        let (grow, display) = match (slot.0, two) {
+            (Slot::Primary, false) => (1.0, Display::Flex),
+            (Slot::Primary, true) => (layout.split, Display::Flex),
+            (Slot::Secondary, true) => (1.0 - layout.split, Display::Flex),
+            (Slot::Secondary, false) => (0.0, Display::None),
+        };
+        node.flex_grow = grow;
+        node.display = display;
+    }
+    for mut node in &mut splitters {
+        node.display = layout::display(two);
     }
 }
 

@@ -11,7 +11,7 @@ use bevy::ui_widgets::Button as Headless;
 
 use super::layout::{INSPECTOR_START_W, SIDEBAR_START_W};
 use super::regions::{region, Region};
-use super::{ShellLayout, Tool};
+use super::{ShellLayout, ShellSystems, Tool};
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Content, Visuals};
@@ -21,7 +21,7 @@ use crate::widgets::chip::dot;
 use crate::widgets::layout::flex_spacer;
 use crate::widgets::layout::{row, set_shown};
 use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
-pub use readouts::{cursor_readout, status_texts, ConnectionDot, CursorReadout, StatusText};
+pub use readouts::{ConnectionDot, CursorReadout, StatusText};
 
 /// The status bar's items, numbered as in §3.6.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -191,4 +191,17 @@ pub fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusItem, &mu
     for (which, mut node) in &mut items {
         set_shown(&mut node, which.shown_at(layout.window_w));
     }
+}
+
+pub(crate) fn build(app: &mut App) {
+    app.init_resource::<CursorReadout>().add_systems(
+        Update,
+        (
+            readouts::status_texts,
+            readouts::connection_dot,
+            readouts::cursor_readout,
+            narrow_rules,
+        )
+            .in_set(ShellSystems::Readouts),
+    );
 }

@@ -25,12 +25,8 @@ pub mod status_bar;
 pub mod top_bar;
 pub mod viewport;
 
-use bevy::camera::visibility::VisibilitySystems;
 use bevy::prelude::*;
-use bevy::ui::UiSystems;
 use gz_bevy::connection::{GzCommand, GzReconnect};
-use gz_bevy::view::controls::{ViewPlacementSystems, ViewRouting};
-use gz_bevy::view::ViewPlacement;
 
 pub use collapsed_bar::ExpandButton;
 pub use commands::UiCommand;
@@ -41,6 +37,18 @@ pub use top_bar::tools::Tool;
 pub use top_bar::transport::StepsPerClick;
 
 use crate::GzUiSystems;
+
+/// The shell's Update systems, in [`GzUiSystems::Behaviour`] and in this
+/// order.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ShellSystems {
+    /// The connection phase, keys, commands and the layout, then the
+    /// sidebar's slots, in a chain.
+    Layout,
+    /// Everything that shows state: readouts, button states, overlays.
+    /// Each region adds its own.
+    Readouts,
+}
 
 /// Adds the shell. `camera` spawns the UI camera (tests bring their own).
 pub struct ShellPlugin {
@@ -58,19 +66,16 @@ impl Plugin for ShellPlugin {
         app.add_message::<UiCommand>()
             .add_message::<GzCommand>()
             .add_message::<GzReconnect>()
-            .init_resource::<Tool>()
-            .init_resource::<StepsPerClick>()
             .init_resource::<connection::ConnectionView>()
             .init_resource::<connection::CurrentPhase>()
-            .init_resource::<ViewRouting>()
-            .init_resource::<routing::ViewFocus>()
-            .init_resource::<status_bar::CursorReadout>()
+            .configure_sets(
+                Update,
+                (ShellSystems::Layout, ShellSystems::Readouts)
+                    .chain()
+                    .in_set(GzUiSystems::Behaviour),
+            )
             .add_systems(PreStartup, regions::init_layout)
             .add_systems(Startup, regions::spawn_shell)
-            .add_systems(
-                PreUpdate,
-                routing::route_pointer.after(bevy::picking::PickingSystems::Hover),
-            )
             .add_systems(
                 Update,
                 (
@@ -79,46 +84,20 @@ impl Plugin for ShellPlugin {
                     commands::apply_ui_commands,
                     regions::fit_to_window,
                     regions::apply_layout,
+                    sidebar::apply_slots,
                     sidebar::rebuild_slots,
                 )
                     .chain()
-                    .in_set(GzUiSystems::Behaviour),
-            )
-            .add_systems(
-                Update,
-                (
-                    activity_bar::activity_states,
-                    top_bar::tools::tool_states,
-                    top_bar::transport::transport_states,
-                    top_bar::top_bar_texts,
-                    inspector::inspector_texts,
-                    status_bar::status_texts,
-                    status_bar::narrow_rules,
-                    status_bar::cursor_readout,
-                    viewport::overlays,
-                    splitter::splitter_strokes,
-                )
-                    .in_set(GzUiSystems::Behaviour)
-                    .after(sidebar::rebuild_slots),
-            )
-            .add_systems(
-                Update,
-                viewport::connect_card::fade_card.after(GzUiSystems::Visuals),
-            )
-            .init_resource::<ViewPlacement>()
-            .add_systems(
-                PostUpdate,
-                viewport::view::place_view
-                    .after(UiSystems::Layout)
-                    .before(ViewPlacementSystems)
-                    .before(VisibilitySystems::UpdateFrusta),
+                    .in_set(ShellSystems::Layout),
             );
+        routing::build(app);
         splitter::build(app);
         collapsed_bar::build(app);
         activity_bar::build(app);
         top_bar::build(app);
         sidebar::build(app);
         inspector::build(app);
+        status_bar::build(app);
         viewport::build(app);
         if self.camera {
             app.add_systems(Startup, regions::spawn_ui_camera);

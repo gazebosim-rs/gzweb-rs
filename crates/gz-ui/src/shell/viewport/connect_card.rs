@@ -12,13 +12,14 @@ use gz_core::transport::Status;
 
 use crate::assets::brand::logo;
 use crate::assets::fonts::text;
-use crate::shell::connection::{ConnectionView, Phase};
+use crate::shell::connection::{ConnectionView, CurrentPhase, Phase};
 use crate::shell::format;
 use crate::theme::{
     elevation, motion, radius, ColorRole, Fill, Ink, Opacity, Shadow, Stroke, Theme, TypeStyle,
     SPACE,
 };
 use crate::widgets::layout::{column, row, set_shown};
+use crate::widgets::text::set_text;
 use crate::widgets::text_field::TextFieldInput;
 use crate::widgets::{button, rounded, text_field, ButtonVariant, TextSubmit};
 
@@ -99,6 +100,36 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
     )
 }
 
+/// The card shows while no world has loaded, or when asked for while
+/// lost; it fades out once a world loads. Its status line follows the
+/// connection.
+pub fn card_state(
+    phase: Res<CurrentPhase>,
+    status: Option<Res<GzStatus>>,
+    view: Res<ConnectionView>,
+    mut cards: Query<(Entity, &mut Node, Option<&Fading>), With<ConnectCard>>,
+    mut lines: Query<&mut Text, With<CardStatus>>,
+    mut commands: Commands,
+) {
+    let lost = matches!(phase.0, Phase::Lost { .. });
+    let card = phase.0.no_world() || (lost && view.card_requested);
+    for (e, mut node, fading) in &mut cards {
+        let shown = node.display != Display::None;
+        if card {
+            if fading.is_some() {
+                commands.entity(e).remove::<Fading>();
+            }
+            set_shown(&mut node, true);
+        } else if shown && fading.is_none() {
+            commands.entity(e).insert(Fading(fade_secs()));
+        }
+    }
+    let line = card_status(phase.0, status.as_deref());
+    for mut t in &mut lines {
+        set_text(&mut t, &line);
+    }
+}
+
 /// The card's status line (§7.10).
 pub fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
     let Some(s) = status else {
@@ -126,14 +157,16 @@ pub fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
     }
 }
 
+/// Anything with a colour role (what the fade's opacity applies to).
+type WithRole = Or<(With<Fill>, With<Stroke>, With<Ink>, With<Shadow>)>;
+
 /// Fades the card out (after the widgets' own looks, so the fade wins),
 /// then hides it.
-#[allow(clippy::type_complexity)]
 pub fn fade_card(
     time: Res<Time<Real>>,
     mut cards: Query<(Entity, &mut Node, &mut Fading), With<ConnectCard>>,
     children: Query<&Children>,
-    roles: Query<(), Or<(With<Fill>, With<Stroke>, With<Ink>, With<Shadow>)>>,
+    roles: Query<(), WithRole>,
     mut opacities: Query<&mut Opacity>,
     mut commands: Commands,
 ) {
@@ -212,7 +245,6 @@ pub fn normalize_address(s: &str) -> String {
 }
 
 /// Banner and card buttons.
-#[allow(clippy::too_many_arguments)]
 pub fn on_connect_button(
     ev: On<Activate>,
     buttons: Query<&ConnectButton>,

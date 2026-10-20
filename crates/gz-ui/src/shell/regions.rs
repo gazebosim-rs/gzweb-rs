@@ -8,7 +8,7 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::view::input::InputMap;
 
 use super::collapsed_bar::collapsed_bar;
-use super::layout::{self, ShellLayout, Side, Slot};
+use super::layout::{self, ShellLayout, Side};
 use super::{activity_bar, inspector, sidebar, status_bar, top_bar, viewport};
 use crate::theme::{border, ColorRole, Fill, Stroke, Theme};
 use crate::widgets::layout::{column, display, fill_parent};
@@ -113,23 +113,10 @@ pub fn fit_to_window(
     }
 }
 
-/// Writes [`ShellLayout`] into the region nodes: widths, collapse
+/// Writes [`ShellLayout`] into the region nodes: widths and collapse
 /// (`Display::None`, so a collapsed panel takes no room and never overlays
-/// the viewport) and the slot split.
-#[allow(clippy::type_complexity)]
-pub fn apply_layout(
-    layout: Res<ShellLayout>,
-    mut regions: Query<(&Region, &mut Node)>,
-    mut slots: Query<(&sidebar::SlotView, &mut Node), Without<Region>>,
-    mut row_splitters: Query<
-        &mut Node,
-        (
-            With<sidebar::SlotSplitter>,
-            Without<Region>,
-            Without<sidebar::SlotView>,
-        ),
-    >,
-) {
+/// the viewport).
+pub fn apply_layout(layout: Res<ShellLayout>, mut regions: Query<(&Region, &mut Node)>) {
     if !layout.is_changed() {
         return;
     }
@@ -147,20 +134,6 @@ pub fn apply_layout(
             Region::InspectorBar => node.display = display(!layout.inspector_open),
             _ => {}
         }
-    }
-    let two = layout.secondary.is_some();
-    for (slot, mut node) in &mut slots {
-        let (grow, display) = match (slot.0, two) {
-            (Slot::Primary, false) => (1.0, Display::Flex),
-            (Slot::Primary, true) => (layout.split, Display::Flex),
-            (Slot::Secondary, true) => (1.0 - layout.split, Display::Flex),
-            (Slot::Secondary, false) => (0.0, Display::None),
-        };
-        node.flex_grow = grow;
-        node.display = display;
-    }
-    for mut node in &mut row_splitters {
-        node.display = display(two);
     }
 }
 

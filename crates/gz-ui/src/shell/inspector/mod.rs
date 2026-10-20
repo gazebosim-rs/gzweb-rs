@@ -15,7 +15,7 @@ use super::connection::{CurrentPhase, Phase};
 use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::top_bar::world_button::world_name;
-use super::{format, ShellLayout, Side, UiCommand};
+use super::{format, ShellLayout, ShellSystems, Side, UiCommand};
 use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;
@@ -283,7 +283,6 @@ pub fn on_inspector_button(
 
 /// The world's name, its source (the server) and the step size; Reset
 /// needs a live world.
-#[allow(clippy::type_complexity)]
 pub fn inspector_texts(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
@@ -329,5 +328,6 @@ pub fn inspector_texts(
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_observer(on_inspector_button);
+    app.add_systems(Update, inspector_texts.in_set(ShellSystems::Readouts))
+        .add_observer(on_inspector_button);
 }

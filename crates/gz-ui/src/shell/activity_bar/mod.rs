@@ -3,13 +3,14 @@
 //! opens the panel in the sidebar's primary slot, Shift+click in the
 //! secondary; clicking the active button collapses the sidebar.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use super::regions::{region, Region};
-use super::{Panel, ShellLayout, UiCommand};
+use super::{Panel, ShellLayout, ShellSystems, UiCommand};
 use crate::assets::icons::IconId;
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
@@ -120,23 +121,14 @@ pub fn on_activity(
     }
 }
 
-/// Active state per §3.2's table, and the badges.
-#[allow(clippy::type_complexity)]
-pub fn activity_states(
+/// Active state per §3.2's table: a button is active while its panel is
+/// in either slot, and pressed to AccessKit.
+pub fn activity_active(
     layout: Res<ShellLayout>,
-    badges: Res<ActivityBadges>,
-    mut buttons: Query<(
-        Entity,
-        &ActivityFor,
-        Has<Active>,
-        &Children,
-        &mut bevy::a11y::AccessibilityNode,
-    )>,
-    mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
-    mut texts: Query<&mut Text>,
+    mut buttons: Query<(Entity, &ActivityFor, Has<Active>, &mut AccessibilityNode)>,
     mut commands: Commands,
 ) {
-    for (e, a, active, children, mut access) in &mut buttons {
+    for (e, a, active, mut access) in &mut buttons {
         let want = layout.is_active(a.0);
         if want != active {
             if want {
@@ -155,6 +147,17 @@ pub fn activity_states(
         if access.toggled() != Some(toggled) {
             access.set_toggled(toggled);
         }
+    }
+}
+
+/// The badges show their counts and hide at zero (§3.2).
+pub fn activity_badges(
+    badges: Res<ActivityBadges>,
+    buttons: Query<(&ActivityFor, &Children)>,
+    mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
+    mut texts: Query<&mut Text>,
+) {
+    for (a, children) in &buttons {
         let badge = badges.badge(a.0);
         for &c in children {
             let Ok((mut node, mut fill, kids)) = badge_nodes.get_mut(c) else {
@@ -175,5 +178,9 @@ pub fn activity_states(
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<ActivityBadges>()
+        .add_systems(
+            Update,
+            (activity_active, activity_badges).in_set(ShellSystems::Readouts),
+        )
         .add_observer(on_activity);
 }

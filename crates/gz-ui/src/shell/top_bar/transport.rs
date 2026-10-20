@@ -10,16 +10,17 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::connection::{GzCommand, GzStatus};
 use gz_bevy::view::input::InputMap;
 
-use super::{TopText, BAR_SEPARATOR_H};
+use super::BAR_SEPARATOR_H;
 use crate::assets::fonts::text;
 use crate::assets::icons::{Icon, IconId};
 use crate::shell::connection::{CurrentPhase, Phase};
 use crate::shell::format;
-use crate::theme::{ColorRole, Theme, TypeStyle, SPACE};
+use crate::theme::{ColorRole, Fill, Theme, TypeStyle, SPACE};
 use crate::widgets::button::{text_button_parts, TextButton};
 use crate::widgets::chip::dot;
 use crate::widgets::layout::{row, separator, Orientation};
 use crate::widgets::menu::{menu, menu_item, MenuSide};
+use crate::widgets::text::set_text;
 use crate::widgets::{bar_button, button_group, Tooltip};
 
 /// Iterations per Step click (§3.1 "1 step ▾").
@@ -47,6 +48,14 @@ pub struct StepsOption(pub u32);
 /// The steps trigger.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct StepsTrigger;
+
+/// The sim clock's text.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct SimClock;
+
+/// The RTF readout's text.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct RtfText;
 
 /// The RTF status dot.
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -128,7 +137,7 @@ pub(super) fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
             .with_children(|r| {
                 r.spawn((
                     text(TypeStyle::CLOCK, ColorRole::Text, format::clock(0.0)),
-                    TopText::Clock,
+                    SimClock,
                 ));
                 r.spawn((
                     RtfReadout,
@@ -140,7 +149,7 @@ pub(super) fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
                     r.spawn((dot(t.s.status_dot, ColorRole::Disabled), RtfDot));
                     r.spawn((
                         text(TypeStyle::MONO_SMALL, ColorRole::Text2, "RTF —"),
-                        TopText::Rtf,
+                        RtfText,
                     ));
                 });
             });
@@ -196,26 +205,18 @@ pub fn on_steps_option(
     }
 }
 
-/// Play/Pause shows `pause` while running, `play` while paused; the
-/// transport is disabled without a live world, and Step while running.
-#[allow(clippy::type_complexity)]
-pub fn transport_states(
+/// The transport is disabled without a live world, and Step while the
+/// sim runs.
+pub fn transport_enabled(
     status: Option<Res<GzStatus>>,
     phase: Res<CurrentPhase>,
-    mut buttons: Query<(
-        Entity,
-        &Transport,
-        &mut Tooltip,
-        &Children,
-        Has<InteractionDisabled>,
-    )>,
-    mut icons: Query<&mut Icon>,
+    buttons: Query<(Entity, &Transport, Has<InteractionDisabled>)>,
     mut commands: Commands,
 ) {
     let sim = status.and_then(|s| s.sim);
     let live = phase.0 == Phase::Live && sim.is_some();
     let running = sim.is_some_and(|s| !s.paused);
-    for (e, which, mut tip, children, disabled) in &mut buttons {
+    for (e, which, disabled) in &buttons {
         let enabled = match which {
             Transport::Step => live && !running,
             _ => live,
@@ -227,21 +228,86 @@ pub fn transport_states(
                 commands.entity(e).insert(InteractionDisabled);
             }
         }
-        if *which == Transport::PlayPause {
-            let (id, title) = if running {
-                (IconId::Pause, "Pause")
-            } else {
-                (IconId::Play, "Play")
-            };
-            if tip.title != title {
-                tip.title = title.into();
-            }
-            for &c in children {
-                if let Ok(mut icon) = icons.get_mut(c) {
-                    if icon.id != id {
-                        icon.id = id;
-                    }
+    }
+}
+
+/// Play/Pause shows `pause` (and says Pause) while running, `play` while
+/// paused.
+pub fn play_pause_look(
+    status: Option<Res<GzStatus>>,
+    mut buttons: Query<(&Transport, &mut Tooltip, &Children)>,
+    mut icons: Query<&mut Icon>,
+) {
+    let running = status.and_then(|s| s.sim).is_some_and(|s| !s.paused);
+    let (id, title) = if running {
+        (IconId::Pause, "Pause")
+    } else {
+        (IconId::Play, "Play")
+    };
+    for (which, mut tip, children) in &mut buttons {
+        if *which != Transport::PlayPause {
+            continue;
+        }
+        if tip.title != title {
+            tip.title = title.into();
+        }
+        for &c in children {
+            if let Ok(mut icon) = icons.get_mut(c) {
+                if icon.id != id {
+                    icon.id = id;
                 }
+            }
+        }
+    }
+}
+
+/// The sim clock (§3.1).
+pub fn clock_text(status: Option<Res<GzStatus>>, mut clocks: Query<&mut Text, With<SimClock>>) {
+    let sim = status.and_then(|s| s.sim);
+    let want = format::clock(sim.map_or(0.0, |s| s.sim_time));
+    for mut t in &mut clocks {
+        set_text(&mut t, &want);
+    }
+}
+
+/// The RTF readout (§3.1): its text, its dot's colour and its tooltip's
+/// stats.
+pub fn rtf_readout(
+    status: Option<Res<GzStatus>>,
+    mut texts: Query<&mut Text, With<RtfText>>,
+    mut dots: Query<&mut Fill, With<RtfDot>>,
+    mut readouts: Query<&mut Tooltip, With<RtfReadout>>,
+) {
+    let sim = status.and_then(|s| s.sim);
+    let (rtf, role) = format::rtf(sim.as_ref());
+    for mut t in &mut texts {
+        set_text(&mut t, &rtf);
+    }
+    for mut fill in &mut dots {
+        fill.set_if_neq(Fill(role));
+    }
+    let detail = format::rtf_detail(sim.as_ref());
+    for mut tip in &mut readouts {
+        if tip.detail.as_deref() != Some(detail.as_str()) {
+            tip.detail = Some(detail.clone());
+        }
+    }
+}
+
+/// The steps trigger says the steps per click ("10 steps").
+pub fn steps_label_text(
+    steps: Res<StepsPerClick>,
+    triggers: Query<&Children, With<StepsTrigger>>,
+    mut labels: Query<&mut Text>,
+) {
+    if !steps.is_changed() {
+        return;
+    }
+    let label = steps_label(steps.0);
+    for children in &triggers {
+        for &c in children {
+            if let Ok(mut t) = labels.get_mut(c) {
+                set_text(&mut t, &label);
             }
         }
     }

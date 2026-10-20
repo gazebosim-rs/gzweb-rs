@@ -3,6 +3,7 @@
 //! the ground point under the cursor.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gz_bevy::camera::MainCamera;
@@ -29,37 +30,54 @@ pub struct ConnectionDot;
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CursorReadout(pub Option<[f32; 2]>);
 
-/// Every item's text and the connection dot.
-#[allow(clippy::too_many_arguments)]
-pub fn status_texts(
-    status: Option<Res<GzStatus>>,
-    phase: Res<CurrentPhase>,
-    tool: Res<Tool>,
-    cursor: Res<CursorReadout>,
-    diagnostics: Option<Res<DiagnosticsStore>>,
-    mut texts: Query<(&StatusText, &mut Text)>,
-    mut dots: Query<&mut Fill, With<ConnectionDot>>,
-) {
-    let status = status.as_deref();
-    let sim = status.and_then(|s| s.sim);
-    let fps = diagnostics
-        .as_ref()
-        .and_then(|d| d.get(&FrameTimeDiagnosticsPlugin::FPS))
-        .and_then(|d| d.smoothed());
-    for (which, mut t) in &mut texts {
-        let want = match which.0 {
+/// What the status bar's texts are read from.
+#[derive(SystemParam)]
+pub struct StatusSources<'w> {
+    status: Option<Res<'w, GzStatus>>,
+    tool: Res<'w, Tool>,
+    cursor: Res<'w, CursorReadout>,
+    diagnostics: Option<Res<'w, DiagnosticsStore>>,
+}
+
+impl StatusSources<'_> {
+    /// The text `item` shows now, if it has one.
+    pub fn text(&self, item: StatusItem) -> Option<String> {
+        let status = self.status.as_deref();
+        let sim = status.and_then(|s| s.sim);
+        Some(match item {
             StatusItem::Connection => status.map_or_else(String::new, |s| format::address(&s.url)),
             StatusItem::Physics => format::physics(None, sim.map(|s| s.step_size)),
-            StatusItem::Fps => format::fps(fps),
+            StatusItem::Fps => format::fps(
+                self.diagnostics
+                    .as_ref()
+                    .and_then(|d| d.get(&FrameTimeDiagnosticsPlugin::FPS))
+                    .and_then(|d| d.smoothed()),
+            ),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
-            StatusItem::Hint => tool.hint().into(),
+            StatusItem::Hint => self.tool.hint().into(),
             StatusItem::Selection => "sel: —".into(),
-            StatusItem::Cursor => format::cursor(cursor.0),
-            StatusItem::Message | StatusItem::Workspace => continue,
-        };
-        set_text(&mut t, &want);
+            StatusItem::Cursor => format::cursor(self.cursor.0),
+            StatusItem::Message | StatusItem::Workspace => return None,
+        })
     }
-    let role = dot_role(phase.0, status);
+}
+
+/// Every item's text.
+pub fn status_texts(sources: StatusSources, mut texts: Query<(&StatusText, &mut Text)>) {
+    for (which, mut t) in &mut texts {
+        if let Some(want) = sources.text(which.0) {
+            set_text(&mut t, &want);
+        }
+    }
+}
+
+/// The connection dot (§3.6 item 1).
+pub fn connection_dot(
+    status: Option<Res<GzStatus>>,
+    phase: Res<CurrentPhase>,
+    mut dots: Query<&mut Fill, With<ConnectionDot>>,
+) {
+    let role = dot_role(phase.0, status.as_deref());
     for mut fill in &mut dots {
         fill.set_if_neq(Fill(role));
     }

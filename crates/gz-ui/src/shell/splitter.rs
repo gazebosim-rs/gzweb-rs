@@ -11,6 +11,7 @@ use bevy::window::SystemCursorIcon;
 use super::commands::UiCommand;
 use super::layout::{ShellLayout, Side};
 use super::regions::Region;
+use super::ShellSystems;
 use crate::theme::{border, ColorRole, Stroke, Theme};
 
 /// A splitter between a side panel and the viewport area (§2.1): a 6 px
@@ -129,7 +130,8 @@ pub fn splitter_strokes(
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_observer(on_splitter_drag_start)
+    app.add_systems(Update, splitter_strokes.in_set(ShellSystems::Readouts))
+        .add_observer(on_splitter_drag_start)
         .add_observer(on_splitter_drag)
         .add_observer(on_splitter_drag_end)
         .add_observer(on_splitter_click);

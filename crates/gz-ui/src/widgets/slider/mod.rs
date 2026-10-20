@@ -261,7 +261,6 @@ pub(crate) fn on_slider_vertical_keys(
 }
 
 /// Moves the fill and thumb, and updates the read-out, when a value changes.
-#[allow(clippy::type_complexity)]
 pub(crate) fn slider_visuals_system(
     sliders: Query<(Entity, &SliderValue, &SliderRange, &ChildOf), Changed<SliderValue>>,
     children: Query<&Children>,
