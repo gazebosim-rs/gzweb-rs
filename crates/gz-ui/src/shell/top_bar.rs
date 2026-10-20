@@ -1,7 +1,9 @@
 //! The top bar (spec §3.1): logo, world menu button, tools, transport
 //! with the sim clock and RTF, and the search trigger, with two flexible
 //! spacers keeping the transport centred between the left group and the
-//! search.
+//! search. The tool and transport groups have no container: their buttons
+//! sit on the bar's `surface` with the activity buttons' look, Play/Pause
+//! included (DECISIONS.md D-48).
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
@@ -24,8 +26,7 @@ use crate::widgets::button::{text_button_parts, TextButton, ICON_BUTTON_RADIUS};
 use crate::widgets::chip::dot;
 use crate::widgets::menu::{menu, menu_item, shortcut_label, MenuSide};
 use crate::widgets::{
-    clickable, icon_button, primary_button, rounded, segmented_group, spacer, tool_button,
-    IconButtonSize, Tooltip,
+    bar_button, bar_tool_button, button_group, clickable, rounded, spacer, Tooltip,
 };
 
 /// A tool button's tool.
@@ -227,28 +228,18 @@ fn transport_group(theme: &Theme, map: &InputMap) -> impl Bundle {
     let t = theme.clone();
     let map = map.clone();
     (
-        segmented_group("Simulation", false, true),
+        button_group("Simulation", false),
         Children::spawn(SpawnWith(move |g: &mut ChildSpawner| {
             g.spawn((
-                icon_button(
-                    &t,
-                    IconId::Reset,
-                    IconButtonSize::Regular,
-                    tip(&map, "sim.reset", "Reset world"),
-                ),
+                bar_button(&t, IconId::Reset, tip(&map, "sim.reset", "Reset world")),
                 Transport::Reset,
             ));
             g.spawn((
-                primary_button(&t, IconId::Play, tip(&map, "sim.play_pause", "Play")),
+                bar_button(&t, IconId::Play, tip(&map, "sim.play_pause", "Play")),
                 Transport::PlayPause,
             ));
             g.spawn((
-                icon_button(
-                    &t,
-                    IconId::Step,
-                    IconButtonSize::Regular,
-                    tip(&map, "sim.step", "Step"),
-                ),
+                bar_button(&t, IconId::Step, tip(&map, "sim.step", "Step")),
                 Transport::Step,
             ));
             g.spawn(steps_menu(&t));
@@ -317,7 +308,7 @@ pub fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
             b.spawn((logo(t.s.logo), pass_through()));
             b.spawn(world_button(&t));
             b.spawn(separator());
-            b.spawn(segmented_group("Tools", true, false))
+            b.spawn(button_group("Tools", true))
                 .with_children(|g| {
                     for tool in Tool::ALL {
                         let id = match tool {
@@ -327,7 +318,7 @@ pub fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
                             Tool::Rotate => IconId::Rotate,
                         };
                         g.spawn((
-                            tool_button(
+                            bar_tool_button(
                                 &t,
                                 id,
                                 tip(&map, tool.binding(), tool.name()),

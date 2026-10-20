@@ -780,3 +780,32 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   the same `UiScale` bug and divide by it now (D-41); `UiCommand::SetTheme`
   uses the one-argument `Theme::set_mode`; the text field's Enter handler
   runs on the input only and its focus look only when focus moves.
+
+## 2026-10-19: M2 owner changes
+
+- **Top bar** (D-48, spec 0.4 §3.1/§5.4): the tool and transport groups
+  have no container; their buttons (Play/Pause included, no `primary`
+  fill) use the activity buttons' look on the bar's `surface` (white in
+  light). A shell test switches theme by the Settings command both ways and
+  by the OS in System mode and checks the bar and every resting button.
+- **Tooltips** (D-49, §5.15): activity buttons' open to the right; any card
+  past an edge is shifted 8 px inside after the popover picks its side, its
+  arrow on the facing edge pointing at the trigger; titles don't wrap to the
+  trigger's width any more.
+- **Collapsed panels** (D-50, §2.1/§3.2/§3.3): a 24 px bar with a
+  chevron button ("Show sidebar · Ctrl+B", "Show inspector ·
+  Ctrl+Alt+I") restores the panel at its previous width; the bars count in
+  the floor maths and the view's placement; the collapsed panel's activity
+  button stays selected (and pressed to AccessKit), and clicking it
+  expands the sidebar.
+- **"System … has not run for N ticks"**: Bevy warns once a system's last
+  run is ~3.2 billion change ticks old. Probed headlessly (system
+  `get_last_run` after start-up): the only idle systems of ours are the
+  start-up ones (`init_layout`, `spawn_shell`); the rest are Bevy's
+  start-up systems and its run-condition-gated ones (hover maps, unused
+  asset events, dialogs). Nothing misses a change it needs, so gzweb's log
+  filter sets `bevy_ecs::system::system=error` (that module logs only this).
+- **Visual check** (release build against the `allmesh` world on
+  ws://localhost:9004; `target/shots/`): `full-light`, `full-dark`
+  (1440×900) and `w1024-light`, `w1024-dark` (1024×700, both panels
+  collapsed to their bars, Scene still selected).

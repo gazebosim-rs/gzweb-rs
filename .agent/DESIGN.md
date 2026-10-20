@@ -801,7 +801,9 @@ panels) take their children from the caller.
 - Tooltips: `TooltipTimer` (500 ms, at once within 300 ms of the last one
   closing, hidden by a press) spawns a floating card on the trigger with an
   8 px arrow that `orient_tooltip_arrows` points back at it after placement.
-  The shortcut is a Geist Mono span (D-46).
+  The shortcut is a Geist Mono span (D-46). `keep_tooltips_inside` shifts a
+  card still past an edge to 8 px inside after the popover picked its side;
+  text doesn't wrap (D-49).
 - NumberField: a wrapper around Bevy's `TextInput` (D-27). Enter and blur
   evaluate `widgets::expr` (`+ - * /`, parentheses up to 64 deep, `pi`, `%`,
   a unit per term into the field's unit, D-40) when the text was edited
@@ -854,7 +856,10 @@ banner), `connection` (phase), `format` (readouts).
   `drag_width` clamps a splitter drag to the side's limits and short of the
   floor; `split_after` keeps both slots ≥ 180 (DECISIONS.md D-30). Widths are
   UI logical pixels (window width / `UiScale`). `apply_layout` writes it to
-  the nodes (`Display::None` collapses, so nothing overlays the view).
+  the nodes (`Display::None` collapses, so nothing overlays the view). A
+  collapsed side shows its 24 px bar (`Region::SidebarBar`/`InspectorBar`)
+  with an `ExpandButton` (→ `UiCommand::Show`); `viewport_w` counts the
+  bars (D-50).
 - **`UiCommand`** messages carry every request (toggle sidebar/inspector,
   activity click with Shift, open in a slot, swap, close the secondary, set
   tool, set/toggle theme, reset a width); `apply_ui_commands` applies them.
@@ -869,17 +874,20 @@ banner), `connection` (phase), `format` (readouts).
   grip.
 - **Top bar** (§3.1): logo, world button (name, `.sdf` in `text_3`; no
   dirty dot yet), separator, tool radio group (`Tool` resource; buttons
-  follow it, keys set it) with Snap, two spacers around the transport
+  follow it, keys set it) with Snap, with no container and activity-style
+  buttons (`button_group`, `bar_tool_button`, `bar_button`; D-48), two spacers around the transport
   (Reset → `GzCommand::Reset`; Play/Pause from the stats; Step →
   `Step(StepsPerClick)` when paused, disabled while running; the steps
   menu: 1, 10, 100), clock, RTF dot and text (tooltip: real and sim time,
   iterations, step), and the search trigger (shrinks first on narrow
   windows). Transport needs a live world.
 - **Activity bar** (§3.2): `ActivityFor(Panel)` buttons in order, Settings
-  last (switches the theme for now, D-35); `Active` while the panel is in
-  either slot of an open sidebar; `ActivityBadges` drives the Plot and
+  last (switches the theme for now, D-35); `Active` (and AccessKit
+  `Toggled::True`) while the panel is in either slot, the sidebar open or
+  collapsed (D-50); `ActivityBadges` drives the Plot and
   Console badges (hidden at zero). Click: inactive → primary slot; active →
-  collapse; Shift → secondary; a panel in the other slot swaps there.
+  collapse, or expand if collapsed; Shift → secondary; a panel in the other
+  slot swaps there. Their tooltips open right (D-49).
 - **Sidebar slots** (§3.3, §3.3.2): `SlotView(Slot)` nodes, rebuilt by
   `rebuild_slots` when their panel, state or count changes: section header
   (title, Scene's entity count when live; Swap with two slots, collapse on

@@ -222,9 +222,10 @@ fn narrow_windows_start_with_panels_collapsed() {
         let i = region(&mut app, Region::Inspector);
         assert_eq!(displayed(&app, s), sidebar, "{w}");
         assert_eq!(displayed(&app, i), inspector, "{w}");
-        // Collapsed panels take no room: the viewport fills the rest.
+        // Collapsed panels leave only their 24 px bar: the viewport fills
+        // the rest.
         let v = region(&mut app, Region::ViewportArea);
-        let open = |o: bool| if o { 300.0 } else { 0.0 };
+        let open = |o: bool| if o { 300.0 } else { 24.0 };
         let want = w as f32 - 56.0 - open(sidebar) - open(inspector);
         assert_eq!(rect(&app, v).1.x, want, "{w}");
         // The status bar drops items below 1280 and 1100.
@@ -243,6 +244,98 @@ fn narrow_windows_start_with_panels_collapsed() {
             assert_eq!(displayed(&app, e), shown, "{w} {item:?}");
         }
     }
+}
+
+/// A collapsed side panel leaves a 24 px bar with a button that brings it
+/// back at its previous width (DECISIONS.md D-50).
+#[test]
+fn collapsed_panels_leave_a_bar_that_expands_them() {
+    use crate::shell::ExpandButton;
+    use crate::widgets::{Tooltip, TooltipSide};
+    // 1024 wide: both start collapsed.
+    let mut app = shell_app((1024, 700), 1.0);
+    frames(&mut app, 3);
+    let l = layout(&app);
+    assert!(!l.sidebar_open && !l.inspector_open);
+    let bars = [
+        (Side::Sidebar, Region::SidebarBar),
+        (Side::Inspector, Region::InspectorBar),
+    ];
+    for (_, r) in bars {
+        let bar = region(&mut app, r);
+        assert!(displayed(&app, bar));
+        assert_eq!(rect(&app, bar).1.x, 24.0);
+    }
+    // The bars sit beside the view: activity bar, bar, view, bar.
+    let mut rect_of = |r| {
+        let e = region(&mut app, r);
+        rect(&app, e)
+    };
+    let (s, v, i) = (
+        rect_of(Region::SidebarBar),
+        rect_of(Region::ViewportArea),
+        rect_of(Region::InspectorBar),
+    );
+    assert_eq!(s.0.x, 56.0);
+    assert_eq!(v.0.x, 80.0);
+    assert_eq!(v.1.x, 1024.0 - 56.0 - 48.0);
+    assert_eq!(i.0.x, 1000.0);
+    assert_eq!(layout(&app).viewport_w(), v.1.x);
+    let world = app.world_mut();
+    let buttons: Vec<(Entity, Side, Tooltip)> = world
+        .query::<(Entity, &ExpandButton, &Tooltip)>()
+        .iter(world)
+        .map(|(e, b, t)| (e, b.0, t.clone()))
+        .collect();
+    assert_eq!(buttons.len(), 2);
+    let find = |side| buttons.iter().find(|b| b.1 == side).unwrap().clone();
+    let (sidebar_button, _, tip) = find(Side::Sidebar);
+    assert_eq!(tip.title, "Show sidebar");
+    assert_eq!(tip.shortcut.as_deref(), Some("Ctrl+B"));
+    assert_eq!(tip.side, TooltipSide::Right);
+    assert_eq!(
+        app.world()
+            .get::<bevy::a11y::AccessibilityNode>(sidebar_button)
+            .unwrap()
+            .label(),
+        Some("Show sidebar")
+    );
+    let (inspector_button, _, tip) = find(Side::Inspector);
+    assert_eq!(tip.title, "Show inspector");
+    assert_eq!(tip.side, TooltipSide::Left);
+    // Scene stays selected while collapsed.
+    let world = app.world_mut();
+    let scene = world
+        .query::<(Entity, &ActivityFor)>()
+        .iter(world)
+        .find(|(_, a)| a.0 == Panel::Scene)
+        .unwrap()
+        .0;
+    assert!(app.world().get::<Active>(scene).is_some());
+    // Widen the window, narrow the sidebar, collapse it, then expand it
+    // from its bar: back at 260, the bar gone.
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    app.world_mut().resource_mut::<ShellLayout>().sidebar_w = 260.0;
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    let bar = region(&mut app, Region::SidebarBar);
+    assert!(displayed(&app, bar));
+    let world = app.world_mut();
+    let button = world
+        .query::<(Entity, &ExpandButton)>()
+        .iter(world)
+        .find(|(_, b)| b.0 == Side::Sidebar)
+        .unwrap()
+        .0;
+    app.world_mut().trigger(Activate { entity: button });
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert!(l.sidebar_open && l.sidebar_w == 260.0);
+    assert!(!displayed(&app, bar));
+    let sidebar = region(&mut app, Region::Sidebar);
+    assert_eq!(rect(&app, sidebar).1.x, 260.0);
+    let _ = inspector_button;
 }
 
 #[test]
@@ -560,12 +653,13 @@ fn the_3d_view_follows_the_view_node_at_any_scale() {
         };
         assert!((p.aspect_ratio - 784.0 / 828.0).abs() < 1e-3, "{scale}");
         // Collapsing the inspector widens it at once (one update: the
-        // layout and the texture follow in the same frame).
+        // layout and the texture follow in the same frame), less the
+        // collapsed inspector's bar.
         app.world_mut().write_message(UiCommand::ToggleInspector);
         app.update();
         let (r, size, _) = placed(&mut app);
-        assert_eq!(r.width(), 1084.0, "{scale}");
-        assert_eq!(size.x, (1084.0 * scale).round() as u32, "{scale}");
+        assert_eq!(r.width(), 1060.0, "{scale}");
+        assert_eq!(size.x, (1060.0 * scale).round() as u32, "{scale}");
     }
     // UI scale 1.25: everything is a quarter bigger, and the layout fits
     // the 1152 logical pixels that leaves (so the inspector starts
@@ -577,9 +671,11 @@ fn the_3d_view_follows_the_view_node_at_any_scale() {
     let l = layout(&app);
     assert!(l.sidebar_open && !l.inspector_open);
     let (r, size, _) = placed(&mut app);
+    // The collapsed inspector's 24 px bar is at the right edge.
     let x = (56.0 + 300.0) * 1.25;
-    assert_eq!(r, Rect::new(x, 44.0 * 1.25, 1440.0, 900.0 - 28.0 * 1.25));
-    assert_eq!(size, UVec2::new(1440 - 445, 900 - 55 - 35));
+    let right = 1440.0 - 24.0 * 1.25;
+    assert_eq!(r, Rect::new(x, 44.0 * 1.25, right, 900.0 - 28.0 * 1.25));
+    assert_eq!(size, UVec2::new(1410 - 445, 900 - 55 - 35));
 }
 
 #[test]
@@ -641,11 +737,17 @@ fn camera_input_goes_to_the_view_only_when_the_pointer_is_over_it() {
 fn activity_buttons_open_collapse_and_use_the_second_slot() {
     let mut l = ShellLayout::for_width(1440.0);
     assert!(l.is_active(Panel::Scene));
-    // The active one collapses the sidebar, and comes back.
+    // The active one collapses the sidebar and stays selected; another
+    // click brings it back.
     l.activity_click(Panel::Scene, false);
-    assert!(!l.sidebar_open && !l.is_active(Panel::Scene));
+    assert!(!l.sidebar_open && l.is_active(Panel::Scene));
     l.activity_click(Panel::Scene, false);
     assert!(l.sidebar_open && l.is_active(Panel::Scene));
+    // Collapsed, a different panel expands the sidebar with that panel.
+    l.activity_click(Panel::Scene, false);
+    l.activity_click(Panel::Assets, false);
+    assert!(l.sidebar_open && l.primary == Some(Panel::Assets));
+    l.activity_click(Panel::Scene, false);
     // An inactive one replaces the primary.
     l.activity_click(Panel::Topics, false);
     assert_eq!((l.primary, l.secondary), (Some(Panel::Topics), None));
@@ -728,13 +830,28 @@ fn activity_buttons_open_collapse_and_use_the_second_slot() {
     let (p, s) = (h(Slot::Primary), h(Slot::Secondary));
     assert!((p + s + 6.0 - 828.0).abs() < 0.5, "{p} {s}");
     assert!((p / (p + s) - 0.55).abs() < 0.01, "{p} {s}");
-    // Clicking the active one collapses the sidebar.
+    // Clicking the active one collapses the sidebar; both stay selected,
+    // and pressed to AccessKit.
     app.world_mut().trigger(Activate {
         entity: button(Panel::Topics),
     });
     frames(&mut app, 2);
     assert!(!layout(&app).sidebar_open);
-    assert!(!active(&app, Panel::Topics) && !active(&app, Panel::Console));
+    assert!(active(&app, Panel::Topics) && active(&app, Panel::Console));
+    let toggled = |app: &App, p: Panel| {
+        app.world()
+            .get::<bevy::a11y::AccessibilityNode>(button(p))
+            .unwrap()
+            .toggled()
+    };
+    assert_eq!(toggled(&app, Panel::Topics), Some(accesskit::Toggled::True));
+    assert_eq!(toggled(&app, Panel::Scene), Some(accesskit::Toggled::False));
+    // Clicked again, it expands.
+    app.world_mut().trigger(Activate {
+        entity: button(Panel::Topics),
+    });
+    frames(&mut app, 2);
+    assert!(layout(&app).sidebar_open);
     // Badges show their counts and hide at zero.
     app.world_mut().resource_mut::<ActivityBadges>().plot = 2;
     frames(&mut app, 1);
@@ -1174,6 +1291,83 @@ fn the_theme_command_recolours_the_shell() {
     app.world_mut().write_message(UiCommand::ToggleTheme);
     frames(&mut app, 2);
     assert_eq!(app.world().get::<BackgroundColor>(top).unwrap().0, light);
+}
+
+/// The top bar is `surface` (white in light) in every theme and after
+/// every switch, with its tool and transport buttons transparent on it at
+/// rest (no group containers; DECISIONS.md D-48) and the current tool in
+/// the activity button's active look.
+#[test]
+fn the_top_bar_buttons_sit_on_surface() {
+    use crate::visuals::Visuals;
+    use crate::widgets::segmented::SegmentedGroup;
+    use bevy::ui::Checked;
+    use bevy::window::{PrimaryWindow, WindowTheme, WindowThemeChanged};
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let check = |app: &mut App, dark: bool| {
+        let theme = app.world().resource::<Theme>().clone();
+        assert_eq!(theme.is_dark, dark);
+        let top = region(app, Region::TopBar);
+        let w = app.world();
+        let surface = theme.color(ColorRole::Surface);
+        assert_eq!(w.get::<BackgroundColor>(top).unwrap().0, surface);
+        if !dark {
+            assert_eq!(crate::gallery::hex(surface), format!("{}FFFFFF", '#'));
+        }
+        let mut buttons = 0;
+        for e in descendants(w, top) {
+            let tool = w.get::<ToolChoice>(e).is_some();
+            let transport = w.get::<Transport>(e).is_some();
+            let group = w.get::<SegmentedGroup>(e).is_some();
+            if !(tool || transport || group) {
+                continue;
+            }
+            let bg = w.get::<BackgroundColor>(e).unwrap().0;
+            let border = w.get::<BorderColor>(e).map_or(Color::NONE, |b| b.top);
+            if w.get::<Checked>(e).is_some() {
+                // The current tool: accent_soft with the accent_ring.
+                assert_eq!(bg, theme.color(ColorRole::AccentSoft));
+                assert_eq!(border, theme.color(ColorRole::AccentRing));
+            } else {
+                assert_eq!(bg.alpha(), 0.0, "{e} rests transparent");
+                assert_eq!(border.alpha(), 0.0, "{e} has no border");
+            }
+            if tool || transport {
+                assert_eq!(
+                    *w.get::<Visuals>(e).unwrap(),
+                    crate::widgets::activity::activity_visuals()
+                );
+                buttons += 1;
+            }
+        }
+        assert_eq!(buttons, Tool::ALL.len() + 3);
+    };
+    check(&mut app, false);
+    // The Settings command, both ways.
+    app.world_mut()
+        .write_message(UiCommand::SetTheme(ThemeMode::Dark));
+    frames(&mut app, 2);
+    check(&mut app, true);
+    app.world_mut()
+        .write_message(UiCommand::SetTheme(ThemeMode::Light));
+    frames(&mut app, 2);
+    check(&mut app, false);
+    // System, following the OS.
+    let window = {
+        let w = app.world_mut();
+        w.query_filtered::<Entity, With<PrimaryWindow>>()
+            .single(w)
+            .unwrap()
+    };
+    app.world_mut()
+        .write_message(UiCommand::SetTheme(ThemeMode::System));
+    for (os, dark) in [(WindowTheme::Dark, true), (WindowTheme::Light, false)] {
+        app.world_mut()
+            .write_message(WindowThemeChanged { window, theme: os });
+        frames(&mut app, 3);
+        check(&mut app, dark);
+    }
 }
 
 #[test]

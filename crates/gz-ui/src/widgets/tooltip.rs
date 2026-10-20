@@ -2,15 +2,19 @@
 //! tooltip closed less than 300 ms ago. Radius 7, padding 8 10, Geist 12:
 //! a 600-weight title in `tooltip_text` and an optional second line in
 //! `tooltip_text_2`, its shortcut in Geist Mono (Geist lacks key caps such
-//! as ⏎ and ⌫; DECISIONS.md D-26). Placed below its trigger (above in the status bar,
-//! left of the rail) with an 8 px gap and an 8 px arrow; flips to stay on
-//! screen.
+//! as ⏎ and ⌫; DECISIONS.md D-26). Placed below its trigger (above in the
+//! status bar, left of the rail, right of the activity bar) with an 8 px
+//! gap and an 8 px arrow pointing at the trigger. It never leaves the
+//! window: it flips to the other side when its own doesn't fit, and is
+//! shifted to stay [`GAP`] inside the window's edges (DECISIONS.md D-49).
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::picking::hover::Hovered;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
-use bevy::ui::{OverrideClip, Pressed, UiGlobalTransform};
+use bevy::ui::{
+    ComputedNode, ComputedUiRenderTargetInfo, OverrideClip, Pressed, UiGlobalTransform, Val2,
+};
 use bevy::ui_widgets::popover::{Popover, PopoverAlign, PopoverPlacement, PopoverSide};
 
 use super::rounded;
@@ -45,6 +49,8 @@ pub enum TooltipSide {
     Above,
     /// Viewport rail buttons.
     Left,
+    /// Activity bar buttons, at the window's left edge.
+    Right,
 }
 
 impl TooltipSide {
@@ -53,6 +59,7 @@ impl TooltipSide {
             TooltipSide::Below => (PopoverSide::Bottom, PopoverAlign::Center),
             TooltipSide::Above => (PopoverSide::Top, PopoverAlign::Center),
             TooltipSide::Left => (PopoverSide::Left, PopoverAlign::Center),
+            TooltipSide::Right => (PopoverSide::Right, PopoverAlign::Center),
         };
         Popover {
             positions: vec![
@@ -164,8 +171,11 @@ pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
                     Pickable::IGNORE,
                 ));
             }
+            // One line each: a floating card's text would otherwise wrap
+            // to its trigger's width (the card is the trigger's child).
             p.spawn((
                 text(TITLE_TYPE, ColorRole::TooltipText, title),
+                TextLayout::no_wrap(),
                 Pickable::IGNORE,
             ));
             // The second line: "detail · keys", the keys a mono span.
@@ -177,6 +187,7 @@ pub fn tooltip_card(theme: &Theme, tip: &Tooltip, live: bool) -> impl Bundle {
                 };
                 let mut line = p.spawn((
                     text(DETAIL_TYPE, ColorRole::TooltipText2, lead),
+                    TextLayout::no_wrap(),
                     Pickable::IGNORE,
                 ));
                 if let Some(keys) = keys {
@@ -326,6 +337,11 @@ fn arrow_node(side: TooltipSide) -> (Node, UiTransform) {
             node.top = Val::Percent(50.0);
             node.margin.top = px(half);
         }
+        TooltipSide::Right => {
+            node.left = px(half);
+            node.top = Val::Percent(50.0);
+            node.margin.top = px(half);
+        }
     }
     (
         node,
@@ -336,45 +352,123 @@ fn arrow_node(side: TooltipSide) -> (Node, UiTransform) {
     )
 }
 
-/// Puts each arrow on the side that faces the trigger after the popover
-/// placed (and maybe flipped) its card.
-pub(crate) fn orient_tooltip_arrows(
-    cards: Query<(&UiGlobalTransform, &ChildOf, &Children), With<TooltipCard>>,
-    triggers: Query<&UiGlobalTransform, Without<TooltipCard>>,
-    mut arrows: Query<&mut Node, With<TooltipArrow>>,
+/// A node's rect in logical pixels.
+fn logical_rect(node: &ComputedNode, transform: &UiGlobalTransform) -> Rect {
+    let k = node.inverse_scale_factor();
+    Rect::from_center_size(transform.translation * k, node.size() * k)
+}
+
+/// How far `rect` must move to lie inside `bounds` (to its top-left when
+/// it's larger).
+pub fn shift_inside(rect: Rect, bounds: Rect) -> Vec2 {
+    let axis = |min: f32, max: f32, lo: f32, hi: f32| {
+        if min < lo || max - min > hi - lo {
+            lo - min
+        } else if max > hi {
+            hi - max
+        } else {
+            0.0
+        }
+    };
+    Vec2::new(
+        axis(rect.min.x, rect.max.x, bounds.min.x, bounds.max.x),
+        axis(rect.min.y, rect.max.y, bounds.min.y, bounds.max.y),
+    )
+}
+
+/// Keeps every tooltip card [`GAP`] inside the window: after Bevy's
+/// popover has picked the side (flipping if needed), a card still past an
+/// edge (centred on a trigger near it) is shifted in, the same way the
+/// popover moves it, so the frame being drawn already shows it inside.
+#[allow(clippy::type_complexity)]
+pub(crate) fn keep_tooltips_inside(
+    mut cards: Query<
+        (
+            Entity,
+            &ComputedNode,
+            &ComputedUiRenderTargetInfo,
+            &mut UiTransform,
+            &mut UiGlobalTransform,
+        ),
+        With<TooltipCard>,
+    >,
+    children: Query<&Children>,
+    mut transforms: Query<&mut UiGlobalTransform, Without<TooltipCard>>,
 ) {
-    for (card, parent, children) in &cards {
-        let Ok(trigger) = triggers.get(parent.parent()) else {
+    for (card, node, target, mut transform, mut global) in &mut cards {
+        let window = Rect::from_corners(Vec2::ZERO, target.logical_size()).inflate(-GAP);
+        let shift = shift_inside(logical_rect(node, &global), window);
+        if shift == Vec2::ZERO {
+            continue;
+        }
+        let (Val::Px(x), Val::Px(y)) = (transform.translation.x, transform.translation.y) else {
             continue;
         };
-        let d = trigger.translation - card.translation;
+        transform.translation = Val2::px(x + shift.x, y + shift.y);
+        let physical = shift * target.scale_factor();
+        let mut affine = global.affine();
+        affine.translation += physical;
+        *global = affine.into();
+        let mut stack: Vec<Entity> = children.get(card).into_iter().flatten().copied().collect();
+        while let Some(e) = stack.pop() {
+            if let Ok(mut t) = transforms.get_mut(e) {
+                let mut affine = t.affine();
+                affine.translation += physical;
+                *t = affine.into();
+            }
+            stack.extend(children.get(e).into_iter().flatten());
+        }
+    }
+}
+
+/// Puts each arrow on the card's edge that faces the trigger, after the
+/// popover placed (and maybe flipped) the card and it was kept inside the
+/// window, and slides it along that edge to point at the trigger's centre
+/// (clear of the rounded corners).
+pub(crate) fn orient_tooltip_arrows(
+    cards: Query<(&ComputedNode, &UiGlobalTransform, &ChildOf, &Children), With<TooltipCard>>,
+    triggers: Query<(&ComputedNode, &UiGlobalTransform), Without<TooltipCard>>,
+    mut arrows: Query<&mut Node, With<TooltipArrow>>,
+) {
+    for (card_node, card_transform, parent, children) in &cards {
+        let Ok((trigger_node, trigger_transform)) = triggers.get(parent.parent()) else {
+            continue;
+        };
+        let card = logical_rect(card_node, card_transform);
+        let trigger = logical_rect(trigger_node, trigger_transform);
+        let half = px(-GAP / 2.0);
+        // Offsets are from inside the card's 1px border.
+        let along = |centre: f32, min: f32, len: f32| {
+            let lo = RADIUS;
+            let hi = (len - 2.0 * border::HAIRLINE - RADIUS - GAP).max(lo);
+            px((centre - min - border::HAIRLINE - GAP / 2.0).clamp(lo, hi))
+        };
         for child in children.iter() {
             let Ok(mut node) = arrows.get_mut(child) else {
                 continue;
             };
-            let half = px(-GAP / 2.0);
             let mut want = node.clone();
             want.top = Val::Auto;
             want.bottom = Val::Auto;
             want.left = Val::Auto;
             want.right = Val::Auto;
             want.margin = UiRect::ZERO;
-            if d.x.abs() > d.y.abs() {
-                if d.x > 0.0 {
-                    want.right = half;
-                } else {
-                    want.left = half;
-                }
-                want.top = Val::Percent(50.0);
-                want.margin.top = half;
-            } else {
-                if d.y < 0.0 {
+            if card.min.y >= trigger.max.y - 0.5 || card.max.y <= trigger.min.y + 0.5 {
+                // Below or above: the arrow on the top or bottom edge.
+                if card.min.y >= trigger.max.y - 0.5 {
                     want.top = half;
                 } else {
                     want.bottom = half;
                 }
-                want.left = Val::Percent(50.0);
-                want.margin.left = half;
+                want.left = along(trigger.center().x, card.min.x, card.width());
+            } else {
+                // Beside it: the arrow on the left or right edge.
+                if card.min.x >= trigger.center().x {
+                    want.left = half;
+                } else {
+                    want.right = half;
+                }
+                want.top = along(trigger.center().y, card.min.y, card.height());
             }
             if *node != want {
                 *node = want;
@@ -404,6 +498,11 @@ pub(crate) fn build(app: &mut App) {
         )
         .add_systems(
             PostUpdate,
-            orient_tooltip_arrows.after(bevy::ui::UiSystems::PostLayout),
+            (
+                keep_tooltips_inside
+                    .after(bevy::ui::UiSystems::Layout)
+                    .before(bevy::ui::UiSystems::PostLayout),
+                orient_tooltip_arrows.after(bevy::ui::UiSystems::PostLayout),
+            ),
         );
 }

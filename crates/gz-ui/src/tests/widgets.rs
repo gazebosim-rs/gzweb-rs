@@ -888,3 +888,132 @@ fn text_fields_submit_once() {
         ["ws://localhost:9002".to_string()]
     );
 }
+
+/// A live tooltip card's rect and its arrow's node, a few frames after
+/// it was shown on `trigger`.
+fn shown_tooltip(app: &mut App, trigger: Entity, tip: Tooltip) -> (Rect, Rect, Node) {
+    use crate::widgets::tooltip::show_tooltip;
+    let theme = app.world().resource::<Theme>().clone();
+    let mut commands = app.world_mut().commands();
+    show_tooltip(&mut commands, &theme, trigger, &tip);
+    app.world_mut().flush();
+    frames(app, 4);
+    let w = app.world_mut();
+    let rect = |w: &World, e: Entity| {
+        let n = w.get::<ComputedNode>(e).unwrap();
+        let t = w.get::<UiGlobalTransform>(e).unwrap();
+        let k = n.inverse_scale_factor();
+        Rect::from_center_size(t.translation * k, n.size() * k)
+    };
+    let card = w
+        .query_filtered::<(Entity, &ChildOf), With<TooltipCard>>()
+        .iter(w)
+        .find(|(_, p)| p.parent() == trigger)
+        .unwrap()
+        .0;
+    let arrow = w
+        .get::<Children>(card)
+        .unwrap()
+        .iter()
+        .find(|c| w.get::<TooltipArrow>(*c).is_some())
+        .unwrap();
+    (
+        rect(w, card),
+        rect(w, trigger),
+        w.get::<Node>(arrow).unwrap().clone(),
+    )
+}
+
+/// Tooltips never leave the window: activity buttons (at the left edge)
+/// open theirs to the right; a centred tooltip on a trigger at the right
+/// edge shifts in to an 8 px margin, its arrow still under the trigger.
+#[test]
+fn tooltips_stay_inside_the_window() {
+    use crate::widgets::tooltip::{shift_inside, GAP};
+    let bounds = Rect::new(8.0, 8.0, 1432.0, 892.0);
+    assert_eq!(
+        shift_inside(Rect::new(-20.0, 10.0, 80.0, 40.0), bounds),
+        Vec2::new(28.0, 0.0)
+    );
+    assert_eq!(
+        shift_inside(Rect::new(1400.0, 880.0, 1500.0, 900.0), bounds),
+        Vec2::new(-68.0, -8.0)
+    );
+    assert_eq!(
+        shift_inside(Rect::new(10.0, 10.0, 20.0, 20.0), bounds),
+        Vec2::ZERO
+    );
+
+    let mut app = ui_app(ThemeMode::Light);
+    let t = Theme::default();
+    // An activity button at the window's left edge.
+    let at = |app: &mut App, node: Node| app.world_mut().spawn(node).id();
+    let left_slot = at(
+        &mut app,
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(6),
+            top: px(60),
+            ..default()
+        },
+    );
+    let activity = app
+        .world_mut()
+        .spawn((
+            activity_button(
+                &t,
+                IconId::ActivityScene,
+                Tooltip::new("Scene · long enough to clip"),
+                None,
+            ),
+            ChildOf(left_slot),
+        ))
+        .id();
+    // An icon button at the right edge with a tooltip below.
+    let right_slot = at(
+        &mut app,
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(30),
+            top: px(4),
+            ..default()
+        },
+    );
+    let right = app
+        .world_mut()
+        .spawn((
+            icon_button(
+                &t,
+                IconId::Settings,
+                IconButtonSize::Regular,
+                Tooltip::new("x"),
+            ),
+            ChildOf(right_slot),
+        ))
+        .id();
+    frames(&mut app, 2);
+    let tip = app.world().get::<Tooltip>(activity).unwrap().clone();
+    assert_eq!(tip.side, TooltipSide::Right);
+    let (card, button, arrow) = shown_tooltip(&mut app, activity, tip);
+    // (The popover measures from inside the button's 1px border.)
+    assert!(
+        card.min.x >= button.max.x + GAP - 1.5,
+        "{card:?} right of {button:?}"
+    );
+    // One line per row: the title doesn't wrap to the 44 px trigger.
+    assert!(card.height() < 40.0 && card.width() > 150.0, "{card:?}");
+    assert!(card.min.x >= GAP && card.min.y >= GAP && card.max.y <= 900.0 - GAP);
+    // The arrow is on the card's left edge.
+    assert_eq!(arrow.left, px(-GAP / 2.0));
+    let long =
+        Tooltip::new("Settings for the whole workbench").detail("Below, near the right edge");
+    let (card, button, arrow) = shown_tooltip(&mut app, right, long);
+    assert!(card.max.x <= 1440.0 - GAP + 0.5, "{card:?} inside");
+    assert!(card.min.y >= button.max.y + GAP - 1.5, "{card:?} below");
+    // Shifted left, the arrow still points at the trigger.
+    let Val::Px(left) = arrow.left else {
+        panic!("{:?}", arrow.left)
+    };
+    assert!((card.min.x + 1.0 + left + GAP / 2.0 - button.center().x).abs() < 0.5);
+    assert_eq!(arrow.top, px(-GAP / 2.0));
+}

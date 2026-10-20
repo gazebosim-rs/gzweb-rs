@@ -1,6 +1,8 @@
 # Gazebo UI — Design and Layout Spec
 
-Version 0.3 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+Version 0.4 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+
+Changes in 0.4 (owner decisions during the build; DECISIONS.md D-48 to D-50): the top bar's tool and transport groups have no container, their buttons look like activity buttons and Play/Pause is a plain icon button (§3.1, §5.4); tooltips open right of the activity bar and never leave the window (§5.15); a collapsed sidebar or inspector leaves a 24px bar with a button that expands it, and the activity button of the collapsed panel stays selected (§2.1, §3.2, §3.3).
 
 Changes in 0.3: decisions Q1–Q8 recorded in DECISIONS.md and folded in (second sidebar slot, Workspaces out of the activity bar, Delete behind more-actions, Space tap = play/pause, X = e-stop, in-place model editing, gz-transport native + websocket web).
 
@@ -19,7 +21,7 @@ Files in this folder:
 | `shortcuts.json` | Every keyboard binding, per platform, with scope | Source of truth for shortcuts; tooltips, menus, ⌘K and a CI conflict test read it |
 | `assets/ui/brand/` | Gazebo icon, light and dark variants | — |
 
-Visual references live on the design canvas "Gazebo UI — Rust + Bevy" (boards named `W2 — …`). Section headings below cite the board to compare against. If the canvas and this file disagree, this file wins. Known board drift: the viewport section of `W2 — Top bar, status bar, viewport controls` shows a superseded design (text dropdowns, bottom-left camera strip) and is obsolete; `W2 — Viewport rail` is current. Boards also predate the 0.2 token changes (hint text, accent text, axis text colors, icon fixes); tokens.json and icons.json win.
+Visual references live on the design canvas "Gazebo UI — Rust + Bevy" (boards named `W2 — …`). Section headings below cite the board to compare against. If the canvas and this file disagree, this file wins. Known board drift: the viewport section of `W2 — Top bar, status bar, viewport controls` shows a superseded design (text dropdowns, bottom-left camera strip) and is obsolete; `W2 — Viewport rail` is current. Boards also predate the 0.2 token changes (hint text, accent text, axis text colors, icon fixes); tokens.json and icons.json win. The 0.4 changes supersede the boards too: they show the top bar's tool and transport groups in `bg` containers with a filled Play/Pause, activity tooltips below their buttons, and collapsed panels with nothing left on screen.
 
 Words used precisely: **MUST** is required for acceptance. **SHOULD** is expected unless there is a logged reason. **MAY** is optional.
 
@@ -66,7 +68,9 @@ Board: `W2 — Main screen, split viewport` (light) and `W2 — Main screen, dar
 | Top bar | full width × 44 | `surface` | bottom 1px `line` | No |
 | Activity bar | 56 × fill | `bg` | right 1px `line` | No |
 | Sidebar | 300 default, 240–480, drag to resize; holds one or two panel **slots** stacked vertically (§3.3.2) | `surface` | right 1px `line` | Yes: click active activity button, or chevron in section header, or ⌘B |
+| Sidebar bar (while the sidebar is collapsed) | 24 × fill | `surface` | right 1px `line` | — (it is the collapsed sidebar) |
 | Viewport area | fill | `bg` (shows as 2px gap between views) | none | No |
+| Inspector bar (while the inspector is collapsed) | 24 × fill | `surface` | left 1px `line` | — |
 | Inspector | 300 default, 260–480, drag to resize | `surface` | left 1px `line` | Yes: chevron in its header, or ⌘⌥I (Ctrl+Alt on Linux/Windows) |
 | Status bar | full width × 28 | `surface` | top 1px `line` | No |
 
@@ -75,6 +79,7 @@ Rules:
 - Root is a column flex: top bar, body (row flex), status bar. Body: activity bar, sidebar, viewport area, inspector.
 - Splitters between sidebar|viewport and viewport|inspector are 6px invisible hit areas centered on the 1px border. Cursor changes to col-resize on hover; the border turns `accent` while dragging. Double-click resets to default width.
 - Minimum window: 1024 × 640. Below 1280 wide the inspector starts collapsed. Below 1100 wide the sidebar also starts collapsed. Collapsed panels never overlay the viewport; they reopen pushing it narrower.
+- A collapsed sidebar or inspector leaves a 24px bar (`surface`, 1px `line` on the side facing the view) between the activity bar (or the window's right edge) and the view, holding at its top a 20px icon button with a chevron pointing at the view (`chevron_right` for the sidebar, `chevron_left` for the inspector; tooltip "Show sidebar · ⌘B" / "Show inspector · ⌘⌥I"). It expands the panel at its previous width. The bars count toward the viewport floor and the view's placement; splitters are hidden while their panel is collapsed.
 - Viewport area floor: the area MUST be able to hold every view at `viewport_min` (240). When a resize or a panel opening would break that, collapse the inspector first, then the sidebar, and if still too small, fall back to the Single layout (the multi-view layout is remembered and restored when space returns). Never clamp a view below 240.
 - Panel widths, collapsed state and the viewport layout are part of the workspace (§8) and persist.
 
@@ -93,9 +98,9 @@ Row flex, `align-items: center`, gap 8, padding left 8, right 10. Contents left 
 | 1 | Logo | 28×28 image `ui/brand/gazebo-icon.png` (light) or `gazebo-icon-dark.png` (dark). Not interactive. MAY open "About" on click later. |
 | 2 | World menu button | Text button: world file name in `text` weight 500, extension `.sdf` in `text_3` weight 400, unsaved dot (7px circle `warn`, only when dirty), chevron_down 15px. Opens the World menu (§7.1). Tooltip: full path; when dirty append "· unsaved changes · ⌘S". |
 | 3 | Vertical separator | 1×18 `line`, margin 0 4. |
-| 4 | Tool group | Container `bg`, radius 8, padding 2, gap 2. Buttons (icon_btn 32): **Navigate** `navigate` (Esc), **Box select** `box_select` (B), **Translate** `translate` (T), **Rotate** `rotate` (R). Exactly one is active (radio). Then a text button "Snap 0.25 ▾" in mono 12 that opens the Snap popover (§7.6). |
+| 4 | Tool group | No container (no fill, border or padding; gap 2): the buttons sit on the bar's `surface`, white in light. Buttons (icon_btn 32, icon 17, radius 7) look like activity buttons (§3.2 states: transparent with `text_3` icon at rest, `hover`/`text` on hover, the selected tool `accent_soft`/`accent_text` with the inset 1px `accent_ring`): **Navigate** `navigate` (Esc), **Box select** `box_select` (B), **Translate** `translate` (T), **Rotate** `rotate` (R). Exactly one is active (radio). Then a text button "Snap 0.25 ▾" in mono 12 that opens the Snap popover (§7.6). |
 | 5 | Flexible spacer | flex 1 |
-| 6 | Transport group | Container `bg`, border 1px `line`, radius 9, padding 2, gap 2. **Reset** icon button `reset` (return-to-start glyph, the mirror of Step; undoable, see §7.1). **Play/Pause** 40×32 radius 7, fill `primary`, icon `on_primary` 14px; shows `pause` when running, `play` when paused. **Step** icon button `step`. **Steps per click** text button mono 12 labelled "1 step ▾" (options 1, 10, 100, custom; tooltip "Steps per click"). Separator. **Sim clock** mono 13 weight 500 `text`, format `HH:MM:SS.mmm`. **RTF** status dot (7px; `ok` ≥ 90%, `warn` 50–90%, `danger` < 50%, `disabled` when paused) + "RTF 98%" mono 12 `text_2`; reads "paused" when paused. Hover RTF: tooltip with real time, sim time, iterations, step size. |
+| 6 | Transport group | No container, as the tool group; its icon buttons have the same activity-button look. **Reset** icon button `reset` (return-to-start glyph, the mirror of Step; undoable, see §7.1). **Play/Pause** a plain icon button like Reset and Step (no `primary` fill); shows `pause` when running, `play` when paused. **Step** icon button `step`. **Steps per click** text button mono 12 labelled "1 step ▾" (options 1, 10, 100, custom; tooltip "Steps per click"). Separator. **Sim clock** mono 13 weight 500 `text`, format `HH:MM:SS.mmm`. **RTF** status dot (7px; `ok` ≥ 90%, `warn` 50–90%, `danger` < 50%, `disabled` when paused) + "RTF 98%" mono 12 `text_2`; reads "paused" when paused. Hover RTF: tooltip with real time, sim time, iterations, step size. |
 | 7 | Flexible spacer | flex 1 (keeps transport visually centered) |
 | 8 | Search / command bar trigger | 220 wide text button, border 1px `line`, fill `field`, icon `search`, placeholder "Search or run a command" `text_3`, key cap "⌘K" (mono 11, border `line`, radius 4). Opens the command palette (§7.7). |
 
@@ -128,10 +133,10 @@ States:
 |---|---|---|---|
 | Default | transparent | `text_3` | none |
 | Hover | `hover` | `text` | none |
-| Active (its panel is open) | `accent_soft` | `accent_text` | inset 1px `accent_ring` around the whole button |
+| Active (its panel is open, or in the collapsed sidebar) | `accent_soft` | `accent_text` | inset 1px `accent_ring` around the whole button |
 | Focus (keyboard) | as state | as state | 2px `accent` outside, offset 2 |
 
-Behavior: clicking an inactive button opens its panel in the sidebar's primary slot (replacing what was there). Clicking the active button collapses the sidebar. Shift+click opens the panel in the secondary slot. A button whose panel is open in either slot shows the active state; a panel that is popped out shows a hollow 7px ring instead. Badge: 14px tall pill, top-right offset 6/6, mono 9 weight 600, text color = `surface`.
+Behavior: clicking an inactive button opens its panel in the sidebar's primary slot (replacing what was there), expanding a collapsed sidebar. Clicking the active button collapses the sidebar; it stays selected (active look, pressed to accessibility) while collapsed, and clicking it again expands the sidebar. Shift+click opens the panel in the secondary slot. A button whose panel is in either slot shows the active state, the sidebar open or collapsed; a panel that is popped out shows a hollow 7px ring instead. Badge: 14px tall pill, top-right offset 6/6, mono 9 weight 600, text color = `surface`.
 
 ### 3.3 Sidebar panels
 
@@ -140,6 +145,7 @@ Board: `W2 — Activity panels`. Every panel shares this shell:
 - **Section header** 36 tall: title in `section` type (12/600 uppercase, `text_2`), optional count in mono 11 `text_3`, flex spacer, up to three 28px icon buttons, bottom border `line_soft`.
 - **Body** scrolls vertically. Inner padding 8 for lists, 14 for forms.
 - **Footer** (optional): top border `line`, padding 10 14, row of equal-width buttons (button_h 30).
+- **Collapsed**: the sidebar leaves its 24px bar with a "Show sidebar" button (§2.1); the active activity button stays selected.
 
 | Panel | Content (top to bottom) | Gazebo source |
 |---|---|---|
@@ -208,7 +214,7 @@ Board: `W2 — Inspector by entity type`. Shows the current selection. With no s
 
 Shell (all entity types):
 
-1. Section header "Inspector": pin button (keeps showing this entity when selection changes), collapse chevron.
+1. Section header "Inspector": pin button (keeps showing this entity when selection changes), collapse chevron. Collapsed, the inspector leaves its 24px bar at the window's right edge with a "Show inspector" button (§2.1).
 2. Title row (padding 14 16 10): type tag (mono 11 500, radius 4, padding 2 6; colors per type below), name `entity_name` type (15/600, ellipsized, double-click or F2 to rename), more-actions icon button.
 3. Breadcrumb: mono 11 `text_3`, parent chain and source (e.g. `warehouse_demo › amr_01 · fuel://…`).
 4. Quick actions row: three equal buttons (button_h 30), never destructive (decision Q3). Delete, Rename, Hide/Show, Copy and Reset-pose live in the more-actions menu (⋯) at the right of the title row; Delete is the last item, in `danger`, with the ⌫ shortcut shown. Delete remains undoable with the status-bar chip (§7.1).
@@ -331,7 +337,7 @@ Height 32, padding 0 9, radius 7, gap 6, Geist 13/500, optional leading icon 15 
 Height 30, padding 0 10–12, radius 6, 1px `line` border, fill `surface_2` (white in light, a step lighter than the panel in dark), Geist 12/500 `text`. Destructive variant: text `danger`. In rows, equal width (`flex: 1`), gap 6.
 
 ### 5.4 SegmentedGroup (tool group, transport group)
-Container with `bg` fill, radius 8, padding 2, gap 2, holds IconButtons. Radio semantics for the tool group.
+Container with `bg` fill, radius 8, padding 2, gap 2, holds IconButtons. Radio semantics for the tool group. In the top bar (owner decision, 0.4) the tool and transport groups keep the group semantics (radio for the tools) but drop the container: no fill, border or padding, gap 2, with activity-button-styled icon buttons on the bar's `surface` (§3.1).
 
 ### 5.5 ActivityButton
 See §3.2. Includes optional Badge (§5.13).
@@ -369,7 +375,7 @@ Menu: `surface`, 1px `line`, radius 10, padding 6, shadow per `elevation.menu`, 
 MenuItem: height 30, radius 6, padding 0 10, gap 10, Geist 13 `text`, leading icon 15 `text_2` (optional), trailing shortcut mono 11 `text_3`. Hover `hover`. Current/checked choice: `accent_soft` + `accent_text`. Checkbox item: 14px box radius 4 (off: 1.5px `text_3` border; on: `accent` fill). Group label: `caps` type, padding 6 10 4. Separator: 1px `line_soft`, margin 4 6. Arrow keys move, Enter activates, type-to-search.
 
 ### 5.15 Tooltip
-Appears after 500ms hover, 0ms when moving between tooltipped controls within 300ms. Radius 7, padding 8 10, Geist 12; title weight 600 `tooltip_text`, second line `tooltip_text_2`. Light: `tooltip` fill. Dark: `tooltip` fill + 1px `line`. Placed below the trigger (above in the status bar, left of the rail), 8px gap, 8px arrow.
+Appears after 500ms hover, 0ms when moving between tooltipped controls within 300ms. Radius 7, padding 8 10, Geist 12; title weight 600 `tooltip_text`, second line `tooltip_text_2`. Light: `tooltip` fill. Dark: `tooltip` fill + 1px `line`. Placed below the trigger (above in the status bar, left of the rail, right of the activity bar), 8px gap, 8px arrow pointing at the trigger. A tooltip never leaves the window: it flips to the opposite side when its own doesn't fit, and shifts along to stay 8px inside the window's edges (the arrow still points at the trigger). One line per row: titles and second lines don't wrap.
 
 ### 5.16 Popover
 A Menu-styled container with arbitrary content (Snap, Layout presets). Same open/close rules.

@@ -134,12 +134,18 @@ pub fn on_activity(
 pub fn activity_states(
     layout: Res<ShellLayout>,
     badges: Res<ActivityBadges>,
-    buttons: Query<(Entity, &ActivityFor, Has<Active>, &Children)>,
+    mut buttons: Query<(
+        Entity,
+        &ActivityFor,
+        Has<Active>,
+        &Children,
+        &mut bevy::a11y::AccessibilityNode,
+    )>,
     mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
-    for (e, a, active, children) in &buttons {
+    for (e, a, active, children, mut access) in &mut buttons {
         let want = layout.is_active(a.0);
         if want != active {
             if want {
@@ -147,6 +153,16 @@ pub fn activity_states(
             } else {
                 commands.entity(e).remove::<Active>();
             }
+        }
+        // A toggle button to AccessKit: pressed while its panel is shown
+        // (or collapsed with the sidebar).
+        let toggled = if want {
+            accesskit::Toggled::True
+        } else {
+            accesskit::Toggled::False
+        };
+        if access.toggled() != Some(toggled) {
+            access.set_toggled(toggled);
         }
         let badge = badges.badge(a.0);
         for &c in children {

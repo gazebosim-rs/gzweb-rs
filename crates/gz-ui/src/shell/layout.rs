@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use crate::icons::IconId;
-use crate::theme::Sizes;
+use crate::theme::{Sizes, SPACE};
 
 /// The sidebar panels with an activity button (spec §3.2), in its order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Reflect)]
@@ -89,6 +89,9 @@ pub const INSPECTOR_START_W: f32 = 1280.0;
 pub const SIDEBAR_START_W: f32 = 1100.0;
 /// The smallest window the layout is designed for (§2.1).
 pub const MIN_WINDOW: (f32, f32) = (1024.0, 640.0);
+/// A collapsed side panel leaves a bar this wide with the button that
+/// brings it back (DECISIONS.md D-50).
+pub const COLLAPSED_BAR_W: f32 = SPACE[10];
 /// The primary slot's default share of the sidebar (§3.3.2).
 pub const DEFAULT_SPLIT: f32 = 0.55;
 /// A slot is never shorter than this (§3.3.2).
@@ -179,15 +182,17 @@ impl ShellLayout {
         }
     }
 
-    /// The viewport area's width: the window less the activity bar and the
-    /// open panels.
+    /// The viewport area's width: the window less the activity bar, the
+    /// open panels and the collapsed panels' bars.
     pub fn viewport_w(&self) -> f32 {
         let s = Sizes::default();
         let mut w = self.window_w - s.activity_bar_w;
         for side in [Side::Sidebar, Side::Inspector] {
-            if self.is_open(side) {
-                w -= self.width(side);
-            }
+            w -= if self.is_open(side) {
+                self.width(side)
+            } else {
+                COLLAPSED_BAR_W
+            };
         }
         w
     }
@@ -216,7 +221,8 @@ impl ShellLayout {
         let min = Sizes::default().viewport_min;
         for side in [Side::Sidebar, Side::Inspector] {
             let i = index(side);
-            if self.floor_closed[i] && self.viewport_w() - self.width(side) >= min {
+            if self.floor_closed[i] && self.viewport_w() + COLLAPSED_BAR_W - self.width(side) >= min
+            {
                 self.set_open(side, true);
                 self.floor_closed[i] = false;
             }
@@ -249,6 +255,7 @@ impl ShellLayout {
             Side::Inspector => -1.0,
         };
         let room = self.viewport_w() + self.width(side) - Sizes::default().viewport_min;
+        // (`side` is open while it's dragged: no bar of its own to count.)
         (start + sign * dx).min(room).clamp(min, max)
     }
 
@@ -287,22 +294,21 @@ impl ShellLayout {
         }
     }
 
-    /// The panel's activity button shows the active state: its panel is
-    /// open in either slot of an open sidebar (§3.2).
+    /// The panel's activity button shows the active state: its panel is in
+    /// either slot, whether the sidebar is open or collapsed (§3.2; the
+    /// selection survives a collapse, DECISIONS.md D-50).
     pub fn is_active(&self, panel: Panel) -> bool {
-        self.sidebar_open && self.slot_of(panel).is_some()
+        self.slot_of(panel).is_some()
     }
 
     /// An activity button click (§3.2): an inactive panel opens in the
     /// primary slot (Shift: the secondary); the active one collapses the
-    /// sidebar.
+    /// sidebar, or expands it again if it's collapsed.
     pub fn activity_click(&mut self, panel: Panel, shift: bool) {
         if shift {
             self.open_in(panel, Slot::Secondary);
         } else if self.is_active(panel) {
-            self.show(Side::Sidebar, false);
-        } else if self.slot_of(panel).is_some() {
-            self.show(Side::Sidebar, true);
+            self.show(Side::Sidebar, !self.sidebar_open);
         } else {
             self.open_in(panel, Slot::Primary);
         }

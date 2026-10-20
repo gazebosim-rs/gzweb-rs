@@ -87,6 +87,51 @@ pub fn tool_button(theme: &Theme, id: IconId, tip: Tooltip, checked: bool) -> im
     )
 }
 
+/// A top-bar icon button (DECISIONS.md D-48): 32 px, icon 17, radius 7,
+/// with the activity button's look (transparent at rest, `hover` on hover,
+/// the active look with its `accent_ring`), no container behind it.
+pub fn bar_button(theme: &Theme, id: IconId, tip: Tooltip) -> impl Bundle {
+    let (side, icon, r) = IconButtonSize::Regular.metrics(theme);
+    (
+        bar_button_node(side, r),
+        Headless,
+        clickable(
+            super::activity::activity_visuals(),
+            Role::Button,
+            tip.accessible_name(),
+        ),
+        tip,
+        children![content_icon(id, icon, ColorRole::Text3)],
+    )
+}
+
+/// A top-bar tool button: [`bar_button`]'s look with radio semantics, for a
+/// radio [`button_group`](super::segmented::button_group); `Checked` is the
+/// active look.
+pub fn bar_tool_button(theme: &Theme, id: IconId, tip: Tooltip, checked: bool) -> impl Bundle {
+    let (side, icon, r) = IconButtonSize::Regular.metrics(theme);
+    (
+        bar_button_node(side, r),
+        RadioButton,
+        clickable(
+            super::activity::activity_visuals(),
+            Role::RadioButton,
+            tip.accessible_name(),
+        ),
+        tip,
+        children![content_icon(id, icon, ColorRole::Text3)],
+        Checkedness(checked),
+    )
+}
+
+/// An icon button's box with the 1px border the active ring needs.
+fn bar_button_node(side: f32, r: f32) -> Node {
+    Node {
+        border: UiRect::all(px(border::HAIRLINE)),
+        ..icon_button_node(side, r)
+    }
+}
+
 /// Play/Pause (§3.1): 40×32, radius 7, `primary` fill, icon `on_primary`
 /// 14 px. The only `primary`-filled control (§4.1).
 pub fn primary_button(theme: &Theme, id: IconId, tip: Tooltip) -> impl Bundle {

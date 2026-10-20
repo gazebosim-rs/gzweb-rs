@@ -39,14 +39,14 @@ use crate::visuals::Visuals;
 pub use activity::activity_button;
 pub use badge::{badge, BadgeKind};
 pub use button::{
-    button, icon_button, primary_button, text_button, tool_button, ButtonVariant, IconButtonSize,
-    TextButton,
+    bar_button, bar_tool_button, button, icon_button, primary_button, text_button, tool_button,
+    ButtonVariant, IconButtonSize, TextButton,
 };
 pub use chip::{filter_chip, status_chip, StatusKind};
 pub use menu::{menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator};
 pub use number_field::{number_field, AxisTag, NumberCommit, NumberField, Unit};
 pub use section::section_header;
-pub use segmented::segmented_group;
+pub use segmented::{button_group, segmented_group};
 pub use select::{select, SelectChanged};
 pub use slider::{slider_row, SliderSpec};
 pub use splitter::{splitter, Splitter};

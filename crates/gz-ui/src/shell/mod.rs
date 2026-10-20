@@ -34,7 +34,7 @@ use gz_bevy::view::ViewPlacement;
 
 pub use layout::{Panel, ShellLayout, Side, Slot};
 
-use crate::theme::{border, ColorRole, Fill, Stroke, Theme, ThemeMode};
+use crate::theme::{border, ColorRole, Fill, Stroke, Theme, ThemeMode, SPACE};
 use crate::GzUiSystems;
 
 /// The top-bar tools (spec §6.1). Only the selection shows until M5.
@@ -120,6 +120,8 @@ pub enum UiCommand {
     ToggleTheme,
     /// A splitter double-click.
     ResetWidth(Side),
+    /// A collapsed panel's bar button: expand it at its previous width.
+    Show(Side),
 }
 
 /// Marks the shell's regions (spec §2.1).
@@ -130,9 +132,100 @@ pub enum Region {
     Body,
     ActivityBar,
     Sidebar,
+    /// The bar a collapsed sidebar leaves (D-50).
+    SidebarBar,
     ViewportArea,
+    /// The bar a collapsed inspector leaves.
+    InspectorBar,
     Inspector,
     StatusBar,
+}
+
+/// A collapsed panel's bar button: shows that side again.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExpandButton(pub Side);
+
+/// The bar a collapsed side panel leaves between the activity bar (or the
+/// window's right edge) and the view (DECISIONS.md D-50):
+/// [`COLLAPSED_BAR_W`](layout::COLLAPSED_BAR_W) wide, `surface`, a 1px
+/// `line` border facing the view, and at the top a small button with a
+/// chevron pointing at the view that brings the panel back.
+pub fn collapsed_bar(theme: &Theme, side: Side, map: &InputMap) -> impl Bundle {
+    use crate::icons::{content_icon, IconId};
+    use crate::visuals::Visuals;
+    use crate::widgets::{clickable, rounded, Tooltip, TooltipSide};
+    let (region_kind, border_side, icon, title, binding, tip_side) = match side {
+        Side::Sidebar => (
+            Region::SidebarBar,
+            UiRect::right(px(border::HAIRLINE)),
+            IconId::ChevronRight,
+            "Show sidebar",
+            "ui.sidebar",
+            TooltipSide::Right,
+        ),
+        Side::Inspector => (
+            Region::InspectorBar,
+            UiRect::left(px(border::HAIRLINE)),
+            IconId::ChevronLeft,
+            "Show inspector",
+            "ui.inspector",
+            TooltipSide::Left,
+        ),
+    };
+    let tip = Tooltip::new(title)
+        .shortcut_opt(crate::widgets::menu::shortcut_label(map, binding))
+        .side(tip_side);
+    let button = EXPAND_BUTTON;
+    (
+        region(
+            region_kind,
+            Node {
+                width: px(layout::COLLAPSED_BAR_W),
+                flex_shrink: 0.0,
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                padding: UiRect::top(px(SPACE[3])),
+                border: border_side,
+                display: Display::None,
+                ..default()
+            },
+            ColorRole::Surface,
+        ),
+        children![(
+            ExpandButton(side),
+            Node {
+                width: px(button),
+                height: px(button),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: rounded(crate::theme::radius::XS),
+                ..default()
+            },
+            bevy::ui_widgets::Button,
+            clickable(
+                Visuals::new(ColorRole::Clear, ColorRole::Icon),
+                accesskit::Role::Button,
+                tip.accessible_name(),
+            ),
+            tip,
+            children![content_icon(icon, theme.s.icon_sm, ColorRole::Icon)],
+        )],
+    )
+}
+
+/// The collapsed bar's button: 20 px, inside the 24 px bar.
+pub const EXPAND_BUTTON: f32 = SPACE[9];
+
+/// A collapsed bar's button expands its side.
+pub fn on_expand(
+    ev: On<bevy::ui_widgets::Activate>,
+    buttons: Query<&ExpandButton>,
+    mut out: MessageWriter<UiCommand>,
+) {
+    if let Ok(b) = buttons.get(ev.entity) {
+        out.write(UiCommand::Show(b.0));
+    }
 }
 
 /// A splitter between a side panel and the viewport area (§2.1): a 6 px
@@ -215,7 +308,8 @@ impl Plugin for ShellPlugin {
             .add_observer(on_splitter_drag_start)
             .add_observer(on_splitter_drag)
             .add_observer(on_splitter_drag_end)
-            .add_observer(on_splitter_click);
+            .add_observer(on_splitter_click)
+            .add_observer(on_expand);
         activity_bar::build(app);
         top_bar::build(app);
         sidebar::build(app);
@@ -332,6 +426,7 @@ pub fn apply_ui_commands(
             UiCommand::SetTheme(mode) => theme.set_mode(mode),
             UiCommand::ToggleTheme => theme.toggle(),
             UiCommand::ResetWidth(side) => layout.reset_width(side),
+            UiCommand::Show(side) => layout.show(side, true),
         }
     }
 }
@@ -367,6 +462,8 @@ pub fn apply_layout(
                 node.width = px(layout.inspector_w);
                 node.display = shown(layout.inspector_open);
             }
+            Region::SidebarBar => node.display = shown(!layout.sidebar_open),
+            Region::InspectorBar => node.display = shown(!layout.inspector_open),
             _ => {}
         }
     }
@@ -533,7 +630,9 @@ pub fn spawn_shell(
             .with_children(|body| {
                 body.spawn(activity_bar::activity_bar(&t, &map));
                 body.spawn(sidebar::sidebar(&t, &l));
+                body.spawn(collapsed_bar(&t, Side::Sidebar, &map));
                 body.spawn(viewport::viewport_area(&t));
+                body.spawn(collapsed_bar(&t, Side::Inspector, &map));
                 body.spawn(inspector::inspector(&t, &l, &map));
             });
             root.spawn(status_bar::status_bar(&t));

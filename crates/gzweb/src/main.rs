@@ -289,6 +289,15 @@ fn command() -> Result<Command, String> {
     }))
 }
 
+/// The log filter. `bevy_ecs::system::system` logs one thing: "System '…'
+/// has not run for N ticks", once the world's change tick has moved about
+/// 3.2 billion past a system's last run. In a viewer left running for
+/// hours that is every system that ran only at start-up (ours:
+/// `init_layout`, `spawn_shell`; Bevy's own) and Bevy's systems behind run
+/// conditions that stay false (hover maps without a pointer, asset events
+/// for unused types, dialogs); none of them misses a change it needs.
+const LOG_FILTER: &str = "wgpu=warn,naga=warn,bevy_ecs::system::system=error";
+
 /// Bevy's default plugins for `mode`: an interactive window (native, or the
 /// `#bevy-canvas` element on wasm), a fixed capture window, or headless
 /// snapshot mode (no window, no winit, no GPU backend). `size` is the
@@ -306,7 +315,7 @@ fn default_plugins(
                 ..default()
             })
             .set(bevy::log::LogPlugin {
-                filter: "wgpu=warn,naga=warn".into(),
+                filter: LOG_FILTER.into(),
                 ..default()
             })
     };
