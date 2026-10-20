@@ -186,7 +186,8 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
     )
 }
 
-/// A tree row's parts and what [`tree_row_system`] writes into them.
+/// A tree row's parts, and [`paint`](Self::paint) to write a row's state
+/// into them.
 #[derive(SystemParam)]
 pub(crate) struct RowParts<'w, 's> {
     children: Query<'w, 's, &'static Children>,
@@ -196,6 +197,77 @@ pub(crate) struct RowParts<'w, 's> {
     types: Query<'w, 's, &'static mut Type>,
     icons: Query<'w, 's, &'static mut Icon>,
     opacity: Query<'w, 's, &'static Opacity>,
+    commands: Commands<'w, 's>,
+}
+
+impl RowParts<'_, '_> {
+    /// Badge, name weight, eye icon and opacity from `row`'s state.
+    fn paint(&mut self, row: Entity, spec: &TreeRowSpec, selected: bool, hovered: bool) {
+        let alpha = if spec.hidden { 0.5 } else { 1.0 };
+        for part_entity in self.children.iter_descendants(row) {
+            if self.opacity.get(part_entity).map_or(true, |o| o.0 != alpha) {
+                self.commands.entity(part_entity).insert(Opacity(alpha));
+            }
+            let Ok(part) = self.parts.get(part_entity) else {
+                continue;
+            };
+            match part {
+                TreeRowPart::Badge => {
+                    if let Ok(mut f) = self.fills.get_mut(part_entity) {
+                        f.set_if_neq(Fill(if selected {
+                            ColorRole::Accent
+                        } else {
+                            ColorRole::EntityBadgeBg
+                        }));
+                    }
+                }
+                TreeRowPart::Letter => {
+                    if let Ok(mut i) = self.inks.get_mut(part_entity) {
+                        i.set_if_neq(Ink(if selected {
+                            ColorRole::Surface
+                        } else {
+                            spec.kind.role()
+                        }));
+                    }
+                }
+                TreeRowPart::Name => {
+                    if let Ok(mut t) = self.types.get_mut(part_entity) {
+                        t.set_if_neq(Type(name_type(selected)));
+                    }
+                }
+                TreeRowPart::Eye => {
+                    let shown = spec.hidden || hovered;
+                    for &glyph in self.children.get(part_entity).into_iter().flatten() {
+                        paint_eye(&mut self.icons, &mut self.inks, glyph, spec.hidden, shown);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// An eye glyph: `eye_off` while `hidden`; drawn only while `shown`
+/// (hidden or hovered).
+fn paint_eye(
+    icons: &mut Query<&mut Icon>,
+    inks: &mut Query<&mut Ink>,
+    glyph: Entity,
+    hidden: bool,
+    shown: bool,
+) {
+    if let Ok(mut i) = icons.get_mut(glyph) {
+        let id = if hidden { IconId::EyeOff } else { IconId::Eye };
+        if i.id != id {
+            i.id = id;
+        }
+    }
+    if let Ok(mut i) = inks.get_mut(glyph) {
+        i.set_if_neq(Ink(if shown {
+            ColorRole::Text3
+        } else {
+            ColorRole::Clear
+        }));
+    }
 }
 
 /// Badge, name weight, eye icon and opacity from each row's state, for
@@ -212,82 +284,14 @@ pub(crate) fn tree_row_system(
     >,
     mut deselected: RemovedComponents<Active>,
     mut dirty: Local<Vec<Entity>>,
-    mut row_parts: RowParts,
-    mut commands: Commands,
+    mut parts: RowParts,
 ) {
-    let RowParts {
-        children,
-        parts,
-        fills,
-        inks,
-        types,
-        icons,
-        opacity,
-    } = &mut row_parts;
     dirty.clear();
     dirty.extend(changed.iter().chain(deselected.read()));
     dirty.sort_unstable();
     dirty.dedup();
     for (row, spec, selected, hovered) in dirty.iter().filter_map(|&e| rows.get(e).ok()) {
-        let alpha = if spec.hidden { 0.5 } else { 1.0 };
-        for part_entity in children.iter_descendants(row) {
-            if opacity.get(part_entity).map_or(true, |o| o.0 != alpha) {
-                commands.entity(part_entity).insert(Opacity(alpha));
-            }
-            let Ok(part) = parts.get(part_entity) else {
-                continue;
-            };
-            match part {
-                TreeRowPart::Badge => {
-                    if let Ok(mut f) = fills.get_mut(part_entity) {
-                        f.set_if_neq(Fill(if selected {
-                            ColorRole::Accent
-                        } else {
-                            ColorRole::EntityBadgeBg
-                        }));
-                    }
-                }
-                TreeRowPart::Letter => {
-                    if let Ok(mut i) = inks.get_mut(part_entity) {
-                        i.set_if_neq(Ink(if selected {
-                            ColorRole::Surface
-                        } else {
-                            spec.kind.role()
-                        }));
-                    }
-                }
-                TreeRowPart::Name => {
-                    if let Ok(mut t) = types.get_mut(part_entity) {
-                        t.set_if_neq(Type(name_type(selected)));
-                    }
-                }
-                TreeRowPart::Eye => {
-                    let Ok(c) = children.get(part_entity) else {
-                        continue;
-                    };
-                    for &glyph in c {
-                        if let Ok(mut i) = icons.get_mut(glyph) {
-                            let id = if spec.hidden {
-                                IconId::EyeOff
-                            } else {
-                                IconId::Eye
-                            };
-                            if i.id != id {
-                                i.id = id;
-                            }
-                        }
-                        if let Ok(mut i) = inks.get_mut(glyph) {
-                            let show = spec.hidden || hovered.get();
-                            i.set_if_neq(Ink(if show {
-                                ColorRole::Text3
-                            } else {
-                                ColorRole::Clear
-                            }));
-                        }
-                    }
-                }
-            }
-        }
+        parts.paint(row, spec, selected, hovered.get());
     }
 }
 

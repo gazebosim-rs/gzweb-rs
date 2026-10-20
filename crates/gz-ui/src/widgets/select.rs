@@ -108,6 +108,31 @@ pub(crate) struct SelectTree<'w, 's> {
     labels: Query<'w, 's, (), With<SelectLabel>>,
 }
 
+impl SelectTree<'_, '_> {
+    /// The option `entity` is (its index) and the select it belongs to
+    /// (the root above its popup).
+    fn option(&self, entity: Entity) -> Option<(usize, Entity)> {
+        let (option, popup) = self.options.get(entity).ok()?;
+        let root = self.parents.get(popup.parent()).ok()?.parent();
+        Some((option.0, root))
+    }
+
+    /// The select's options (entity, index) and its label, under `root`.
+    fn parts(&self, root: Entity) -> (Vec<(Entity, usize)>, Option<Entity>) {
+        let mut options = Vec::new();
+        let mut label = None;
+        for e in self.children.iter_descendants(root) {
+            if let Ok((o, _)) = self.options.get(e) {
+                options.push((e, o.0));
+            }
+            if self.labels.contains(e) {
+                label = Some(e);
+            }
+        }
+        (options, label)
+    }
+}
+
 /// Picking an option: updates the [`Select`], the current-choice look and
 /// the trigger label, and sends [`SelectChanged`].
 pub(crate) fn on_select_option(
@@ -117,40 +142,28 @@ pub(crate) fn on_select_option(
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
-    let SelectTree {
-        options,
-        parents,
-        children,
-        labels,
-    } = &tree;
-    let Ok((option, popup)) = options.get(activate.entity) else {
-        return;
-    };
-    let Ok(root) = parents.get(popup.parent()).map(ChildOf::parent) else {
+    let Some((index, root)) = tree.option(activate.entity) else {
         return;
     };
     let Ok(mut select) = selects.get_mut(root) else {
         return;
     };
-    select.selected = option.0;
-    let label = select.options.get(option.0).cloned().unwrap_or_default();
-    for e in children.iter_descendants(root) {
-        if let Ok((o, _)) = options.get(e) {
-            if o.0 == option.0 {
-                commands.entity(e).insert(Active);
-            } else {
-                commands.entity(e).remove::<Active>();
-            }
+    select.selected = index;
+    let label = select.options.get(index).cloned().unwrap_or_default();
+    let (options, label_entity) = tree.parts(root);
+    for (e, i) in options {
+        if i == index {
+            commands.entity(e).insert(Active);
+        } else {
+            commands.entity(e).remove::<Active>();
         }
-        if labels.contains(e) {
-            if let Ok(mut t) = texts.get_mut(e) {
-                t.0.clone_from(&label);
-            }
-        }
+    }
+    if let Some(mut t) = label_entity.and_then(|e| texts.get_mut(e).ok()) {
+        t.0.clone_from(&label);
     }
     commands.trigger(SelectChanged {
         entity: root,
-        index: option.0,
+        index,
     });
 }
 

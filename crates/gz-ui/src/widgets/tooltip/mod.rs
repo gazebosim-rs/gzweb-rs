@@ -344,11 +344,6 @@ pub(crate) fn refresh_tooltips(
     mut texts: CardTexts,
     mut commands: Commands,
 ) {
-    let CardTexts {
-        titles,
-        lines,
-        keys,
-    } = &mut texts;
     let Some((trigger, tip)) = timer.shown.and_then(|t| triggers.get(t).ok()) else {
         return;
     };
@@ -358,29 +353,7 @@ pub(crate) fn refresh_tooltips(
     let Some((card, _, children)) = cards.iter().find(|(_, p, _)| p.parent() == trigger) else {
         return;
     };
-    let want_line = tip.detail.is_some() || tip.shortcut.is_some();
-    let mut has_line = false;
-    let mut same = true;
-    for c in children.iter() {
-        if let Ok(mut t) = titles.get_mut(c) {
-            set_text(&mut t, &tip.title);
-        }
-        if let Ok((mut t, spans)) = lines.get_mut(c) {
-            has_line = true;
-            set_text(&mut t, &lead(&tip.detail, &tip.shortcut));
-            let span = spans.and_then(|s| s.iter().find(|e| keys.contains(*e)));
-            match (span, &tip.shortcut) {
-                (Some(e), Some(k)) => {
-                    if let Ok(mut s) = keys.get_mut(e) {
-                        set_text(&mut s, k);
-                    }
-                }
-                (None, None) => {}
-                _ => same = false,
-            }
-        }
-    }
-    if !same || has_line != want_line {
+    if !texts.update(children, &tip) {
         commands.entity(card).despawn();
         show_tooltip(&mut commands, &theme, trigger, &tip);
     }
@@ -393,6 +366,37 @@ pub(crate) struct CardTexts<'w, 's> {
     titles: Query<'w, 's, &'static mut Text, (With<TooltipTitle>, Without<TooltipLine>)>,
     lines: Query<'w, 's, (&'static mut Text, Option<&'static Children>), With<TooltipLine>>,
     keys: Query<'w, 's, &'static mut TextSpan, With<TooltipKeys>>,
+}
+
+impl CardTexts<'_, '_> {
+    /// Writes `tip` into the card's texts (its `children`) in place.
+    /// False when the card's shape no longer fits: its second line or its
+    /// keys appear or go, so it must be spawned again.
+    fn update(&mut self, children: &Children, tip: &Tooltip) -> bool {
+        let want_line = tip.detail.is_some() || tip.shortcut.is_some();
+        let mut has_line = false;
+        let mut same = true;
+        for c in children.iter() {
+            if let Ok(mut t) = self.titles.get_mut(c) {
+                set_text(&mut t, &tip.title);
+            }
+            if let Ok((mut t, spans)) = self.lines.get_mut(c) {
+                has_line = true;
+                set_text(&mut t, &lead(&tip.detail, &tip.shortcut));
+                let span = spans.and_then(|s| s.iter().find(|e| self.keys.contains(*e)));
+                match (span, &tip.shortcut) {
+                    (Some(e), Some(k)) => {
+                        if let Ok(mut s) = self.keys.get_mut(e) {
+                            set_text(&mut s, k);
+                        }
+                    }
+                    (None, None) => {}
+                    _ => same = false,
+                }
+            }
+        }
+        same && has_line == want_line
+    }
 }
 
 /// Spawns `tip`'s floating card on `trigger`.
