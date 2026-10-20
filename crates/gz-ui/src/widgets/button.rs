@@ -12,7 +12,7 @@ use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, radius, ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 
-/// The three IconButton sizes (§5.1).
+/// The IconButton sizes: the three of §5.1 and the collapsed bar's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconButtonSize {
     /// 32, icon 17, radius 7.
@@ -21,6 +21,8 @@ pub enum IconButtonSize {
     Small,
     /// Viewport rail: 32, icon 18, radius 8.
     Rail,
+    /// A collapsed panel's bar (DECISIONS.md D-50): 20, icon 15, radius 4.
+    Bar,
 }
 
 impl IconButtonSize {
@@ -31,6 +33,7 @@ impl IconButtonSize {
             IconButtonSize::Regular => (s.icon_btn, s.icon, ICON_BUTTON_RADIUS),
             IconButtonSize::Small => (s.icon_btn_sm, s.icon_sm, ICON_BUTTON_RADIUS),
             IconButtonSize::Rail => (s.rail_btn, s.rail_icon, radius::MD),
+            IconButtonSize::Bar => (SPACE[9], s.icon_sm, radius::XS),
         }
     }
 }

@@ -123,6 +123,7 @@ fn chips_badges_and_buttons() {
     assert_eq!(IconButtonSize::Regular.metrics(&t), (32.0, 17.0, 7.0));
     assert_eq!(IconButtonSize::Small.metrics(&t), (28.0, 15.0, 7.0));
     assert_eq!(IconButtonSize::Rail.metrics(&t), (32.0, 18.0, 8.0));
+    assert_eq!(IconButtonSize::Bar.metrics(&t), (20.0, 15.0, 4.0));
 
     let mut app = ui_app(ThemeMode::Light);
     let w = app.world_mut();
