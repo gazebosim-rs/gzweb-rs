@@ -900,3 +900,47 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   search placeholder ("Search…", D-56) and the step size ("— · 1 ms" in
   the status bar, "1 ms" in the inspector, D-56). The gallery is
   pixel-identical to both.
+
+## 2026-10-20: Panel contract (PR #30 second review, D-58)
+
+- **Slots:** a header is keyed on (panel, two slots) and a body on (panel,
+  view): opening or closing the second slot keeps the first slot's body, and
+  a swap re-parents both (the review's XP1/XP3 rebuilt them). The slots
+  rebuild in `Readouts`, after the panels write.
+- **Views:** panels write their `PanelView` (`Cow` messages) into
+  `PanelStatus` through `SetPanelStatus` (compare, then mark a change);
+  `PanelDef::view` is the default; `ViewFn` is gone. Scene and Topics write
+  theirs; Sensors/Assets/Teleop keep placeholders until their data exists.
+- **Actions:** open `PanelAction { id, label, enabled }` and
+  `HeaderAction`s; both trigger `PanelActionActivated`; Reconnect is the
+  shell's. Scene's Expand/Collapse all and Topics' Publish/Services are
+  defined, disabled until M4/M7.
+- **Content:** `.content::<Marker>()` and the panel's own `Add<Marker>`
+  observer; ready bodies are full-bleed, other states padded. Bodies are
+  disposable views; panel state lives in panel resources (UI_PLAN §7).
+- **Sets:** `ShellSystems::Panels` (was `PanelStatus`) and
+  `panel_shown(id)`.
+- **Tab:** a `TabGroup` per region in §6.5's order; `hide_undisplayed`
+  makes `Display::None` nodes invisible so Tab skips them (Bevy skips only
+  `InheritedVisibility`); a test presses Tab for real.
+- **Nits:** shared `Registry<D>` and `ui_id!`; a duplicate id panics;
+  `.place(group, order)`; unknown ids fall back to the first panel, a
+  disabled default panel to the first, no panels to a collapsed sidebar;
+  `format` top-level; `BAR_SEPARATOR_H` in the top bar; `button::build`
+  gone; `SystemParam`s with methods; panels' systems in `systems.rs`; a
+  probe panel for the shell's tests; per-panel string tests replaced by
+  behaviour tests through the shell; binding ids checked against
+  `shortcuts.json` (the gallery named two that don't exist); `ShellPlugin`
+  asks for `GzUiPlugin`.
+- **Later items** (review items 7, 8, 9, 11, 12, 13) are filed under
+  M4–M10 in UI_PLAN.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI
+  light/dark at 1440×900 and 1024×700, the connect card against a closed
+  port, the gallery light/dark), against main's code built in the review
+  worktree: the gallery and both 1024×700 shots (sidebar collapsed) are
+  identical outside the 3D view; at 1440×900 and on the card the only
+  change is Scene's header gaining Expand all and Collapse all (disabled,
+  left of the chevron), plus the fps digits. The Scene body has no content
+  yet, so ready bodies going full-bleed changes nothing on screen.
+- **Tests:** workspace 485 → 493 passing (gz-ui 119 → 127); coverage
+  98.4% lines.
