@@ -21,6 +21,7 @@ pub(crate) mod button;
 pub(crate) mod chip;
 pub(crate) mod cursor;
 pub(crate) mod focus;
+pub mod format;
 pub mod layout;
 pub(crate) mod menu;
 pub(crate) mod number_field;

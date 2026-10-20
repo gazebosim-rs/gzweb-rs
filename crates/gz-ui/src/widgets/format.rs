@@ -1,12 +1,13 @@
-//! Text the shell shows for sim and connection state (spec §3.1, §3.6,
-//! §7.10).
+//! How sim and connection state reads (spec §3.1, §3.6, §7.10): the
+//! clock, RTF, iterations, step, frame rate, addresses and coordinates,
+//! for the shell's readouts and any panel or inspector that shows them.
 
 use gz_bevy::connection::SimStats;
 
 use crate::theme::ColorRole;
 
 /// The sim clock, `HH:MM:SS.mmm` (§3.1). Hours keep counting past 99.
-pub(crate) fn clock(secs: f64) -> String {
+pub fn clock(secs: f64) -> String {
     let ms = (secs.max(0.0) * 1000.0).round() as u64;
     let (h, rest) = (ms / 3_600_000, ms % 3_600_000);
     let (m, rest) = (rest / 60_000, rest % 60_000);
@@ -15,13 +16,13 @@ pub(crate) fn clock(secs: f64) -> String {
 }
 
 /// RTF thresholds (§3.1): `ok` at or above, `warn` from [`RTF_WARN`].
-pub(crate) const RTF_OK: f64 = 0.9;
+pub const RTF_OK: f64 = 0.9;
 /// Below this the RTF dot is `danger`.
-pub(crate) const RTF_WARN: f64 = 0.5;
+pub const RTF_WARN: f64 = 0.5;
 
 /// The RTF readout and its dot's colour (§3.1): "RTF 98%", "paused" (dot
 /// `disabled`), or "RTF —" with no stats.
-pub(crate) fn rtf(stats: Option<&SimStats>) -> (String, ColorRole) {
+pub fn rtf(stats: Option<&SimStats>) -> (String, ColorRole) {
     match stats {
         None => ("RTF —".into(), ColorRole::Disabled),
         Some(s) if s.paused => ("paused".into(), ColorRole::Disabled),
@@ -40,7 +41,7 @@ pub(crate) fn rtf(stats: Option<&SimStats>) -> (String, ColorRole) {
 }
 
 /// `n` with comma thousands separators.
-pub(crate) fn thousands(n: u64) -> String {
+pub fn thousands(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {
@@ -53,7 +54,7 @@ pub(crate) fn thousands(n: u64) -> String {
 }
 
 /// "iter 134,380" (§3.6 item 4), "iter —" with no stats.
-pub(crate) fn iterations(stats: Option<&SimStats>) -> String {
+pub fn iterations(stats: Option<&SimStats>) -> String {
     stats.map_or_else(
         || "iter —".into(),
         |s| format!("iter {}", thousands(s.iterations)),
@@ -61,7 +62,7 @@ pub(crate) fn iterations(stats: Option<&SimStats>) -> String {
 }
 
 /// A step size: "1 ms", "0.5 ms", "1 s".
-pub(crate) fn step(secs: f64) -> String {
+pub fn step(secs: f64) -> String {
     let trim = |v: f64| {
         let s = format!("{v:.3}");
         s.trim_end_matches('0').trim_end_matches('.').to_string()
@@ -75,7 +76,7 @@ pub(crate) fn step(secs: f64) -> String {
 
 /// The physics line (§3.6 item 2): engine and step, each "—" when the
 /// server doesn't say (the websocket server reports no engine).
-pub(crate) fn physics(engine: Option<&str>, step_secs: Option<f64>) -> String {
+pub fn physics(engine: Option<&str>, step_secs: Option<f64>) -> String {
     match (engine, step_secs.filter(|s| *s > 0.0)) {
         (None, None) => "—".into(),
         (e, s) => format!(
@@ -87,19 +88,19 @@ pub(crate) fn physics(engine: Option<&str>, step_secs: Option<f64>) -> String {
 }
 
 /// The frame rate (§3.6 item 3).
-pub(crate) fn fps(fps: Option<f64>) -> String {
+pub fn fps(fps: Option<f64>) -> String {
     fps.map_or_else(|| "— fps".into(), |f| format!("{f:.0} fps"))
 }
 
 /// The server address without the scheme: "localhost:11345".
-pub(crate) fn address(url: &str) -> String {
+pub fn address(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, r)| r);
     rest.trim_end_matches('/').to_string()
 }
 
 /// A signed number with a real minus sign (U+2212), as the boards print
 /// negative values.
-pub(crate) fn signed(v: f32, decimals: usize) -> String {
+pub fn signed(v: f32, decimals: usize) -> String {
     let s = format!("{:.*}", decimals, v.abs());
     let zero = s.chars().all(|c| c == '0' || c == '.');
     if v < 0.0 && !zero {
@@ -110,7 +111,7 @@ pub(crate) fn signed(v: f32, decimals: usize) -> String {
 }
 
 /// "cursor 2.41, −0.73" (§3.6 item 9), "cursor —" off the ground.
-pub(crate) fn cursor(at: Option<[f32; 2]>) -> String {
+pub fn cursor(at: Option<[f32; 2]>) -> String {
     at.map_or_else(
         || "cursor —".into(),
         |[x, y]| format!("cursor {}, {}", signed(x, 2), signed(y, 2)),
@@ -119,7 +120,7 @@ pub(crate) fn cursor(at: Option<[f32; 2]>) -> String {
 
 /// The RTF tooltip's second line (§3.1): real time, sim time, iterations
 /// and step size.
-pub(crate) fn rtf_detail(stats: Option<&SimStats>) -> String {
+pub fn rtf_detail(stats: Option<&SimStats>) -> String {
     stats.map_or_else(
         || "No statistics yet".into(),
         |s| {

@@ -211,32 +211,58 @@ impl LookChanges<'_, '_> {
     }
 }
 
-/// Writes each widget's [`Fill`] / [`Stroke`] and its [`Content`]'s
-/// [`Ink`] and [`Opacity`] from its state. Only widgets whose state, or
-/// content, changed this frame are visited, and only real changes are
-/// written, so the theme pass stays incremental.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub(crate) fn button_visuals_system(
-    mut changes: LookChanges,
-    widgets: Query<StateQuery>,
-    children: Query<&Children>,
-    mut fills: Query<&mut Fill>,
-    mut strokes: Query<&mut Stroke>,
-    mut content: Query<
+/// What [`button_visuals_system`] writes: each widget's fill and stroke,
+/// and its content's ink and opacity.
+#[derive(SystemParam)]
+#[allow(clippy::type_complexity)]
+pub(crate) struct LookTargets<'w, 's> {
+    fills: Query<'w, 's, &'static mut Fill>,
+    strokes: Query<'w, 's, &'static mut Stroke>,
+    content: Query<
+        'w,
+        's,
         (
-            Option<&mut Ink>,
-            Option<&mut Opacity>,
+            Option<&'static mut Ink>,
+            Option<&'static mut Opacity>,
             Has<Visuals>,
             Has<OwnInk>,
         ),
         With<Content>,
     >,
+}
+
+/// What [`button_visuals_system`] keeps between frames: the widgets to
+/// visit, the content walk's stack, and the last focused widget.
+#[derive(Default)]
+pub(crate) struct VisualsScratch {
+    dirty: Vec<Entity>,
+    stack: Vec<Entity>,
+    last_focus: Option<Entity>,
+}
+
+/// Writes each widget's [`Fill`] / [`Stroke`] and its [`Content`]'s
+/// [`Ink`] and [`Opacity`] from its state. Only widgets whose state, or
+/// content, changed this frame are visited, and only real changes are
+/// written, so the theme pass stays incremental.
+pub(crate) fn button_visuals_system(
+    mut changes: LookChanges,
+    widgets: Query<StateQuery>,
+    children: Query<&Children>,
+    mut looks: LookTargets,
     mut commands: Commands,
-    mut dirty: Local<Vec<Entity>>,
-    mut stack: Local<Vec<Entity>>,
-    mut last_focus: Local<Option<Entity>>,
+    mut scratch: Local<VisualsScratch>,
 ) {
-    changes.collect(&mut dirty, &mut last_focus);
+    let VisualsScratch {
+        dirty,
+        stack,
+        last_focus,
+    } = &mut *scratch;
+    let LookTargets {
+        fills,
+        strokes,
+        content,
+    } = &mut looks;
+    changes.collect(dirty, last_focus);
     let focus = changes.focus.get();
     for &widget in &*dirty {
         let Ok((entity, visuals, hovered, pressed, active, checked, disabled, forced, focus_hover)) =

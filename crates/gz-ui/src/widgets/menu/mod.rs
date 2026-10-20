@@ -230,7 +230,8 @@ fn item_parts(label: &str, role: Role) -> impl Bundle {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MenuItemProps {
     pub label: String,
-    /// A leading icon (15 `text_2`); checkbox items have their box there.
+    /// A leading icon (15 `text_2`); a checkbox item draws it after its
+    /// box.
     pub icon: Option<IconId>,
     /// The trailing shortcut text (mono 11 `text_3`).
     pub shortcut: Option<String>,
@@ -301,11 +302,15 @@ pub(crate) struct MenuCheckBox;
 pub(crate) const CHECK_BOX: f32 = 14.0;
 
 /// A checkbox item: a 14 px box (radius 4; off: 1.5px `text_3` border, on:
-/// `accent` fill), label and shortcut. Activating it toggles `Checked`.
+/// `accent` fill), the optional icon, label and shortcut. Activating it
+/// toggles `Checked`.
 pub fn menu_checkbox(theme: &Theme, props: MenuItemProps, checked: bool) -> impl Bundle {
     let MenuItemProps {
-        label, shortcut, ..
+        label,
+        icon: leading,
+        shortcut,
     } = props;
+    let icon_px = theme.s.icon_sm;
     let text_label = label.clone();
     (
         item_node(theme),
@@ -329,6 +334,9 @@ pub fn menu_checkbox(theme: &Theme, props: MenuItemProps, checked: bool) -> impl
                 Content,
                 OwnInk,
             ));
+            if let Some(id) = leading {
+                p.spawn((icon(id, icon_px, ColorRole::Text2), Content, OwnInk));
+            }
             p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
             p.spawn(flex_spacer());
             if let Some(keys) = shortcut {

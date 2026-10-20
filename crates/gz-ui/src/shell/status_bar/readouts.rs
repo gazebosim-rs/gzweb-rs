@@ -13,9 +13,9 @@ use gz_bevy::view::{cursor_on_ground, ViewOrigin};
 
 use super::StatusItem;
 use crate::shell::connection::{dot_role, CurrentPhase};
-use crate::shell::format;
 use crate::shell::Tool;
 use crate::theme::Fill;
+use crate::widgets::format;
 use crate::widgets::text::set_text;
 
 /// The text of an item.

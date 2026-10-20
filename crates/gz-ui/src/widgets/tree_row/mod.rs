@@ -10,6 +10,7 @@
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
+use bevy::ecs::system::SystemParam;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button as Headless};
@@ -185,9 +186,21 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
     )
 }
 
+/// A tree row's parts and what [`tree_row_system`] writes into them.
+#[derive(SystemParam)]
+pub(crate) struct RowParts<'w, 's> {
+    children: Query<'w, 's, &'static Children>,
+    parts: Query<'w, 's, &'static TreeRowPart>,
+    fills: Query<'w, 's, &'static mut Fill>,
+    inks: Query<'w, 's, &'static mut Ink>,
+    types: Query<'w, 's, &'static mut Type>,
+    icons: Query<'w, 's, &'static mut Icon>,
+    opacity: Query<'w, 's, &'static Opacity>,
+}
+
 /// Badge, name weight, eye icon and opacity from each row's state, for
 /// rows that are new or whose spec, selection or hover changed.
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::type_complexity)]
 pub(crate) fn tree_row_system(
     rows: Query<(Entity, &TreeRowSpec, Has<Active>, &Hovered)>,
     changed: Query<
@@ -199,15 +212,18 @@ pub(crate) fn tree_row_system(
     >,
     mut deselected: RemovedComponents<Active>,
     mut dirty: Local<Vec<Entity>>,
-    children: Query<&Children>,
-    parts: Query<&TreeRowPart>,
-    mut fills: Query<&mut Fill>,
-    mut inks: Query<&mut Ink>,
-    mut types: Query<&mut Type>,
-    mut icons: Query<&mut Icon>,
-    opacity: Query<&Opacity>,
+    mut row_parts: RowParts,
     mut commands: Commands,
 ) {
+    let RowParts {
+        children,
+        parts,
+        fills,
+        inks,
+        types,
+        icons,
+        opacity,
+    } = &mut row_parts;
     dirty.clear();
     dirty.extend(changed.iter().chain(deselected.read()));
     dirty.sort_unstable();

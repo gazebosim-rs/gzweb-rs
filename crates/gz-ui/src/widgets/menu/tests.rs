@@ -326,6 +326,27 @@ fn disabled_items_dim_their_shortcut_icon_and_box() {
     // The resolved colours carry the opacity.
     let bg = w.get::<BackgroundColor>(parts[0]).unwrap().0;
     assert!((bg.alpha() - DISABLED_OPACITY).abs() < 1e-6);
+    // A checkbox item's icon follows its box: box, icon, label, spacer,
+    // shortcut.
+    let iconed = app
+        .world_mut()
+        .spawn(menu_checkbox(
+            &t,
+            MenuItemProps::new("Grid")
+                .icon(crate::assets::icons::IconId::Home)
+                .shortcut("G"),
+            false,
+        ))
+        .id();
+    frames(&mut app, 1);
+    let w = app.world();
+    let parts: Vec<Entity> = w.get::<Children>(iconed).unwrap().to_vec();
+    assert_eq!(parts.len(), 5);
+    assert!(w.get::<MenuCheckBox>(parts[0]).is_some());
+    assert_eq!(
+        w.get::<crate::assets::icons::Icon>(parts[1]).map(|i| i.id),
+        Some(crate::assets::icons::IconId::Home)
+    );
 }
 
 #[test]

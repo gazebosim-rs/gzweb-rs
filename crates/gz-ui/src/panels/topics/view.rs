@@ -1,7 +1,7 @@
 //! The Topics panel's body.
 
 use crate::panels::PanelView;
-use crate::shell::connection::Phase;
+use crate::shell::Phase;
 
 /// "No topics yet" once live, skeleton rows while loading, else "Not
 /// connected".

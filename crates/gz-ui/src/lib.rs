@@ -7,10 +7,11 @@
 //!
 //! - [`theme`]: tokens generated from `tokens.json`, the [`theme::Theme`]
 //!   resource, colour roles and their resolution, the OS light/dark
-//!   preference, and in [`visuals`] the hover, pressed, active and
-//!   disabled looks of every clickable widget;
-//! - [`assets`]: the [`icons`] atlas generated from `icons.json`, the
-//!   Geist and Geist Mono [`fonts`] with the type styles, and the logo;
+//!   preference, and the hover, pressed, active and disabled looks of
+//!   every clickable widget ([`theme::Visuals`]);
+//! - [`assets`]: the icon atlas generated from `icons.json`
+//!   ([`assets::icon`]), the Geist and Geist Mono fonts with the type
+//!   styles ([`assets::text`]), and the logo;
 //! - [`widgets`]: the spec §5.1–5.16 components and the splitter, the
 //!   layout primitives they and the shell are built from, and the shared
 //!   behaviour (`focus`: shortcuts stand down while a text field has

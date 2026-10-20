@@ -148,15 +148,17 @@ pub(crate) fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Opti
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct GalleryRoot;
 
-fn header(c: &mut ChildSpawnerCommands) {
-    c.spawn(Node {
+/// A column's header row: 32 tall, its title left and its notes right.
+fn header_row() -> Node {
+    Node {
         height: px(32),
-        align_items: AlignItems::Center,
-        column_gap: px(SPACE[6]),
         flex_shrink: 0.0,
-        ..default()
-    })
-    .with_children(|h| {
+        ..row(SPACE[6])
+    }
+}
+
+fn header(c: &mut ChildSpawnerCommands) {
+    c.spawn(header_row()).with_children(|h| {
         h.spawn((ThemeText::Name, text(TITLE_TYPE, ColorRole::Text, "")));
         h.spawn(flex_spacer());
         h.spawn((
@@ -170,10 +172,8 @@ fn left_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     header(c);
     components::top_bar(c, theme, map);
     c.spawn(Node {
-        column_gap: px(SPACE[8]),
         align_items: AlignItems::FlexStart,
-        flex_shrink: 0.0,
-        ..default()
+        ..sample_row(SPACE[8])
     })
     .with_children(|r| {
         components::activity_card(r, theme, map);
@@ -204,14 +204,7 @@ fn left_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
 }
 
 fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
-    c.spawn(Node {
-        height: px(32),
-        align_items: AlignItems::Center,
-        column_gap: px(SPACE[6]),
-        flex_shrink: 0.0,
-        ..default()
-    })
-    .with_children(|h| {
+    c.spawn(header_row()).with_children(|h| {
         h.spawn(text(TypeStyle::CAPS, ColorRole::Text2, "Color tokens"));
         h.spawn(flex_spacer());
         h.spawn(text(TypeStyle::SMALL, ColorRole::Text3, "T switches theme"));
@@ -230,9 +223,8 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
         let tree = bottom
             .spawn(card_node(Node {
                 width: px(320),
-                flex_direction: FlexDirection::Column,
                 overflow: Overflow::clip(),
-                ..default()
+                ..column(0.0)
             }))
             .with_children(|t| widgets::scene_panel(t, theme, map))
             .id();
@@ -251,10 +243,8 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
             .spawn(Node {
                 flex_grow: 1.0,
                 flex_basis: px(0),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(SPACE[4]),
                 padding: UiRect::left(px(SPACE[3])),
-                ..default()
+                ..column(SPACE[4])
             })
             .with_children(|w| widgets::more_widgets(w, theme, map));
     });

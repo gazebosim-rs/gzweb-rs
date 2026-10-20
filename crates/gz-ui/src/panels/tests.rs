@@ -5,8 +5,8 @@ use super::{
     ScenePanelPlugin, ASSETS, CONSOLE, DATA_GROUP, PLOT, SCENE, SENSORS, TELEOP, TOPICS,
     WORLD_GROUP,
 };
-use crate::assets::icons::IconId;
-use crate::shell::connection::Phase;
+use crate::assets::IconId;
+use crate::shell::Phase;
 
 fn registry(plugins: impl PluginGroup) -> PanelRegistry {
     let mut app = App::new();

@@ -3,7 +3,7 @@
 //!
 //! - `tokens.rs` from `tokens.json`: `Palette` (light and dark), `ColorRole`,
 //!   `Sizes`, `SPACE`, radii, borders, motion, elevation and the type styles
-//!   (DECISIONS.md D-21). Included by `src/theme/mod.rs`.
+//!   (DECISIONS.md D-21). Included by `src/theme/tokens.rs`.
 //! - `icons.rs` from `icons.json`: the `IconId` enum. Included by
 //!   `src/assets/icons/mod.rs`.
 //! - `icons@1x.png`, `icons@2x.png`: every icon at every size in

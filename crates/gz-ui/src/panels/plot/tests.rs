@@ -1,7 +1,7 @@
 use super::view::{badge, state};
 use super::PlotCharts;
 use crate::panels::{PanelAction, PanelView};
-use crate::shell::connection::Phase;
+use crate::shell::Phase;
 use crate::widgets::BadgeKind;
 
 #[test]

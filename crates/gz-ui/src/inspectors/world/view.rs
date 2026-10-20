@@ -3,8 +3,8 @@
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 
-use crate::assets::fonts::text;
-use crate::assets::icons::IconId;
+use crate::assets::text;
+use crate::assets::IconId;
 use crate::theme::{border, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{self, column, flex_spacer, group_header, property_row, row};
 use crate::widgets::{button, icon_button, rounded, ButtonVariant, IconButtonSize, Tooltip};

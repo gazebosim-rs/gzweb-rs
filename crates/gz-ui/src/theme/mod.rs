@@ -6,7 +6,7 @@
 //! (DECISIONS.md D-21), so they can't drift from the spec (`tokens.rs`).
 //! This module holds the [`Theme`] resource and the OS preference; the
 //! role components and their resolution are in `roles.rs`, the widgets'
-//! state looks in [`visuals`].
+//! state looks ([`Visuals`]) in `visuals/`.
 //!
 //! Rules for widget code (spec §4.1):
 //! - Never write a colour literal; only `tokens.rs` may (and it doesn't
@@ -19,7 +19,7 @@
 
 pub(crate) mod roles;
 pub(crate) mod tokens;
-pub mod visuals;
+pub(crate) mod visuals;
 
 use bevy::prelude::*;
 use bevy::window::{WindowTheme, WindowThemeChanged};
@@ -27,6 +27,9 @@ use bevy::window::{WindowTheme, WindowThemeChanged};
 pub(crate) use roles::{apply_theme_system, focus_ring_system};
 pub use roles::{CaretRoles, Fill, FocusRing, Ink, Opacity, Ring, Shadow, Stroke};
 pub use tokens::*;
+pub use visuals::{
+    Active, Content, ForceState, HoverOnFocus, Look, OwnInk, Visuals, WidgetState, DISABLED_OPACITY,
+};
 
 /// The theme setting (spec §4.1): follow the OS, or force one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect)]

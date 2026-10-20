@@ -4,7 +4,9 @@
 //! and the [`TypeStyle`] constants, with the types they are made of.
 //!
 //! This is the one file the colour-literal check exempts, for the palette
-//! it includes; nothing here is written by hand.
+//! it includes. The values are all generated; the types they are made of
+//! ([`FontFamily`], [`TypeStyle`], [`Elevation`]) and their methods are
+//! written here.
 
 use bevy::prelude::*;
 

@@ -13,7 +13,7 @@ use crate::theme::visuals::{Active, ForceState};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::button::TextButtonProps;
 use crate::widgets::chip::dot;
-use crate::widgets::layout::{flex_spacer, separator, Orientation};
+use crate::widgets::layout::{column, flex_spacer, row, separator, Orientation, BAR_SEPARATOR_H};
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::MenuItemProps;
 use crate::widgets::{
@@ -34,9 +34,7 @@ pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMa
             right: px(SPACE[5]),
             ..default()
         },
-        column_gap: px(SPACE[4]),
-        align_items: AlignItems::Center,
-        ..default()
+        ..row(SPACE[4])
     }))
     .with_children(|b| {
         b.spawn(logo(theme.s.logo));
@@ -47,7 +45,7 @@ pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMa
                 .chevron()
                 .large(),
         ));
-        b.spawn(separator(Orientation::Vertical, 18.0, SPACE[2]));
+        b.spawn(separator(Orientation::Vertical, BAR_SEPARATOR_H, SPACE[2]));
         b.spawn(segmented_group("Tools", true, false))
             .with_children(|g| {
                 g.spawn(tool_button(
@@ -85,10 +83,8 @@ pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMa
 
 pub(super) fn activity_card(r: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     r.spawn(card_node(Node {
-        flex_direction: FlexDirection::Column,
         padding: UiRect::all(px(SPACE[3])),
-        row_gap: px(SPACE[2]),
-        ..default()
+        ..column(SPACE[2])
     }))
     .with_children(|a| {
         a.spawn((

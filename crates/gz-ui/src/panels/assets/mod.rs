@@ -6,7 +6,7 @@ mod view;
 use bevy::prelude::*;
 
 use super::{PanelDef, PanelId, RegisterPanel, WORLD_GROUP};
-use crate::assets::icons::IconId;
+use crate::assets::IconId;
 
 /// The Assets panel's id.
 pub const ASSETS: PanelId = PanelId::new("assets");

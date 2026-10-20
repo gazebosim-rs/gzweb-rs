@@ -2,8 +2,11 @@
 //! styles, the icon atlas generated from `icons.json`, and the Gazebo logo.
 
 pub(crate) mod brand;
-pub mod fonts;
-pub mod icons;
+pub(crate) mod fonts;
+pub(crate) mod icons;
+
+pub use fonts::{span, text, Type};
+pub use icons::{content_icon, icon, Icon, IconId};
 
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@ use gz_bevy::spawn::GzIndex;
 
 use super::view::{count, state};
 use crate::panels::{PanelAction, PanelView};
-use crate::shell::connection::Phase::*;
+use crate::shell::Phase::*;
 
 #[test]
 fn the_scene_panel_follows_the_connection() {

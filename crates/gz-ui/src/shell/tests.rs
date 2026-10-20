@@ -32,11 +32,12 @@ use super::top_bar::tools::ToolChoice;
 use super::viewport::connect_card::normalize_address;
 use super::viewport::view::ViewNode;
 use crate::panels::{PanelId, CONSOLE, SCENE};
-use crate::shell::{format, ShellLayout, Side, Tool, UiCommand};
+use crate::shell::{ShellLayout, Side, Tool, UiCommand};
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Theme, ThemeMode};
+use crate::widgets::format;
 
 #[test]
 fn every_region_has_its_size_at_1440_by_900() {

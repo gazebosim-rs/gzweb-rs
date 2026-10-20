@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use super::{ConsoleUnread, CONSOLE};
 use crate::panels::PanelView;
-use crate::shell::connection::Phase;
 use crate::shell::PanelStatus;
+use crate::shell::Phase;
 use crate::widgets::BadgeKind;
 
 /// No messages yet.

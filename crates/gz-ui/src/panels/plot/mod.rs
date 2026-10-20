@@ -6,7 +6,7 @@ mod view;
 use bevy::prelude::*;
 
 use super::{PanelDef, PanelId, RegisterPanel, DATA_GROUP};
-use crate::assets::icons::IconId;
+use crate::assets::IconId;
 use crate::shell::ShellSystems;
 
 /// The Plot panel's id.

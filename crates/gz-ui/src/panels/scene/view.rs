@@ -5,8 +5,8 @@ use gz_bevy::spawn::GzIndex;
 
 use super::SCENE;
 use crate::panels::{PanelAction, PanelView};
-use crate::shell::connection::{CurrentPhase, Phase};
 use crate::shell::PanelStatus;
+use crate::shell::{CurrentPhase, Phase};
 
 /// Ready once the world is loaded; skeleton rows while the first entity
 /// snapshot arrives; the error with Reconnect once it's lost; else "No

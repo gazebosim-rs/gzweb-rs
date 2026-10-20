@@ -36,8 +36,8 @@ use std::fmt;
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 
-use crate::assets::icons::IconId;
-use crate::shell::connection::Phase;
+use crate::assets::IconId;
+use crate::shell::Phase;
 use crate::theme::Theme;
 pub use assets::{AssetsPanelPlugin, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleUnread, CONSOLE};

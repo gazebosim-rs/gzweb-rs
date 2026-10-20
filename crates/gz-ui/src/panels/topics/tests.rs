@@ -1,6 +1,6 @@
 use super::view::state;
 use crate::panels::PanelView;
-use crate::shell::connection::Phase::*;
+use crate::shell::Phase::*;
 
 #[test]
 fn the_topics_panel_follows_the_connection() {

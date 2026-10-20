@@ -3,6 +3,7 @@
 //! shows as the menu's current choice.
 
 use accesskit::Role;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
@@ -98,19 +99,30 @@ pub fn select(
     )
 }
 
+/// A select's parts: its options, its label, and the hierarchy between.
+#[derive(SystemParam)]
+pub(crate) struct SelectTree<'w, 's> {
+    options: Query<'w, 's, (&'static SelectOption, &'static ChildOf)>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    labels: Query<'w, 's, (), With<SelectLabel>>,
+}
+
 /// Picking an option: updates the [`Select`], the current-choice look and
 /// the trigger label, and sends [`SelectChanged`].
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn on_select_option(
     activate: On<Activate>,
-    options: Query<(&SelectOption, &ChildOf)>,
-    parents: Query<&ChildOf>,
+    tree: SelectTree,
     mut selects: Query<&mut Select>,
-    children: Query<&Children>,
-    labels: Query<(), With<SelectLabel>>,
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
+    let SelectTree {
+        options,
+        parents,
+        children,
+        labels,
+    } = &tree;
     let Ok((option, popup)) = options.get(activate.entity) else {
         return;
     };

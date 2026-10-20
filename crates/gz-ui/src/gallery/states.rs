@@ -9,6 +9,7 @@ use crate::assets::icons::IconId;
 use crate::theme::visuals::{ForceState, WidgetState};
 use crate::theme::{border, radius, ColorRole, FocusRing, Ring, Theme, TypeStyle, SPACE};
 use crate::widgets::button::TextButtonProps;
+use crate::widgets::layout::{column, row};
 use crate::widgets::MenuItemProps;
 use crate::widgets::{
     activity_button, button, filter_chip, icon_button, menu_item, rounded, text_button,
@@ -129,10 +130,8 @@ pub(super) fn states_grid(c: &mut ChildSpawnerCommands, theme: &Theme) {
         )
     };
     c.spawn(card_node(Node {
-        flex_direction: FlexDirection::Column,
         padding: UiRect::axes(px(SPACE[7]), px(SPACE[5])),
-        row_gap: px(SPACE[1]),
-        ..default()
+        ..column(SPACE[1])
     }))
     .with_children(|g| {
         g.spawn(sample_row(0.0)).with_children(|h| {
@@ -153,8 +152,7 @@ pub(super) fn states_grid(c: &mut ChildSpawnerCommands, theme: &Theme) {
                 + SPACE[1];
             g.spawn(Node {
                 height: px(h),
-                align_items: AlignItems::Center,
-                ..default()
+                ..row(0.0)
             })
             .with_children(|r| {
                 r.spawn((

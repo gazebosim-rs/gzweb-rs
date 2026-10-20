@@ -4,8 +4,8 @@ use bevy::prelude::*;
 
 use super::{PlotCharts, PLOT};
 use crate::panels::{PanelAction, PanelView};
-use crate::shell::connection::Phase;
 use crate::shell::PanelStatus;
+use crate::shell::Phase;
 use crate::widgets::BadgeKind;
 
 /// Fields come from Topics or the inspector: the empty state offers Add

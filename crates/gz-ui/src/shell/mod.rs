@@ -19,10 +19,9 @@
 pub(crate) mod activity_bar;
 pub(crate) mod collapsed_bar;
 pub(crate) mod commands;
-pub mod connection;
-pub(crate) mod format;
+pub(crate) mod connection;
 pub(crate) mod inspector;
-pub mod layout;
+pub(crate) mod layout;
 pub(crate) mod panel_status;
 pub(crate) mod regions;
 pub(crate) mod routing;
@@ -37,7 +36,11 @@ use bevy::prelude::*;
 use gz_bevy::connection::{GzCommand, GzReconnect};
 
 pub use commands::UiCommand;
-pub use layout::{ShellLayout, Side, Slot};
+pub use connection::{world_name, CurrentPhase, Phase};
+pub use layout::{
+    ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W, MIN_SLOT_H,
+    MIN_WINDOW, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
+};
 pub use panel_status::{PanelState, PanelStatus};
 pub use top_bar::tools::Tool;
 
@@ -97,7 +100,7 @@ impl Plugin for ShellPlugin {
             .init_resource::<InspectorRegistry>()
             .init_resource::<PanelStatus>()
             .init_resource::<connection::ConnectionView>()
-            .init_resource::<connection::CurrentPhase>()
+            .init_resource::<CurrentPhase>()
             .configure_sets(
                 Update,
                 (

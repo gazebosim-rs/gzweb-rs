@@ -14,6 +14,10 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, Fill, Stroke, TypeStyle, SPACE};
 
+/// The length of a bar's vertical separators between its groups (the top
+/// bar's, and the gallery's copy of it).
+pub const BAR_SEPARATOR_H: f32 = 18.0;
+
 /// A row: children left to right, centred across it, `gap` apart.
 pub fn row(gap: f32) -> Node {
     Node {

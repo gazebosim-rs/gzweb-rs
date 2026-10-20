@@ -15,7 +15,7 @@ use super::tools::ToolChoice;
 use super::transport::StepsPerClick;
 use super::transport::{steps_label, StepsOption, Transport};
 use crate::shell::regions::Region;
-use crate::shell::{format, Tool, UiCommand};
+use crate::shell::{Tool, UiCommand};
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;

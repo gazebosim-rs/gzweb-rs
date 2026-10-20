@@ -1,7 +1,7 @@
 use super::view::{badge, state};
 use super::ConsoleUnread;
 use crate::panels::PanelView;
-use crate::shell::connection::Phase;
+use crate::shell::Phase;
 use crate::widgets::BadgeKind;
 
 #[test]

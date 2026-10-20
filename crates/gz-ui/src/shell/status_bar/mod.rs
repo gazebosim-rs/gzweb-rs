@@ -214,9 +214,9 @@ pub(crate) fn build(app: &mut App) {
     app.init_resource::<CursorReadout>().add_systems(
         Update,
         (
-            readouts::status_texts,
+            // The cursor's ground point first, so its text is this frame's.
+            (readouts::cursor_readout, readouts::status_texts).chain(),
             readouts::connection_dot,
-            readouts::cursor_readout,
             narrow_rules,
         )
             .in_set(ShellSystems::Readouts),
