@@ -5,9 +5,7 @@
 
 use std::time::Duration;
 
-use bevy::camera::visibility::VisibilitySystems;
-use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
-use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
@@ -15,20 +13,18 @@ use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use bevy::ui::{ComputedNode, InteractionDisabled, UiGlobalTransform};
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::{GzCommand, GzReconnect, GzStatus, SimStats};
-use gz_bevy::spawn::GzIndex;
-use gz_bevy::view::controls::{ActiveScopes, ViewPlacementSystems, ViewRouting};
-use gz_bevy::view::input::{InputMap, Platform, Scope};
-use gz_bevy::view::{apply_view_placement, ViewOrigin, ViewPlacement};
+use gz_bevy::view::controls::ViewRouting;
+use gz_bevy::view::{ViewOrigin, ViewPlacement};
 use gz_core::transport::Status;
 
 use crate::shell::activity_bar::{ActivityBadges, ActivityFor, SettingsButton};
 use crate::shell::connection::{banner, dot_role, ConnectionView, Phase, LOST_LONG_SECS};
 use crate::shell::layout::MIN_SLOT_H;
-use crate::shell::sidebar::{panel_count, panel_view, PanelAction, PanelBody, PanelView, SlotView};
+use crate::shell::sidebar::{PanelBody, SlotView};
 use crate::shell::status_bar::StatusItem;
 use crate::shell::top_bar::tools::ToolChoice;
 use crate::shell::top_bar::transport::{steps_label, StepsOption, Transport};
@@ -38,117 +34,12 @@ use crate::shell::viewport::connect_card::{
 };
 use crate::shell::viewport::view::{DimOverlay, ViewNode};
 use crate::shell::{
-    format, Panel, Region, ShellLayout, ShellPlugin, ShellSplitter, Side, Slot, StepsPerClick,
-    Tool, UiCommand,
+    format, Panel, Region, ShellLayout, ShellSplitter, Side, Slot, StepsPerClick, Tool, UiCommand,
 };
-use crate::test_support::{descendants, frames, ui_app_with};
+use crate::test_support::shell::*;
+use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Theme, ThemeMode};
-
-/// GzCommands and reconnects sent so far.
-#[derive(Resource, Default)]
-struct Sent(Vec<GzCommand>, Vec<GzReconnect>);
-
-fn collect(
-    mut sim: MessageReader<GzCommand>,
-    mut again: MessageReader<GzReconnect>,
-    mut sent: ResMut<Sent>,
-) {
-    sent.0.extend(sim.read().cloned());
-    sent.1.extend(again.read().cloned());
-}
-
-/// The full UI headless, `size` logical pixels at `scale`, with a 3D main
-/// camera and the gz-bevy resources the shell reads.
-fn shell_app(size: (u32, u32), scale: f32) -> App {
-    let mut app = ui_app_with(ThemeMode::Light, size, scale, |app| {
-        app.add_plugins((
-            crate::GzUiPlugin {
-                theme: ThemeMode::Light,
-            },
-            ShellPlugin { camera: false },
-        ));
-    });
-    let mut map = InputMap::builtin();
-    map.platform = Platform::Linux;
-    app.insert_resource(map)
-        .insert_resource(ActiveScopes(vec![
-            Scope::Global,
-            Scope::Viewport,
-            Scope::Minimal,
-        ]))
-        .insert_resource(GzStatus::new("ws://localhost:9004"))
-        .init_resource::<GzIndex>()
-        .init_resource::<Sent>()
-        .add_systems(Last, collect)
-        // gz-bevy's half of the view placement (ViewerControls adds it in
-        // the app).
-        .configure_sets(
-            PostUpdate,
-            ViewPlacementSystems
-                .after(bevy::ui::UiSystems::Layout)
-                .before(VisibilitySystems::UpdateFrusta),
-        )
-        .add_systems(
-            PostUpdate,
-            apply_view_placement.in_set(ViewPlacementSystems),
-        );
-    let physical = UVec2::new(
-        (size.0 as f32 * scale) as u32,
-        (size.1 as f32 * scale) as u32,
-    );
-    app.world_mut().spawn((
-        Camera3d::default(),
-        Camera {
-            computed: ComputedCameraValues {
-                target_info: Some(RenderTargetInfo {
-                    physical_size: physical,
-                    scale_factor: scale,
-                }),
-                ..default()
-            },
-            ..default()
-        },
-        Projection::Perspective(PerspectiveProjection::default()),
-        MainCamera,
-    ));
-    app
-}
-
-fn find<C: Component>(app: &mut App) -> Entity {
-    let world = app.world_mut();
-    world
-        .query_filtered::<Entity, With<C>>()
-        .single(world)
-        .expect("one")
-}
-
-fn region(app: &mut App, r: Region) -> Entity {
-    let world = app.world_mut();
-    world
-        .query::<(Entity, &Region)>()
-        .iter(world)
-        .find(|(_, x)| **x == r)
-        .map(|(e, _)| e)
-        .expect("region")
-}
-
-/// A node's rect in UI logical pixels (`min`, `size`).
-fn rect(app: &App, e: Entity) -> (Vec2, Vec2) {
-    let n = app.world().get::<ComputedNode>(e).expect("laid out");
-    let t = app.world().get::<UiGlobalTransform>(e).expect("placed");
-    let k = n.inverse_scale_factor();
-    let size = n.size() * k;
-    (t.translation * k - size / 2.0, size)
-}
-
-fn displayed(app: &App, e: Entity) -> bool {
-    app.world().get::<Node>(e).unwrap().display != Display::None
-}
-
-fn layout(app: &App) -> ShellLayout {
-    app.world().resource::<ShellLayout>().clone()
-}
 
 #[test]
 fn every_region_has_its_size_at_1440_by_900() {
@@ -520,29 +411,6 @@ fn splitter_drags_clamp_and_double_click_resets() {
     }
 }
 
-fn key(app: &mut App, key_code: KeyCode, state: ButtonState) {
-    let window = find::<Window>(app);
-    app.world_mut().write_message(KeyboardInput {
-        key_code,
-        logical_key: Key::Unidentified(NativeKey::Unidentified),
-        state,
-        text: None,
-        repeat: false,
-        window,
-    });
-}
-
-fn chord(app: &mut App, keys: &[KeyCode]) {
-    for k in keys {
-        key(app, *k, ButtonState::Pressed);
-    }
-    app.update();
-    for k in keys.iter().rev() {
-        key(app, *k, ButtonState::Released);
-    }
-    app.update();
-}
-
 #[test]
 fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     let mut app = shell_app((1440, 900), 1.0);
@@ -593,16 +461,6 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     let l = layout(&app);
     assert!(l.sidebar_open);
     assert_eq!(l.primary, Some(Panel::Console));
-}
-
-fn mouse(app: &mut App, state: ButtonState) {
-    let window = find::<Window>(app);
-    app.world_mut()
-        .write_message(bevy::input::mouse::MouseButtonInput {
-            button: MouseButton::Left,
-            state,
-            window,
-        });
 }
 
 /// The placed view: its window rect (logical), texture size, and whether
@@ -867,57 +725,11 @@ fn activity_buttons_open_collapse_and_use_the_second_slot() {
         })
         .unwrap();
     assert!(displayed(&app, badge));
-    let b = ActivityBadges {
-        plot: 0,
-        console_warnings: 2,
-        console_errors: 1,
-    };
-    assert_eq!(b.badge(Panel::Plot), None);
-    assert_eq!(
-        b.badge(Panel::Console),
-        Some((crate::widgets::BadgeKind::Error, 3))
-    );
-    assert_eq!(
-        ActivityBadges {
-            console_warnings: 2,
-            ..default()
-        }
-        .badge(Panel::Console),
-        Some((crate::widgets::BadgeKind::Warning, 2))
-    );
     // Settings switches the theme (until the Settings dialog exists).
     let settings = find::<SettingsButton>(&mut app);
     app.world_mut().trigger(Activate { entity: settings });
     frames(&mut app, 1);
     assert!(app.world().resource::<Theme>().is_dark);
-}
-
-fn stats(paused: bool) -> SimStats {
-    SimStats {
-        paused,
-        sim_time: 134.38,
-        real_time: 140.0,
-        real_time_factor: 0.98,
-        iterations: 134_380,
-        step_size: 0.001,
-    }
-}
-
-fn go_live(app: &mut App, paused: bool) {
-    let world = app.world_mut();
-    let mut s = world.resource_mut::<GzStatus>();
-    s.status = Status::Ready;
-    s.world = Some("warehouse_demo".into());
-    s.sim = Some(stats(paused));
-    world.resource_mut::<GzIndex>().scene = Some(gz_core::scene::SceneDesc::from_msg(
-        &Default::default(),
-        Default::default(),
-    ));
-    frames(app, 2);
-}
-
-fn sent(app: &mut App) -> Vec<GzCommand> {
-    std::mem::take(&mut app.world_mut().resource_mut::<Sent>().0)
 }
 
 #[test]
@@ -972,18 +784,6 @@ fn transport_buttons_send_sim_commands() {
     assert_eq!(app.world().resource::<StepsPerClick>().0, 100);
     assert_eq!(steps_label(1), "1 step");
     assert_eq!(steps_label(100), "100 steps");
-}
-
-/// Every text in the shell, joined.
-fn all_text(app: &mut App) -> String {
-    let world = app.world_mut();
-    let mut out: Vec<String> = world
-        .query::<&Text>()
-        .iter(world)
-        .map(|t| t.0.clone())
-        .collect();
-    out.extend(world.query::<&TextSpan>().iter(world).map(|t| t.0.clone()));
-    out.join("\n")
 }
 
 #[test]
@@ -1071,63 +871,12 @@ fn formatting() {
     }
 }
 
+/// The connection phases, the status dot and the card's status line (the
+/// panels' states per phase are tested in each panel).
 #[test]
 fn panel_states_follow_the_connection() {
     use Phase::*;
     let lost = Lost { since: 0.0 };
-    assert_eq!(panel_view(Panel::Scene, Live), PanelView::Ready);
-    assert!(matches!(
-        panel_view(Panel::Scene, Connecting),
-        PanelView::Empty {
-            message: "No world loaded",
-            ..
-        }
-    ));
-    assert_eq!(panel_view(Panel::Scene, Loading), PanelView::Loading);
-    assert_eq!(
-        panel_view(Panel::Scene, lost),
-        PanelView::Error {
-            message: "Lost connection to server",
-            actions: vec![PanelAction::Reconnect]
-        }
-    );
-    assert!(matches!(
-        panel_view(Panel::Scene, Idle),
-        PanelView::Empty {
-            message: "No world loaded",
-            ..
-        }
-    ));
-    assert!(matches!(
-        panel_view(Panel::Topics, Live),
-        PanelView::Empty {
-            message: "No topics yet",
-            ..
-        }
-    ));
-    assert!(matches!(
-        panel_view(Panel::Topics, lost),
-        PanelView::Empty {
-            message: "Not connected",
-            ..
-        }
-    ));
-    assert_eq!(panel_view(Panel::Topics, Loading), PanelView::Loading);
-    for p in Panel::ALL {
-        let _ = panel_view(p, Live);
-        assert!(!p.title().is_empty());
-    }
-    assert_eq!(panel_count(Panel::Scene, Idle, None), None);
-    assert_eq!(panel_count(Panel::Plot, Live, None), None);
-    for a in [
-        PanelAction::Reconnect,
-        PanelAction::OpenWorld,
-        PanelAction::NewWorld,
-        PanelAction::AddField,
-    ] {
-        assert_eq!(a.available(), a == PanelAction::Reconnect);
-        assert!(!a.label().is_empty());
-    }
 
     // The phases themselves.
     let mut view = ConnectionView::default();

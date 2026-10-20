@@ -7,22 +7,26 @@
 //!
 //! - [`theme`]: tokens generated from `tokens.json`, the [`theme::Theme`]
 //!   resource, colour roles and their resolution, the OS light/dark
-//!   preference;
-//! - [`visuals`]: hover, pressed, active and disabled looks for every
-//!   clickable widget;
-//! - [`icons`]: the icon atlas generated from `icons.json`;
-//! - [`focus`]: shortcuts stand down while a text field has focus;
-//! - [`cursor`]: hover cursors, held through a drag;
-//! - [`fonts`]: Geist and Geist Mono, embedded, and the type styles;
-//! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
+//!   preference, and in [`visuals`] the hover, pressed, active and
+//!   disabled looks of every clickable widget;
+//! - [`assets`]: the [`icons`] atlas generated from `icons.json`, the
+//!   Geist and Geist Mono [`fonts`] with the type styles, and the logo;
+//! - [`widgets`]: the spec §5.1–5.16 components and the splitter, the
+//!   layout primitives they and the shell are built from, and the shared
+//!   behaviour ([`focus`]: shortcuts stand down while a text field has
+//!   focus; [`cursor`]: hover cursors, held through a drag);
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
 //!
 //! Milestone M2 adds [`shell`]: the workbench's regions, their layout
 //! rules, the 3D view's placement, and the connect card and banner
-//! ([`shell::ShellPlugin`], added with this plugin in the full mode).
+//! ([`shell::ShellPlugin`], added with this plugin in the full mode). The
+//! sidebar's [`panels`] and the [`inspectors`] are plugins of their own
+//! that register into a registry the shell hosts (DECISIONS.md D-51).
 
 pub mod assets;
 pub mod gallery;
+pub mod inspectors;
+pub mod panels;
 pub mod shell;
 pub mod theme;
 pub mod widgets;

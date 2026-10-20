@@ -1,5 +1,8 @@
-//! A headless app with the UI stack: no renderer, no winit, a 1440×900
-//! window entity and a UI camera.
+//! The tests' shared harness: a headless app with the UI stack (no
+//! renderer, no winit, a 1440×900 window entity and a UI camera), and in
+//! [`shell`] the full UI on it.
+
+pub(crate) mod shell;
 
 use bevy::a11y::AccessibilityPlugin;
 use bevy::camera::{CameraPlugin, ComputedCameraValues, RenderTargetInfo};

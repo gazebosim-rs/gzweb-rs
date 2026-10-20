@@ -1,6 +1,6 @@
 //! What the shell makes of the connection (spec §3.3.1, §3.6, §7.10):
-//! [`Phase`] from `gz-bevy`'s `GzStatus` and scene, and the banner's state
-//! after the connection drops.
+//! [`Phase`] from `gz-bevy`'s `GzStatus` and scene, the banner's state
+//! after the connection drops, and the world's name.
 
 use bevy::prelude::*;
 use gz_bevy::connection::{GzReconnect, GzStatus};
@@ -165,4 +165,12 @@ pub fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Option<Banne
 /// "Retry now" and Reconnect: try the current server again at once.
 pub fn retry(out: &mut MessageWriter<GzReconnect>) {
     out.write(GzReconnect::default());
+}
+
+/// The world's name: the server's world, else the scene's.
+pub fn world_name(status: Option<&GzStatus>, index: Option<&GzIndex>) -> Option<String> {
+    status
+        .and_then(|s| s.world.clone())
+        .or_else(|| index.and_then(|i| i.scene.as_ref().map(|s| s.name.clone())))
+        .filter(|n| !n.is_empty())
 }

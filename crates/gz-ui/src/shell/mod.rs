@@ -36,6 +36,8 @@ pub use splitter::ShellSplitter;
 pub use top_bar::tools::Tool;
 pub use top_bar::transport::StepsPerClick;
 
+use crate::inspectors::InspectorsPlugin;
+use crate::panels::PanelsPlugin;
 use crate::GzUiSystems;
 
 /// The shell's Update systems, in [`GzUiSystems::Behaviour`] and in this
@@ -90,6 +92,7 @@ impl Plugin for ShellPlugin {
                     .chain()
                     .in_set(ShellSystems::Layout),
             );
+        app.add_plugins((PanelsPlugin, InspectorsPlugin));
         routing::build(app);
         splitter::build(app);
         collapsed_bar::build(app);

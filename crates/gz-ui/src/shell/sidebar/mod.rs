@@ -2,11 +2,14 @@
 //! row splitter between them (§3.3.2), each holding one panel's shell: a
 //! section header with its title, count and slot buttons, and a body in
 //! its empty, loading or error state (§3.3.1). The panels' contents come
-//! in M4 and M7.
+//! in M4 and M7; the panels register themselves
+//! ([`PanelRegistry`]).
+
 pub mod body;
 pub mod slot_splitter;
 
 use bevy::ecs::spawn::SpawnWith;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 use gz_bevy::spawn::GzIndex;
@@ -19,11 +22,12 @@ use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::{Panel, ShellLayout, Side, Slot};
 use crate::assets::icons::IconId;
+use crate::panels::{PanelRegistry, PanelView};
 use crate::theme::Theme;
 use crate::widgets::layout::{self, column};
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
 use body::panel_body;
-pub use body::{panel_count, panel_view, PanelAction, PanelBody, PanelView, SkeletonRow};
+pub use body::{PanelBody, SkeletonRow};
 pub use slot_splitter::{SlotDrag, SlotSplitter};
 
 /// A sidebar slot's node.
@@ -80,44 +84,67 @@ pub struct SlotContent {
     pub two: bool,
 }
 
+/// What the slots are built from: the layout, the registered panels, and
+/// the connection and scene their states follow.
+#[derive(SystemParam)]
+pub struct SlotSources<'w> {
+    layout: Res<'w, ShellLayout>,
+    panels: Res<'w, PanelRegistry>,
+    phase: Res<'w, CurrentPhase>,
+    index: Option<Res<'w, GzIndex>>,
+    theme: Res<'w, Theme>,
+    map: Option<Res<'w, InputMap>>,
+}
+
+impl SlotSources<'_> {
+    /// What `slot` should show now.
+    fn content(&self, slot: Slot) -> SlotContent {
+        let panel = match slot {
+            Slot::Primary => self.layout.primary,
+            Slot::Secondary => self.layout.secondary,
+        };
+        let def = panel.and_then(|p| self.panels.get(p));
+        SlotContent {
+            panel,
+            view: def.map(|d| (d.view)(self.phase.0)),
+            count: def.and_then(|d| (d.count)(self.phase.0, self.index.as_deref())),
+            two: self.layout.secondary.is_some(),
+        }
+    }
+}
+
 /// Rebuilds a slot's header and body when its panel, state or count
 /// changes.
-#[allow(clippy::too_many_arguments)]
 pub fn rebuild_slots(
-    layout: Res<ShellLayout>,
-    phase: Res<CurrentPhase>,
-    index: Option<Res<GzIndex>>,
-    theme: Res<Theme>,
-    map: Option<Res<InputMap>>,
+    sources: SlotSources,
     slots: Query<(Entity, &SlotView)>,
     mut shown: Local<[Option<SlotContent>; 2]>,
     mut commands: Commands,
 ) {
-    let two = layout.secondary.is_some();
     for (e, slot) in &slots {
-        let (panel, i) = match slot.0 {
-            Slot::Primary => (layout.primary, 0),
-            Slot::Secondary => (layout.secondary, 1),
+        let i = match slot.0 {
+            Slot::Primary => 0,
+            Slot::Secondary => 1,
         };
-        let want = SlotContent {
-            panel,
-            view: panel.map(|p| panel_view(p, phase.0)),
-            count: panel.and_then(|p| panel_count(p, phase.0, index.as_deref())),
-            two,
-        };
+        let want = sources.content(slot.0);
         if shown[i].as_ref() == Some(&want) {
             continue;
         }
         commands.entity(e).despawn_children();
-        if let (Some(panel), Some(view)) = (want.panel, want.view.clone()) {
-            let t = theme.clone();
-            let map = map.as_deref().cloned().unwrap_or_else(InputMap::builtin);
+        let def = want.panel.and_then(|p| sources.panels.get(p));
+        if let (Some(def), Some(view)) = (def, want.view.clone()) {
+            let t = sources.theme.clone();
+            let map = sources
+                .map
+                .as_deref()
+                .cloned()
+                .unwrap_or_else(InputMap::builtin);
             let count = want.count.clone();
-            let which = slot.0;
+            let (which, two) = (slot.0, want.two);
             commands.entity(e).with_children(|p| {
-                p.spawn(section_header(&t, panel.title(), count))
+                p.spawn(section_header(&t, def.title, count))
                     .with_children(|h| header_buttons(h, &t, &map, which, two));
-                p.spawn(panel_body(&t, panel, view));
+                p.spawn(panel_body(&t, def, view));
             });
         }
         shown[i] = Some(want);

@@ -10,6 +10,8 @@ use gz_bevy::view::input::InputMap;
 use super::collapsed_bar::collapsed_bar;
 use super::layout::{self, ShellLayout, Side};
 use super::{activity_bar, inspector, sidebar, status_bar, top_bar, viewport};
+use crate::inspectors::InspectorRegistry;
+use crate::panels::PanelRegistry;
 use crate::theme::{border, ColorRole, Fill, Stroke, Theme};
 use crate::widgets::layout::{column, display, fill_parent};
 
@@ -144,10 +146,13 @@ pub fn spawn_shell(
     theme: Res<Theme>,
     layout: Res<ShellLayout>,
     map: Option<Res<InputMap>>,
+    panels: Res<PanelRegistry>,
+    inspectors: Res<InspectorRegistry>,
 ) {
     let map = map.map_or_else(InputMap::builtin, |m| m.clone());
     let t = theme.clone();
     let l = layout.clone();
+    let (panels, inspectors) = (panels.clone(), inspectors.clone());
     commands.spawn((
         Region::Root,
         Node {
@@ -168,12 +173,12 @@ pub fn spawn_shell(
                 pass_through(),
             ))
             .with_children(|body| {
-                body.spawn(activity_bar::activity_bar(&t, &map));
+                body.spawn(activity_bar::activity_bar(&t, &map, &panels));
                 body.spawn(sidebar::sidebar(&t, &l));
                 body.spawn(collapsed_bar(&t, Side::Sidebar, &map));
                 body.spawn(viewport::viewport_area(&t));
                 body.spawn(collapsed_bar(&t, Side::Inspector, &map));
-                body.spawn(inspector::inspector(&t, &l, &map));
+                body.spawn(inspector::inspector(&t, &l, &map, &inspectors));
             });
             root.spawn(status_bar::status_bar(&t));
         })),

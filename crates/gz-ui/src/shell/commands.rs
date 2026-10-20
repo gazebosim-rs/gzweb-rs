@@ -9,6 +9,7 @@ use gz_bevy::view::input::InputMap;
 
 use super::layout::{Panel, ShellLayout, Side, Slot};
 use super::top_bar::tools::Tool;
+use crate::panels::PanelRegistry;
 use crate::theme::{Theme, ThemeMode};
 
 /// What the shell's controls and keys ask for.
@@ -47,6 +48,7 @@ pub fn shortcut_keys(
     map: Option<Res<InputMap>>,
     scopes: Option<Res<ActiveScopes>>,
     routing: Res<ViewRouting>,
+    panels: Res<PanelRegistry>,
     mut out: MessageWriter<UiCommand>,
 ) {
     let (Some(map), Some(scopes)) = (map, scopes) else {
@@ -59,7 +61,7 @@ pub fn shortcut_keys(
             "ui.inspector" => UiCommand::ToggleInspector,
             id => match Tool::ALL.into_iter().find(|t| t.binding() == id) {
                 Some(tool) => UiCommand::SetTool(tool),
-                None => match Panel::ALL.into_iter().find(|p| p.binding() == Some(id)) {
+                None => match panels.for_binding(id) {
                     Some(panel) => UiCommand::OpenPanel {
                         panel,
                         slot: Slot::Primary,

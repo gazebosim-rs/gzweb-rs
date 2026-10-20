@@ -12,6 +12,7 @@ use gz_bevy::view::input::InputMap;
 use super::regions::{region, Region};
 use super::{Panel, ShellLayout, ShellSystems, UiCommand};
 use crate::assets::icons::IconId;
+use crate::panels::PanelRegistry;
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
 use crate::widgets::badge::Badge;
@@ -30,7 +31,9 @@ pub struct ActivityFor(pub Panel);
 pub struct SettingsButton;
 
 /// Badge counts (§3.2): active charts on Plot, unread warnings and errors
-/// on Console. Zero hides the badge. Filled by the panels (M7).
+/// on Console. Filled by the panels (M7); each panel's
+/// [`PanelDef::badge`](crate::panels::PanelDef::badge) says what its
+/// button shows of them (zero hides the badge).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ActivityBadges {
     pub plot: u32,
@@ -38,30 +41,14 @@ pub struct ActivityBadges {
     pub console_errors: u32,
 }
 
-impl ActivityBadges {
-    /// The badge for `panel`: kind and count, if it shows.
-    pub fn badge(&self, panel: Panel) -> Option<(BadgeKind, u32)> {
-        match panel {
-            Panel::Plot if self.plot > 0 => Some((BadgeKind::Count, self.plot)),
-            Panel::Console if self.console_errors > 0 => Some((
-                BadgeKind::Error,
-                self.console_errors + self.console_warnings,
-            )),
-            Panel::Console if self.console_warnings > 0 => {
-                Some((BadgeKind::Warning, self.console_warnings))
-            }
-            _ => None,
-        }
-    }
-}
-
 /// The length of the separator after Assets.
 const SEPARATOR_W: f32 = 24.0;
 
-/// The bar.
-pub fn activity_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
+/// The bar, with a button for each registered panel.
+pub fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry) -> impl Bundle {
     let t = theme.clone();
     let map = map.clone();
+    let panels = panels.clone();
     (
         region(
             Region::ActivityBar,
@@ -76,18 +63,17 @@ pub fn activity_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
             ColorRole::Bg,
         ),
         Children::spawn(SpawnWith(move |bar: &mut ChildSpawner| {
-            for panel in Panel::ALL {
-                let tip = Tooltip::new(panel.title())
-                    .shortcut_opt(panel.binding().and_then(|id| shortcut_label(&map, id)))
+            for panel in panels.iter() {
+                let tip = Tooltip::new(panel.title)
+                    .shortcut_opt(panel.binding.and_then(|id| shortcut_label(&map, id)))
                     .detail("Shift+click: second slot");
-                // Badged buttons get a hidden badge for `badge_states`.
-                let badge =
-                    matches!(panel, Panel::Plot | Panel::Console).then_some((BadgeKind::Count, 0));
+                // Badged buttons get a hidden badge for `activity_badges`.
+                let badge = panel.badge.is_some().then_some((BadgeKind::Count, 0));
                 bar.spawn((
-                    activity_button(&t, panel.icon(), tip, badge),
-                    ActivityFor(panel),
+                    activity_button(&t, panel.icon, tip, badge),
+                    ActivityFor(panel.id),
                 ));
-                if panel == Panel::Assets {
+                if panel.separator_after {
                     bar.spawn(separator(Orientation::Horizontal, SEPARATOR_W, SPACE[3]));
                 }
             }
@@ -153,12 +139,13 @@ pub fn activity_active(
 /// The badges show their counts and hide at zero (§3.2).
 pub fn activity_badges(
     badges: Res<ActivityBadges>,
+    panels: Res<PanelRegistry>,
     buttons: Query<(&ActivityFor, &Children)>,
     mut badge_nodes: Query<(&mut Node, &mut Fill, &Children), With<Badge>>,
     mut texts: Query<&mut Text>,
 ) {
     for (a, children) in &buttons {
-        let badge = badges.badge(a.0);
+        let badge = panels.badge(a.0, &badges);
         for &c in children {
             let Ok((mut node, mut fill, kids)) = badge_nodes.get_mut(c) else {
                 continue;

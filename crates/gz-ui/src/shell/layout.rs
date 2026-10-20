@@ -5,7 +5,6 @@
 
 use bevy::prelude::*;
 
-use crate::assets::icons::IconId;
 use crate::theme::{Sizes, SPACE};
 
 /// The sidebar panels with an activity button (spec §3.2), in its order.
@@ -21,7 +20,8 @@ pub enum Panel {
 }
 
 impl Panel {
-    /// The activity bar's order; a separator follows [`Panel::Assets`].
+    /// Every panel, in the activity bar's order (each registers itself:
+    /// [`PanelRegistry`](crate::panels::PanelRegistry)).
     pub const ALL: [Panel; 7] = [
         Panel::Scene,
         Panel::Assets,
@@ -31,42 +31,6 @@ impl Panel {
         Panel::Teleop,
         Panel::Console,
     ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Panel::Scene => "Scene",
-            Panel::Assets => "Assets",
-            Panel::Topics => "Topics",
-            Panel::Plot => "Plot",
-            Panel::Sensors => "Sensors",
-            Panel::Teleop => "Teleop",
-            Panel::Console => "Console",
-        }
-    }
-
-    pub fn icon(self) -> IconId {
-        match self {
-            Panel::Scene => IconId::ActivityScene,
-            Panel::Assets => IconId::ActivityAssets,
-            Panel::Topics => IconId::ActivityTopics,
-            Panel::Plot => IconId::ActivityPlot,
-            Panel::Sensors => IconId::ActivitySensors,
-            Panel::Teleop => IconId::ActivityTeleop,
-            Panel::Console => IconId::ActivityConsole,
-        }
-    }
-
-    /// The `shortcuts.json` binding that opens it, if any.
-    pub fn binding(self) -> Option<&'static str> {
-        match self {
-            Panel::Scene => Some("panel.scene"),
-            Panel::Assets => Some("panel.assets"),
-            Panel::Topics => Some("panel.topics"),
-            Panel::Plot => Some("panel.plot"),
-            Panel::Console => Some("panel.console"),
-            Panel::Sensors | Panel::Teleop => None,
-        }
-    }
 }
 
 /// The sidebar's two stacked slots (spec §3.3.2).

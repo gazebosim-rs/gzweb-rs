@@ -11,6 +11,7 @@ use gz_bevy::spawn::GzIndex;
 
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
+use crate::shell::connection::world_name;
 use crate::theme::visuals::Visuals;
 use crate::theme::{ColorRole, FontFamily, Theme, TypeStyle, SPACE};
 use crate::widgets::button::text_button_node;
@@ -75,12 +76,4 @@ pub fn world_texts(
         };
         set_text(&mut t, &want);
     }
-}
-
-/// The world's name: the server's world, else the scene's.
-pub fn world_name(status: Option<&GzStatus>, index: Option<&GzIndex>) -> Option<String> {
-    status
-        .and_then(|s| s.world.clone())
-        .or_else(|| index.and_then(|i| i.scene.as_ref().map(|s| s.name.clone())))
-        .filter(|n| !n.is_empty())
 }
