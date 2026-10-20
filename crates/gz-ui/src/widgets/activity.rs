@@ -11,15 +11,15 @@ use bevy::ui_widgets::Button as Headless;
 
 use super::badge::{badge_node, badge_parts};
 use super::{clickable, rounded, BadgeKind, Tooltip, TooltipSide};
-use crate::icons::{content_icon, IconId};
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::Visuals;
 use crate::theme::{border, radius, ColorRole, Theme, SPACE};
-use crate::visuals::Visuals;
 
 /// The activity button's state table: transparent with a `text_3` icon at
 /// rest, `hover` / `text` on hover, `accent_soft` / `accent_text` with an
 /// inset 1px `accent_ring` when active. The top bar's buttons share it
 /// (DECISIONS.md D-48). Needs a 1px border on the node for the ring.
-pub fn activity_visuals() -> Visuals {
+pub(crate) fn activity_visuals() -> Visuals {
     let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text3).stroked(ColorRole::Clear);
     visuals.active_stroke = Some(ColorRole::AccentRing);
     visuals

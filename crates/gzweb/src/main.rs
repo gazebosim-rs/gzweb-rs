@@ -386,7 +386,7 @@ fn interactive_window(size: Option<(u32, u32)>, full: bool) -> Window {
         // overflow and scroll instead of reflowing (the floor rule
         // handles narrow windows).
         resize_constraints: if full && cfg!(not(target_arch = "wasm32")) {
-            let (w, h) = gz_ui::shell::layout::MIN_WINDOW;
+            let (w, h) = gz_ui::shell::MIN_WINDOW;
             WindowResizeConstraints {
                 min_width: w,
                 min_height: h,
@@ -490,7 +490,7 @@ fn main() -> AppExit {
     if full {
         app.add_plugins((
             gz_ui::GzUiPlugin { theme: args.theme },
-            gz_ui::shell::ShellPlugin::default(),
+            gz_ui::shell::ShellPlugins,
         ));
     }
     if let Some(req) = args.snapshot {
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn the_minimum_window_size_is_native_only() {
         let c = interactive_window(None, true).resize_constraints;
-        let (w, h) = gz_ui::shell::layout::MIN_WINDOW;
+        let (w, h) = gz_ui::shell::MIN_WINDOW;
         assert_eq!((c.min_width, c.min_height), (w, h));
         let default = WindowResizeConstraints::default();
         let c = interactive_window(None, false).resize_constraints;

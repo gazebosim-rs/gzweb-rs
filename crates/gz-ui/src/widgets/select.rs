@@ -3,15 +3,17 @@
 //! shows as the menu's current choice.
 
 use accesskit::Role;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
-use super::menu::{menu, menu_item, MenuSide};
-use super::{clickable, rounded, spacer};
-use crate::fonts::text;
-use crate::icons::{content_icon, IconId};
+use super::layout::flex_spacer;
+use super::menu::{menu, menu_item, MenuItemProps, MenuSide};
+use super::{clickable, rounded};
+use crate::assets::fonts::text;
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::{Active, Content, Visuals};
 use crate::theme::{border, radius, ColorRole, Theme, TypeStyle, SPACE};
-use crate::visuals::{Active, Content, Visuals};
 
 /// A select's options and choice (on the menu root).
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
@@ -22,11 +24,11 @@ pub struct Select {
 
 /// Option `n` of the enclosing [`Select`].
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SelectOption(pub usize);
+pub(crate) struct SelectOption(pub usize);
 
 /// The trigger's label.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct SelectLabel;
+pub(crate) struct SelectLabel;
 
 /// Sent to the [`Select`] root when the user picks an option.
 #[derive(EntityEvent, Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +72,7 @@ pub fn select(
                 text(TypeStyle::BODY, ColorRole::Text, current),
                 Content
             ),
-            spacer(),
+            flex_spacer(),
             content_icon(IconId::ChevronDown, icon_px, ColorRole::Text2),
         ],
     );
@@ -84,8 +86,10 @@ pub fn select(
             trigger,
             move |p: &mut ChildSpawner| {
                 for (i, label) in items.into_iter().enumerate() {
-                    let mut e =
-                        p.spawn((menu_item(&item_theme, label, None, None), SelectOption(i)));
+                    let mut e = p.spawn((
+                        menu_item(&item_theme, MenuItemProps::new(label)),
+                        SelectOption(i),
+                    ));
                     if i == selected {
                         e.insert(Active);
                     }
@@ -95,19 +99,30 @@ pub fn select(
     )
 }
 
+/// A select's parts: its options, its label, and the hierarchy between.
+#[derive(SystemParam)]
+pub(crate) struct SelectTree<'w, 's> {
+    options: Query<'w, 's, (&'static SelectOption, &'static ChildOf)>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    labels: Query<'w, 's, (), With<SelectLabel>>,
+}
+
 /// Picking an option: updates the [`Select`], the current-choice look and
 /// the trigger label, and sends [`SelectChanged`].
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn on_select_option(
     activate: On<Activate>,
-    options: Query<(&SelectOption, &ChildOf)>,
-    parents: Query<&ChildOf>,
+    tree: SelectTree,
     mut selects: Query<&mut Select>,
-    children: Query<&Children>,
-    labels: Query<(), With<SelectLabel>>,
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
+    let SelectTree {
+        options,
+        parents,
+        children,
+        labels,
+    } = &tree;
     let Ok((option, popup)) = options.get(activate.entity) else {
         return;
     };

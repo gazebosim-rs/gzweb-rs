@@ -737,13 +737,23 @@ public API) and never reaches into rendering (the 3D view's placement is
 `gz-bevy::view::ViewPlacement`, written by the shell). M1 has the
 foundation; the shell (M2) is below.
 
+**Code layout** (DECISIONS.md D-51; conventions in `.agent/UI_PLAN.md` §7):
+feature folders (`theme/`, `assets/`, `widgets/`, `shell/` with a folder
+per region, `panels/` and `inspectors/` with a folder per panel or
+inspector, `gallery/`), each with its tests beside it. Panels and
+inspectors are plugins that register a `PanelDef` / `InspectorDef` in
+`PanelRegistry` / `InspectorRegistry`; the activity bar, the sidebar and
+the inspector frame host what is registered. The public API is the
+plugins, `UiCommand`, `ShellLayout`, the registries, the theme and the
+widgets; the rest is `pub(crate)` (the crate warns on `unreachable_pub`).
+
 **Generated from the spec** (`build.rs`, DECISIONS.md D-21): `tokens.json`
 becomes `Palette` (light and dark), `ColorRole` (every colour token plus
 `Clear`), `Sizes`, `SPACE`, `radius`, `border`, `motion`, `elevation` and the
-`TypeStyle` constants, included by `src/theme.rs`; `icons.json` becomes the
+`TypeStyle` constants, included by `src/theme/tokens.rs`; `icons.json` becomes the
 `IconId` enum and two atlas PNGs (1× and 2×, every icon at 10/12/13/14/15/
 17/18/20/24 px, white glyphs on white transparent texels, D-44, rasterized with resvg/usvg/tiny-skia, which are build
-dependencies only). The layout maths (`src/icons/layout.rs`) is shared by the
+dependencies only). The layout maths (`src/assets/icons/layout.rs`) is shared by the
 build script and the runtime. Fonts (Geist 400/500/600, Geist Mono 400/500,
 v1.8.1 from the vercel/geist-font release, OFL-1.1 with `OFL.txt`), the
 atlases and the logos are `include_bytes!`, so the browser build needs no
@@ -761,7 +771,7 @@ every role when the theme changes and otherwise only changed ones.
 asks the platform on the desktop and the `prefers-color-scheme` media query
 in the browser; the theme keeps the last OS value, so `set_mode(System)`
 needs no argument. `Theme::scale` drives Bevy's `UiScale` (D-23). A test
-tokenizes `src/` for colour literals outside `theme.rs` (colour-space types,
+tokenizes `src/` for colour literals outside `theme/tokens.rs` (colour-space types,
 `Color::` other than `NONE`, palettes, hex).
 
 **Visuals** (§4.3, §5 state table): `Visuals` holds a widget's roles per
@@ -925,7 +935,7 @@ banner), `connection` (phase), `format` (readouts).
   reconnects now (new URL: attempts reset; same: counted), clearing a
   backoff and a rejection; `GzStatus::attempting` says a socket is open or
   opening; `SimStats` gained `real_time` and `step_size`.
-- **Tests** (`crates/gz-ui/src/tests/shell.rs`, headless): every region's
+- **Tests** (`crates/gz-ui/src/shell/tests.rs` and each region's `tests.rs`, headless): every region's
   rect at 1440×900, start-up collapse at 1440/1280/1279/1100/1099/1024 with
   the status bar's drops, floor-rule order and restore, splitter maths,
   drags, accent border and double-click, slot split clamping, Ctrl+B,

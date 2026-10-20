@@ -7,30 +7,50 @@
 //!
 //! - [`theme`]: tokens generated from `tokens.json`, the [`theme::Theme`]
 //!   resource, colour roles and their resolution, the OS light/dark
-//!   preference;
-//! - [`visuals`]: hover, pressed, active and disabled looks for every
-//!   clickable widget;
-//! - [`icons`]: the icon atlas generated from `icons.json`;
-//! - [`focus`]: shortcuts stand down while a text field has focus;
-//! - [`cursor`]: hover cursors, held through a drag;
-//! - [`fonts`]: Geist and Geist Mono, embedded, and the type styles;
-//! - [`widgets`]: the spec §5.1–5.16 components and the splitter;
+//!   preference, and the hover, pressed, active and disabled looks of
+//!   every clickable widget ([`theme::Visuals`]);
+//! - [`assets`]: the icon atlas generated from `icons.json`
+//!   ([`assets::icon`]), the Geist and Geist Mono fonts with the type
+//!   styles ([`assets::text`]), and the logo;
+//! - [`widgets`]: the spec §5.1–5.16 components and the splitter, the
+//!   layout primitives they and the shell are built from, and the shared
+//!   behaviour (`focus`: shortcuts stand down while a text field has
+//!   focus; `cursor`: hover cursors, held through a drag);
 //! - [`gallery`]: a screen with every widget in every state (`--ui gallery`).
 //!
 //! Milestone M2 adds [`shell`]: the workbench's regions, their layout
 //! rules, the 3D view's placement, and the connect card and banner
-//! ([`shell::ShellPlugin`], added with this plugin in the full mode).
+//! ([`shell::ShellPlugin`], added with this plugin in the full mode). The
+//! sidebar's [`panels`] and the [`inspectors`] are plugins of their own
+//! that register into a registry the shell hosts (DECISIONS.md D-51).
 
-pub mod brand;
-pub mod cursor;
-pub mod focus;
-pub mod fonts;
+#![warn(unreachable_pub)]
+
+pub mod assets;
 pub mod gallery;
-pub mod icons;
+pub mod inspectors;
+pub mod panels;
 pub mod shell;
 pub mod theme;
-pub mod visuals;
 pub mod widgets;
+
+/// What a plugin that adds to the UI usually needs: the plugins and system
+/// sets, the shell's commands and layout, the panel and inspector
+/// registries, and the theme.
+pub mod prelude {
+    pub use crate::inspectors::{
+        InspectorDef, InspectorId, InspectorPlugins, InspectorRegistry, RegisterInspector,
+    };
+    pub use crate::panels::{
+        PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
+    };
+    pub use crate::shell::{
+        PanelState, PanelStatus, ShellLayout, ShellPlugin, ShellPlugins, ShellSystems, Side, Slot,
+        Tool, UiCommand,
+    };
+    pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
+    pub use crate::{GzUiPlugin, GzUiSystems};
+}
 
 use bevy::input::InputSystems;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
@@ -38,7 +58,9 @@ use bevy::input_focus::InputFocusSystems;
 use bevy::prelude::*;
 use bevy::ui::UiSystems;
 
-use theme::{OsTheme, Theme, ThemeMode};
+use assets::{brand, fonts, icons};
+use theme::{visuals, OsTheme, Theme, ThemeMode};
+use widgets::{cursor, focus};
 
 /// The UI's systems, in order. Everything a widget does to its own state
 /// runs in [`GzUiSystems::Behaviour`]; looks follow in
@@ -130,4 +152,6 @@ impl Plugin for GzUiPlugin {
 }
 
 #[cfg(test)]
-mod tests;
+mod spec_checks;
+#[cfg(test)]
+mod test_support;

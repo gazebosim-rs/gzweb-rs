@@ -810,6 +810,35 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   (1440×900) and `w1024-light`, `w1024-dark` (1024×700, both panels
   collapsed to their bars, Scene still selected).
 
+## 2026-10-19: gz-ui restructure (D-51)
+
+- **Layout**: feature folders (`theme/`, `assets/`, `widgets/`, `shell/`
+  with a folder per region, `panels/`, `inspectors/`, `gallery/`) instead
+  of one file per region with a 646-line `shell/mod.rs`, a 1072-line
+  gallery and central test files. Conventions in UI_PLAN §7, spec 0.4.1
+  §9.1.
+- **Panels and inspectors** are plugins registering a `PanelDef` /
+  `InspectorDef`; the sidebar's per-panel `match`, `Panel`'s
+  title/icon/binding and the per-panel badge rules moved into
+  `panels/<name>/`, the World inspector into `inspectors/world/`.
+- **Shared**: `widgets::layout` (row, column, flex_spacer, separator,
+  overlay, clip_box, group, property_row, set_shown), `widgets::text::
+  set_text`, `Tooltip::binding`, `TextButtonProps` / `SliderProps` /
+  `MenuItemProps`, one `side_panel` region. The top bar's and status bar's
+  god systems split per readout (`StatusSources`, `SlotSources`,
+  `PointerOver` SystemParams); clippy allows down from 25 to 10.
+- **API**: 345 public items in 42 modules before, 252 in 21 after
+  (rustdoc pages); `unreachable_pub` warns.
+- **Tests**: next to their modules; 83 before, 98 after (registry, each
+  panel, the World inspector, layout primitives, set_text/set_shown change
+  detection; the connection test split in two).
+- **Behaviour**: unchanged. Captures from the M2 binary and after (full UI
+  light/dark at 1440×900 and 1024×700 against `allmesh` on
+  ws://localhost:9004 with the world paused, the connect card against a
+  closed port, the gallery light/dark) are pixel-identical outside the 3D
+  view (temporal AA differs run to run) and the fps readout. Readout texts
+  and the overlays' nodes are now marked changed only when they change.
+
 ## 2026-10-20: PR #29 review fixes
 
 - **Focus** (D-52): a click no longer leaves keyboard focus on a button
@@ -841,3 +870,33 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   input map; Reset is enabled alike in the top bar and the inspector.
 - **Docs:** DESIGN.md §9.3 and UI_PLAN's M2 entry and risk table describe
   the view texture of D-31 instead of `Camera::viewport`.
+- **Merged into the restructure** (D-51): each fix went to its feature
+  folder (`top_bar/transport.rs`, `top_bar/search.rs`, `splitter.rs`,
+  `regions.rs`, `commands.rs`, `status_bar/`, `viewport/`,
+  `widgets/focus.rs`) and each test beside its module; the banner's
+  change gate is a `SystemParam` rather than an eighth argument.
+
+## 2026-10-20: PR #30 review fixes (D-57)
+
+- **Registry**: open `PanelId`/`InspectorId`; `PanelDef` carries the
+  activity bar group and order and `default_open`; badges and counts are
+  the panels' own systems writing the shell's `PanelStatus`;
+  `ActivityBadges`, `Panel::ALL`, the count and badge function types are
+  gone. A count changes the header's text in place (a test checks the
+  body entity survives it); `register_panel` is the only way in, warns on
+  a duplicate id or binding and panics after the shell spawned;
+  `ShellPlugins` = `ShellPlugin` + `PanelPlugins` + `InspectorPlugins`.
+- **Nits**: `widgets::format` (was `shell::format`), module trees
+  `pub(crate)` with re-exports, the last `too_many_arguments` allows
+  replaced by `SystemParam`s, the checkbox item's icon, the gallery on
+  `row`/`column` and `BAR_SEPARATOR_H`, the cursor readout chained before
+  the status texts, docs in build.rs and theme/tokens.rs, tests for
+  panel actions and `PanelDef::content`.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI
+  light/dark at 1440×900 and 1024×700, the connect card against a closed
+  port, the gallery light/dark): against M2 with the #29 fixes, identical
+  outside the 3D view (temporal AA differs run to run) but for the fps
+  digits; against the M2 binary before the fixes, the differences are the
+  search placeholder ("Search…", D-56) and the step size ("— · 1 ms" in
+  the status bar, "1 ms" in the inspector, D-56). The gallery is
+  pixel-identical to both.

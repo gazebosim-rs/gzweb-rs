@@ -1,6 +1,8 @@
 # Gazebo UI — Design and Layout Spec
 
-Version 0.4 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+Version 0.4.1 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+
+Changes in 0.4.1 (documentation only; DECISIONS.md D-51): §9.1 describes the code layout as built: feature folders, and panels and inspectors as plugins registered in a registry the shell hosts.
 
 Changes in 0.4 (owner decisions during the build; DECISIONS.md D-48 to D-50): the top bar's tool and transport groups have no container, their buttons look like activity buttons and Play/Pause is a plain icon button (§3.1, §5.4); tooltips open right of the activity bar and never leave the window (§5.15); a collapsed sidebar or inspector leaves a 24px bar with a button that expands it, and the activity button of the collapsed panel stays selected (§2.1, §3.2, §3.3).
 
@@ -512,33 +514,32 @@ Storage: desktop `~/.gz/ui/workspaces.json` (use the platform config dir); web: 
 
 ## 9. Architecture for Bevy
 
-### 9.1 Crate layout (suggested)
+### 9.1 Code layout
+
+As built in gzweb-rs (`.agent/UI_PLAN.md` §7 has the full conventions; DECISIONS.md D-51). The UI is one crate, `gz-ui`, beside the backend (`gz-core`: protocol and scene model; `gz-bevy`: connection, scene sync, rendering, the camera and the input map) and the app (`gzweb`: native and wasm entry, mode selection).
 
 ```
-gz_ui/
-  src/
-    main.rs                 // App, plugin registration, native vs wasm entry
-    ui/
-      mod.rs                // UiPlugin
-      theme.rs              // from this folder
-      icons.rs              // icon atlas loading, IconId enum generated from icons.json
-      layout.rs             // root layout, splitters, collapse logic
-      top_bar.rs
-      activity_bar.rs
-      sidebar/              // one file per panel
-      inspector/            // shell + one file per entity type
-      viewport/             // view layout, rail, cube, chip, overlays
-      status_bar.rs
-      menus.rs              // Menu, MenuItem, Popover, Tooltip infrastructure
-      command_palette.rs
-      widgets/              // §5 components
-    sim/
-      backend.rs            // SimBackend trait
-      native.rs             // gz-transport connection
-      web.rs                // websocket bridge connection
-      scene_sync.rs         // mirrors Gazebo entities into Bevy entities
-    state/                  // Selection, Tool, ActiveView, Workspace, UndoStack
+gz-ui/src/
+  lib.rs                 GzUiPlugin, prelude
+  theme/                 Theme; tokens.rs (generated from tokens.json), roles.rs, visuals/
+  assets/                fonts, icons/ (atlas generated from icons.json), brand
+  widgets/               §5 components; layout.rs (row, column, flex_spacer, separator,
+                         group/property_row), text.rs, format.rs, shortcut.rs; a folder per
+                         larger widget
+  shell/                 ShellPlugin, ShellPlugins; commands, layout (ShellLayout), regions,
+                         routing, splitter, collapsed_bar, connection, panel_status,
+                         inspector (frame)
+    top_bar/             tools, transport, world_button, search
+    activity_bar/ sidebar/ status_bar/
+    viewport/            view, banner, connect_card (§3.4 rail and cube come in M3)
+  panels/                PanelRegistry; one folder and plugin per panel:
+    scene/ assets/ topics/ plot/ sensors/ teleop/ console/
+  inspectors/            InspectorRegistry; one folder and plugin per selection kind:
+    world/               (M5: model/, link/, joint/, light/, sensor/, multi/)
+  gallery/               the widget gallery (§12 item 1)
 ```
+
+Each panel and inspector is a Bevy plugin that registers a definition (an open id, title, icon, shortcut binding, activity bar group and order, whether it opens at start, body per connection phase) in a registry resource while the app is built; its own systems write what changes at run time (activity badge, header count) into the shell's panel status. The activity bar, the sidebar's slots and the inspector frame show whatever is registered and never name a panel. The built-in panels and inspectors are plugin groups inside `ShellPlugins`, so an app can leave one out or replace it under the same id (DECISIONS.md D-57). A panel can move to its own crate when it grows heavy; the plugin is its whole interface. Shell regions and panels are built from `widgets/` and its layout primitives, with colours only through roles (§4.1).
 
 ### 9.2 State resources
 `Selection { entities: Vec<GzEntityId> }`, `ActiveTool { Navigate | BoxSelect | Translate | Rotate }`, `ViewLayout { preset, ratios, views: Vec<ViewState> }`, `ViewState { camera_pose, projection, camera_mode, drag_action, overlays }`, `ActiveView(usize)`, `Workspace`, `SimStatus { running, sim_time, real_time, rtf, iterations, step_size, connection }`, `MessageLog`, `UndoStack`.

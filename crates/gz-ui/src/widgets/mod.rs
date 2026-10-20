@@ -8,23 +8,34 @@
 //! Sizes come from [`Theme::s`](crate::theme::Theme), colours from roles,
 //! spacing and radii from the tokens. Every control gets an AccessKit name:
 //! its tooltip or its label (spec §10).
+//!
+//! The widgets are flat here (`widgets::button`, `widgets::MenuItemProps`);
+//! a widget with optional parts takes a `…Props` struct. [`layout`] has the
+//! rows, columns, separators and property groups the shell is built from,
+//! [`text`] the readouts' setter, [`shortcut`] the shortcut text. Text-field
+//! focus and drag cursors are shared behaviour, registered with the widgets.
 
-pub mod activity;
-pub mod badge;
-pub mod button;
-pub mod chip;
-pub mod expr;
-pub mod menu;
-pub mod number_field;
-pub mod section;
-pub mod segmented;
-pub mod select;
-pub mod slider;
-pub mod splitter;
-pub mod text_field;
-pub mod toggle;
-pub mod tooltip;
-pub mod tree_row;
+pub(crate) mod activity;
+pub(crate) mod badge;
+pub(crate) mod button;
+pub(crate) mod chip;
+pub(crate) mod cursor;
+pub(crate) mod focus;
+pub mod format;
+pub mod layout;
+pub(crate) mod menu;
+pub(crate) mod number_field;
+pub(crate) mod section;
+pub(crate) mod segmented;
+pub(crate) mod select;
+pub mod shortcut;
+pub(crate) mod slider;
+pub(crate) mod splitter;
+pub mod text;
+pub(crate) mod text_field;
+pub(crate) mod toggle;
+pub(crate) mod tooltip;
+pub(crate) mod tree_row;
 
 use accesskit::Role;
 use bevy::a11y::AccessibilityNode;
@@ -32,24 +43,27 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
+use crate::theme::visuals::Visuals;
 use crate::theme::{radius, Fill, FocusRing};
-pub use crate::visuals::ForceState;
-use crate::visuals::Visuals;
 
 pub use activity::activity_button;
 pub use badge::{badge, BadgeKind};
 pub use button::{
     bar_button, bar_tool_button, button, icon_button, primary_button, text_button, tool_button,
-    ButtonVariant, IconButtonSize, TextButton,
+    ButtonVariant, IconButtonSize, TextButtonProps,
 };
 pub use chip::{filter_chip, status_chip, StatusKind};
-pub use menu::{menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator};
-pub use number_field::{number_field, AxisTag, NumberCommit, NumberField, Unit};
-pub use section::section_header;
+pub use menu::{
+    menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator, Menu,
+    MenuItemProps, MenuSide,
+};
+pub use number_field::expr::{eval, ExprError, MAX_DEPTH};
+pub use number_field::{number_field, AxisTag, Invalid, NumberCommit, NumberField, Unit};
+pub use section::{section_header, SectionCount};
 pub use segmented::{button_group, segmented_group};
-pub use select::{select, SelectChanged};
-pub use slider::{slider_row, SliderSpec};
-pub use splitter::{splitter, Splitter};
+pub use select::{select, Select, SelectChanged};
+pub use slider::{slider_row, SliderProps};
+pub use splitter::{splitter, SplitAxis, Splitter};
 pub use text_field::{text_field, TextSubmit};
 pub use toggle::toggle_row;
 pub use tooltip::{tooltip_card, Tooltip, TooltipSide};
@@ -63,15 +77,13 @@ pub fn a11y(role: Role, label: impl Into<String>) -> AccessibilityNode {
 }
 
 /// What every clickable widget carries: pointer hover tracking, a tab stop
-/// (that a pointer press doesn't keep: [`PressFocusless`]), the focus
-/// ring, its state visuals and an accessible name.
-///
-/// [`PressFocusless`]: crate::focus::PressFocusless
+/// (that a pointer press doesn't keep: `PressFocusless`, DECISIONS.md
+/// D-52), the focus ring, its state visuals and an accessible name.
 pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl Bundle {
     (
         Hovered::default(),
         TabIndex(0),
-        crate::focus::PressFocusless,
+        focus::PressFocusless,
         FocusRing,
         visuals,
         Fill(visuals.fill),
@@ -82,14 +94,6 @@ pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl
 /// A rounded rectangle node.
 pub fn rounded(r: f32) -> BorderRadius {
     BorderRadius::all(px(r))
-}
-
-/// A flexible spacer.
-pub fn spacer() -> Node {
-    Node {
-        flex_grow: 1.0,
-        ..default()
-    }
 }
 
 /// Default radius for small controls.
@@ -108,3 +112,6 @@ pub(crate) fn build(app: &mut App) {
     tooltip::build(app);
     tree_row::build(app);
 }
+
+#[cfg(test)]
+mod tests;
