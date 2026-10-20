@@ -19,6 +19,10 @@
 //! focused, and Space is also the global play/pause chord (D-32), so a
 //! clicked button kept focused would act twice on Space, or a hidden one
 //! act unseen.
+//!
+//! Nor does Tab land there ([`hide_undisplayed`], DECISIONS.md D-58):
+//! Bevy's tab navigation skips only invisible entities, so a node that
+//! isn't displayed is made invisible too.
 
 use bevy::input_focus::InputFocus;
 use bevy::prelude::*;
@@ -138,6 +142,34 @@ pub(crate) fn release_focus(
     let pressed = led.0 && pressless.contains(e);
     if gone || pressed {
         focus.clear();
+    }
+}
+
+/// A node [`hide_undisplayed`] made `Visibility::Hidden`.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct HiddenByDisplay;
+
+/// Makes a node that isn't displayed (`Display::None`: a collapsed side
+/// panel, the closed second slot, a faded-out card) `Visibility::Hidden`,
+/// and visible again once it is displayed, so Bevy's tab navigation,
+/// which skips only what `InheritedVisibility` hides, skips it and its
+/// subtree. Only a node left at `Visibility::Inherited` is touched: one
+/// that sets its own visibility (a menu's popup, the 3D view's node)
+/// keeps it. Nothing looks different: an undisplayed node draws nothing
+/// either way. Runs in PostUpdate before visibility propagates.
+pub(crate) fn hide_undisplayed(
+    mut nodes: Query<(Entity, &Node, &mut Visibility, Has<HiddenByDisplay>), Changed<Node>>,
+    mut commands: Commands,
+) {
+    for (e, node, mut visibility, hidden) in &mut nodes {
+        let shown = node.display != Display::None;
+        if !shown && !hidden && *visibility == Visibility::Inherited {
+            *visibility = Visibility::Hidden;
+            commands.entity(e).insert(HiddenByDisplay);
+        } else if shown && hidden {
+            visibility.set_if_neq(Visibility::Inherited);
+            commands.entity(e).remove::<HiddenByDisplay>();
+        }
     }
 }
 

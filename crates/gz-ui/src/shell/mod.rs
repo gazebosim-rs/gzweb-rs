@@ -124,6 +124,7 @@ impl Plugin for ShellPlugin {
             )
             .add_systems(PreStartup, regions::init_layout)
             .add_systems(Startup, regions::spawn_shell)
+            .add_observer(regions::add_tab_groups)
             .add_systems(
                 Update,
                 (

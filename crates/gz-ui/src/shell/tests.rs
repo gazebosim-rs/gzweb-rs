@@ -885,3 +885,64 @@ fn the_shell_needs_the_ui_plugin() {
     app.add_plugins((MinimalPlugins, crate::shell::ShellPlugins));
     app.finish();
 }
+
+/// Tab pressed for real walks the shell's regions in the spec's order
+/// (§6.5: top bar → activity bar → sidebar → viewport → inspector →
+/// status bar) and comes round again, never landing in a region that
+/// isn't displayed: a collapsed sidebar gives its turn to its bar.
+#[test]
+fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    // From no focus, Tab by Tab until focus comes back to the first stop.
+    let walk = |app: &mut App| -> Vec<Region> {
+        app.world_mut()
+            .resource_mut::<bevy::input_focus::InputFocus>()
+            .clear();
+        let mut seen: Vec<(Entity, Region)> = Vec::new();
+        for _ in 0..200 {
+            key(app, KeyCode::Tab, ButtonState::Pressed);
+            app.update();
+            key(app, KeyCode::Tab, ButtonState::Released);
+            app.update();
+            let e = focused(app).expect("Tab focuses something");
+            if seen.first().is_some_and(|s| s.0 == e) {
+                break;
+            }
+            let world = app.world();
+            let region =
+                std::iter::successors(Some(e), |x| world.get::<ChildOf>(*x).map(ChildOf::parent))
+                    .find_map(|a| world.get::<Region>(a).copied())
+                    .expect("in a region");
+            seen.push((e, region));
+        }
+        let mut regions: Vec<Region> = seen.into_iter().map(|s| s.1).collect();
+        regions.dedup();
+        regions
+    };
+    use Region::*;
+    assert_eq!(
+        walk(&mut app),
+        [
+            TopBar,
+            ActivityBar,
+            Sidebar,
+            ViewportArea,
+            Inspector,
+            StatusBar
+        ]
+    );
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(
+        walk(&mut app),
+        [
+            TopBar,
+            ActivityBar,
+            SidebarBar,
+            ViewportArea,
+            Inspector,
+            StatusBar
+        ]
+    );
+}

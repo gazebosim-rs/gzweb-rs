@@ -17,6 +17,7 @@ mod widgets;
 
 use std::path::PathBuf;
 
+use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::prelude::*;
 use bevy::text::Underline;
 use gz_bevy::view::input::InputMap;
@@ -126,6 +127,8 @@ pub(crate) fn spawn_gallery(mut commands: Commands, theme: Res<Theme>, map: Opti
     commands
         .spawn((
             GalleryRoot,
+            // Tab walks the gallery's widgets.
+            TabGroup::new(0),
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),

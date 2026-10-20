@@ -58,6 +58,7 @@ pub mod prelude {
     pub use crate::{GzUiPlugin, GzUiSystems};
 }
 
+use bevy::camera::visibility::VisibilitySystems;
 use bevy::input::InputSystems;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
 use bevy::input_focus::InputFocusSystems;
@@ -127,9 +128,12 @@ impl Plugin for GzUiPlugin {
             )
             .add_systems(
                 PostUpdate,
-                focus::release_focus
-                    .after(bevy::ui_widgets::MenuFocusSystem)
-                    .before(InputFocusSystems::FocusChangeEvents),
+                (
+                    focus::release_focus
+                        .after(bevy::ui_widgets::MenuFocusSystem)
+                        .before(InputFocusSystems::FocusChangeEvents),
+                    focus::hide_undisplayed.before(VisibilitySystems::VisibilityPropagate),
+                ),
             )
             .add_systems(
                 Update,

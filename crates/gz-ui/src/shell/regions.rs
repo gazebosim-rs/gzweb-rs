@@ -2,6 +2,7 @@
 //! [`ShellLayout`] into their nodes as the window and the layout change.
 
 use bevy::ecs::spawn::SpawnWith;
+use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -30,6 +31,33 @@ pub(crate) enum Region {
     InspectorBar,
     Inspector,
     StatusBar,
+}
+
+impl Region {
+    /// Its place in the Tab order (§6.5: top bar → activity bar → sidebar
+    /// → viewport → inspector → status bar; a collapsed panel's bar where
+    /// the panel would be). The containers have none.
+    pub(crate) fn tab_order(self) -> Option<i32> {
+        Some(match self {
+            Region::Root | Region::Body => return None,
+            Region::TopBar => 0,
+            Region::ActivityBar => 1,
+            Region::Sidebar => 2,
+            Region::SidebarBar => 3,
+            Region::ViewportArea => 4,
+            Region::InspectorBar => 5,
+            Region::Inspector => 6,
+            Region::StatusBar => 7,
+        })
+    }
+}
+
+/// Every region but the containers is a tab group, in the spec's order
+/// (DECISIONS.md D-58).
+pub(crate) fn add_tab_groups(ev: On<Add<Region>>, regions: Query<&Region>, mut commands: Commands) {
+    if let Some(order) = regions.get(ev.entity).ok().and_then(|r| r.tab_order()) {
+        commands.entity(ev.entity).insert(TabGroup::new(order));
+    }
 }
 
 /// A plain region node with its background and one border.
