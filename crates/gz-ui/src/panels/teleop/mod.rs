@@ -17,7 +17,8 @@ pub struct TeleopPanelPlugin;
 impl Plugin for TeleopPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(TELEOP, "Teleop", IconId::ActivityTeleop, DATA_GROUP, 50)
+            PanelDef::new(TELEOP, "Teleop", IconId::ActivityTeleop)
+                .place(DATA_GROUP, 50)
                 .view(view::state),
         );
     }

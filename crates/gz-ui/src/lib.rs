@@ -32,9 +32,12 @@ pub mod format;
 pub mod gallery;
 pub mod inspectors;
 pub mod panels;
+pub(crate) mod registry;
 pub mod shell;
 pub mod theme;
 pub mod widgets;
+
+pub use registry::{Registered, Registry};
 
 /// What a plugin that adds to the UI usually needs: the plugins and system
 /// sets, the shell's commands and layout, the panel and inspector

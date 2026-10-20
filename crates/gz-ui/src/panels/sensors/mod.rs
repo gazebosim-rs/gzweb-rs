@@ -17,7 +17,8 @@ pub struct SensorsPanelPlugin;
 impl Plugin for SensorsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(SENSORS, "Sensors", IconId::ActivitySensors, DATA_GROUP, 40)
+            PanelDef::new(SENSORS, "Sensors", IconId::ActivitySensors)
+                .place(DATA_GROUP, 40)
                 .view(view::state),
         );
     }

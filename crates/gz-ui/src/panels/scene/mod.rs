@@ -21,7 +21,8 @@ pub struct ScenePanelPlugin;
 impl Plugin for ScenePanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(SCENE, "Scene", IconId::ActivityScene, WORLD_GROUP, 0)
+            PanelDef::new(SCENE, "Scene", IconId::ActivityScene)
+                .place(WORLD_GROUP, 0)
                 .binding("panel.scene")
                 .default_open()
                 .view(view::state),

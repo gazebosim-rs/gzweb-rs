@@ -22,7 +22,8 @@ pub struct PlotPanelPlugin;
 impl Plugin for PlotPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(PLOT, "Plot", IconId::ActivityPlot, DATA_GROUP, 30)
+            PanelDef::new(PLOT, "Plot", IconId::ActivityPlot)
+                .place(DATA_GROUP, 30)
                 .binding("panel.plot")
                 .view(view::state),
         )

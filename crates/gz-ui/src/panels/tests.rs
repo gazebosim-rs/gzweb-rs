@@ -41,12 +41,15 @@ fn every_panel_registers_once_in_activity_bar_order() {
 fn a_built_in_panel_can_be_left_out_or_replaced() {
     let r = registry(PanelPlugins.build().disable::<ScenePanelPlugin>());
     assert!(r.get(SCENE).is_none());
-    assert_eq!(r.default_open(), None);
+    // Without its default panel, the first in the bar opens at start.
+    assert_eq!(r.default_open(), Some(ASSETS));
     struct MyScene;
     impl Plugin for MyScene {
         fn build(&self, app: &mut App) {
             app.register_panel(
-                PanelDef::new(SCENE, "World", IconId::ActivityScene, WORLD_GROUP, 0).default_open(),
+                PanelDef::new(SCENE, "World", IconId::ActivityScene)
+                    .place(WORLD_GROUP, 0)
+                    .default_open(),
             );
         }
     }
@@ -58,32 +61,49 @@ fn a_built_in_panel_can_be_left_out_or_replaced() {
 }
 
 #[test]
-fn registering_again_replaces_and_groups_then_order_sort() {
+fn groups_then_order_sort_and_unknown_ids_resolve_to_the_first() {
     let mut r = PanelRegistry::default();
-    let def = |id, title, icon, group, order| PanelDef::new(id, title, icon, group, order);
-    r.register(def(
-        CONSOLE,
-        "Console",
-        IconId::ActivityConsole,
-        DATA_GROUP,
-        60,
-    ));
-    r.register(def(PLOT, "Plot", IconId::ActivityPlot, DATA_GROUP, 30));
+    assert_eq!(r.default_open(), None);
+    assert_eq!(r.resolve(SCENE), None);
+    let def = |id, title, icon| PanelDef::new(id, title, icon);
+    r.register(def(CONSOLE, "Console", IconId::ActivityConsole).place(DATA_GROUP, 60));
+    r.register(
+        def(PLOT, "Plot", IconId::ActivityPlot)
+            .place(DATA_GROUP, 30)
+            .binding("panel.plot"),
+    );
     // A lower order in a later group still comes after the first group.
-    r.register(def(SCENE, "Scene", IconId::ActivityScene, WORLD_GROUP, 90));
-    r.register(def(SCENE, "World", IconId::ActivityScene, WORLD_GROUP, 90).binding("panel.plot"));
-    r.register(def(PLOT, "Plot", IconId::ActivityPlot, DATA_GROUP, 30).binding("panel.plot"));
+    r.register(
+        def(SCENE, "World", IconId::ActivityScene)
+            .place(WORLD_GROUP, 90)
+            .binding("panel.plot"),
+    );
+    // Unplaced: after every placed panel.
+    r.register(def(TOPICS, "Topics", IconId::ActivityTopics));
     let titles: Vec<&str> = r.iter().map(|p| p.title).collect();
-    assert_eq!(titles, ["World", "Plot", "Console"]);
+    assert_eq!(titles, ["World", "Plot", "Console", "Topics"]);
     // Two panels on one binding: the first in the bar opens.
     assert_eq!(r.for_binding("panel.plot"), Some(SCENE));
+    // An id nothing registered stands for the first panel.
+    assert_eq!(r.resolve(PanelId::new("nope")), Some(SCENE));
+    assert_eq!(r.resolve(PLOT), Some(PLOT));
     // The defaults: ready, closed at start, no binding or content.
     let d = r.get(CONSOLE).unwrap();
     assert_eq!((d.view)(Phase::Idle), PanelView::Ready);
     assert!(d.binding.is_none() && d.content.is_none() && !d.default_open);
     // Content is the panel's body once ready.
-    let d = def(PLOT, "Plot", IconId::ActivityPlot, 1, 0).content(|_, _| {});
+    let d = def(PLOT, "Plot", IconId::ActivityPlot).content(|_, _| {});
     assert!(d.content.is_some());
+}
+
+/// Replacing a built-in panel means disabling its plugin: registering its
+/// id again would leave the first plugin's systems writing its state.
+#[test]
+#[should_panic(expected = "panel 'scene' is registered twice")]
+fn registering_an_id_twice_panics() {
+    let mut app = App::new();
+    app.add_plugins(PanelPlugins);
+    app.register_panel(PanelDef::new(SCENE, "World", IconId::ActivityScene));
 }
 
 #[test]
@@ -92,7 +112,7 @@ fn registering_after_the_shell_spawned_panics() {
     let mut app = App::new();
     app.init_resource::<PanelRegistry>();
     app.world_mut().resource_mut::<PanelRegistry>().close();
-    app.register_panel(PanelDef::new(PLOT, "Plot", IconId::ActivityPlot, 1, 0));
+    app.register_panel(PanelDef::new(PLOT, "Plot", IconId::ActivityPlot));
 }
 
 #[test]

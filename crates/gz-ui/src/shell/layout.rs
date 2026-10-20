@@ -77,14 +77,14 @@ fn index(side: Side) -> usize {
 impl ShellLayout {
     /// The layout a window `width` wide starts with: both panels at their
     /// default widths, the inspector collapsed below 1280, the sidebar too
-    /// below 1100, `open` (the registry's default panel) in the primary
-    /// slot, then the floor rule.
+    /// below 1100 (or with no panel to show), `open` (the registry's
+    /// default panel) in the primary slot, then the floor rule.
     pub fn for_width(width: f32, open: Option<PanelId>) -> Self {
         let s = Sizes::default();
         let mut l = Self {
             sidebar_w: s.sidebar_w,
             inspector_w: s.inspector_w,
-            sidebar_open: width >= SIDEBAR_START_W,
+            sidebar_open: width >= SIDEBAR_START_W && open.is_some(),
             inspector_open: width >= INSPECTOR_START_W,
             primary: open,
             secondary: None,

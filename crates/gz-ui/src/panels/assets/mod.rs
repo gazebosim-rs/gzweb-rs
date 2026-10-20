@@ -17,7 +17,8 @@ pub struct AssetsPanelPlugin;
 impl Plugin for AssetsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(ASSETS, "Assets", IconId::ActivityAssets, WORLD_GROUP, 10)
+            PanelDef::new(ASSETS, "Assets", IconId::ActivityAssets)
+                .place(WORLD_GROUP, 10)
                 .binding("panel.assets")
                 .view(view::state),
         );

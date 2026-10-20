@@ -6,8 +6,13 @@ use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
-use crate::panels::{PLOT, SCENE};
+use bevy::app::PluginGroupBuilder;
+
+use crate::inspectors::InspectorPlugins;
+use crate::panels::{PanelId, ScenePanelPlugin, ASSETS, PLOT, SCENE};
 use crate::shell::layout::MIN_SLOT_H;
+use crate::shell::sidebar::body::PanelBody;
+use crate::shell::{ShellPlugin, ShellPlugins};
 use crate::shell::{Slot, UiCommand};
 use crate::test_support::frames;
 use crate::test_support::shell::*;
@@ -156,7 +161,7 @@ fn panel_content_and_actions() {
     const PROBE: PanelId = PanelId::new("probe");
     let mut app = shell_app((1440, 900), 1.0);
     app.register_panel(
-        PanelDef::new(PROBE, "Probe", IconId::ActivityPlot, 9, 0)
+        PanelDef::new(PROBE, "Probe", IconId::ActivityPlot)
             .view(|phase| match phase {
                 Phase::Live => PanelView::Ready,
                 _ => PanelView::Error {
@@ -197,4 +202,57 @@ fn panel_content_and_actions() {
         app.world().get::<ChildOf>(probe).map(ChildOf::parent),
         Some(body)
     );
+}
+
+fn bodies(app: &mut App) -> Vec<(Entity, PanelId)> {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &PanelBody)>()
+        .iter(world)
+        .map(|(e, b)| (e, b.0))
+        .collect()
+}
+
+/// A command naming a panel nothing registered shows the first panel in
+/// the activity bar instead of an empty slot.
+#[test]
+fn an_unknown_panel_id_opens_the_first_panel() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PLOT,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PanelId::new("nope"),
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert_eq!((l.primary, l.secondary), (Some(SCENE), None));
+    let shown: Vec<PanelId> = bodies(&mut app).into_iter().map(|b| b.1).collect();
+    assert_eq!(shown, [SCENE]);
+}
+
+/// Without its default panel (an app disabled Scene's plugin), the first
+/// panel in the bar opens at start; with no panels, the sidebar starts
+/// collapsed rather than empty.
+#[test]
+fn without_the_default_panel_the_first_one_opens() {
+    let mut app = shell_app_from(
+        (1440, 900),
+        1.0,
+        ShellPlugins.build().disable::<ScenePanelPlugin>(),
+    );
+    frames(&mut app, 2);
+    assert_eq!(layout(&app).primary, Some(ASSETS));
+    assert_eq!(bodies(&mut app).len(), 1);
+    let no_panels = PluginGroupBuilder::start::<ShellPlugins>()
+        .add(ShellPlugin::default())
+        .add_group(InspectorPlugins);
+    let mut app = shell_app_from((1440, 900), 1.0, no_panels);
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert_eq!((l.primary, l.sidebar_open), (None, false));
 }

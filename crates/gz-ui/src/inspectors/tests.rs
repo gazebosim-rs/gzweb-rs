@@ -11,17 +11,28 @@ fn the_world_inspector_shows_with_nothing_selected() {
     let r = app.world().resource::<InspectorRegistry>().clone();
     assert_eq!(r.for_selection().map(|i| i.id), Some(WORLD));
     assert_eq!(WORLD.to_string(), WORLD.name());
-    // Registering an id again replaces it.
+    // Inspectors keep their registration order.
     let mut r = InspectorRegistry::default();
     assert!(r.for_selection().is_none());
     let body: super::BodyFn = |_, _| {};
-    r.register(InspectorDef { id: WORLD, body });
     r.register(InspectorDef { id: WORLD, body });
     r.register(InspectorDef {
         id: InspectorId::new("model"),
         body,
     });
-    assert_eq!(r.inspectors.len(), 2);
+    let ids: Vec<&str> = r.iter().map(|i| i.id.name()).collect();
+    assert_eq!(ids, ["world", "model"]);
+}
+
+/// Replacing a built-in inspector means disabling its plugin: registering
+/// its id again is a mistake.
+#[test]
+#[should_panic(expected = "inspector 'world' is registered twice")]
+fn registering_an_id_twice_panics() {
+    let mut app = App::new();
+    app.add_plugins(InspectorPlugins);
+    let body: super::BodyFn = |_, _| {};
+    app.register_inspector(InspectorDef { id: WORLD, body });
 }
 
 #[test]

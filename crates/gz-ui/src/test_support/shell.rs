@@ -2,6 +2,7 @@
 //! 3D main camera and the gz-bevy resources the shell reads, and helpers
 //! to find regions, read rects, press keys and go live.
 
+use bevy::app::PluginGroupBuilder;
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::camera::{ComputedCameraValues, RenderTargetInfo};
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
@@ -43,12 +44,18 @@ fn collect(
 /// The full UI headless, `size` logical pixels at `scale`, with a 3D main
 /// camera and the gz-bevy resources the shell reads.
 pub(crate) fn shell_app(size: (u32, u32), scale: f32) -> App {
+    shell_app_from(size, scale, ShellPlugins.build())
+}
+
+/// [`shell_app`] from `plugins` (`ShellPlugins.build()` with a panel left
+/// out, say); the UI camera is the harness's.
+pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupBuilder) -> App {
     let mut app = ui_app_with(ThemeMode::Light, size, scale, |app| {
         app.add_plugins((
             crate::GzUiPlugin {
                 theme: ThemeMode::Light,
             },
-            ShellPlugins.set(ShellPlugin { camera: false }),
+            plugins.set(ShellPlugin { camera: false }),
         ));
     });
     let mut map = InputMap::builtin();

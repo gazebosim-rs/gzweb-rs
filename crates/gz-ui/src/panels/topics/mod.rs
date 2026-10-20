@@ -17,7 +17,8 @@ pub struct TopicsPanelPlugin;
 impl Plugin for TopicsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(TOPICS, "Topics", IconId::ActivityTopics, DATA_GROUP, 20)
+            PanelDef::new(TOPICS, "Topics", IconId::ActivityTopics)
+                .place(DATA_GROUP, 20)
                 .binding("panel.topics")
                 .view(view::state),
         );

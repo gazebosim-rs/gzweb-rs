@@ -26,7 +26,8 @@ pub struct ConsolePanelPlugin;
 impl Plugin for ConsolePanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_panel(
-            PanelDef::new(CONSOLE, "Console", IconId::ActivityConsole, DATA_GROUP, 60)
+            PanelDef::new(CONSOLE, "Console", IconId::ActivityConsole)
+                .place(DATA_GROUP, 60)
                 .binding("panel.console")
                 .view(view::state),
         )

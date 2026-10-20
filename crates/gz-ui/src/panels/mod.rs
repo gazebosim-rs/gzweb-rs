@@ -15,9 +15,9 @@
 //!
 //! The built-in panels come as [`PanelPlugins`]; an app replaces one by
 //! disabling its plugin and registering its own panel under the same id
-//! (registering an id twice warns, and the later registration wins). Panels
-//! register while the app is built: once the shell has spawned, the
-//! registry is closed (DECISIONS.md D-57).
+//! (registering an id twice panics: the earlier plugin's systems would
+//! still run). Panels register while the app is built: once the shell has
+//! spawned, the registry is closed (DECISIONS.md D-57, D-58).
 //!
 //! A panel can move to its own crate when it grows heavy (or compile times
 //! ask for it): it depends on this module and the widgets, and its plugin
@@ -31,12 +31,11 @@ mod sensors;
 mod teleop;
 mod topics;
 
-use std::fmt;
-
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 
 use crate::assets::IconId;
+use crate::registry::{self, ui_id, Registered, Registry};
 use crate::shell::Phase;
 use crate::theme::Theme;
 pub use assets::{AssetsPanelPlugin, ASSETS};
@@ -47,27 +46,12 @@ pub use sensors::{SensorsPanelPlugin, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TELEOP};
 pub use topics::{TopicsPanelPlugin, TOPICS};
 
-/// A panel's id: a short, stable name ("scene"), unique among the
-/// registered panels. Open, like Rerun's `ViewClassIdentifier`: a panel in
-/// any crate declares its own as a constant. The layout keeps ids in its
-/// slots, and a saved layout (M8) keys by [`name`](Self::name).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
-pub struct PanelId(&'static str);
-
-impl PanelId {
-    pub const fn new(name: &'static str) -> Self {
-        Self(name)
-    }
-
-    pub const fn name(self) -> &'static str {
-        self.0
-    }
-}
-
-impl fmt::Display for PanelId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
-    }
+ui_id! {
+    /// A panel's id: a short, stable name ("scene"), unique among the
+    /// registered panels. Open, like Rerun's `ViewClassIdentifier`: a panel
+    /// in any crate declares its own as a constant. The layout keeps ids in
+    /// its slots, and a saved layout (M8) keys by [`name`](Self::name).
+    PanelId
 }
 
 /// What a panel's body shows (§3.3.1).
@@ -156,20 +140,28 @@ pub struct PanelDef {
 }
 
 impl PanelDef {
-    /// A panel in activity bar `group` at `order`, with no binding or
-    /// content, closed at start, ready in every phase.
-    pub fn new(id: PanelId, title: &'static str, icon: IconId, group: u32, order: u32) -> Self {
+    /// A panel with no binding or content, closed at start, ready in
+    /// every phase, after every placed panel in the activity bar until
+    /// [`place`](Self::place)d.
+    pub fn new(id: PanelId, title: &'static str, icon: IconId) -> Self {
         Self {
             id,
             title,
             icon,
             binding: None,
-            group,
-            order,
+            group: u32::MAX,
+            order: 0,
             default_open: false,
             view: |_| PanelView::Ready,
             content: None,
         }
+    }
+
+    /// Its place in the activity bar: `group` (a separator between
+    /// groups; [`WORLD_GROUP`], [`DATA_GROUP`]), then `order` in it.
+    pub fn place(mut self, group: u32, order: u32) -> Self {
+        (self.group, self.order) = (group, order);
+        self
     }
 
     pub fn binding(mut self, id: &'static str) -> Self {
@@ -193,37 +185,72 @@ impl PanelDef {
         self.content = Some(content);
         self
     }
+}
 
-    /// Its place in the activity bar.
-    fn place(&self) -> (u32, u32) {
+impl Registered for PanelDef {
+    type Id = PanelId;
+    const KIND: &'static str = "panel";
+
+    fn id(&self) -> PanelId {
+        self.id
+    }
+
+    fn sort_key(&self) -> (u32, u32) {
         (self.group, self.order)
     }
 }
 
 /// The registered panels, in activity bar order. Only
 /// [`RegisterPanel::register_panel`] adds to it, while the app is built.
-#[derive(Resource, Clone, Debug, Default)]
-pub struct PanelRegistry {
-    panels: Vec<PanelDef>,
-    /// The shell has spawned from it.
-    closed: bool,
+pub type PanelRegistry = Registry<PanelDef>;
+
+impl Registry<PanelDef> {
+    /// The panel the binding `id` opens (the first in the activity bar).
+    pub fn for_binding(&self, id: &str) -> Option<PanelId> {
+        self.iter().find(|p| p.binding == Some(id)).map(|p| p.id)
+    }
+
+    /// The panel that opens at start: the first marked
+    /// [`default_open`](PanelDef::default_open), else the first in the
+    /// activity bar (an app may have disabled the default one).
+    pub fn default_open(&self) -> Option<PanelId> {
+        self.iter()
+            .find(|p| p.default_open)
+            .or_else(|| self.first())
+            .map(|p| p.id)
+    }
+
+    /// `id` if it is registered, else the first panel (with a warning): a
+    /// command or a restored layout naming a panel that isn't there.
+    pub fn resolve(&self, id: PanelId) -> Option<PanelId> {
+        if self.get(id).is_some() {
+            return Some(id);
+        }
+        let first = self.first().map(|p| p.id);
+        warn!("no panel '{id}' is registered; showing {first:?} instead");
+        first
+    }
 }
 
-impl PanelRegistry {
-    /// Adds a panel, keeping the activity bar order. An id registered again
-    /// replaces the earlier panel; both that and a binding another panel
-    /// already has are warned about.
-    pub(crate) fn register(&mut self, def: PanelDef) {
-        if self.get(def.id).is_some() {
-            warn!(
-                "panel '{}' is registered twice; the later registration replaces the earlier \
-                 (to replace a built-in panel, disable its plugin in ShellPlugins)",
-                def.id
-            );
-            self.panels.retain(|p| p.id != def.id);
-        }
+/// Registering a panel from its plugin.
+pub trait RegisterPanel {
+    /// Adds `def` to the [`PanelRegistry`]. Panics on an id already
+    /// registered (to replace a built-in panel, disable its plugin), and
+    /// once the shell has spawned: the activity bar is built from the
+    /// registry once, so a panel registered later would have a slot and a
+    /// shortcut but no button. A binding another panel already has warns;
+    /// the first panel in the activity bar keeps it.
+    fn register_panel(&mut self, def: PanelDef) -> &mut Self;
+}
+
+impl RegisterPanel for App {
+    fn register_panel(&mut self, def: PanelDef) -> &mut Self {
         if let Some(b) = def.binding {
-            if let Some(other) = self.for_binding(b) {
+            let other = self
+                .world()
+                .get_resource::<PanelRegistry>()
+                .and_then(|r| r.for_binding(b));
+            if let Some(other) = other {
                 warn!(
                     "panels '{other}' and '{}' both bind '{b}'; the first in the activity bar \
                      opens",
@@ -231,57 +258,7 @@ impl PanelRegistry {
                 );
             }
         }
-        let at = self.panels.partition_point(|p| p.place() <= def.place());
-        self.panels.insert(at, def);
-    }
-
-    /// No more panels: the shell has spawned its activity bar.
-    pub(crate) fn close(&mut self) {
-        self.closed = true;
-    }
-
-    /// Every panel, in activity bar order.
-    pub fn iter(&self) -> impl Iterator<Item = &PanelDef> {
-        self.panels.iter()
-    }
-
-    pub fn get(&self, id: PanelId) -> Option<&PanelDef> {
-        self.panels.iter().find(|p| p.id == id)
-    }
-
-    /// The panel the binding `id` opens (the first in the activity bar).
-    pub fn for_binding(&self, id: &str) -> Option<PanelId> {
-        self.panels
-            .iter()
-            .find(|p| p.binding == Some(id))
-            .map(|p| p.id)
-    }
-
-    /// The panel that opens at start.
-    pub fn default_open(&self) -> Option<PanelId> {
-        self.panels.iter().find(|p| p.default_open).map(|p| p.id)
-    }
-}
-
-/// Registering a panel from its plugin.
-pub trait RegisterPanel {
-    /// Adds `def` to the [`PanelRegistry`]. Panics once the shell has
-    /// spawned: the activity bar is built from the registry once, so a
-    /// panel registered later would have a slot and a shortcut but no
-    /// button.
-    fn register_panel(&mut self, def: PanelDef) -> &mut Self;
-}
-
-impl RegisterPanel for App {
-    fn register_panel(&mut self, def: PanelDef) -> &mut Self {
-        let mut registry = self.world_mut().get_resource_or_init::<PanelRegistry>();
-        assert!(
-            !registry.closed,
-            "register_panel('{}'): panels register while the app is built (in a plugin's \
-             build); the shell has already spawned",
-            def.id
-        );
-        registry.register(def);
+        registry::register(self, def);
         self
     }
 }

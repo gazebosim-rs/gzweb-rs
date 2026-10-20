@@ -87,9 +87,12 @@ pub(crate) fn shortcut_keys(
     }
 }
 
-/// Applies [`UiCommand`]s.
+/// Applies [`UiCommand`]s. A panel id nothing registered stands for the
+/// first panel in the activity bar ([`PanelRegistry::resolve`]); with no
+/// panels at all, the command does nothing.
 pub(crate) fn apply_ui_commands(
     mut commands: MessageReader<UiCommand>,
+    panels: Res<PanelRegistry>,
     mut layout: ResMut<ShellLayout>,
     mut tool: ResMut<Tool>,
     mut theme: ResMut<Theme>,
@@ -98,8 +101,16 @@ pub(crate) fn apply_ui_commands(
         match *cmd {
             UiCommand::ToggleSidebar => layout.toggle(Side::Sidebar),
             UiCommand::ToggleInspector => layout.toggle(Side::Inspector),
-            UiCommand::Activity { panel, shift } => layout.activity_click(panel, shift),
-            UiCommand::OpenPanel { panel, slot } => layout.open_in(panel, slot),
+            UiCommand::Activity { panel, shift } => {
+                if let Some(panel) = panels.resolve(panel) {
+                    layout.activity_click(panel, shift);
+                }
+            }
+            UiCommand::OpenPanel { panel, slot } => {
+                if let Some(panel) = panels.resolve(panel) {
+                    layout.open_in(panel, slot);
+                }
+            }
             UiCommand::SwapSlots => layout.swap_slots(),
             UiCommand::CloseSecondary => layout.close_secondary(),
             UiCommand::SetTool(t) => {
