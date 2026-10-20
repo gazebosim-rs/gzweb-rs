@@ -6,12 +6,18 @@ use bevy::prelude::*;
 use bevy::ui::{Checked, ComputedNode};
 use gz_bevy::view::input::{Chord, InputMap, Mods, Platform};
 
+use super::{
+    activity_button, badge, button, filter_chip, icon_button, menu_item, number_field,
+    primary_button, section_header, segmented_group, splitter, status_chip, text_button,
+    tool_button, tree_row, AxisTag, BadgeKind, ButtonVariant, EntityKind, IconButtonSize,
+    MenuItemProps, NumberField, SplitAxis, Splitter, StatusKind, TextButtonProps, Tooltip,
+    TreeRowSpec,
+};
 use crate::assets::icons::IconId;
 use crate::test_support::{descendants, frames, ui_app};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
 use crate::widgets::shortcut::{chord_label, key_label, shortcut_label};
-use crate::widgets::*;
 
 fn size(app: &mut App, e: Entity) -> Vec2 {
     let n = app.world().get::<ComputedNode>(e).expect("laid out");
@@ -425,7 +431,7 @@ fn shortcut_text() {
 
 #[test]
 fn layout_primitives_say_what_they_are() {
-    use layout::{
+    use super::layout::{
         clip_box, column, display, fill_parent, flex_spacer, group, group_header, overlay,
         property_row, row, separator, Orientation,
     };
@@ -482,8 +488,8 @@ fn layout_primitives_say_what_they_are() {
 
 #[test]
 fn readout_setters_mark_changed_only_on_a_change() {
-    use layout::set_shown;
-    use text::set_text;
+    use super::layout::set_shown;
+    use super::text::set_text;
     let mut world = World::new();
     let e = world.spawn((Text::new("same"), Node::default())).id();
     world.clear_trackers();

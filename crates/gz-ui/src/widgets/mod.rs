@@ -8,6 +8,12 @@
 //! Sizes come from [`Theme::s`](crate::theme::Theme), colours from roles,
 //! spacing and radii from the tokens. Every control gets an AccessKit name:
 //! its tooltip or its label (spec §10).
+//!
+//! The widgets are flat here (`widgets::button`, `widgets::MenuItemProps`);
+//! a widget with optional parts takes a `…Props` struct. [`layout`] has the
+//! rows, columns, separators and property groups the shell is built from,
+//! [`text`] the readouts' setter, [`shortcut`] the shortcut text. Text-field
+//! focus and drag cursors are shared behaviour, registered with the widgets.
 
 pub(crate) mod activity;
 pub(crate) mod badge;

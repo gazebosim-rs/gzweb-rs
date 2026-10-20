@@ -6,9 +6,15 @@
 //! [`ShellPlugin`] is added on top of [`GzUiPlugin`](crate::GzUiPlugin) in
 //! the full UI mode. The layout state is [`ShellLayout`]; everything the
 //! user asks for goes through [`UiCommand`] messages, which
-//! `commands::apply_ui_commands` applies, so buttons,
-//! keys and tests share one path. Sim requests are `gz-bevy` messages
-//! (`GzCommand`, `GzReconnect`).
+//! `commands::apply_ui_commands` applies, so buttons, keys and tests share
+//! one path. Sim requests are `gz-bevy` messages (`GzCommand`,
+//! `GzReconnect`).
+//!
+//! A file or folder per region (`top_bar/`, `activity_bar/`, `sidebar/`,
+//! `viewport/`, `status_bar/`, the inspector frame), each registering its
+//! own systems; the sidebar and the inspector host the
+//! [panels](crate::panels) and [inspectors](crate::inspectors) registered
+//! by their plugins, which this plugin adds.
 
 pub(crate) mod activity_bar;
 pub(crate) mod collapsed_bar;
