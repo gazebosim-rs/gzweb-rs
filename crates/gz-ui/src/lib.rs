@@ -88,9 +88,20 @@ impl Plugin for GzUiPlugin {
                     .before(InputFocusSystems::Dispatch),
             )
             .configure_sets(PostUpdate, GzUiSystems::Resolve.before(UiSystems::Prepare))
+            .init_resource::<focus::MenuTakesEscape>()
+            .init_resource::<focus::PointerLed>()
             .add_systems(
                 PreUpdate,
-                focus::text_focus_system.after(InputFocusSystems::Dispatch),
+                (
+                    focus::text_focus_system.after(InputFocusSystems::Dispatch),
+                    (focus::note_input, focus::menu_escape).in_set(GzUiSystems::Input),
+                ),
+            )
+            .add_systems(
+                PostUpdate,
+                focus::release_focus
+                    .after(bevy::ui_widgets::MenuFocusSystem)
+                    .before(InputFocusSystems::FocusChangeEvents),
             )
             .add_systems(
                 Update,

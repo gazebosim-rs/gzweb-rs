@@ -62,12 +62,16 @@ pub fn a11y(role: Role, label: impl Into<String>) -> AccessibilityNode {
     AccessibilityNode(node)
 }
 
-/// What every clickable widget carries: pointer hover tracking, a tab stop,
-/// the focus ring, its state visuals and an accessible name.
+/// What every clickable widget carries: pointer hover tracking, a tab stop
+/// (that a pointer press doesn't keep: [`PressFocusless`]), the focus
+/// ring, its state visuals and an accessible name.
+///
+/// [`PressFocusless`]: crate::focus::PressFocusless
 pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl Bundle {
     (
         Hovered::default(),
         TabIndex(0),
+        crate::focus::PressFocusless,
         FocusRing,
         visuals,
         Fill(visuals.fill),
