@@ -22,13 +22,8 @@
 
 use bevy::prelude::*;
 use bevy::window::WindowResizeConstraints;
-use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode};
+use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode, DEFAULT_PORT};
 use gz_ui::theme::ThemeMode;
-
-const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
-    Some(p) => p,
-    None => "9002",
-};
 
 #[derive(Debug)]
 struct Args {
@@ -59,6 +54,27 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn web_ui(value: Option<&str>) -> Result<UiMode, String> {
     value.map_or(Ok(UiMode::Minimal), str::parse)
+}
+
+/// The browser's server (spec §7.10): `?url=`, else `?port=` on the page's
+/// host, else, in the full UI only, the last server the page connected to
+/// (`last`; only the full UI's connect card can change the server, so
+/// minimal mode never inherits one it can't change back), else the page's
+/// host on the default port. A page served over https gets `wss://`
+/// (`secure`): browsers block `ws://` from a secure page.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn web_url(
+    url: Option<String>,
+    port: Option<String>,
+    last: Option<String>,
+    host: &str,
+    secure: bool,
+    ui: UiMode,
+) -> String {
+    let scheme = if secure { "wss" } else { "ws" };
+    url.or_else(|| port.map(|p| format!("{scheme}://{host}:{p}")))
+        .or_else(|| last.filter(|_| ui == UiMode::Full))
+        .unwrap_or_else(|| format!("{scheme}://{host}:{DEFAULT_PORT}"))
 }
 
 /// `--ui gallery` / `?ui=gallery`.
@@ -250,14 +266,25 @@ fn command() -> Result<Command, String> {
         .and_then(|w| w.location().hostname().ok())
         .filter(|h| !h.is_empty())
         .unwrap_or_else(|| "localhost".into());
-    let port = get("port").unwrap_or_else(|| DEFAULT_PORT.to_string());
+    let ui = web_ui(
+        get("ui")
+            .filter(|v| !is_gallery(Some(v.as_str())))
+            .as_deref(),
+    )
+    .unwrap_or_else(|e| {
+        bevy::log::warn!("?ui: {e}");
+        UiMode::Minimal
+    });
     Ok(Command::Run(Args {
         config: GzConfig {
-            // ?url=, else the last server this page connected to (spec
-            // §7.10), else this host.
-            url: get("url")
-                .or_else(gz_bevy::view::web::last_url)
-                .unwrap_or_else(|| format!("ws://{host}:{port}")),
+            url: web_url(
+                get("url"),
+                get("port"),
+                gz_bevy::view::web::last_url(),
+                &host,
+                gz_bevy::view::web::page_is_secure(),
+                ui,
+            ),
             key: get("key"),
             quality: get("quality")
                 .and_then(|q| {
@@ -266,15 +293,7 @@ fn command() -> Result<Command, String> {
                         .ok()
                 })
                 .unwrap_or_default(),
-            ui: web_ui(
-                get("ui")
-                    .filter(|v| !is_gallery(Some(v.as_str())))
-                    .as_deref(),
-            )
-            .unwrap_or_else(|e| {
-                bevy::log::warn!("?ui: {e}");
-                UiMode::Minimal
-            }),
+            ui,
             hud: web_hud(get("hud").as_deref()),
             ..Default::default()
         },
@@ -349,29 +368,40 @@ fn default_plugins(
                 ..default()
             })
         }
-        Mode::Interactive => window(Window {
-            title: "gzweb".into(),
-            resolution: size
-                .or(full.then_some(FULL_WINDOW))
-                .map_or_else(default, |(w, h)| bevy::window::WindowResolution::new(w, h)),
-            resize_constraints: if full {
-                let (w, h) = gz_ui::shell::layout::MIN_WINDOW;
-                WindowResizeConstraints {
-                    min_width: w,
-                    min_height: h,
-                    ..default()
-                }
-            } else {
-                default()
-            },
-            canvas: Some("#bevy-canvas".into()),
-            fit_canvas_to_parent: true,
-            // Off: winit would cancel every key and wheel event on the
-            // canvas. `gz_bevy::view::web` cancels only what the spec lists
-            // (context menu, Ctrl+wheel and pinch, the canvas chords).
-            prevent_default_event_handling: false,
-            ..default()
-        }),
+        Mode::Interactive => window(interactive_window(size, full)),
+    }
+}
+
+/// The interactive window: `size`, else 1440x900 for the full UI (which
+/// has a minimum size on native), else Bevy's default; in the browser, the
+/// page's `#bevy-canvas`.
+fn interactive_window(size: Option<(u32, u32)>, full: bool) -> Window {
+    Window {
+        title: "gzweb".into(),
+        resolution: size
+            .or(full.then_some(FULL_WINDOW))
+            .map_or_else(default, |(w, h)| bevy::window::WindowResolution::new(w, h)),
+        // Native only: in the browser winit turns this into the
+        // canvas's CSS min-width/min-height, and a smaller window would
+        // overflow and scroll instead of reflowing (the floor rule
+        // handles narrow windows).
+        resize_constraints: if full && cfg!(not(target_arch = "wasm32")) {
+            let (w, h) = gz_ui::shell::layout::MIN_WINDOW;
+            WindowResizeConstraints {
+                min_width: w,
+                min_height: h,
+                ..default()
+            }
+        } else {
+            default()
+        },
+        canvas: Some("#bevy-canvas".into()),
+        fit_canvas_to_parent: true,
+        // Off: winit would cancel every key and wheel event on the
+        // canvas. `gz_bevy::view::web` cancels only what the spec lists
+        // (context menu, Ctrl+wheel and pinch, the canvas chords).
+        prevent_default_event_handling: false,
+        ..default()
     }
 }
 
@@ -673,6 +703,54 @@ mod tests {
         for off in ["0", "false", "OFF", "no"] {
             assert!(!web_hud(Some(off)), "{off}");
         }
+    }
+
+    /// `?url=` wins, then `?port=`, then (full UI only) the remembered
+    /// server, then the page's host; an https page uses `wss://`.
+    #[test]
+    fn web_url_precedence() {
+        let s = |v: &str| Some(v.to_string());
+        let last = || s("ws://remembered:9010");
+        let url = |u, p, l, secure, ui| web_url(u, p, l, "example.org", secure, ui);
+        let full = UiMode::Full;
+        let minimal = UiMode::Minimal;
+        assert_eq!(
+            url(s("ws://given:1"), s("9003"), last(), false, full),
+            "ws://given:1"
+        );
+        assert_eq!(
+            url(None, s("9003"), last(), false, full),
+            "ws://example.org:9003"
+        );
+        assert_eq!(url(None, None, last(), false, full), "ws://remembered:9010");
+        // Minimal mode can't change the server, so it never inherits one.
+        assert_eq!(
+            url(None, None, last(), false, minimal),
+            format!("ws://example.org:{DEFAULT_PORT}")
+        );
+        assert_eq!(
+            url(None, s("9003"), None, true, minimal),
+            "wss://example.org:9003"
+        );
+        assert_eq!(
+            url(None, None, None, true, full),
+            format!("wss://example.org:{DEFAULT_PORT}")
+        );
+    }
+
+    /// The full UI's minimum window size is a native window's: in the
+    /// browser it would become the canvas's CSS minimum.
+    #[test]
+    fn the_minimum_window_size_is_native_only() {
+        let c = interactive_window(None, true).resize_constraints;
+        let (w, h) = gz_ui::shell::layout::MIN_WINDOW;
+        assert_eq!((c.min_width, c.min_height), (w, h));
+        let default = WindowResizeConstraints::default();
+        let c = interactive_window(None, false).resize_constraints;
+        assert_eq!(
+            (c.min_width, c.min_height),
+            (default.min_width, default.min_height)
+        );
     }
 
     #[test]
