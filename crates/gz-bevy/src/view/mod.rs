@@ -21,6 +21,7 @@
 pub mod controls;
 pub mod input;
 pub mod modes;
+pub mod select;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
@@ -38,6 +39,7 @@ use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
 pub use controls::ViewerControls;
 pub use input::InputMap;
 pub use modes::CameraMode;
+pub use select::{BoxSelectTool, Marquee, MarqueeRect, SelectMode};
 
 /// How long snaps, focus and home animate (spec §12: cube snaps in 250 ms).
 pub const ANIMATION_SECS: f32 = 0.25;
@@ -285,6 +287,19 @@ pub enum ViewOp {
         dir: Vec3,
         secs: f32,
     },
+    /// A click at `at`: picks the top-level model under it (nothing, on
+    /// empty space) into the selection by `mode`.
+    Select {
+        at: Vec2,
+        mode: SelectMode,
+    },
+    /// A marquee from `from` to `to`: picks the top-level models it
+    /// overlaps.
+    SelectRect {
+        from: Vec2,
+        to: Vec2,
+        mode: SelectMode,
+    },
 }
 
 /// A [`ViewOp`] for the view on camera entity `view`.
@@ -294,9 +309,9 @@ pub struct ViewCommand {
     pub op: ViewOp,
 }
 
-/// The selected entities. Nothing selects yet: the full UI's selection
-/// (M5) fills it. Views already use it for the orbit pivot fallback, focus
-/// and snaps.
+/// The selected entities: top-level models picked in a view (spec §6.4),
+/// and whatever the full UI's Scene tree selects. One selection for every
+/// view; the orbit pivot fallback, focus, snaps, Follow and Track use it.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct Selection {
     pub entities: Vec<Entity>,
@@ -716,6 +731,17 @@ impl Bounds {
         (self.center() - p).length() + self.radius()
     }
 
+    /// The eight corners.
+    pub fn corners(&self) -> [Vec3; 8] {
+        std::array::from_fn(|i| {
+            Vec3::new(
+                if i & 1 == 0 { self.min.x } else { self.max.x },
+                if i & 2 == 0 { self.min.y } else { self.max.y },
+                if i & 4 == 0 { self.min.z } else { self.max.z },
+            )
+        })
+    }
+
     /// The distance from `p` to the nearest point of the bounds.
     pub fn distance_to(&self, p: Vec3) -> f32 {
         (p.clamp(self.min, self.max) - p).length()
@@ -810,7 +836,7 @@ impl Skip {
 #[derive(SystemParam)]
 pub struct ViewScene<'w, 's> {
     ray_cast: MeshRayCast<'w, 's>,
-    selection: Res<'w, Selection>,
+    selection: ResMut<'w, Selection>,
     nodes: Query<'w, 's, NodeData>,
     parents: Query<'w, 's, &'static ChildOf>,
     roots: Query<'w, 's, Entity, With<GzWorldRoot>>,
@@ -1049,10 +1075,20 @@ fn apply(
             | ViewOp::SetMode(_)
             | ViewOp::Follow { .. }
             | ViewOp::Track { .. }
+            | ViewOp::Select { .. }
+            | ViewOp::SelectRect { .. }
     ) {
         finish(view, t, p);
     }
     match op {
+        ViewOp::Select { at, mode } => {
+            let picked = select::pick_at(scene, (t, p), f.size, at);
+            scene.selection.apply(mode, picked.as_slice());
+        }
+        ViewOp::SelectRect { from, to, mode } => {
+            let picked = scene.models_in_rect((t, p), f.size, from, to);
+            scene.selection.apply(mode, &picked);
+        }
         ViewOp::SetDragAction(action) => view.drag_action = action,
         ViewOp::PivotAt { at, orbit } => {
             view.pivot = scene.pivot(ray(p, t, at), orbit, view, t, p);

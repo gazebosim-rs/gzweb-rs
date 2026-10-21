@@ -3,7 +3,7 @@
 //! by synthetic input messages.
 
 use super::controls::{ViewerControls, TAP_SECS, WHEEL_PX_PER_STEP, ZOOM_DRAG_PX};
-use super::input::Scope;
+use super::input::{Platform, Scope};
 use super::*;
 use crate::camera::perspective as gz_perspective;
 use crate::connection::{GzCommand, GzStatus, SimStats};
@@ -2294,4 +2294,233 @@ fn the_start_view_applies_once_the_world_has_loaded() {
         assert_eq!(s.parse::<SnapView>(), Ok(v));
     }
     assert!("iso".parse::<SnapView>().is_err());
+}
+
+// ------------------------------------------------------- selection (M5a)
+
+/// Two models at gz (0, 0, 0.5) and gz (0, 3, 0.5), each a link holding
+/// a cube: (rig, near model, far model). Ctrl toggles (Linux).
+fn two_models() -> (Rig, Entity, Entity) {
+    let mut r = rig(default_view());
+    r.app.world_mut().resource_mut::<InputMap>().platform = Platform::Linux;
+    let (root, a) = r.world_root();
+    let b = r
+        .app
+        .world_mut()
+        .spawn((Transform::default(), Visibility::default(), ChildOf(root)))
+        .id();
+    for (model, y) in [(a, 0.0), (b, 3.0)] {
+        let link = r
+            .app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(0.0, y, 0.5),
+                Visibility::default(),
+                ChildOf(model),
+            ))
+            .id();
+        r.cube(Some(link), Vec3::ZERO, 0.5);
+    }
+    r.make_visible();
+    (r, a, b)
+}
+
+fn on_screen(r: &Rig, gz: Vec3) -> Vec2 {
+    r.screen(gz_to_bevy() * gz)
+}
+
+fn selected(r: &Rig) -> Vec<Entity> {
+    r.app.world().resource::<Selection>().entities.clone()
+}
+
+fn click(r: &mut Rig, at: Vec2, modifiers: &[KeyCode]) {
+    for k in modifiers {
+        r.key(*k, ButtonState::Pressed);
+    }
+    r.drag(MouseButton::Left, at, &[]);
+    for k in modifiers {
+        r.key(*k, ButtonState::Released);
+    }
+    r.app.update();
+}
+
+#[test]
+fn a_click_selects_the_model_under_it_and_empty_space_clears() {
+    let (mut r, a, b) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    // The mesh is a link's child: the click picks the top-level model.
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, pb, &[]);
+    assert_eq!(selected(&r), [b]);
+    click(&mut r, Vec2::new(400.0, 5.0), &[]);
+    assert_eq!(selected(&r), []);
+}
+
+#[test]
+fn shift_adds_and_ctrl_toggles() {
+    let (mut r, a, b) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    click(&mut r, pa, &[]);
+    click(&mut r, pb, &[KeyCode::ShiftLeft]);
+    assert_eq!(selected(&r), [a, b]);
+    click(&mut r, pa, &[KeyCode::ShiftLeft]);
+    assert_eq!(selected(&r), [a, b], "Shift never removes");
+    click(&mut r, pa, &[KeyCode::ControlLeft]);
+    assert_eq!(selected(&r), [b]);
+    click(&mut r, pa, &[KeyCode::ControlLeft]);
+    assert_eq!(selected(&r), [b, a]);
+    // Neither changes anything on empty space.
+    click(&mut r, Vec2::new(400.0, 5.0), &[KeyCode::ShiftLeft]);
+    click(&mut r, Vec2::new(400.0, 5.0), &[KeyCode::ControlLeft]);
+    assert_eq!(selected(&r), [b, a]);
+}
+
+#[test]
+fn a_drag_past_the_slop_orbits_and_selects_nothing() {
+    let (mut r, a, _) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    // Within the slop: a click.
+    r.drag(MouseButton::Left, pa, &[pa + Vec2::new(2.0, 1.0)]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, Vec2::new(400.0, 5.0), &[]);
+    let before = r.transform();
+    r.drag(MouseButton::Left, pa, &[pa + Vec2::new(20.0, 0.0)]);
+    assert_eq!(selected(&r), []);
+    assert_ne!(r.transform(), before, "it orbited");
+    // A right click never selects.
+    r.drag(MouseButton::Right, pa, &[]);
+    assert_eq!(selected(&r), []);
+}
+
+#[test]
+fn ctrl_drag_draws_a_marquee_and_selects_what_it_overlaps() {
+    let (mut r, a, b) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    let before = r.transform();
+    // From beside the near model to the far one's middle.
+    let from = pa + Vec2::new(0.0, 60.0);
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.cursor(Some(from));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.cursor(Some(pb));
+    r.app.update();
+    let m = r.app.world().resource::<Marquee>().0.expect("drawing");
+    assert_eq!((m.from, m.to), (from, pb));
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    r.key(KeyCode::ControlLeft, ButtonState::Released);
+    r.app.update();
+    assert_eq!(r.app.world().resource::<Marquee>().0, None);
+    // The ⌘/Ctrl that started it doesn't toggle: it replaces.
+    let mut got = selected(&r);
+    got.sort();
+    let mut want = vec![a, b];
+    want.sort();
+    assert_eq!(got, want);
+    assert_eq!(r.transform(), before, "the camera stayed put");
+}
+
+#[test]
+fn the_box_select_tool_draws_a_marquee_with_a_plain_drag() {
+    let (mut r, a, b) = two_models();
+    r.app.world_mut().resource_mut::<BoxSelectTool>().0 = true;
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    let before = r.transform();
+    // Around the near model only.
+    r.drag(
+        MouseButton::Left,
+        pa - Vec2::splat(10.0),
+        &[pa + Vec2::splat(10.0)],
+    );
+    assert_eq!(selected(&r), [a]);
+    // Shift adds; ⌘/Ctrl toggles with this tool.
+    r.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    r.drag(
+        MouseButton::Left,
+        pb - Vec2::splat(10.0),
+        &[pb + Vec2::splat(10.0)],
+    );
+    r.key(KeyCode::ShiftLeft, ButtonState::Released);
+    assert_eq!(selected(&r), [a, b]);
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.drag(
+        MouseButton::Left,
+        pa - Vec2::splat(10.0),
+        &[pa + Vec2::splat(10.0)],
+    );
+    r.key(KeyCode::ControlLeft, ButtonState::Released);
+    assert_eq!(selected(&r), [b]);
+    // A marquee on nothing clears; a click still picks.
+    r.drag(
+        MouseButton::Left,
+        Vec2::new(10.0, 10.0),
+        &[Vec2::new(40.0, 40.0)],
+    );
+    assert_eq!(selected(&r), []);
+    click(&mut r, pb, &[]);
+    assert_eq!(selected(&r), [b]);
+    assert_eq!(r.transform(), before);
+}
+
+#[test]
+fn a_marquee_leaves_out_hidden_models_and_ground_planes() {
+    let (mut r, a, b) = two_models();
+    let (root, ground) = {
+        let world = r.app.world_mut();
+        let root = world
+            .query_filtered::<Entity, With<GzWorldRoot>>()
+            .single(world)
+            .unwrap();
+        let ground = world
+            .spawn((Transform::default(), Visibility::default(), ChildOf(root)))
+            .id();
+        (root, ground)
+    };
+    let _ = root;
+    let plane = r.cube(Some(ground), Vec3::new(0.0, 0.0, -0.05), 50.0);
+    r.app.world_mut().entity_mut(plane).insert(plane_visual());
+    r.app.world_mut().entity_mut(b).insert(Visibility::Hidden);
+    r.make_visible();
+    r.app.world_mut().resource_mut::<BoxSelectTool>().0 = true;
+    r.drag(
+        MouseButton::Left,
+        Vec2::new(1.0, 1.0),
+        &[Vec2::new(799.0, 599.0)],
+    );
+    assert_eq!(selected(&r), [a]);
+}
+
+#[test]
+fn a_despawned_model_leaves_the_selection() {
+    let (mut r, a, b) = two_models();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a, b];
+    r.app.world_mut().entity_mut(a).despawn();
+    r.app.update();
+    assert_eq!(selected(&r), [b]);
+}
+
+#[test]
+fn select_modes_replace_add_and_toggle() {
+    let (a, b, c) = (
+        Entity::from_raw_u32(1).unwrap(),
+        Entity::from_raw_u32(2).unwrap(),
+        Entity::from_raw_u32(3).unwrap(),
+    );
+    let mut s = Selection::default();
+    s.apply(SelectMode::Replace, &[a, b]);
+    assert_eq!(s.entities, [a, b]);
+    s.apply(SelectMode::Add, &[b, c]);
+    assert_eq!(s.entities, [a, b, c]);
+    s.apply(SelectMode::Toggle, &[a, c]);
+    assert_eq!(s.entities, [b]);
+    s.apply(SelectMode::Replace, &[]);
+    assert_eq!(s.entities, []);
+    assert_eq!(SelectMode::from_keys(true, true), SelectMode::Toggle);
+    assert_eq!(SelectMode::from_keys(true, false), SelectMode::Add);
 }

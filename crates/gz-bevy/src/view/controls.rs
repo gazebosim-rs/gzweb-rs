@@ -25,8 +25,9 @@ use bevy::prelude::*;
 
 use super::input::{Action, InputMap, KeyMods, Platform, Scope};
 use super::{
-    apply_view_commands, apply_view_placement, view_rect, DragAction, Selection, ViewCamera,
-    ViewCommand, ViewOp, ViewOrigin, ViewPlacement, ZOOM_STEP,
+    apply_view_commands, apply_view_placement, view_rect, BoxSelectTool, DragAction, Marquee,
+    MarqueeRect, SelectMode, Selection, ViewCamera, ViewCommand, ViewOp, ViewOrigin, ViewPlacement,
+    ZOOM_STEP,
 };
 use crate::connection::{GzCommand, GzStatus, StepsPerClick};
 use crate::overlays::{apply_overlay_commands, OverlayCommand, Overlays};
@@ -39,6 +40,10 @@ pub const TAP_SECS: f64 = 0.2;
 /// Middle (or Zoom-action) drags zoom one [`super::ZOOM_STEP`] per this many
 /// pixels of vertical movement.
 pub const ZOOM_DRAG_PX: f32 = 5.0;
+
+/// A left press released within this many logical pixels of where it went
+/// down is a click, which selects; further, a drag (as the view cube's).
+pub const CLICK_SLOP: f32 = 3.0;
 /// Pixel-unit wheel deltas per zoom step, in logical pixels: one notch of a
 /// mouse wheel in Chrome, so a notch is a step as it is natively.
 pub const WHEEL_PX_PER_STEP: f32 = 100.0;
@@ -177,8 +182,24 @@ pub struct ControlState {
 #[derive(Debug, Clone, Copy)]
 struct Drag {
     button: MouseButton,
-    gesture: DragAction,
+    gesture: Gesture,
+    /// Where the press went down.
+    start: Vec2,
     last: Option<Vec2>,
+    /// The pointer's last place in the view.
+    end: Vec2,
+    /// Gone past [`CLICK_SLOP`]: not a click.
+    moved: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Gesture {
+    Camera(DragAction),
+    /// A selection marquee (spec §6.1): the Box select tool's left drag,
+    /// or ⌘/Ctrl+drag in Navigate (`by_command`).
+    Marquee {
+        by_command: bool,
+    },
 }
 
 /// A tap chord that went down at `since` (`Time<Real>` seconds).
@@ -197,6 +218,8 @@ impl Plugin for ViewerControls {
             .add_message::<OverlayCommand>()
             .init_resource::<Overlays>()
             .init_resource::<Selection>()
+            .init_resource::<Marquee>()
+            .init_resource::<BoxSelectTool>()
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
             .init_resource::<BrowserWheel>()
@@ -214,6 +237,7 @@ impl Plugin for ViewerControls {
                     mouse_input,
                     key_input,
                     fly_input,
+                    super::select::prune_selection,
                     apply_view_commands,
                     apply_overlay_commands,
                 )
@@ -405,6 +429,34 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
     out
 }
 
+/// ⌘ on a Mac, Ctrl elsewhere: the key that toggles in the selection.
+fn command_held(held: KeyMods, platform: Platform) -> bool {
+    if platform == Platform::Mac {
+        held.super_key
+    } else {
+        held.ctrl
+    }
+}
+
+/// What releasing a left drag does: a click (within [`CLICK_SLOP`])
+/// selects what was under the press; a marquee selects what it covers.
+/// Shift adds; ⌘/Ctrl toggles, except for the ⌘/Ctrl+drag marquee it
+/// started, which (like the Box select tool's plain drag) replaces.
+fn released(drag: Drag, shift: bool, command: bool) -> Option<ViewOp> {
+    match drag.gesture {
+        _ if !drag.moved => Some(ViewOp::Select {
+            at: drag.start,
+            mode: SelectMode::from_keys(shift, command),
+        }),
+        Gesture::Marquee { by_command } => Some(ViewOp::SelectRect {
+            from: drag.start,
+            to: drag.end,
+            mode: SelectMode::from_keys(shift, command && !by_command),
+        }),
+        Gesture::Camera(_) => None,
+    }
+}
+
 /// Mouse buttons, wheel and trackpad → [`ViewCommand`]s.
 #[allow(clippy::too_many_arguments)]
 pub fn mouse_input(
@@ -417,11 +469,16 @@ pub fn mouse_input(
     routing: Res<ViewRouting>,
     mut wheel: WheelInput,
     mut state: ResMut<ControlState>,
+    mut marquee: ResMut<Marquee>,
+    box_tool: Res<BoxSelectTool>,
     mut out: MessageWriter<ViewCommand>,
 ) {
     let Some(target) = target(&windows, &views) else {
         wheel.clear();
         state.drag = None;
+        if marquee.0.is_some() {
+            marquee.0 = None;
+        }
         return;
     };
     let scopes = routing.key_scopes(&scopes.0);
@@ -431,8 +488,18 @@ pub fn mouse_input(
         out.write(ViewCommand { view, op });
     };
 
-    if state.drag.is_some_and(|d| !buttons.pressed(d.button)) {
+    let held = KeyMods::held(&keys);
+    let command = command_held(held, map.platform);
+    if let Some(drag) = state.drag.filter(|d| !buttons.pressed(d.button)) {
         state.drag = None;
+        if marquee.0.is_some() {
+            marquee.0 = None;
+        }
+        if drag.button == MouseButton::Left {
+            if let Some(op) = released(drag, held.shift, command) {
+                send(&mut out, op);
+            }
+        }
     }
     if state.drag.is_none() && routing.pointer {
         let pressed = [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
@@ -441,34 +508,60 @@ pub fn mouse_input(
         if let (Some(button), Some(at)) = (pressed, cursor) {
             let gesture = match button {
                 MouseButton::Left if map.holding(&keys, &scopes, Action::PanHold) => {
-                    DragAction::Pan
+                    Gesture::Camera(DragAction::Pan)
                 }
-                MouseButton::Left => target.camera.drag_action,
-                MouseButton::Right => DragAction::Pan,
-                _ => DragAction::Zoom,
+                MouseButton::Left if box_tool.0 || command => Gesture::Marquee {
+                    by_command: !box_tool.0,
+                },
+                MouseButton::Left => Gesture::Camera(target.camera.drag_action),
+                MouseButton::Right => Gesture::Camera(DragAction::Pan),
+                _ => Gesture::Camera(DragAction::Zoom),
             };
-            let orbit = gesture == DragAction::Orbit;
-            send(&mut out, ViewOp::PivotAt { at, orbit });
+            if let Gesture::Camera(action) = gesture {
+                let orbit = action == DragAction::Orbit;
+                send(&mut out, ViewOp::PivotAt { at, orbit });
+            }
             state.drag = Some(Drag {
                 button,
                 gesture,
+                start: at,
                 last: Some(at),
+                end: at,
+                moved: false,
             });
         }
     }
     if let Some(drag) = state.drag.as_mut() {
+        if let Some(now) = cursor {
+            drag.moved |= now.distance(drag.start) > CLICK_SLOP;
+        }
         if let (Some(now), Some(last)) = (cursor, drag.last) {
             let d = now - last;
             match drag.gesture {
+                Gesture::Marquee { .. } => {
+                    let rect = drag.moved.then_some(MarqueeRect {
+                        view,
+                        from: drag.start,
+                        to: now,
+                    });
+                    if marquee.0 != rect {
+                        marquee.0 = rect;
+                    }
+                }
                 _ if d == Vec2::ZERO => {}
-                DragAction::Orbit => send(&mut out, ViewOp::Orbit(d)),
-                DragAction::Pan => send(&mut out, ViewOp::Pan(d)),
+                Gesture::Camera(DragAction::Orbit) => send(&mut out, ViewOp::Orbit(d)),
+                Gesture::Camera(DragAction::Pan) => send(&mut out, ViewOp::Pan(d)),
                 // Down zooms out, as three.js's middle-drag dolly does.
-                DragAction::Zoom if d.y != 0.0 => send(&mut out, ViewOp::Zoom(-d.y / ZOOM_DRAG_PX)),
-                DragAction::Zoom => {}
+                Gesture::Camera(DragAction::Zoom) if d.y != 0.0 => {
+                    send(&mut out, ViewOp::Zoom(-d.y / ZOOM_DRAG_PX));
+                }
+                Gesture::Camera(DragAction::Zoom) => {}
             }
         }
         drag.last = cursor;
+        if let Some(now) = cursor {
+            drag.end = now;
+        }
     }
 
     if !routing.pointer {
