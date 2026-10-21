@@ -1,7 +1,12 @@
 //! Pointer and key routing (spec §3.4, §9.3; DECISIONS.md D-32): the
 //! camera gets the pointer only over the view's node and not over any UI
 //! node; the view keeps the keys after a press in it, and loses them to a
-//! press elsewhere or a widget taking keyboard focus.
+//! press elsewhere or a widget taking keyboard focus. The view's own
+//! controls (the rail, the cube, the target chip) block the camera's
+//! pointer like any UI, but a press on them or keyboard focus in them keeps
+//! the view's keys (§3.4: the active view is the one that got the last
+//! press, "including on its rail or cube"; shortcuts.json: viewport keys
+//! fire while "viewport or its rail has focus").
 
 use bevy::ecs::system::SystemParam;
 use bevy::input_focus::InputFocus;
@@ -32,6 +37,8 @@ pub(crate) struct PointerOver<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     views: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<ViewNode>>,
     nodes: Query<'w, 's, (), (With<ComputedNode>, Without<ViewNode>)>,
+    view_nodes: Query<'w, 's, (), With<ViewNode>>,
+    parents: Query<'w, 's, &'static ChildOf>,
     hover: Option<Res<'w, HoverMap>>,
 }
 
@@ -49,17 +56,35 @@ impl PointerOver<'_, '_> {
         }
     }
 
-    /// Over a UI node other than the view's (bevy_picking's hover map).
-    fn over_ui(&self) -> bool {
+    /// The UI nodes under the pointer (bevy_picking's hover map).
+    fn hits(&self) -> impl Iterator<Item = Entity> + '_ {
         self.hover
             .as_ref()
             .and_then(|h| h.get(&PointerId::Mouse))
-            .is_some_and(|hits| hits.keys().any(|e| self.is_ui(*e)))
+            .into_iter()
+            .flat_map(|hits| hits.keys().copied())
+    }
+
+    /// Over a UI node other than the view's.
+    fn over_ui(&self) -> bool {
+        self.hits().any(|e| self.is_ui(e))
+    }
+
+    /// Over one of the view's own controls (rail, cube, chip).
+    fn over_view_controls(&self) -> bool {
+        self.hits().any(|e| self.is_view_control(e))
     }
 
     /// `e` is a UI node other than the view's.
     fn is_ui(&self, e: Entity) -> bool {
         self.nodes.contains(e)
+    }
+
+    /// `e` is one of the view's own controls: inside the view's node.
+    fn is_view_control(&self, e: Entity) -> bool {
+        self.parents
+            .iter_ancestors(e)
+            .any(|a| self.view_nodes.contains(a))
     }
 }
 
@@ -75,12 +100,14 @@ pub(crate) fn route_pointer(
 ) {
     let pointer = over.in_view() && !over.over_ui();
     if buttons.get_just_pressed().next().is_some() {
-        view_focus.0 = pointer;
+        view_focus.0 = pointer || over.over_view_controls();
     }
     // A widget that takes keyboard focus takes the keys too (the window
-    // itself holds the focus at start).
-    if focus.is_some_and(|f| f.is_changed() && f.get().is_some_and(|e| over.is_ui(e))) {
-        view_focus.0 = false;
+    // itself holds the focus at start), unless it is one of the view's.
+    if let Some(e) = focus.filter(|f| f.is_changed()).and_then(|f| f.get()) {
+        if over.is_ui(e) {
+            view_focus.0 = over.is_view_control(e);
+        }
     }
     routing.set_if_neq(ViewRouting {
         pointer,

@@ -16,10 +16,12 @@ use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::{GzCommand, GzReconnect, GzStatus, SimStats};
+use gz_bevy::overlays::{apply_overlay_commands, OverlayCommand, Overlays};
+use gz_bevy::render::GzGrid;
 use gz_bevy::spawn::GzIndex;
-use gz_bevy::view::apply_view_placement;
 use gz_bevy::view::controls::{ActiveScopes, ViewPlacementSystems};
 use gz_bevy::view::input::{InputMap, Platform, Scope};
+use gz_bevy::view::{apply_view_commands, apply_view_placement, ViewCamera, ViewCommand};
 use gz_core::transport::Status;
 
 use super::{frames, ui_app_with};
@@ -69,6 +71,18 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .insert_resource(GzStatus::new("ws://localhost:9004"))
         .init_resource::<GzIndex>()
         .init_resource::<Sent>()
+        // The view's and the overlays' state, as ViewerControls keeps it.
+        .init_asset::<StandardMaterial>()
+        .add_message::<ViewCommand>()
+        .add_message::<OverlayCommand>()
+        .init_resource::<Overlays>()
+        .init_resource::<GzGrid>()
+        .init_resource::<gz_bevy::view::Selection>()
+        .init_resource::<gz_bevy::camera::GzCameraTarget>()
+        .add_systems(
+            Update,
+            (apply_view_commands, apply_overlay_commands).before(crate::GzUiSystems::Behaviour),
+        )
         .add_systems(Last, collect)
         // gz-bevy's half of the view placement (ViewerControls adds it in
         // the app).
@@ -98,7 +112,9 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
             },
             ..default()
         },
-        Projection::Perspective(PerspectiveProjection::default()),
+        Projection::Perspective(gz_bevy::camera::perspective()),
+        gz_bevy::view::home_transform(),
+        ViewCamera::new(Vec3::ZERO, gz_bevy::camera::perspective()),
         MainCamera,
     ));
     app
@@ -285,4 +301,37 @@ pub(crate) fn connect_button(app: &mut App, which: ConnectButton) -> Entity {
         .find(|(_, b)| **b == which)
         .unwrap()
         .0
+}
+
+// The view (M3): live with a world, its camera's state, commands to it.
+
+/// The full UI `h` tall with a live world, so the view and its controls
+/// show.
+pub(crate) fn live_view(h: u32) -> App {
+    let mut app = shell_app((1440, h), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    frames(&mut app, 2);
+    app
+}
+
+/// The main view's camera state.
+pub(crate) fn view(app: &mut App) -> ViewCamera {
+    let world = app.world_mut();
+    world
+        .query_filtered::<&ViewCamera, With<MainCamera>>()
+        .single(world)
+        .unwrap()
+        .clone()
+}
+
+/// Sends `op` to the main view and runs two frames.
+pub(crate) fn send(app: &mut App, op: gz_bevy::view::ViewOp) {
+    let world = app.world_mut();
+    let view = world
+        .query_filtered::<Entity, With<MainCamera>>()
+        .single(world)
+        .unwrap();
+    world.write_message(ViewCommand { view, op });
+    frames(app, 2);
 }

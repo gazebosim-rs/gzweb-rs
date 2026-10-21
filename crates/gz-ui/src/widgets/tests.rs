@@ -165,7 +165,13 @@ fn chips_badges_and_buttons() {
     let group = w.spawn(segmented_group("Tools", true, true)).id();
     let tool = w
         .spawn((
-            tool_button(&t, IconId::Navigate, Tooltip::new("Navigate"), true),
+            tool_button(
+                &t,
+                IconId::Navigate,
+                IconButtonSize::Regular,
+                Tooltip::new("Navigate"),
+                true,
+            ),
             ChildOf(group),
         ))
         .id();

@@ -71,12 +71,19 @@ pub fn icon_button(theme: &Theme, id: IconId, size: IconButtonSize, tip: Tooltip
     )
 }
 
-/// An icon button with radio semantics, for a [`segmented_group`]: `Checked`
+/// An icon button of `size` with radio semantics, for a
+/// [`segmented_group`] (or the viewport rail's Orbit/Pan/Zoom): `Checked`
 /// is its active state.
 ///
 /// [`segmented_group`]: super::segmented_group
-pub fn tool_button(theme: &Theme, id: IconId, tip: Tooltip, checked: bool) -> impl Bundle {
-    let (side, icon, r) = IconButtonSize::Regular.metrics(theme);
+pub fn tool_button(
+    theme: &Theme,
+    id: IconId,
+    size: IconButtonSize,
+    tip: Tooltip,
+    checked: bool,
+) -> impl Bundle {
+    let (side, icon, r) = size.metrics(theme);
     (
         icon_button_node(side, r),
         RadioButton,
