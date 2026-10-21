@@ -213,7 +213,7 @@ fn spawn_header(
         .spawn((section_header(t, def.title, count), header))
         .with_children(|h| {
             for a in &def.header_actions {
-                header_action(h, t, &map, def.id, a);
+                header_action(h, t, &map, &sources.status, def.id, a);
             }
             slot_buttons(h, t, &map, slot, header.two);
         })
@@ -239,20 +239,28 @@ pub(crate) fn slot_counts(
     }
 }
 
+/// A header action's button (with its [`ActionButton`]): its enabled
+/// state follows [`PanelStatus`] in place ([`header_action_states`]).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct HeaderButton;
+
 /// A panel's header action: an icon button that triggers
-/// [`PanelActionActivated`](crate::panels::PanelActionActivated).
+/// [`PanelActionActivated`](crate::panels::PanelActionActivated), enabled
+/// as the panel's status says.
 fn header_action(
     h: &mut ChildSpawnerCommands,
     theme: &Theme,
     map: &InputMap,
+    status: &PanelStatus,
     panel: PanelId,
     a: &HeaderAction,
 ) {
+    let enabled = status.header_action_enabled(panel, a);
     let mut tip = Tooltip::new(a.tooltip);
     if let Some(b) = a.binding {
         tip = tip.binding(map, b);
     }
-    if !a.enabled {
+    if !enabled {
         tip = tip.detail(body::NOT_YET);
     }
     let mut e = h.spawn((
@@ -261,9 +269,49 @@ fn header_action(
             panel,
             action: a.id,
         },
+        HeaderButton,
     ));
-    if !a.enabled {
+    if !enabled {
         e.insert(InteractionDisabled);
+    }
+}
+
+/// Each header action's button follows its panel's [`PanelStatus`] in
+/// place: dimmed, saying "Not available yet" and inert while disabled.
+pub(crate) fn header_action_states(
+    status: Res<PanelStatus>,
+    panels: Res<PanelRegistry>,
+    mut buttons: Query<
+        (
+            Entity,
+            &ActionButton,
+            &mut Tooltip,
+            Has<InteractionDisabled>,
+        ),
+        With<HeaderButton>,
+    >,
+    mut commands: Commands,
+) {
+    if !status.is_changed() {
+        return;
+    }
+    for (e, b, mut tip, disabled) in &mut buttons {
+        let Some(a) = panels
+            .get(b.panel)
+            .and_then(|d| d.header_actions.iter().find(|a| a.id == b.action))
+        else {
+            continue;
+        };
+        let enabled = status.header_action_enabled(b.panel, a);
+        if enabled == !disabled {
+            continue;
+        }
+        if enabled {
+            commands.entity(e).remove::<InteractionDisabled>();
+        } else {
+            commands.entity(e).insert(InteractionDisabled);
+        }
+        tip.detail = (!enabled).then(|| body::NOT_YET.to_string());
     }
 }
 
@@ -364,7 +412,7 @@ pub(crate) fn build(app: &mut App) {
     // After the panels have written their views.
     .add_systems(
         Update,
-        (rebuild_slots, slot_counts)
+        (rebuild_slots, slot_counts, header_action_states)
             .chain()
             .in_set(ShellSystems::Readouts),
     )

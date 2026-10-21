@@ -488,3 +488,74 @@ fn the_slots_leave_a_body_hosted_elsewhere() {
         host
     );
 }
+
+/// A panel enables and disables its header actions at run time through
+/// `PanelStatus`: the button changes in place (look, tooltip, whether it
+/// reacts), and the status marks a change only on a real one.
+#[test]
+fn header_actions_are_enabled_at_run_time_in_place() {
+    use crate::shell::sidebar::body::NOT_YET;
+    use crate::shell::{PanelStatus, SetPanelStatus};
+    use crate::widgets::Tooltip;
+    use bevy::ui::InteractionDisabled;
+
+    let mut app = probe_app(Slot::Primary);
+    let later = header_button(&mut app, LATER);
+    let state = |app: &App| {
+        let w = app.world();
+        (
+            w.get::<InteractionDisabled>(later).is_none(),
+            w.get::<Tooltip>(later).unwrap().detail.clone(),
+        )
+    };
+    assert_eq!(state(&app), (false, Some(NOT_YET.into())));
+    assert_eq!(
+        app.world()
+            .resource::<PanelStatus>()
+            .action_enabled(PROBE, LATER),
+        None,
+        "as registered"
+    );
+    let set = |app: &mut App, enabled: bool| {
+        app.world_mut()
+            .resource_mut::<PanelStatus>()
+            .set_action_enabled(PROBE, LATER, enabled);
+        frames(app, 2);
+    };
+    set(&mut app, true);
+    assert_eq!(header_button(&mut app, LATER), later, "not respawned");
+    assert_eq!(state(&app), (true, None));
+    app.world_mut().trigger(Activate { entity: later });
+    frames(&mut app, 1);
+    assert_eq!(app.world().resource::<ProbeActions>().0, [(LATER, later)]);
+    // Only a real change marks the status changed.
+    let tick = app.world().resource_ref::<PanelStatus>().last_changed();
+    app.world_mut()
+        .resource_mut::<PanelStatus>()
+        .set_action_enabled(PROBE, LATER, true);
+    assert_eq!(
+        app.world().resource_ref::<PanelStatus>().last_changed(),
+        tick
+    );
+    set(&mut app, false);
+    assert_eq!(state(&app), (false, Some(NOT_YET.into())));
+    app.world_mut().trigger(Activate { entity: later });
+    frames(&mut app, 1);
+    assert_eq!(app.world().resource::<ProbeActions>().0.len(), 1);
+    // A header rebuilt later (the panel reopened) starts as the status says.
+    app.world_mut()
+        .resource_mut::<PanelStatus>()
+        .set_action_enabled(PROBE, POKE, false);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PLOT,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PROBE,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    let poke = header_button(&mut app, POKE);
+    assert!(app.world().get::<InteractionDisabled>(poke).is_some());
+}
