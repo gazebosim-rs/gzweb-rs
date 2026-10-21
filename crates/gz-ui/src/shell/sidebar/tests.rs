@@ -400,3 +400,91 @@ fn panel_shown_follows_the_slots_and_the_sidebar() {
     frames(&mut app, 1);
     assert!(!shown(&mut app, PROBE));
 }
+
+/// The probe's header action button for `action`.
+fn header_button(app: &mut App, action: crate::panels::ActionId) -> Entity {
+    use crate::shell::sidebar::body::ActionButton;
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ActionButton)>()
+        .iter(world)
+        .find(|(_, b)| b.panel == PROBE && b.action == action)
+        .expect("the header action")
+        .0
+}
+
+fn slot_actions(app: &mut App, header: Entity) -> Vec<crate::shell::sidebar::SlotAction> {
+    let world = app.world_mut();
+    world
+        .query::<(&crate::shell::sidebar::SlotAction, &ChildOf)>()
+        .iter(world)
+        .filter(|(_, p)| p.parent() == header)
+        .map(|(a, _)| *a)
+        .collect()
+}
+
+/// A second slot opening or closing rebuilds the header's slot buttons
+/// only: the header and a focused header action stay (a popover anchored
+/// on it in M7 would too), and keyboard focus with it.
+#[test]
+fn a_focused_header_action_survives_the_second_slot() {
+    use crate::shell::sidebar::SlotAction::*;
+    let mut app = probe_app(Slot::Primary);
+    let poke = header_button(&mut app, POKE);
+    let header = app.world().get::<ChildOf>(poke).unwrap().parent();
+    assert_eq!(slot_actions(&mut app, header), [Collapse]);
+    tab_to(&mut app, poke);
+    frames(&mut app, 1);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: PLOT,
+        slot: Slot::Secondary,
+    });
+    frames(&mut app, 2);
+    assert_eq!(header_button(&mut app, POKE), poke);
+    assert_eq!(app.world().get::<ChildOf>(poke).unwrap().parent(), header);
+    assert_eq!(focused(&app), Some(poke));
+    assert_eq!(slot_actions(&mut app, header), [Swap, Collapse]);
+    // The slot buttons stay last, after the header actions.
+    let kids = app.world().get::<Children>(header).unwrap().to_vec();
+    let at = |e: Entity| kids.iter().position(|k| *k == e).unwrap();
+    let swap = kids
+        .iter()
+        .copied()
+        .find(|k| app.world().get::<crate::shell::sidebar::SlotAction>(*k) == Some(&Swap))
+        .unwrap();
+    assert!(at(poke) < at(swap));
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    frames(&mut app, 2);
+    assert_eq!(header_button(&mut app, POKE), poke);
+    assert_eq!(focused(&app), Some(poke));
+    assert_eq!(slot_actions(&mut app, header), [Collapse]);
+}
+
+/// A body the slots don't host (M7's pop-out) isn't theirs to despawn.
+#[test]
+fn the_slots_leave_a_body_hosted_elsewhere() {
+    let mut app = probe_app(Slot::Primary);
+    let elsewhere = app
+        .world_mut()
+        .spawn((
+            PanelBody(PLOT),
+            crate::shell::sidebar::body::BodyView(PanelView::Ready),
+            Node::default(),
+        ))
+        .id();
+    let host = app
+        .world_mut()
+        .spawn(Node::default())
+        .add_child(elsewhere)
+        .id();
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: ASSETS,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    assert!(app.world().get_entity(elsewhere).is_ok());
+    assert_eq!(
+        app.world().get::<ChildOf>(elsewhere).unwrap().parent(),
+        host
+    );
+}
