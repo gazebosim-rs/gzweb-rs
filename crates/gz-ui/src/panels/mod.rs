@@ -1,5 +1,5 @@
-//! The sidebar's panels (spec §3.3; contents in M4 and M7), one folder
-//! and one plugin each.
+//! The sidebar's panels (spec §3.3; contents in M4 and M7), one plugin
+//! each.
 //!
 //! A panel is a [`PanelDef`] registered by its plugin with
 //! `app.register_panel(…)`, the way Rerun registers view classes and Zed
@@ -8,16 +8,36 @@
 //! particular panel. A panel is known by its [`PanelId`], an open id: a
 //! panel in another crate brings its own, and
 //! [`ShellLayout`](crate::shell::ShellLayout) keeps ids in its slots.
-//! What is a panel's own lives in its folder: its title, icon, binding and
-//! place in the activity bar, its body in each connection phase, and its
-//! systems, which write its activity badge and header count into the
-//! shell's [`PanelStatus`](crate::shell::PanelStatus).
+//!
+//! The contract (DECISIONS.md D-58):
+//!
+//! - **Static:** the [`PanelDef`]: title, icon, binding, place in the
+//!   activity bar, its [`HeaderAction`]s, the [`PanelView`] it starts
+//!   with, and the marker component its content is built under.
+//! - **What changes:** its own systems write its view, activity badge,
+//!   header count and header actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
+//!   (through [`SetPanelStatus`](crate::shell::SetPanelStatus), which marks
+//!   a change only), in [`ShellSystems::Panels`](crate::shell::ShellSystems).
+//!   The shell rebuilds a body only when its view differs.
+//! - **Content:** a [`PanelView::Ready`] body gets the panel's marker, and
+//!   the panel's own observer on `Add<Marker>` fills it with whatever
+//!   system parameters it needs. The body is full-bleed; the shell pads
+//!   only the empty, loading and error states.
+//! - **Actions:** buttons in an empty or error state ([`PanelAction`]) and
+//!   in the header ([`HeaderAction`]) trigger [`PanelActionActivated`],
+//!   which the panel observes. Reconnect ([`PanelAction::reconnect`]) is
+//!   the shell's own.
+//! - **Bodies are disposable views.** A view change, a swap or (M7) a
+//!   pop-out respawns a body; the shell keeps it across a second slot
+//!   opening or closing and moves it on a swap, but a panel never relies
+//!   on that. Its state (tree expansion, filter text, scroll offset, plot
+//!   series) lives in its own resources, which its content is built from.
 //!
 //! The built-in panels come as [`PanelPlugins`]; an app replaces one by
 //! disabling its plugin and registering its own panel under the same id
-//! (registering an id twice warns, and the later registration wins). Panels
-//! register while the app is built: once the shell has spawned, the
-//! registry is closed (DECISIONS.md D-57).
+//! (registering an id twice panics: the earlier plugin's systems would
+//! still run). Panels register while the app is built: once the shell has
+//! spawned, the registry is closed (DECISIONS.md D-57).
 //!
 //! A panel can move to its own crate when it grows heavy (or compile times
 //! ask for it): it depends on this module and the widgets, and its plugin
@@ -31,14 +51,13 @@ mod sensors;
 mod teleop;
 mod topics;
 
-use std::fmt;
+use std::borrow::Cow;
 
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 
 use crate::assets::IconId;
-use crate::shell::Phase;
-use crate::theme::Theme;
+use crate::registry::{self, ui_id, Registered, Registry};
 pub use assets::{AssetsPanelPlugin, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleUnread, CONSOLE};
 pub use plot::{PlotCharts, PlotPanelPlugin, PLOT};
@@ -47,92 +66,167 @@ pub use sensors::{SensorsPanelPlugin, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TELEOP};
 pub use topics::{TopicsPanelPlugin, TOPICS};
 
-/// A panel's id: a short, stable name ("scene"), unique among the
-/// registered panels. Open, like Rerun's `ViewClassIdentifier`: a panel in
-/// any crate declares its own as a constant. The layout keeps ids in its
-/// slots, and a saved layout (M8) keys by [`name`](Self::name).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
-pub struct PanelId(&'static str);
-
-impl PanelId {
-    pub const fn new(name: &'static str) -> Self {
-        Self(name)
-    }
-
-    pub const fn name(self) -> &'static str {
-        self.0
-    }
+ui_id! {
+    /// A panel's id: a short, stable name ("scene"), unique among the
+    /// registered panels. Open, like Rerun's `ViewClassIdentifier`: a panel
+    /// in any crate declares its own as a constant. The layout keeps ids in
+    /// its slots, and a saved layout (M8) keys by [`name`](Self::name).
+    PanelId
 }
 
-impl fmt::Display for PanelId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
-    }
+ui_id! {
+    /// A panel action's id: a short name unique within its panel
+    /// ("add_field"), declared as a constant beside the panel's id.
+    ActionId
 }
 
-/// What a panel's body shows (§3.3.1).
+/// What a panel's body shows (§3.3.1). A panel's systems write it into
+/// [`PanelStatus`](crate::shell::PanelStatus); until they do, the body
+/// shows [`PanelDef::view`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum PanelView {
-    /// Content ([`PanelDef::content`]; empty until M4/M7).
+    /// The panel's content, built by its own observer
+    /// ([`PanelDef::content`]); full-bleed.
     Ready,
+    /// Centred: the panel's icon, the message and the actions.
     Empty {
-        message: &'static str,
+        message: Cow<'static, str>,
         actions: Vec<PanelAction>,
     },
     /// Skeleton rows.
     Loading,
+    /// Centred: a warning icon, the message and the actions.
     Error {
-        message: &'static str,
+        message: Cow<'static, str>,
         actions: Vec<PanelAction>,
     },
 }
 
 impl PanelView {
     /// The empty state with `message` and no buttons.
-    pub fn empty(message: &'static str) -> Self {
+    pub fn empty(message: impl Into<Cow<'static, str>>) -> Self {
         PanelView::Empty {
-            message,
+            message: message.into(),
             actions: vec![],
         }
     }
-}
 
-/// A button in an empty or error state.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PanelAction {
-    /// Retry the server now.
-    Reconnect,
-    /// Not available until the World menu (M8): shown disabled.
-    OpenWorld,
-    NewWorld,
-    AddField,
-}
-
-impl PanelAction {
-    pub fn label(self) -> &'static str {
-        match self {
-            PanelAction::Reconnect => "Reconnect",
-            PanelAction::OpenWorld => "Open world…",
-            PanelAction::NewWorld => "New world",
-            PanelAction::AddField => "Add field…",
+    /// The error state with `message` and no buttons.
+    pub fn error(message: impl Into<Cow<'static, str>>) -> Self {
+        PanelView::Error {
+            message: message.into(),
+            actions: vec![],
         }
     }
 
-    /// Whether it does something yet.
-    pub fn available(self) -> bool {
-        self == PanelAction::Reconnect
+    /// Adds a button to an empty or error state (other states have none).
+    pub fn action(mut self, action: PanelAction) -> Self {
+        if let PanelView::Empty { actions, .. } | PanelView::Error { actions, .. } = &mut self {
+            actions.push(action);
+        }
+        self
     }
 }
 
-/// A panel's body in a connection phase (§3.3.1's table, as far as the
-/// shell knows the world: the connection and whether the scene arrived).
-pub type ViewFn = fn(Phase) -> PanelView;
-/// Spawns a panel's content into its body while [`PanelView::Ready`].
-pub type ContentFn = fn(&mut ChildSpawner, &Theme);
+/// A button in an empty or error state (§3.3.1). Activating it triggers
+/// [`PanelActionActivated`] with its id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelAction {
+    pub id: ActionId,
+    pub label: Cow<'static, str>,
+    /// A disabled action shows dimmed, with "Not available yet".
+    pub enabled: bool,
+}
+
+/// [`PanelAction::reconnect`]'s id: the shell retries the server.
+pub const RECONNECT: ActionId = ActionId::new("shell.reconnect");
+
+impl PanelAction {
+    pub fn new(id: ActionId, label: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+            enabled: true,
+        }
+    }
+
+    /// Shown, but not available yet (what it does comes in a later
+    /// milestone).
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+
+    /// Retry the server now: the shell's own action, which it handles for
+    /// every panel.
+    pub fn reconnect() -> Self {
+        Self::new(RECONNECT, "Reconnect")
+    }
+}
+
+/// An icon button in a panel's section header (§3.3: up to three, before
+/// the shell's slot buttons). Activating it triggers
+/// [`PanelActionActivated`] with its id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeaderAction {
+    pub id: ActionId,
+    pub icon: IconId,
+    /// Its tooltip's title.
+    pub tooltip: &'static str,
+    /// The `shortcuts.json` binding that activates it while its panel is
+    /// shown (its tooltip shows the keys), if any.
+    pub binding: Option<&'static str>,
+    /// A disabled action shows dimmed, with "Not available yet". This is
+    /// its state until the panel's systems set one
+    /// ([`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus::set_action_enabled)).
+    pub enabled: bool,
+}
+
+impl HeaderAction {
+    pub fn new(id: ActionId, icon: IconId, tooltip: &'static str) -> Self {
+        Self {
+            id,
+            icon,
+            tooltip,
+            binding: None,
+            enabled: true,
+        }
+    }
+
+    pub fn binding(mut self, id: &'static str) -> Self {
+        self.binding = Some(id);
+        self
+    }
+
+    /// Shown, but not available yet.
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+}
+
+/// A panel's action button was activated: a [`PanelAction`] in its body or
+/// a [`HeaderAction`]. `entity` is the button (an anchor for a popover);
+/// a panel observes the event globally and matches its `panel` id.
+#[derive(EntityEvent, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelActionActivated {
+    pub entity: Entity,
+    pub panel: PanelId,
+    pub action: ActionId,
+}
+
+/// A panel's body in the sidebar, on every state. A ready body also
+/// carries the panel's content marker ([`PanelDef::content`]).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PanelBody(pub PanelId);
+
+/// Inserts a panel's content marker on its ready body.
+pub type ContentMarker = fn(&mut EntityCommands);
 
 /// What a panel registers: everything the shell shows of it that doesn't
-/// change at run time. What does (its activity badge, its header's count)
-/// its systems write into [`PanelStatus`](crate::shell::PanelStatus).
+/// change at run time. What does (its view, activity badge, header count
+/// and header actions' enabled state) its systems write into
+/// [`PanelStatus`](crate::shell::PanelStatus).
 #[derive(Clone, Debug)]
 pub struct PanelDef {
     pub id: PanelId,
@@ -150,26 +244,41 @@ pub struct PanelDef {
     /// It opens in the primary slot at start (the first such panel in the
     /// activity bar's order).
     pub default_open: bool,
-    pub view: ViewFn,
-    /// Its content once ready (none yet: M4 and M7 fill the panels).
-    pub content: Option<ContentFn>,
+    /// Its body until its systems write a view into
+    /// [`PanelStatus`](crate::shell::PanelStatus): a panel whose state
+    /// never changes (until a later milestone) needs no system.
+    pub view: PanelView,
+    /// Its section header's icon buttons, in order.
+    pub header_actions: Vec<HeaderAction>,
+    /// Marks its body while [`PanelView::Ready`], for its observer to fill
+    /// ([`content`](Self::content)).
+    pub content: Option<ContentMarker>,
 }
 
 impl PanelDef {
-    /// A panel in activity bar `group` at `order`, with no binding or
-    /// content, closed at start, ready in every phase.
-    pub fn new(id: PanelId, title: &'static str, icon: IconId, group: u32, order: u32) -> Self {
+    /// A panel with no binding, header actions or content, closed at
+    /// start, ready until its systems say otherwise, after every placed
+    /// panel in the activity bar until [`place`](Self::place)d.
+    pub fn new(id: PanelId, title: &'static str, icon: IconId) -> Self {
         Self {
             id,
             title,
             icon,
             binding: None,
-            group,
-            order,
+            group: u32::MAX,
+            order: 0,
             default_open: false,
-            view: |_| PanelView::Ready,
+            view: PanelView::Ready,
+            header_actions: Vec::new(),
             content: None,
         }
+    }
+
+    /// Its place in the activity bar: `group` (a separator between
+    /// groups; [`WORLD_GROUP`], [`DATA_GROUP`]), then `order` in it.
+    pub fn place(mut self, group: u32, order: u32) -> Self {
+        (self.group, self.order) = (group, order);
+        self
     }
 
     pub fn binding(mut self, id: &'static str) -> Self {
@@ -183,47 +292,95 @@ impl PanelDef {
         self
     }
 
-    pub fn view(mut self, view: ViewFn) -> Self {
+    /// Its body until its systems write one.
+    pub fn view(mut self, view: PanelView) -> Self {
         self.view = view;
         self
     }
 
-    /// What its body shows once [`PanelView::Ready`].
-    pub fn content(mut self, content: ContentFn) -> Self {
-        self.content = Some(content);
+    /// Adds an icon button to its section header.
+    pub fn header_action(mut self, action: HeaderAction) -> Self {
+        self.header_actions.push(action);
         self
     }
 
-    /// Its place in the activity bar.
-    fn place(&self) -> (u32, u32) {
+    /// Its content: a ready body gets `C::default()`, and the panel's own
+    /// observer on `Add<C>` builds the content into it with whatever
+    /// system parameters it needs (`On<Add<C>>`, `Commands`, its
+    /// resources). The body is respawned whenever its view changes, so the
+    /// content is built from the panel's resources, never kept in it.
+    pub fn content<C: Component + Default>(mut self) -> Self {
+        self.content = Some(|body| {
+            body.insert(C::default());
+        });
+        self
+    }
+}
+
+impl Registered for PanelDef {
+    type Id = PanelId;
+    const KIND: &'static str = "panel";
+
+    fn id(&self) -> PanelId {
+        self.id
+    }
+
+    fn sort_key(&self) -> (u32, u32) {
         (self.group, self.order)
     }
 }
 
 /// The registered panels, in activity bar order. Only
 /// [`RegisterPanel::register_panel`] adds to it, while the app is built.
-#[derive(Resource, Clone, Debug, Default)]
-pub struct PanelRegistry {
-    panels: Vec<PanelDef>,
-    /// The shell has spawned from it.
-    closed: bool,
+pub type PanelRegistry = Registry<PanelDef>;
+
+impl Registry<PanelDef> {
+    /// The panel the binding `id` opens (the first in the activity bar).
+    pub fn for_binding(&self, id: &str) -> Option<PanelId> {
+        self.iter().find(|p| p.binding == Some(id)).map(|p| p.id)
+    }
+
+    /// The panel that opens at start: the first marked
+    /// [`default_open`](PanelDef::default_open), else the first in the
+    /// activity bar (an app may have disabled the default one).
+    pub fn default_open(&self) -> Option<PanelId> {
+        self.iter()
+            .find(|p| p.default_open)
+            .or_else(|| self.first())
+            .map(|p| p.id)
+    }
+
+    /// `id` if it is registered, else the first panel (with a warning): a
+    /// command or a restored layout naming a panel that isn't there.
+    pub fn resolve(&self, id: PanelId) -> Option<PanelId> {
+        if self.get(id).is_some() {
+            return Some(id);
+        }
+        let first = self.first().map(|p| p.id);
+        warn!("no panel '{id}' is registered; showing {first:?} instead");
+        first
+    }
 }
 
-impl PanelRegistry {
-    /// Adds a panel, keeping the activity bar order. An id registered again
-    /// replaces the earlier panel; both that and a binding another panel
-    /// already has are warned about.
-    pub(crate) fn register(&mut self, def: PanelDef) {
-        if self.get(def.id).is_some() {
-            warn!(
-                "panel '{}' is registered twice; the later registration replaces the earlier \
-                 (to replace a built-in panel, disable its plugin in ShellPlugins)",
-                def.id
-            );
-            self.panels.retain(|p| p.id != def.id);
-        }
+/// Registering a panel from its plugin.
+pub trait RegisterPanel {
+    /// Adds `def` to the [`PanelRegistry`]. Panics on an id already
+    /// registered (to replace a built-in panel, disable its plugin), and
+    /// once the shell has spawned: the activity bar is built from the
+    /// registry once, so a panel registered later would have a slot and a
+    /// shortcut but no button. A binding another panel already has warns;
+    /// the first panel in the activity bar keeps it.
+    fn register_panel(&mut self, def: PanelDef) -> &mut Self;
+}
+
+impl RegisterPanel for App {
+    fn register_panel(&mut self, def: PanelDef) -> &mut Self {
         if let Some(b) = def.binding {
-            if let Some(other) = self.for_binding(b) {
+            let other = self
+                .world()
+                .get_resource::<PanelRegistry>()
+                .and_then(|r| r.for_binding(b));
+            if let Some(other) = other {
                 warn!(
                     "panels '{other}' and '{}' both bind '{b}'; the first in the activity bar \
                      opens",
@@ -231,57 +388,7 @@ impl PanelRegistry {
                 );
             }
         }
-        let at = self.panels.partition_point(|p| p.place() <= def.place());
-        self.panels.insert(at, def);
-    }
-
-    /// No more panels: the shell has spawned its activity bar.
-    pub(crate) fn close(&mut self) {
-        self.closed = true;
-    }
-
-    /// Every panel, in activity bar order.
-    pub fn iter(&self) -> impl Iterator<Item = &PanelDef> {
-        self.panels.iter()
-    }
-
-    pub fn get(&self, id: PanelId) -> Option<&PanelDef> {
-        self.panels.iter().find(|p| p.id == id)
-    }
-
-    /// The panel the binding `id` opens (the first in the activity bar).
-    pub fn for_binding(&self, id: &str) -> Option<PanelId> {
-        self.panels
-            .iter()
-            .find(|p| p.binding == Some(id))
-            .map(|p| p.id)
-    }
-
-    /// The panel that opens at start.
-    pub fn default_open(&self) -> Option<PanelId> {
-        self.panels.iter().find(|p| p.default_open).map(|p| p.id)
-    }
-}
-
-/// Registering a panel from its plugin.
-pub trait RegisterPanel {
-    /// Adds `def` to the [`PanelRegistry`]. Panics once the shell has
-    /// spawned: the activity bar is built from the registry once, so a
-    /// panel registered later would have a slot and a shortcut but no
-    /// button.
-    fn register_panel(&mut self, def: PanelDef) -> &mut Self;
-}
-
-impl RegisterPanel for App {
-    fn register_panel(&mut self, def: PanelDef) -> &mut Self {
-        let mut registry = self.world_mut().get_resource_or_init::<PanelRegistry>();
-        assert!(
-            !registry.closed,
-            "register_panel('{}'): panels register while the app is built (in a plugin's \
-             build); the shell has already spawned",
-            def.id
-        );
-        registry.register(def);
+        registry::register(self, def);
         self
     }
 }

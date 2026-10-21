@@ -5,10 +5,11 @@ use bevy::prelude::*;
 use bevy::ui_widgets::Activate;
 
 use super::{ActivityFor, SettingsButton};
-use crate::panels::{ConsoleUnread, PanelId, PlotCharts, ASSETS, CONSOLE, PLOT, SCENE, TOPICS};
+use crate::panels::{PanelId, ASSETS, CONSOLE, PLOT, SCENE, TOPICS};
 use crate::shell::sidebar::SlotView;
-use crate::shell::PanelStatus;
+use crate::shell::{PanelStatus, SetPanelStatus};
 use crate::shell::{ShellLayout, Side, Slot};
+use crate::test_support::probe::{Probe, ProbePanelPlugin, PROBE};
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
@@ -58,6 +59,7 @@ fn activity_buttons_open_collapse_and_use_the_second_slot() {
 
     // Through the buttons.
     let mut app = shell_app((1440, 900), 1.0);
+    app.add_plugins(ProbePanelPlugin);
     frames(&mut app, 3);
     let world = app.world_mut();
     let buttons: Vec<(Entity, PanelId)> = world
@@ -119,8 +121,7 @@ fn activity_buttons_open_collapse_and_use_the_second_slot() {
     });
     frames(&mut app, 2);
     assert!(layout(&app).sidebar_open);
-    // Badges show what their panels set, and hide without one: Plot's
-    // charts, Console's unread messages, any panel's status.
+    // Badges show what their panels set, and hide without one.
     let badge = |app: &App, p: PanelId| {
         descendants(app.world(), button(p))
             .into_iter()
@@ -131,21 +132,24 @@ fn activity_buttons_open_collapse_and_use_the_second_slot() {
             })
             .unwrap()
     };
-    assert!(!displayed(&app, badge(&app, PLOT)));
-    app.world_mut().resource_mut::<PlotCharts>().0 = 2;
-    app.world_mut().resource_mut::<ConsoleUnread>().errors = 1;
+    assert!(!displayed(&app, badge(&app, PROBE)));
+    app.world_mut().resource_mut::<Probe>().badge = Some((BadgeKind::Error, 12));
     frames(&mut app, 2);
-    assert!(displayed(&app, badge(&app, PLOT)));
-    assert!(displayed(&app, badge(&app, CONSOLE)));
-    assert!(all_text(&mut app).contains('2'));
+    let b = badge(&app, PROBE);
+    assert!(displayed(&app, b));
+    assert_eq!(
+        app.world().get::<crate::theme::Fill>(b).unwrap().0,
+        BadgeKind::Error.fill()
+    );
+    assert!(all_text(&mut app).contains("12"));
     app.world_mut()
         .resource_mut::<PanelStatus>()
         .set_badge(TOPICS, Some((BadgeKind::Count, 7)));
     frames(&mut app, 1);
     assert!(displayed(&app, badge(&app, TOPICS)));
-    app.world_mut().resource_mut::<PlotCharts>().0 = 0;
+    app.world_mut().resource_mut::<Probe>().badge = None;
     frames(&mut app, 2);
-    assert!(!displayed(&app, badge(&app, PLOT)));
+    assert!(!displayed(&app, badge(&app, PROBE)));
     // Settings switches the theme (until the Settings dialog exists).
     let settings = find::<SettingsButton>(&mut app);
     app.world_mut().trigger(Activate { entity: settings });

@@ -1,6 +1,8 @@
 # Gazebo UI — Design and Layout Spec
 
-Version 0.4.1 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+Version 0.4.2 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+
+Changes in 0.4.2 (documentation only; DECISIONS.md D-58, D-58a): §9.1 describes the panel contract as built: panels write their own views, define their own actions and header actions, and build their content in their own observer; bodies are disposable views; the regions are tab groups in §6.5's order; a focused control consumes the keys it acts on and a disabled one is no Tab stop (§6.3, §6.5).
 
 Changes in 0.4.1 (documentation only; DECISIONS.md D-51): §9.1 describes the code layout as built: feature folders, and panels and inspectors as plugins registered in a registry the shell hosts.
 
@@ -424,7 +426,7 @@ The rail's Orbit/Pan/Zoom sets the view's plain left-drag action; it persists pe
 
 - **Modifier vocabulary.** Shift = coarse step and extend selection. Alt = fine step and temporary alternate. ⌘ (Ctrl on Linux/Windows) = command chords and toggle-in-selection. Space (hold) = temporary Pan. Z is reserved for axis constraint and has no other binding.
 - **Esc order.** Close open menu/popover → cancel current drag → return to the Navigate tool. Esc never changes the camera drag action and never releases follow (⇧F does).
-- **Scopes.** `global` chords fire anywhere except inside text fields that consume them. `viewport` single letters fire when the pointer is over a view or a view has focus. `teleop` keys (WASD/arrows, X = emergency stop) fire only while the Teleop panel is armed, with focus in the viewport or the Teleop panel; the panel shows a "keyboard captured" indicator while armed.
+- **Scopes.** `global` chords fire anywhere except inside text fields that consume them, and a focused control consumes the keys it acts on: Space and Enter press a focused button and don't also play/pause (DECISIONS.md D-58a). `viewport` single letters fire when the pointer is over a view or a view has focus. `teleop` keys (WASD/arrows, X = emergency stop) fire only while the Teleop panel is armed, with focus in the viewport or the Teleop panel; the panel shows a "keyboard captured" indicator while armed.
 - **Platform.** ⌘ renders as Ctrl on Linux/Windows. Workspaces are Alt+1–4 on every platform (Ctrl+1–9 are browser tab shortcuts and collide with the ⌃ view presets). Reverse views are Shift+7/1/3.
 - **Web build.** Bindings in `web_reserved` (⌘W, ⌘N, ⌘T, ⌘⇧T, ⌘⇧N, ⌘1–9, ⌘D) cannot be intercepted by a page; each has a `web_alt` and tooltips show the alternate in the browser. `prevent_default_when_canvas_focused` lists chords the page must swallow (⌘K, ⌘S, ⌘O, Space, Tab) only while the viewport has focus, so the browser's own shortcuts keep working in text fields.
 - **Play/Pause** is a Space **tap** (decision Q4): key down and up within 200 ms with no pointer drag. Space held longer, or dragged while held, is temporary Pan and never toggles. Space does nothing in text fields. The transport Play button tooltip reads "Play · Space".
@@ -449,7 +451,7 @@ Entering: Model inspector › Edit model, context menu › Edit model, or double
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 
 ### 6.5 Focus and keyboard navigation
-Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5.
+Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar; disabled controls are skipped. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5. A focused control takes Space and Enter (DECISIONS.md D-58a).
 
 ---
 
@@ -520,26 +522,28 @@ As built in gzweb-rs (`.agent/UI_PLAN.md` §7 has the full conventions; DECISION
 
 ```
 gz-ui/src/
-  lib.rs                 GzUiPlugin, prelude
+  lib.rs                 GzUiPlugin, GzUiSystems, prelude
+  registry.rs            Registry (panels' and inspectors'), open ids
+  format/                how sim and connection state reads (clock, RTF, step)
   theme/                 Theme; tokens.rs (generated from tokens.json), roles.rs, visuals/
   assets/                fonts, icons/ (atlas generated from icons.json), brand
   widgets/               §5 components; layout.rs (row, column, flex_spacer, separator,
-                         group/property_row), text.rs, format.rs, shortcut.rs; a folder per
+                         group/property_row), text.rs, shortcut.rs, focus.rs; a folder per
                          larger widget
-  shell/                 ShellPlugin, ShellPlugins; commands, layout (ShellLayout), regions,
-                         routing, splitter, collapsed_bar, connection, panel_status,
-                         inspector (frame)
+  shell/                 ShellPlugin, ShellPlugins, ShellSystems; commands, layout
+                         (ShellLayout), regions, routing, splitter, collapsed_bar,
+                         connection, panel_status, inspector (frame)
     top_bar/             tools, transport, world_button, search
     activity_bar/ sidebar/ status_bar/
     viewport/            view, banner, connect_card (§3.4 rail and cube come in M3)
-  panels/                PanelRegistry; one folder and plugin per panel:
-    scene/ assets/ topics/ plot/ sensors/ teleop/ console/
+  panels/                the panel contract and PanelRegistry; one plugin per panel:
+    scene/ topics/ plot/ console/ assets sensors teleop
   inspectors/            InspectorRegistry; one folder and plugin per selection kind:
     world/               (M5: model/, link/, joint/, light/, sensor/, multi/)
   gallery/               the widget gallery (§12 item 1)
 ```
 
-Each panel and inspector is a Bevy plugin that registers a definition (an open id, title, icon, shortcut binding, activity bar group and order, whether it opens at start, body per connection phase) in a registry resource while the app is built; its own systems write what changes at run time (activity badge, header count) into the shell's panel status. The activity bar, the sidebar's slots and the inspector frame show whatever is registered and never name a panel. The built-in panels and inspectors are plugin groups inside `ShellPlugins`, so an app can leave one out or replace it under the same id (DECISIONS.md D-57). A panel can move to its own crate when it grows heavy; the plugin is its whole interface. Shell regions and panels are built from `widgets/` and its layout primitives, with colours only through roles (§4.1).
+Each panel and inspector is a Bevy plugin that registers a definition (an open id, title, icon, shortcut binding, activity bar group and order, whether it opens at start, its header's icon actions, the body it starts with) in a registry resource while the app is built. Its own systems write what changes at run time into the shell's panel status: its body's state (§3.3.1: content, empty, loading or error, with messages and action buttons the panel defines), its activity badge, its header count and which of its header actions are enabled. Its content is built by its own observer when the shell spawns a ready body, and is full-bleed; the empty, loading and error states are padded. Bodies are disposable views: the shell respawns one when its state changes (and keeps it across the second slot opening, closing or swapping), so a panel keeps its expansion, filter, scroll and series in its own resources. Action buttons, in the body or the header, send the panel an event, and so does a header action's shortcut while the panel is shown; Reconnect is the shell's own. The activity bar, the sidebar's slots and the inspector frame show whatever is registered and never name a panel. The built-in panels and inspectors are plugin groups inside `ShellPlugins`, so an app can leave one out or replace it under the same id (DECISIONS.md D-57, D-58). Each region is a tab group in §6.5's order. A panel can move to its own crate when it grows heavy; the plugin is its whole interface. Shell regions and panels are built from `widgets/` and its layout primitives, with colours only through roles (§4.1).
 
 ### 9.2 State resources
 `Selection { entities: Vec<GzEntityId> }`, `ActiveTool { Navigate | BoxSelect | Translate | Rotate }`, `ViewLayout { preset, ratios, views: Vec<ViewState> }`, `ViewState { camera_pose, projection, camera_mode, drag_action, overlays }`, `ActiveView(usize)`, `Workspace`, `SimStatus { running, sim_time, real_time, rtf, iterations, step_size, connection }`, `MessageLog`, `UndoStack`.

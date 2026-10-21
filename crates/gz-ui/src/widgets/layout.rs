@@ -14,10 +14,6 @@ use bevy::ui::{ComputedNode, UiGlobalTransform};
 use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, Fill, Stroke, TypeStyle, SPACE};
 
-/// The length of a bar's vertical separators between its groups (the top
-/// bar's, and the gallery's copy of it).
-pub const BAR_SEPARATOR_H: f32 = 18.0;
-
 /// A row: children left to right, centred across it, `gap` apart.
 pub fn row(gap: f32) -> Node {
     Node {
@@ -86,6 +82,10 @@ pub enum Orientation {
     /// A vertical rule, between items in a row.
     Vertical,
 }
+
+/// The length of the top bar's vertical separators between its groups
+/// (§3.1 item 3: 1×18), for the shell and the gallery's copy of the bar.
+pub(crate) const BAR_SEPARATOR_H: f32 = 18.0;
 
 /// A 1px `line` rule `length` long, with `margin` on both sides across it:
 /// vertical between the items of a row (the top bar's groups), horizontal

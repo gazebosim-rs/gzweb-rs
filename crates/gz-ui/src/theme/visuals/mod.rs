@@ -181,12 +181,17 @@ pub(crate) struct LookChanges<'w, 's> {
     parents: Query<'w, 's, &'static ChildOf>,
     widgets: Query<'w, 's, (), With<Visuals>>,
     focus: Res<'w, InputFocus>,
+    /// The widgets to visit this frame.
+    dirty: Local<'s, Vec<Entity>>,
+    /// The widget focused last frame.
+    last_focus: Local<'s, Option<Entity>>,
 }
 
 impl LookChanges<'_, '_> {
     /// The widgets to restyle: new or changed state, new content, and the
     /// widgets focus left and entered ([`HoverOnFocus`]).
-    fn collect(&mut self, out: &mut Vec<Entity>, last_focus: &mut Option<Entity>) {
+    fn collect(&mut self) -> &[Entity] {
+        let (out, last_focus) = (&mut *self.dirty, &mut *self.last_focus);
         out.clear();
         out.extend(self.changed.iter());
         out.extend(self.released.read());
@@ -208,11 +213,12 @@ impl LookChanges<'_, '_> {
         }
         out.sort_unstable();
         out.dedup();
+        out
     }
 }
 
 /// What [`button_visuals_system`] writes: each widget's fill and stroke,
-/// and its content's ink and opacity.
+/// and its content's ink and opacity ([`paint`](Self::paint)).
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)]
 pub(crate) struct LookTargets<'w, 's> {
@@ -229,15 +235,70 @@ pub(crate) struct LookTargets<'w, 's> {
         ),
         With<Content>,
     >,
+    children: Query<'w, 's, &'static Children>,
+    widgets: Query<'w, 's, (), With<Visuals>>,
+    commands: Commands<'w, 's>,
+    /// The content walk's stack.
+    stack: Local<'s, Vec<Entity>>,
 }
 
-/// What [`button_visuals_system`] keeps between frames: the widgets to
-/// visit, the content walk's stack, and the last focused widget.
-#[derive(Default)]
-pub(crate) struct VisualsScratch {
-    dirty: Vec<Entity>,
-    stack: Vec<Entity>,
-    last_focus: Option<Entity>,
+impl LookTargets<'_, '_> {
+    /// Writes `look` into `widget` and its [`Content`], down to (not into)
+    /// nested widgets; only real changes, inserting what's missing.
+    fn paint(&mut self, widget: Entity, look: Look) {
+        match self.fills.get_mut(widget) {
+            Ok(mut fill) => {
+                fill.set_if_neq(Fill(look.fill));
+            }
+            Err(_) => {
+                self.commands.entity(widget).insert(Fill(look.fill));
+            }
+        }
+        if let Some(stroke) = look.stroke {
+            match self.strokes.get_mut(widget) {
+                Ok(mut s) => {
+                    s.set_if_neq(Stroke(stroke));
+                }
+                Err(_) => {
+                    self.commands.entity(widget).insert(Stroke(stroke));
+                }
+            }
+        }
+        self.stack.clear();
+        self.stack
+            .extend(self.children.get(widget).into_iter().flatten());
+        while let Some(child) = self.stack.pop() {
+            let Ok((ink, opacity, nested, own_ink)) = self.content.get_mut(child) else {
+                if !self.widgets.contains(child) {
+                    self.stack
+                        .extend(self.children.get(child).into_iter().flatten());
+                }
+                continue;
+            };
+            if nested {
+                continue;
+            }
+            match (ink, own_ink) {
+                (_, true) => {}
+                (Some(mut ink), false) => {
+                    ink.set_if_neq(Ink(look.ink));
+                }
+                (None, false) => {
+                    self.commands.entity(child).insert(Ink(look.ink));
+                }
+            }
+            match opacity {
+                Some(mut o) => {
+                    o.set_if_neq(Opacity(look.opacity));
+                }
+                None => {
+                    self.commands.entity(child).insert(Opacity(look.opacity));
+                }
+            }
+            self.stack
+                .extend(self.children.get(child).into_iter().flatten());
+        }
+    }
 }
 
 /// Writes each widget's [`Fill`] / [`Stroke`] and its [`Content`]'s
@@ -247,24 +308,10 @@ pub(crate) struct VisualsScratch {
 pub(crate) fn button_visuals_system(
     mut changes: LookChanges,
     widgets: Query<StateQuery>,
-    children: Query<&Children>,
     mut looks: LookTargets,
-    mut commands: Commands,
-    mut scratch: Local<VisualsScratch>,
 ) {
-    let VisualsScratch {
-        dirty,
-        stack,
-        last_focus,
-    } = &mut *scratch;
-    let LookTargets {
-        fills,
-        strokes,
-        content,
-    } = &mut looks;
-    changes.collect(dirty, last_focus);
     let focus = changes.focus.get();
-    for &widget in &*dirty {
+    for &widget in changes.collect() {
         let Ok((entity, visuals, hovered, pressed, active, checked, disabled, forced, focus_hover)) =
             widgets.get(widget)
         else {
@@ -280,57 +327,7 @@ pub(crate) fn button_visuals_system(
             },
             |f| f.0,
         );
-        let look = visuals.look(state);
-        match fills.get_mut(entity) {
-            Ok(mut fill) => {
-                fill.set_if_neq(Fill(look.fill));
-            }
-            Err(_) => {
-                commands.entity(entity).insert(Fill(look.fill));
-            }
-        }
-        if let Some(stroke) = look.stroke {
-            match strokes.get_mut(entity) {
-                Ok(mut s) => {
-                    s.set_if_neq(Stroke(stroke));
-                }
-                Err(_) => {
-                    commands.entity(entity).insert(Stroke(stroke));
-                }
-            }
-        }
-        // Content down to (not into) nested widgets.
-        stack.clear();
-        stack.extend(children.get(entity).into_iter().flatten());
-        while let Some(child) = stack.pop() {
-            let Ok((ink, opacity, nested, own_ink)) = content.get_mut(child) else {
-                if !widgets.contains(child) {
-                    stack.extend(children.get(child).into_iter().flatten());
-                }
-                continue;
-            };
-            if nested {
-                continue;
-            }
-            match (ink, own_ink) {
-                (_, true) => {}
-                (Some(mut ink), false) => {
-                    ink.set_if_neq(Ink(look.ink));
-                }
-                (None, false) => {
-                    commands.entity(child).insert(Ink(look.ink));
-                }
-            }
-            match opacity {
-                Some(mut o) => {
-                    o.set_if_neq(Opacity(look.opacity));
-                }
-                None => {
-                    commands.entity(child).insert(Opacity(look.opacity));
-                }
-            }
-            stack.extend(children.get(child).into_iter().flatten());
-        }
+        looks.paint(entity, visuals.look(state));
     }
 }
 

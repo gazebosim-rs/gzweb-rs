@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
-use gz_bevy::connection::{GzStatus, SimStats};
+use gz_bevy::connection::GzStatus;
 use gz_bevy::view::controls::ViewRouting;
 use gz_core::transport::Status;
 
@@ -25,11 +25,11 @@ use super::collapsed_bar::ExpandButton;
 use super::connection::{dot_role, ConnectionView, Phase};
 use super::layout::MIN_SLOT_H;
 use super::regions::Region;
-use super::sidebar::body::PanelBody;
 use super::splitter::ShellSplitter;
 use super::status_bar::StatusItem;
 use super::top_bar::tools::ToolChoice;
-use super::viewport::connect_card::normalize_address;
+use crate::panels::PanelBody;
+
 use super::viewport::view::ViewNode;
 use crate::panels::{PanelId, CONSOLE, SCENE};
 use crate::shell::{ShellLayout, Side, Tool, UiCommand};
@@ -37,7 +37,6 @@ use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Theme, ThemeMode};
-use crate::widgets::format;
 
 #[test]
 fn every_region_has_its_size_at_1440_by_900() {
@@ -545,78 +544,6 @@ fn readouts_follow_the_sim() {
     assert!(all_text(&mut app).contains(Tool::Translate.hint()));
 }
 
-#[test]
-fn formatting() {
-    assert_eq!(format::clock(134.38), "00:02:14.380");
-    assert_eq!(format::clock(0.0), "00:00:00.000");
-    assert_eq!(format::clock(-1.0), "00:00:00.000");
-    assert_eq!(format::clock(3600.0 * 101.0 + 0.0005), "101:00:00.001");
-    assert_eq!(format::clock(59.9996), "00:01:00.000");
-    let rtf = |r: f64, paused| {
-        format::rtf(Some(&SimStats {
-            real_time_factor: r,
-            ..stats(paused)
-        }))
-    };
-    assert_eq!(rtf(0.98, false), ("RTF 98%".into(), ColorRole::Ok));
-    assert_eq!(rtf(0.9, false), ("RTF 90%".into(), ColorRole::Ok));
-    assert_eq!(rtf(0.899, false).1, ColorRole::Warn);
-    assert_eq!(rtf(0.5, false).1, ColorRole::Warn);
-    assert_eq!(rtf(0.49, false), ("RTF 49%".into(), ColorRole::Danger));
-    assert_eq!(rtf(0.98, true), ("paused".into(), ColorRole::Disabled));
-    assert_eq!(format::rtf(None), ("RTF —".into(), ColorRole::Disabled));
-    assert_eq!(format::thousands(0), "0");
-    assert_eq!(format::thousands(999), "999");
-    assert_eq!(format::thousands(1000), "1,000");
-    assert_eq!(format::thousands(1_234_567), "1,234,567");
-    assert_eq!(format::iterations(None), "iter —");
-    assert_eq!(format::step(0.001), "1 ms");
-    assert_eq!(format::step(0.0005), "0.5 ms");
-    assert_eq!(format::step(2.0), "2 s");
-    assert_eq!(format::physics(None, None), "—");
-    assert_eq!(format::physics(None, Some(0.0)), "—");
-    assert_eq!(format::physics(Some("dart"), Some(0.001)), "dart · 1 ms");
-    assert_eq!(format::physics(Some("dart"), None), "dart · —");
-    assert_eq!(format::fps(Some(59.6)), "60 fps");
-    assert_eq!(format::fps(None), "— fps");
-    assert_eq!(format::address("ws://localhost:11345/"), "localhost:11345");
-    assert_eq!(format::address("localhost:9002"), "localhost:9002");
-    assert_eq!(
-        format::cursor(Some([2.414, -0.731])),
-        "cursor 2.41, \u{2212}0.73"
-    );
-    assert_eq!(format::cursor(Some([-0.001, 0.0])), "cursor 0.00, 0.00");
-    assert_eq!(format::cursor(None), "cursor —");
-    assert!(format::rtf_detail(Some(&stats(false))).contains("134,380 iterations · step 1 ms"));
-    assert!(format::rtf_detail(Some(&SimStats {
-        step_size: 0.0,
-        ..stats(true)
-    }))
-    .ends_with("step —"));
-    assert_eq!(format::rtf_detail(None), "No statistics yet");
-    let port = gz_bevy::DEFAULT_PORT;
-    assert_eq!(normalize_address(" gz:9002 ", false), "ws://gz:9002");
-    assert_eq!(normalize_address("wss://gz", false), "wss://gz");
-    // The page's http scheme names the websocket's.
-    assert_eq!(normalize_address("http://gz:9002", false), "ws://gz:9002");
-    assert_eq!(normalize_address("HTTPS://gz/ws", false), "wss://gz/ws");
-    // A bare host gets the default port; from an https page, wss://.
-    assert_eq!(normalize_address("gz", false), format!("ws://gz:{port}"));
-    assert_eq!(normalize_address("gz", true), format!("wss://gz:{port}"));
-    assert_eq!(
-        normalize_address("gz/sim", false),
-        format!("ws://gz:{port}/sim")
-    );
-    assert_eq!(normalize_address("[::1]:9004", true), "wss://[::1]:9004");
-    assert_eq!(
-        normalize_address("[::1]", false),
-        format!("ws://[::1]:{port}")
-    );
-    for t in Tool::ALL {
-        assert!(!t.hint().is_empty() && !t.name().is_empty());
-    }
-}
-
 /// The connection phases and the status dot (the panels' states per
 /// phase are tested in each panel, the card's line in the viewport).
 #[test]
@@ -911,6 +838,82 @@ fn a_tab_focused_button_still_takes_enter() {
     assert!(!layout(&app).sidebar_open);
 }
 
+fn transport(app: &mut App, which: super::top_bar::transport::Transport) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &super::top_bar::transport::Transport)>()
+        .iter(world)
+        .find(|(_, t)| **t == which)
+        .unwrap()
+        .0
+}
+
+/// Tab, then Space: the focused button takes Space, and the global
+/// play/pause chord (gz-bevy's Space tap) stands down (DECISIONS.md
+/// D-58a). Reset resets once without toggling the sim; Play/Pause
+/// toggles exactly once; with nothing focused Space still toggles.
+#[test]
+fn a_focused_button_takes_space_from_the_play_pause_chord() {
+    use super::top_bar::transport::Transport;
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    sent(&mut app);
+    let space = |app: &mut App| {
+        chord(app, &[KeyCode::Space]);
+        frames(app, 1);
+        sent(app)
+    };
+    assert_eq!(space(&mut app), [GzCommand::Pause], "no focus: the chord");
+    let reset = transport(&mut app, Transport::Reset);
+    tab_to(&mut app, reset);
+    assert_eq!(space(&mut app), [GzCommand::Reset]);
+    assert_eq!(focused(&app), Some(reset));
+    let play = transport(&mut app, Transport::PlayPause);
+    tab_to(&mut app, play);
+    assert_eq!(space(&mut app), [GzCommand::Pause]);
+    // Held: the repeats are the button's too, and the release is no tap.
+    key(&mut app, KeyCode::Space, ButtonState::Pressed);
+    frames(&mut app, 3);
+    key(&mut app, KeyCode::Space, ButtonState::Released);
+    frames(&mut app, 2);
+    assert_eq!(sent(&mut app), [GzCommand::Pause]);
+    // Focus gone: Space is the chord's again.
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    assert_eq!(space(&mut app), [GzCommand::Pause]);
+    // A shortcut on another key still works with a button focused.
+    tab_to(&mut app, reset);
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// Tab pressed for real to Reset, then Space: one reset, no pause.
+#[test]
+fn tab_to_reset_then_space_resets_once() {
+    use super::top_bar::transport::Transport;
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    let reset = transport(&mut app, Transport::Reset);
+    for _ in 0..50 {
+        chord(&mut app, &[KeyCode::Tab]);
+        if focused(&app) == Some(reset) {
+            break;
+        }
+    }
+    assert_eq!(focused(&app), Some(reset));
+    sent(&mut app);
+    chord(&mut app, &[KeyCode::Space]);
+    frames(&mut app, 1);
+    assert_eq!(sent(&mut app), [GzCommand::Reset]);
+}
+
 /// Reset works in the top bar and the inspector alike: with a live world,
 /// stats or not. Play/Pause needs the stats.
 #[test]
@@ -947,4 +950,122 @@ fn reset_is_enabled_alike_in_the_top_bar_and_the_inspector() {
     let s = stats(true);
     assert!(Transport::Step.enabled(Phase::Live, Some(&s)));
     assert!(!Transport::Reset.enabled(Phase::Loading, Some(&s)));
+}
+
+/// The shell is built from the UI's theme, fonts and widgets: without
+/// `GzUiPlugin` it says so rather than failing later.
+#[test]
+#[should_panic(expected = "ShellPlugin needs GzUiPlugin")]
+fn the_shell_needs_the_ui_plugin() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, crate::shell::ShellPlugins));
+    app.finish();
+}
+
+/// Tab pressed for real walks the shell's regions in the spec's order
+/// (§6.5: top bar → activity bar → sidebar → viewport → inspector →
+/// status bar) and comes round again, never landing in a region that
+/// isn't displayed: a collapsed sidebar gives its turn to its bar, and
+/// gets it back when reopened. Shift+Tab walks the other way; the second
+/// slot's buttons are stops while it is open, and the walk is as before
+/// once it closes.
+#[test]
+fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    // From no focus, Tab by Tab until focus comes back to the first stop.
+    let walk = |app: &mut App, back: bool| -> Vec<(Entity, Region)> {
+        app.world_mut()
+            .resource_mut::<bevy::input_focus::InputFocus>()
+            .clear();
+        let mut seen: Vec<(Entity, Region)> = Vec::new();
+        for _ in 0..200 {
+            if back {
+                key(app, KeyCode::ShiftLeft, ButtonState::Pressed);
+            }
+            key(app, KeyCode::Tab, ButtonState::Pressed);
+            app.update();
+            key(app, KeyCode::Tab, ButtonState::Released);
+            if back {
+                key(app, KeyCode::ShiftLeft, ButtonState::Released);
+            }
+            app.update();
+            let e = focused(app).expect("Tab focuses something");
+            if seen.first().is_some_and(|s| s.0 == e) {
+                break;
+            }
+            let world = app.world();
+            let region =
+                std::iter::successors(Some(e), |x| world.get::<ChildOf>(*x).map(ChildOf::parent))
+                    .find_map(|a| world.get::<Region>(a).copied())
+                    .expect("in a region");
+            seen.push((e, region));
+        }
+        seen
+    };
+    let regions = |seen: &[(Entity, Region)]| {
+        let mut r: Vec<Region> = seen.iter().map(|s| s.1).collect();
+        r.dedup();
+        r
+    };
+    use Region::*;
+    let all = [
+        TopBar,
+        ActivityBar,
+        Sidebar,
+        ViewportArea,
+        Inspector,
+        StatusBar,
+    ];
+    let first = walk(&mut app, false);
+    assert_eq!(regions(&first), all);
+    // Disabled controls are no stops (Scene's Expand all, Collapse all).
+    for (e, _) in &first {
+        assert!(app.world().get::<InteractionDisabled>(*e).is_none());
+    }
+    // Shift+Tab: the same stops the other way round.
+    let mut back = walk(&mut app, true);
+    back.reverse();
+    assert_eq!(back, first);
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(
+        regions(&walk(&mut app, false)),
+        [
+            TopBar,
+            ActivityBar,
+            SidebarBar,
+            ViewportArea,
+            Inspector,
+            StatusBar
+        ]
+    );
+    // Reopened: the sidebar is visible to Tab again.
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(walk(&mut app, false), first);
+    // A second slot adds its header's buttons, and takes them away again.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: CONSOLE,
+        slot: crate::shell::Slot::Secondary,
+    });
+    frames(&mut app, 2);
+    let two = walk(&mut app, false);
+    assert_eq!(regions(&two), all);
+    assert!(two.len() > first.len());
+    let secondary = |app: &App, e: Entity| {
+        let world = app.world();
+        std::iter::successors(Some(e), |x| world.get::<ChildOf>(*x).map(ChildOf::parent)).any(|a| {
+            world.get::<crate::shell::sidebar::SlotView>(a)
+                == Some(&crate::shell::sidebar::SlotView(
+                    crate::shell::Slot::Secondary,
+                ))
+        })
+    };
+    assert!(two.iter().any(|(e, _)| secondary(&app, *e)));
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    frames(&mut app, 2);
+    let closed = walk(&mut app, false);
+    assert_eq!(closed.len(), first.len());
+    assert_eq!(regions(&closed), all);
 }

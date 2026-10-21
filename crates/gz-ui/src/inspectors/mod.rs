@@ -8,40 +8,24 @@
 //!
 //! The built-in inspectors come as [`InspectorPlugins`], part of
 //! [`ShellPlugins`](crate::shell::ShellPlugins); an app replaces one by
-//! disabling its plugin and registering its own under the same id.
-//! Inspectors register while the app is built: the shell closes the
-//! registry when it spawns.
+//! disabling its plugin and registering its own under the same id (an id
+//! registered twice panics). Inspectors register while the app is built:
+//! the shell closes the registry when it spawns.
 
 mod world;
 
 pub use world::{WorldInspectorPlugin, WORLD};
 
-use std::fmt;
-
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 
+use crate::registry::{self, ui_id, Registered, Registry};
 use crate::theme::Theme;
 
-/// An inspector's id: a short, stable name ("world"), like
-/// [`PanelId`](crate::panels::PanelId).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Reflect)]
-pub struct InspectorId(&'static str);
-
-impl InspectorId {
-    pub const fn new(name: &'static str) -> Self {
-        Self(name)
-    }
-
-    pub const fn name(self) -> &'static str {
-        self.0
-    }
-}
-
-impl fmt::Display for InspectorId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
-    }
+ui_id! {
+    /// An inspector's id: a short, stable name ("world"), like
+    /// [`PanelId`](crate::panels::PanelId).
+    InspectorId
 }
 
 /// Spawns an inspector's body under the frame's header.
@@ -54,40 +38,21 @@ pub struct InspectorDef {
     pub body: BodyFn,
 }
 
-/// The registered inspectors. Only
-/// [`RegisterInspector::register_inspector`] adds to it, while the app is
-/// built.
-#[derive(Resource, Clone, Debug, Default)]
-pub struct InspectorRegistry {
-    inspectors: Vec<InspectorDef>,
-    /// The shell has spawned from it.
-    closed: bool,
+impl Registered for InspectorDef {
+    type Id = InspectorId;
+    const KIND: &'static str = "inspector";
+
+    fn id(&self) -> InspectorId {
+        self.id
+    }
 }
 
-impl InspectorRegistry {
-    /// Adds an inspector; an id registered again replaces the earlier one,
-    /// with a warning.
-    pub(crate) fn register(&mut self, def: InspectorDef) {
-        if self.get(def.id).is_some() {
-            warn!(
-                "inspector '{}' is registered twice; the later registration replaces the \
-                 earlier (to replace a built-in inspector, disable its plugin in ShellPlugins)",
-                def.id
-            );
-            self.inspectors.retain(|i| i.id != def.id);
-        }
-        self.inspectors.push(def);
-    }
+/// The registered inspectors, in registration order. Only
+/// [`RegisterInspector::register_inspector`] adds to it, while the app is
+/// built.
+pub type InspectorRegistry = Registry<InspectorDef>;
 
-    /// No more inspectors: the shell has spawned.
-    pub(crate) fn close(&mut self) {
-        self.closed = true;
-    }
-
-    pub fn get(&self, id: InspectorId) -> Option<&InspectorDef> {
-        self.inspectors.iter().find(|i| i.id == id)
-    }
-
+impl Registry<InspectorDef> {
     /// The inspector for the current selection: always the world's until
     /// there is a selection (M5).
     pub fn for_selection(&self) -> Option<&InspectorDef> {
@@ -97,21 +62,15 @@ impl InspectorRegistry {
 
 /// Registering an inspector from its plugin.
 pub trait RegisterInspector {
-    /// Adds `def` to the [`InspectorRegistry`]. Panics once the shell has
-    /// spawned (the inspector frame is built from the registry).
+    /// Adds `def` to the [`InspectorRegistry`]. Panics on an id already
+    /// registered, and once the shell has spawned (the inspector frame is
+    /// built from the registry).
     fn register_inspector(&mut self, def: InspectorDef) -> &mut Self;
 }
 
 impl RegisterInspector for App {
     fn register_inspector(&mut self, def: InspectorDef) -> &mut Self {
-        let mut registry = self.world_mut().get_resource_or_init::<InspectorRegistry>();
-        assert!(
-            !registry.closed,
-            "register_inspector('{}'): inspectors register while the app is built (in a \
-             plugin's build); the shell has already spawned",
-            def.id
-        );
-        registry.register(def);
+        registry::register(self, def);
         self
     }
 }

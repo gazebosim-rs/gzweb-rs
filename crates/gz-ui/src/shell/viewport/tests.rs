@@ -16,7 +16,9 @@ use gz_bevy::view::{ViewOrigin, ViewPlacement};
 use gz_core::transport::Status;
 
 use super::banner::DisconnectBanner;
-use super::connect_card::{card_status, AddressField, ConnectButton, ConnectCard};
+use super::connect_card::{
+    card_status, normalize_address, AddressField, ConnectButton, ConnectCard,
+};
 use super::view::{DimOverlay, ViewNode};
 use crate::shell::connection::{banner, ConnectionView, Phase, LOST_LONG_SECS};
 use crate::shell::UiCommand;
@@ -440,5 +442,28 @@ fn an_interrupted_card_fade_restores_its_opacities() {
         opacities(&mut app).iter().all(|o| *o == 1.0),
         "{:?}",
         opacities(&mut app)
+    );
+}
+
+/// What the connect card makes of an address (DECISIONS.md D-55).
+#[test]
+fn addresses_normalize() {
+    let port = gz_bevy::DEFAULT_PORT;
+    assert_eq!(normalize_address(" gz:9002 ", false), "ws://gz:9002");
+    assert_eq!(normalize_address("wss://gz", false), "wss://gz");
+    // The page's http scheme names the websocket's.
+    assert_eq!(normalize_address("http://gz:9002", false), "ws://gz:9002");
+    assert_eq!(normalize_address("HTTPS://gz/ws", false), "wss://gz/ws");
+    // A bare host gets the default port; from an https page, wss://.
+    assert_eq!(normalize_address("gz", false), format!("ws://gz:{port}"));
+    assert_eq!(normalize_address("gz", true), format!("wss://gz:{port}"));
+    assert_eq!(
+        normalize_address("gz/sim", false),
+        format!("ws://gz:{port}/sim")
+    );
+    assert_eq!(normalize_address("[::1]:9004", true), "wss://[::1]:9004");
+    assert_eq!(
+        normalize_address("[::1]", false),
+        format!("ws://[::1]:{port}")
     );
 }

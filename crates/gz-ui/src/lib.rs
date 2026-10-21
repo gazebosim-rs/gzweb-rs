@@ -20,19 +20,24 @@
 //!
 //! Milestone M2 adds [`shell`]: the workbench's regions, their layout
 //! rules, the 3D view's placement, and the connect card and banner
-//! ([`shell::ShellPlugin`], added with this plugin in the full mode). The
+//! ([`shell::ShellPlugin`], added with this plugin in the full mode), and
+//! [`format`](mod@format), how sim and connection state reads (clock, RTF, step). The
 //! sidebar's [`panels`] and the [`inspectors`] are plugins of their own
 //! that register into a registry the shell hosts (DECISIONS.md D-51).
 
 #![warn(unreachable_pub)]
 
 pub mod assets;
+pub mod format;
 pub mod gallery;
 pub mod inspectors;
 pub mod panels;
+pub(crate) mod registry;
 pub mod shell;
 pub mod theme;
 pub mod widgets;
+
+pub use registry::{Registered, Registry};
 
 /// What a plugin that adds to the UI usually needs: the plugins and system
 /// sets, the shell's commands and layout, the panel and inspector
@@ -42,16 +47,18 @@ pub mod prelude {
         InspectorDef, InspectorId, InspectorPlugins, InspectorRegistry, RegisterInspector,
     };
     pub use crate::panels::{
-        PanelAction, PanelDef, PanelId, PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
+        ActionId, HeaderAction, PanelAction, PanelActionActivated, PanelBody, PanelDef, PanelId,
+        PanelPlugins, PanelRegistry, PanelView, RegisterPanel,
     };
     pub use crate::shell::{
-        PanelState, PanelStatus, ShellLayout, ShellPlugin, ShellPlugins, ShellSystems, Side, Slot,
-        Tool, UiCommand,
+        panel_shown, PanelState, PanelStatus, SetPanelStatus, ShellLayout, ShellPlugin,
+        ShellPlugins, ShellSystems, Side, Slot, Tool, UiCommand,
     };
     pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
     pub use crate::{GzUiPlugin, GzUiSystems};
 }
 
+use bevy::camera::visibility::VisibilitySystems;
 use bevy::input::InputSystems;
 use bevy::input_focus::tab_navigation::TabNavigationPlugin;
 use bevy::input_focus::InputFocusSystems;
@@ -112,18 +119,26 @@ impl Plugin for GzUiPlugin {
             .configure_sets(PostUpdate, GzUiSystems::Resolve.before(UiSystems::Prepare))
             .init_resource::<focus::MenuTakesEscape>()
             .init_resource::<focus::PointerLed>()
+            .init_resource::<focus::WidgetKeys>()
+            .add_systems(Startup, focus::watch_windows)
+            .add_observer(focus::skip_disabled)
+            .add_observer(focus::restore_enabled)
             .add_systems(
                 PreUpdate,
                 (
                     focus::text_focus_system.after(InputFocusSystems::Dispatch),
+                    focus::hide_taken_keys.after(InputFocusSystems::Dispatch),
                     (focus::note_input, focus::menu_escape).in_set(GzUiSystems::Input),
                 ),
             )
             .add_systems(
                 PostUpdate,
-                focus::release_focus
-                    .after(bevy::ui_widgets::MenuFocusSystem)
-                    .before(InputFocusSystems::FocusChangeEvents),
+                (
+                    focus::release_focus
+                        .after(bevy::ui_widgets::MenuFocusSystem)
+                        .before(InputFocusSystems::FocusChangeEvents),
+                    focus::hide_undisplayed.before(VisibilitySystems::VisibilityPropagate),
+                ),
             )
             .add_systems(
                 Update,

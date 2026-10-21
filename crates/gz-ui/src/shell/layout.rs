@@ -77,14 +77,14 @@ fn index(side: Side) -> usize {
 impl ShellLayout {
     /// The layout a window `width` wide starts with: both panels at their
     /// default widths, the inspector collapsed below 1280, the sidebar too
-    /// below 1100, `open` (the registry's default panel) in the primary
-    /// slot, then the floor rule.
+    /// below 1100 (or with no panel to show), `open` (the registry's
+    /// default panel) in the primary slot, then the floor rule.
     pub fn for_width(width: f32, open: Option<PanelId>) -> Self {
         let s = Sizes::default();
         let mut l = Self {
             sidebar_w: s.sidebar_w,
             inspector_w: s.inspector_w,
-            sidebar_open: width >= SIDEBAR_START_W,
+            sidebar_open: width >= SIDEBAR_START_W && open.is_some(),
             inspector_open: width >= INSPECTOR_START_W,
             primary: open,
             secondary: None,
@@ -166,12 +166,12 @@ impl ShellLayout {
     }
 
     /// Fits the layout to a new window width: during start-up the start-up
-    /// rules again; afterwards the floor rule, then panels it closed come
+    /// rules again (the sidebar only with a panel to show); afterwards the floor rule, then panels it closed come
     /// back (sidebar first) once they fit again.
     pub fn fit(&mut self, window_w: f32) {
         if self.startup {
             self.window_w = window_w;
-            self.sidebar_open = window_w >= SIDEBAR_START_W;
+            self.sidebar_open = window_w >= SIDEBAR_START_W && self.primary.is_some();
             self.inspector_open = window_w >= INSPECTOR_START_W;
             self.floor_closed = [false; 2];
             self.enforce_floor(None);
@@ -197,8 +197,12 @@ impl ShellLayout {
         self.show(side, open);
     }
 
-    /// Opens (or collapses) a side on the user's request.
+    /// Opens (or collapses) a side on the user's request. The sidebar
+    /// opens only with a panel to show.
     pub fn show(&mut self, side: Side, open: bool) {
+        if open && side == Side::Sidebar && self.primary.is_none() {
+            return;
+        }
         self.startup = false;
         self.floor_closed[index(side)] = false;
         self.set_open(side, open);

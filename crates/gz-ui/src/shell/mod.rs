@@ -4,17 +4,18 @@
 //! the connect card and disconnected banner.
 //!
 //! [`ShellPlugins`] (the shell and the built-in panels and inspectors) is
-//! added on top of [`GzUiPlugin`](crate::GzUiPlugin) in the full UI mode. The layout state is [`ShellLayout`]; everything the
-//! user asks for goes through [`UiCommand`] messages, which
-//! `commands::apply_ui_commands` applies, so buttons, keys and tests share
-//! one path. Sim requests are `gz-bevy` messages (`GzCommand`,
-//! `GzReconnect`).
+//! added on top of [`GzUiPlugin`](crate::GzUiPlugin) in the full UI mode.
+//! The layout state is [`ShellLayout`]; everything the user asks for goes
+//! through [`UiCommand`] messages, which `commands::apply_ui_commands`
+//! applies, so buttons, keys and tests share one path. Sim requests are
+//! `gz-bevy` messages (`GzCommand`, `GzReconnect`).
 //!
 //! A file or folder per region (`top_bar/`, `activity_bar/`, `sidebar/`,
 //! `viewport/`, `status_bar/`, the inspector frame), each registering its
 //! own systems; the sidebar and the inspector host the
 //! [panels](crate::panels) and [inspectors](crate::inspectors) registered
 //! by their plugins, and show what each panel writes into [`PanelStatus`].
+//! Each region is a tab group, in the spec's order (§6.5).
 
 pub(crate) mod activity_bar;
 pub(crate) mod collapsed_bar;
@@ -41,26 +42,40 @@ pub use layout::{
     ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W, MIN_SLOT_H,
     MIN_WINDOW, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
 };
-pub use panel_status::{PanelState, PanelStatus};
+pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
 pub use top_bar::tools::Tool;
 
 use crate::inspectors::{InspectorPlugins, InspectorRegistry};
-use crate::panels::{PanelPlugins, PanelRegistry};
+use crate::panels::{PanelId, PanelPlugins, PanelRegistry};
+use crate::theme::Theme;
 use crate::GzUiSystems;
 
 /// The shell's Update systems, in [`GzUiSystems::Behaviour`] and in this
 /// order.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ShellSystems {
-    /// The connection phase, keys, commands and the layout, then the
-    /// sidebar's slots, in a chain.
+    /// The connection phase, keys, commands and the layout, in a chain.
     Layout,
-    /// The panels' own systems write their badges and counts into
-    /// [`PanelStatus`].
-    PanelStatus,
-    /// Everything that shows state: readouts, button states, overlays.
-    /// Each region adds its own.
+    /// The panels' own systems: they write their views, badges, counts and
+    /// header actions' state into [`PanelStatus`] (gate one that only
+    /// feeds a shown panel with [`panel_shown`]).
+    Panels,
+    /// The sidebar's slots rebuild what changed (headers, bodies), then
+    /// their headers' counts and actions follow [`PanelStatus`]; before
+    /// the readouts, so those find this frame's entities.
+    Slots,
+    /// Everything else that shows state: readouts, button states,
+    /// overlays. Each region adds its own.
     Readouts,
+}
+
+/// A run condition: `panel` is in a slot of the open sidebar. For a
+/// panel's systems that only feed what it shows (M7: a topic echo's
+/// subscription); what it must keep while closed (Plot's series, the
+/// Console's log) runs unconditionally, and so do the systems writing its
+/// [`PanelStatus`], which the shell reads when the panel opens.
+pub fn panel_shown(panel: PanelId) -> impl FnMut(Option<Res<ShellLayout>>) -> bool + Clone {
+    move |layout| layout.is_some_and(|l| l.sidebar_open && l.is_active(panel))
 }
 
 /// The shell with the built-in panels and inspectors: [`ShellPlugin`],
@@ -105,7 +120,8 @@ impl Plugin for ShellPlugin {
                 Update,
                 (
                     ShellSystems::Layout,
-                    ShellSystems::PanelStatus,
+                    ShellSystems::Panels,
+                    ShellSystems::Slots,
                     ShellSystems::Readouts,
                 )
                     .chain()
@@ -113,11 +129,13 @@ impl Plugin for ShellPlugin {
             )
             .add_systems(PreStartup, regions::init_layout)
             .add_systems(Startup, regions::spawn_shell)
+            .add_observer(regions::add_tab_groups)
             .add_systems(
                 Update,
                 (
                     connection::track_connection,
                     commands::shortcut_keys,
+                    commands::header_action_keys,
                     commands::apply_ui_commands,
                     regions::fit_to_window,
                     regions::apply_layout,
@@ -137,6 +155,14 @@ impl Plugin for ShellPlugin {
         if self.camera {
             app.add_systems(Startup, regions::spawn_ui_camera);
         }
+    }
+
+    fn finish(&self, app: &mut App) {
+        assert!(
+            app.world().contains_resource::<Theme>(),
+            "ShellPlugin needs GzUiPlugin (the theme, fonts, icons and widgets): add \
+             GzUiPlugin alongside ShellPlugins"
+        );
     }
 }
 

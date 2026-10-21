@@ -200,10 +200,16 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Restructured after M2 (DECISIONS.md D-51): feature folders, panels and inspectors as
   plugins in registries, shared layout primitives, a small public API and tests next to
   their modules. Later milestones follow §7.
+- Panel contract after the PR #30 second review (D-58): panels write their views into
+  `PanelStatus`, define their own actions and header actions, build their content in
+  their own observer; slots keep bodies across a second slot and a swap; Tab walks the
+  regions.
 
 ### M3 — Viewport controls
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,
   view cube (render-to-texture camera + picking on the image), scale label in ortho, target chip.
+  The rail's controls are tab stops inside the viewport area's tab group (D-58); the rail adds
+  no `TabGroup` of its own (§7, Focus: a nested group would jump the Tab order).
 - Overlays menu wired to existing toggles: grid, collisions, wireframe (line-mesh fallback on
   wasm), joints, frames, inertia/CoM.
 - Camera menu: Free / Follow / Track (the gzweb camera modes from PORT_PLAN Phase 5).
@@ -216,6 +222,17 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Scene panel: entity tree from `GzIndex`, virtualized, with filter, chips and visibility toggles.
   Spawn and delete update it live; this needs `scene/deletion` handling, which PORT_PLAN Phase 1
   left out.
+- Scene panel on the contract (D-58): `.content::<SceneTree>()` and an observer on
+  `Add<SceneTree>` that builds rows from panel-owned resources (expansion, filter text, chip,
+  scroll offset), since a body is respawned on every view change; Expand all / Collapse all
+  (header actions, defined and disabled now) enabled and handled in its
+  `PanelActionActivated` observer. Systems that only feed the shown tree run under
+  `panel_shown(SCENE)`.
+- `tree_row` recyclable (PR #30 second review, item 7): a `TreeRowSpec` change must update
+  the name text, letter, indent, caret and AccessKit label too (today only the badge, weight,
+  eye and opacity), so a virtualized row can be reused. The eye becomes controlled: it emits
+  an event and the panel (and M5's undo) owns visibility, instead of `on_eye_activate`
+  toggling `spec.hidden` itself (the feathers controlled pattern).
 
 ### M5 — Selection, inspector, transform tools, undo
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
@@ -225,29 +242,74 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Translate/Rotate gizmos with snap and X/Y/Z constraints. Edits go through `set_pose` and the
   other services.
 - `UndoStack` and dirty-state rules (§7.1). Undo chips for Delete and Reset.
+- Inspector registry for real (PR #30 second review, item 8): `InspectorDef` says which
+  selection kind it handles (`for_selection()` returns World today, and `BodyFn` sees no
+  entity); the frame rebuilds its body when `Selection` changes; bodies are built like panel
+  content (D-58: a marker per inspector and its own observer on `Add<Marker>`, state in
+  resources).
 
 ### M6 — Split viewports
 - Layout presets, active/hovered view rules, inactive-view face marker, per-view `ViewState`,
   floor and fallback rules, the multi-view quality policy (§3 item 5).
+- One splitter (PR #30 second review, item 9): there are three today (`shell/splitter.rs`,
+  `shell/sidebar/slot_splitter.rs` and the §5.18 widget `widgets/splitter/`, used only by the
+  gallery). Only the widget has `TabIndex` and arrow/Home/End keys, and it writes its pane's
+  `Node` itself. Make it controlled (it emits a size or drag event; the owner applies it to
+  `ShellLayout`) and use it for the side and slot splitters and the view dividers. If M6
+  doesn't need it, M10 does (keyboard access, §10).
 
 ### M7 — Panels
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).
-- Pop-out windows (§7.11).
+- Pop-out windows (§7.11). Generalize the sidebar's two hard-wired slots (PR #30 second
+  review, item 13: `rebuild_slots` walks the two `SlotView`s, `slot_counts` finds a count
+  through its `PanelHeader`, `ShellLayout::is_active` knows only the two slots) to a
+  `PanelHost { panel }` component on a slot or a window, rebuilt per host; bodies already
+  move between hosts (D-58).
+- The panels' §3.3.1 states from their data (D-58: each writes its `PanelView`): Topics
+  Ready once the client keeps the server's topic list (today `gz-bevy` only logs it), and
+  "Topic ended" for a dropped echo; Sensors "Select a model with sensors" vs "No sensors in
+  this world" (needs the world's sensors in the scene model and M5's selection); Assets
+  "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled.
+  Topics' Publish and Services header actions enabled.
+- Footers (PR #33 review, N10): §3.3's optional footer has no place in the contract yet, so
+  Plot's (Add field…, Export CSV, Pop out) could only live in its ready content and its empty
+  state would lose it. Decide before Plot: likely `PanelDef::footer(..)` with `PanelAction`s
+  drawn by the shell under every state (equal-width buttons, §3.3), their enabled state in
+  `PanelState` like header actions; Console's footer is a command input, so also a footer
+  content marker, built by the panel's observer like `.content::<Marker>()`.
+- Gating (PR #30 second review, item 6): a topic echo's and a camera's `image`
+  subscriptions run only while their panel is shown (`panel_shown(id)` on the systems that
+  subscribe, plus unsubscribing when it hides); Plot's series and the Console's log keep
+  recording while closed, so their data lives in always-on resources and only the view is
+  gated.
 
 ### M8 — Menus, command palette, workspaces, persistence
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.
 - Persistence: desktop config dir `gz/ui/workspaces.json`; web `localStorage`.
+- Command registry (PR #30 second review, item 11): `shortcut_keys` matches binding strings
+  inline (`commands.rs`) and `UiCommand` is a closed enum without labels. ⌘K "over every
+  action and panel" needs a registry of commands (id, label, binding, dispatch) that panels
+  and their actions (`PanelAction`, `HeaderAction`, D-58) register into; panels are already
+  enumerable through `PanelRegistry::iter()`.
+- Ids and persistence (PR #30 second review, item 12): `PanelId(&'static str)` can't be
+  built from a loaded string. Add `PanelRegistry::by_name` (and the same for inspectors) and
+  restore a saved `ShellLayout` through it (Reflect-deserializing `&'static str` ids won't
+  work). Unknown ids already fall back to the first registered panel in
+  `apply_ui_commands` (`PanelRegistry::resolve`); restoring uses the same.
 
 ### M9 — Model editing (§6.6)
 - Sim pause, dimming, EDITING pill, Parts tab, link/joint/visual/collision/sensor insertion,
   validation, write-back.
 
 ### M10 — Hardening
-- AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion.
+- AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
+  tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
+  viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
+  Space chord, is resolved: D-58a).
 - Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
@@ -288,30 +350,40 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 
 ## 7. Code layout and conventions (`gz-ui`)
 
-Agreed after M2 (DECISIONS.md D-51), after Rerun (`re_ui` plus a crate per view, registered
-as a view class), Zed (`ui` plus a crate per panel behind a `Panel` trait) and Bevy's
-`bevy_feathers`. Later milestones follow it; change it here, not by example.
+Agreed after M2 (DECISIONS.md D-51; the panel contract D-57, D-58), after Rerun (`re_ui`
+plus a crate per view, registered as a view class), Zed (`ui` plus a crate per panel behind
+a `Panel` trait) and Bevy's `bevy_feathers`. Later milestones follow it; change it here,
+not by example.
 
 ```
 crates/gz-ui/src/
-  lib.rs            GzUiPlugin, GzUiSystems, prelude
-  spec_checks.rs    the spec's own checks (tokens, contrast, no colour literals, fonts, icons)
-  test_support/     the headless harness (ui_app) and the full UI on it (shell_app, helpers)
+  lib.rs            GzUiPlugin, GzUiSystems, prelude; re-exports Registry, Registered
+  spec_checks.rs    the spec's own checks (tokens, contrast, no colour literals, fonts, icons,
+                    binding ids)
+  test_support/     the headless harness (ui_app), the full UI on it (shell_app, helpers) and
+                    a probe panel (probe.rs) for the shell's tests
+  registry.rs       Registry<D> (panels' and inspectors'), the ui_id! macro for open ids
+  format/           how sim and connection state reads (clock, RTF, step, addresses)
   theme/            Theme and the OS preference; tokens.rs (generated tables), roles.rs,
                     visuals/ (state looks)
   assets/           fonts, icons/ (atlas), brand (logo)
   widgets/          the §5 components, flat under widgets::; layout.rs (row, column,
                     flex_spacer, overlay, clip_box, separator, group/group_header/
-                    property_row, set_shown), text.rs (set_text), format.rs (how sim and
-                    connection state reads), shortcut.rs; a folder per widget with more
-                    than one file or its own tests (menu/, number_field/, slider/,
-                    splitter/, toggle/, tooltip/, tree_row/)
-  shell/            mod.rs: ShellPlugin, ShellPlugins and ShellSystems only; commands, layout
-                    (ShellLayout), regions, routing, splitter, collapsed_bar, connection,
-                    panel_status (PanelStatus), inspector (the frame); top_bar/
-                    activity_bar/ sidebar/ status_bar/ viewport/
-  panels/           PanelId, PanelDef, PanelRegistry, RegisterPanel, PanelPlugins; one
-                    folder per panel: scene/ assets/ topics/ plot/ sensors/ teleop/ console/
+                    property_row, set_shown), text.rs (set_text), shortcut.rs, focus.rs
+                    (text-field focus, released and hidden focus, keys a focused widget
+                    takes, D-52, D-58, D-58a); a folder per
+                    widget with more than one file or its own tests (menu/, number_field/,
+                    slider/, splitter/, toggle/, tooltip/, tree_row/)
+  shell/            mod.rs: ShellPlugin, ShellPlugins, ShellSystems and panel_shown only;
+                    commands, layout (ShellLayout), regions (and their tab groups), routing,
+                    splitter, collapsed_bar, connection, panel_status (PanelStatus,
+                    SetPanelStatus), inspector (the frame); top_bar/ activity_bar/ sidebar/
+                    (slots, body, slot_splitter) status_bar/ viewport/
+  panels/           the panel contract (PanelId, PanelDef, PanelView, PanelAction,
+                    HeaderAction, PanelActionActivated, PanelBody, PanelRegistry,
+                    RegisterPanel, PanelPlugins); a folder per panel with more than one file
+                    (scene/ topics/ plot/ console/), a file per one-file panel (assets.rs,
+                    sensors.rs, teleop.rs)
   inspectors/       InspectorId, InspectorDef, InspectorRegistry, InspectorPlugins; one
                     folder per kind: world/ (M5 adds model, link, joint, light, sensor,
                     multi)
@@ -322,20 +394,54 @@ Rules:
 
 - **Feature folders.** A shell region, panel, inspector or widget with more than one file or
   tests of its own is a folder: `mod.rs` (the plugin or builder and the module's docs), a
-  file per job (`view.rs`, `systems.rs`, …) and `tests.rs`. One-file widgets stay files.
-- **Panels and inspectors are plugins in a registry.** A panel declares its id as a
-  constant (`pub const SCENE: PanelId = PanelId::new("scene")`; open, so a panel in another
-  crate brings its own) and its plugin calls `app.register_panel(PanelDef::new(id, title,
-  icon, group, order).binding(..).default_open().view(..).content(..))`. What changes at run
-  time its own systems write into the shell's `PanelStatus` (badge, header count; compare
-  first, write a change only), in `ShellSystems::PanelStatus`. The activity bar (by group,
-  then order, a separator between groups), the sidebar's slots and the panel shortcuts only
-  host what `PanelRegistry` holds and draw `PanelStatus`; nothing outside `panels/<name>/`
-  matches on one panel. `ShellLayout` stores ids. Panels register while the app is built:
-  the shell closes the registry when it spawns, and a later `register_panel` panics; an id
-  or binding registered twice warns, the later registration winning. The built-in panels
-  are `PanelPlugins` inside `ShellPlugins`: to replace one, disable its plugin there and
-  register your own under its id. Inspectors work the same way (`InspectorId`,
+  file per job and `tests.rs`. The jobs: `view.rs` builds entities (bundles, a panel's
+  content observer), `systems.rs` keeps state in step (readouts, what a panel writes into
+  `PanelStatus`, its action observers). One-file panels and widgets stay files.
+- **Panels and inspectors are plugins in a registry** (DECISIONS.md D-57, D-58). A panel
+  declares its id as a constant (`pub const SCENE: PanelId = PanelId::new("scene")`; open,
+  so a panel in another crate brings its own) and its plugin calls
+  `app.register_panel(PanelDef::new(id, title, icon).place(group, order).binding(..)
+  .default_open().view(..).header_action(..).content::<Marker>())`. The contract:
+  - **What changes at run time** its own systems write into the shell's `PanelStatus`
+    through `SetPanelStatus` (`status.set_view(id, ..)`, `set_badge`, `set_count`,
+    `set_action_enabled`, which compare and mark a change only), in `ShellSystems::Panels`:
+    its body's `PanelView` (messages are `Cow<'static, str>`, so they can say what the data
+    says), its activity badge, its header count and which header actions are enabled (an
+    action it never sets keeps its registered `enabled`; the shell updates the button in
+    place, D-58a). `PanelDef::view` is the view until then; a panel whose
+    view never changes needs no system.
+  - **Actions are the panel's.** An empty or error state's buttons are `PanelAction { id,
+    label, enabled }`, its header's icon buttons `HeaderAction { id, icon, tooltip,
+    binding, enabled }`; both trigger `PanelActionActivated { entity, panel, action }`,
+    which the panel observes (matching its id). A header action's `binding` does the same
+    while its panel is shown. Reconnect (`PanelAction::reconnect()`) is the shell's own. A
+    disabled action shows dimmed with "Not available yet" and is no Tab stop.
+  - **Content** is built by the panel's own observer on `Add<Marker>` (the marker named in
+    `.content::<Marker>()`, inserted on a `Ready` body), with whatever system parameters it
+    needs. A ready body is full-bleed: the shell pads only the empty, loading and error
+    states.
+  - **Bodies are disposable views.** The shell rebuilds a body when its view changes and
+    (M7) when it pops out, and keeps it, re-parented, across a second slot opening or
+    closing and a swap; a panel never relies on either. Everything a user would miss after
+    a rebuild (tree expansion, filter text, scroll offset, plot series, the selected
+    sensor) lives in the panel's own resources, which its content is built from; that is
+    also what M8 persists. Nothing panel-specific is stored on body entities.
+  - **Gating.** Systems that only feed a shown panel (a subscription for an echo or an
+    image) run under `panel_shown(id)`; data the panel keeps while closed and the systems
+    writing its `PanelStatus` run unconditionally.
+
+  The activity bar (by group, then order, a separator between groups), the sidebar's slots
+  and the panel shortcuts only host what `PanelRegistry` holds and draw `PanelStatus`;
+  nothing outside `panels/<name>` matches on one panel or one of its actions. `ShellLayout`
+  stores ids, and a command naming an id nothing registered stands for the first panel in
+  the bar (`PanelRegistry::resolve`); without a `default_open` panel the first one opens
+  at start. Panels register while the app is built: the shell closes the registry when it
+  spawns, and a later `register_panel` panics. An id registered twice panics (the earlier
+  plugin's systems would keep writing its state); a binding registered twice warns, and the
+  first panel in the activity bar keeps it. The built-in panels are `PanelPlugins` inside
+  `ShellPlugins`: to replace one, disable its plugin there
+  (`ShellPlugins.build().disable::<ScenePanelPlugin>()`) and register your own under its id.
+  Inspectors work the same way on the same `Registry` (`InspectorId`,
   `register_inspector`, `InspectorPlugins`); `shell::inspector` is the frame.
 - **Crates later.** A panel moves to its own crate when it grows heavy or compile times ask
   for it; it depends only on `gz-ui`'s public API (prelude, widgets, theme, registries), so
@@ -349,26 +455,45 @@ Rules:
 - **Build from primitives.** The shell, panels and gallery use `widgets::layout`
   (`Node { padding, ..row(SPACE[4]) }`) rather than spelling out a flexbox, `set_text` /
   `set_shown` for readouts (they write, and mark changed, only on a change), and
-  `Tooltip::new(..).binding(map, id)` for shortcuts. Sizes from `Theme::s`, spacing from
+  `Tooltip::new(..).binding(map, id)` for shortcuts (every binding id is checked against
+  `shortcuts.json` by `spec_checks`). Sizes from `Theme::s`, spacing from
   `SPACE`, colours only through roles: no colour literals (`spec_checks` greps; only
   `theme/tokens.rs` is exempt).
-- **Systems.** A system updates one thing; one that needs more than seven parameters reads
-  through a `#[derive(SystemParam)]` struct (`StatusSources`, `SlotSources`, `PointerOver`,
-  `LookTargets`) instead of a `clippy::too_many_arguments` allow. That is for clarity, not
-  speed: readouts that all write `Text` still run one after another. A readout returns early
-  unless what it shows changed. Each region's `build()` (each panel's plugin) registers its
-  own systems: the layout chain in `ShellSystems::Layout` (the sidebar's after the regions'
-  `apply_layout`), the panels' status in `ShellSystems::PanelStatus`, everything that shows
-  state in `ShellSystems::Readouts`.
+- **Systems.** A system updates one thing. One that needs more than seven parameters reads
+  through a `#[derive(SystemParam)]` struct whose methods do the work (`SlotSources::view`,
+  `StatusSources::text`, `PointerOver::over_ui`, `LookTargets::paint`, `RowParts::paint`)
+  instead of a `clippy::too_many_arguments` allow; a struct that is only destructured on the
+  system's first line is ceremony, not grouping. That is for clarity, not speed: readouts
+  that all write `Text` still run one after another. A readout returns early unless what it
+  shows changed. Each region's `build()` (each panel's plugin) registers its own systems:
+  the layout chain in `ShellSystems::Layout` (the sidebar's after the regions'
+  `apply_layout`), the panels' own in `ShellSystems::Panels`, the sidebar's slots (rebuild,
+  counts, header actions) in `ShellSystems::Slots`, everything else that shows state in
+  `ShellSystems::Readouts`.
+- **Focus.** Each region is a `TabGroup` in §6.5's order (`Region::tab_order`), so Tab walks
+  top bar → activity bar → sidebar → viewport → inspector → status bar. A node that isn't
+  displayed is made invisible (`focus::hide_undisplayed`), since Bevy's tab navigation skips
+  only invisible entities; focus on a hidden node is released (D-52); a disabled control is
+  no Tab stop. **No nested `TabGroup`s:** Bevy sorts every non-modal group globally by its
+  `order` and doesn't descend into a group inside another, so a group inside a region (the
+  M3 rail, a panel's list) would jump the Tab order; controls inside a region are plain tab
+  stops (`TabIndex`), and only a modal (a dialog, an open menu) gets a group of its own.
+  **A focused widget consumes the keys it acts on** (D-58a): a widget handling a key in its
+  `FocusedInput` observer calls `propagate(false)`, and only keys that reach the window are
+  the shortcuts' (`focus::hide_taken_keys`), so a focused button takes Space from the
+  play/pause chord. A new widget with keys does the same; a shortcut reads
+  `ButtonInput<KeyCode>` (or the shell's `Shortcuts`), never `KeyboardInput` directly.
 - **Visibility.** `pub` is the crate's API only: the plugins and sets, `UiCommand`,
-  `ShellLayout`/`Slot`/`Side`/`Tool`/`Phase`, `PanelStatus`, the ids and registries, the
-  theme and its looks, the fonts' and icons' builders, and the widgets (constructors, props,
+  `ShellLayout`/`Slot`/`Side`/`Tool`/`Phase`, `PanelStatus`/`SetPanelStatus`/`panel_shown`,
+  the ids, registries and the panel contract's types, the theme and its looks, the fonts' and icons' builders, and the widgets (constructors, props,
   markers, events). Everything else is `pub(crate)` or private, and module trees are
-  `pub(crate)` with re-exports (`shell::MIN_WINDOW`, `theme::Active`, `assets::icon`). Four
-  leaf modules stay public because their items read better qualified:
-  `widgets::{layout, text, format, shortcut}` (`layout::row`, `format::clock`). The crate
-  warns on `unreachable_pub`, so check.sh rejects a stray `pub`.
+  `pub(crate)` with re-exports (`shell::MIN_WINDOW`, `theme::Active`, `assets::icon`). The
+  leaf modules whose items read better qualified stay public: `format` (`format::clock`;
+  domain formatting, so not under `widgets`) and `widgets::{layout, text, shortcut}`
+  (`layout::row`). The crate warns on `unreachable_pub`, so check.sh rejects a stray `pub`.
 - **Tests** sit next to their module (`#[cfg(test)] mod tests;`, a sibling `tests.rs`);
   shared harness code goes in `test_support`. A region's and widget's tests import it through
-  `super::`.
+  `super::`. The shell's tests use the probe panel (`test_support::probe`), not a built-in
+  one; a panel's tests drive it through the shell (open it, change the connection or its
+  data, check what its body, header and badge do) rather than restate its strings.
 - **Docs.** Every module opens with what it is and its spec §; decisions cite DECISIONS.md.
