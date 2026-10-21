@@ -1117,3 +1117,25 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** a regression test for each (overlays 4, sdf 2, view cube 3,
   rail 1, and the scale label's lengths test extended); workspace 558 →
   568 passing; coverage 98.7% lines. check.sh passes.
+
+## 2026-10-21: PR #35 review fixes (D-70a)
+
+- **Merged** M3's review fixes first: `extras.rs` takes M3's request
+  logic with M4's `SdfWanted` (which covers the replaced-model finding).
+- **Paths:** `PathAllocator::free`; `apply_deletions` frees the subtree's
+  paths; the lowest free suffix, skipping paths another name has (`a#1`
+  named so collided with the second `a`).
+- **`--scene-expand`:** extends the open rows, waits for more than the
+  world; `rebuild_model` after `gz_bevy::spawn::apply_scene`.
+- **Rebuilds:** on the world's name, not every `GzStatus` change; rows
+  repaint when the model changes (found while testing it: a renamed
+  world kept its old name).
+- **Scrolling:** `first_row` allows for the list's top padding,
+  `pool_size` is a row longer.
+- **AccessKit:** `TreeContent` has a `GenericContainer` node; empty pool
+  rows are hidden.
+- **Tests:** path reuse (gz-core), respawned paths (gz-bevy), scene expand
+  on an empty world, stats leave the tree alone, the pool covers the list
+  at any scroll (checked to fail with the old maths), the accessibility
+  tree; workspace 586 → 591 passing after the merge; coverage 98.6% lines.
+  check.sh passes.
