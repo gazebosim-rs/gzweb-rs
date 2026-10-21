@@ -1308,11 +1308,14 @@ fn assert_world_in_front(r: &Rig, extent: f32) {
     assert!((near - reach).abs() < 1e-3, "near {near} reach {reach}");
     assert!(near > 0.0);
     let d = depth(r);
+    // A few f32 steps at the camera's distance: 10 km out a step is about
+    // a millimetre, and the depth is a chain of dot products.
+    let tolerance = 1e-3_f32.max((d + extent) * 1e-6);
     assert!(
-        d - extent >= near - 1e-3,
+        d - extent >= near - tolerance,
         "depth {d} extent {extent} near {near}"
     );
-    assert!(far >= d + extent, "far {far}");
+    assert!(far >= d + extent - tolerance, "far {far}");
 }
 
 #[test]

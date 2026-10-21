@@ -1156,6 +1156,10 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   view (checked to fail with the 1000 m cap). Both checked to fail against
   what they guard; workspace 591 → 593 passing; coverage 98.6% lines.
   check.sh passes.
+- **CI** (PR #37): `assert_world_in_front` allowed 1 mm of rounding,
+  which a camera 10 km out exceeds by a step or two in CI's
+  coverage build (depth 10008.483 against 8.484). It now allows a few
+  f32 steps at the camera's distance.
 
 ## 2026-10-21: Asset-load tests wait on the clock, not a frame count
 
