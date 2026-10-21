@@ -3140,6 +3140,7 @@ dependencies = [
  "gz-proto",
  "prost",
  "rcgen",
+ "roxmltree 0.21.1",
  "rustls",
  "rustls-pki-types",
  "serde",

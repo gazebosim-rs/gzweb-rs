@@ -10,6 +10,8 @@ gz-proto.workspace = true
 prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# SDFormat for the overlays (`sdf`); already in the tree through resvg.
+roxmltree = "0.21"
 # `native`: blocking websocket connect with wss:// (rustls + ring).
 tungstenite = { version = "0.26", optional = true, features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12", "logging"] }

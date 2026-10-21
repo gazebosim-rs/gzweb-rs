@@ -1,0 +1,475 @@
+//! What the scene message leaves out: collisions, inertials and joints,
+//! read from the SDFormat the world's `generate_world_sdf` service returns
+//! (DECISIONS.md D-62). The viewport's overlays (spec §7.3: Collisions,
+//! Inertia, Center of mass, Joints) draw them on the links the scene
+//! message already gave us.
+//!
+//! The Gazebo websocket server forwards only the `gz.msgs.Scene` that
+//! gz-sim's SceneBroadcaster builds (models, links, visuals, lights), so
+//! the Gazebo GUI's VisualizationCapabilities, which reads the entity
+//! component manager directly, has nothing to copy here. The world's SDF,
+//! with included models expanded ([`generate_request`]), has all of it.
+//!
+//! Everything is keyed by the link's path as [`crate::scene`] builds it
+//! (`model/link`, `outer/inner/link`), and every pose is in the link's own
+//! frame, so a renderer attaches each overlay to the link entity it already
+//! has and pose updates move them.
+//!
+//! Frames, as SDFormat 1.7+ defines them: a link's pose is relative to its
+//! model, a collision's and an inertial's to their link, and a joint's to
+//! its child link, unless `relative_to` names another link or `__model__`.
+//! Other frames (`<frame>` elements, nested models' frames) are not
+//! resolved: they count as the model frame.
+
+use std::collections::HashMap;
+
+use crate::scene::{GeometryDesc, Pose};
+use crate::uri;
+
+/// The request body for `/world/<w>/generate_world_sdf`: a
+/// `gz.msgs.SdfGeneratorConfig` with `expand_include_tags` on, so models
+/// included from Fuel or a model path come back in full. Encoded by hand:
+/// it is six bytes, none of them a `,` or a NUL (which the websocket
+/// framing can't carry).
+pub fn generate_request() -> Vec<u8> {
+    // global_entity_gen_config (2) { expand_include_tags (1) { data (2): true } }
+    vec![0x12, 0x04, 0x0a, 0x02, 0x10, 0x01]
+}
+
+/// The service that returns the world's SDFormat.
+pub fn generate_service(world: &str) -> String {
+    format!("/world/{world}/generate_world_sdf")
+}
+
+/// A joint's type, as far as drawing it goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JointKind {
+    Revolute,
+    Continuous,
+    Prismatic,
+    Fixed,
+    Ball,
+    Universal,
+    Revolute2,
+    Screw,
+    Gearbox,
+    Other,
+}
+
+impl JointKind {
+    fn parse(s: &str) -> JointKind {
+        match s {
+            "revolute" => JointKind::Revolute,
+            "continuous" => JointKind::Continuous,
+            "prismatic" => JointKind::Prismatic,
+            "fixed" => JointKind::Fixed,
+            "ball" => JointKind::Ball,
+            "universal" => JointKind::Universal,
+            "revolute2" => JointKind::Revolute2,
+            "screw" => JointKind::Screw,
+            "gearbox" => JointKind::Gearbox,
+            _ => JointKind::Other,
+        }
+    }
+
+    /// Turns about its axes (drawn with a ring), rather than sliding along
+    /// them.
+    pub fn rotates(self) -> bool {
+        matches!(
+            self,
+            JointKind::Revolute
+                | JointKind::Continuous
+                | JointKind::Universal
+                | JointKind::Revolute2
+                | JointKind::Screw
+                | JointKind::Gearbox
+        )
+    }
+}
+
+/// A collision shape, in its link's frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Collision {
+    pub name: String,
+    pub pose: Pose,
+    pub geometry: GeometryDesc,
+    /// A mesh's `<scale>`; ones for everything else.
+    pub scale: [f64; 3],
+}
+
+/// A link's mass properties: the centre of mass in the link's frame and
+/// the inertia about it (`ixx, ixy, ixz, iyy, iyz, izz`) in the inertial
+/// frame's axes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Inertial {
+    pub pose: Pose,
+    pub mass: f64,
+    pub inertia: [f64; 6],
+}
+
+/// A joint, drawn on its child link: its frame in the child link's frame
+/// and its axes in the joint frame (unit vectors; one, or two for
+/// universal and revolute2 joints).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Joint {
+    pub name: String,
+    pub kind: JointKind,
+    pub pose: Pose,
+    pub axes: Vec<[f64; 3]>,
+}
+
+/// Everything the overlays draw on one link.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LinkExtras {
+    pub collisions: Vec<Collision>,
+    pub inertial: Option<Inertial>,
+    /// The joints whose child this link is.
+    pub joints: Vec<Joint>,
+}
+
+/// A world's links' extras by link path.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WorldExtras {
+    pub links: HashMap<String, LinkExtras>,
+}
+
+impl WorldExtras {
+    /// Parses a `generate_world_sdf` reply (or any SDFormat world or model
+    /// file). Models' top-level names are their paths, as in the scene
+    /// message.
+    pub fn parse(xml: &str) -> Result<WorldExtras, String> {
+        let doc = roxmltree::Document::parse(xml).map_err(|e| e.to_string())?;
+        let root = doc.root_element();
+        if root.tag_name().name() != "sdf" {
+            return Err(format!("not SDFormat: <{}>", root.tag_name().name()));
+        }
+        let mut out = WorldExtras::default();
+        for top in elements(root) {
+            match top.tag_name().name() {
+                "world" => {
+                    for model in children(top, "model") {
+                        read_model(model, "", &mut out);
+                    }
+                }
+                "model" => read_model(top, "", &mut out),
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn link(&self, path: &str) -> Option<&LinkExtras> {
+        self.links.get(path)
+    }
+}
+
+type Node<'a, 'i> = roxmltree::Node<'a, 'i>;
+
+fn elements<'a, 'i>(n: Node<'a, 'i>) -> impl Iterator<Item = Node<'a, 'i>> {
+    n.children().filter(Node::is_element)
+}
+
+fn children<'a, 'i>(n: Node<'a, 'i>, tag: &'static str) -> impl Iterator<Item = Node<'a, 'i>> {
+    elements(n).filter(move |c| c.tag_name().name() == tag)
+}
+
+fn child<'a, 'i>(n: Node<'a, 'i>, tag: &'static str) -> Option<Node<'a, 'i>> {
+    children(n, tag).next()
+}
+
+fn text<'a>(n: Node<'a, '_>, tag: &'static str) -> Option<&'a str> {
+    child(n, tag).and_then(|c| c.text()).map(str::trim)
+}
+
+fn number(n: Node, tag: &'static str) -> Option<f64> {
+    text(n, tag).and_then(|t| t.parse().ok())
+}
+
+fn numbers(s: &str) -> Vec<f64> {
+    s.split_whitespace()
+        .filter_map(|t| t.parse().ok())
+        .collect()
+}
+
+fn vec3(n: Node, tag: &'static str, default: [f64; 3]) -> [f64; 3] {
+    match text(n, tag).map(numbers).as_deref() {
+        Some([x, y, z]) => [*x, *y, *z],
+        _ => default,
+    }
+}
+
+/// A `<pose>`'s value and `relative_to`. Euler angles are radians unless
+/// `degrees="true"`; `rotation_format="quat_xyzw"` gives a quaternion.
+fn pose_of(n: Node) -> (Pose, Option<String>) {
+    let Some(p) = child(n, "pose") else {
+        return (Pose::IDENTITY, None);
+    };
+    let relative_to = p
+        .attribute("relative_to")
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let v = numbers(p.text().unwrap_or(""));
+    let degrees = p.attribute("degrees") == Some("true");
+    let quat_format = p.attribute("rotation_format") == Some("quat_xyzw");
+    let pose = match (v.as_slice(), quat_format) {
+        ([x, y, z, qx, qy, qz, qw], true) => Pose {
+            pos: [*x, *y, *z],
+            quat: normalize([*qx, *qy, *qz, *qw]),
+        },
+        ([x, y, z, r, pi, ya], false) => {
+            let k = if degrees { 1f64.to_radians() } else { 1.0 };
+            Pose {
+                pos: [*x, *y, *z],
+                quat: rpy(*r * k, *pi * k, *ya * k),
+            }
+        }
+        _ => Pose::IDENTITY,
+    };
+    (pose, relative_to)
+}
+
+fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
+    let name = model.attribute("name").unwrap_or("");
+    let path = if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    };
+    // Each link's pose in the model frame, for joints posed relative to
+    // another link or the model.
+    let links: Vec<Node> = children(model, "link").collect();
+    let raw: HashMap<&str, (Pose, Option<String>)> = links
+        .iter()
+        .map(|l| (l.attribute("name").unwrap_or(""), pose_of(*l)))
+        .collect();
+    let in_model = |link: &str| link_in_model(link, &raw, 0);
+
+    for link in &links {
+        let lname = link.attribute("name").unwrap_or("");
+        let extras = out.links.entry(format!("{path}/{lname}")).or_default();
+        for c in children(*link, "collision") {
+            if let Some(geometry) = child(c, "geometry").and_then(geometry) {
+                extras.collisions.push(Collision {
+                    name: c.attribute("name").unwrap_or("").to_string(),
+                    pose: pose_of(c).0,
+                    scale: mesh_scale(c),
+                    geometry,
+                });
+            }
+        }
+        if let Some(i) = child(*link, "inertial") {
+            extras.inertial = Some(inertial(i));
+        }
+    }
+
+    for j in children(model, "joint") {
+        let Some(child_name) = text(j, "child") else {
+            continue;
+        };
+        // A nested model's link: `inner::link` is `path/inner/link`.
+        let child_path = format!("{path}/{}", child_name.replace("::", "/"));
+        let (pose, relative_to) = pose_of(j);
+        let pose = match relative_to.as_deref() {
+            None => pose,
+            Some(r) if r == child_name => pose,
+            Some(r) => {
+                let frame = if r == "__model__" {
+                    Pose::IDENTITY
+                } else {
+                    in_model(r)
+                };
+                mul(inverse(in_model(child_name)), mul(frame, pose))
+            }
+        };
+        let axes = ["axis", "axis2"]
+            .into_iter()
+            .filter_map(|tag| child(j, tag))
+            .map(|a| {
+                let xyz = child(a, "xyz");
+                let v = xyz
+                    .and_then(|x| x.text())
+                    .map(numbers)
+                    .and_then(|v| <[f64; 3]>::try_from(v).ok())
+                    .unwrap_or([0.0, 0.0, 1.0]);
+                // An axis expressed in the model frame turns into the
+                // joint frame: undo the joint's rotation in the model.
+                let in_model_frame =
+                    xyz.and_then(|x| x.attribute("expressed_in")) == Some("__model__");
+                let v = if in_model_frame {
+                    let joint_in_model = mul(in_model(child_name), pose);
+                    rotate(inverse(joint_in_model).quat, v)
+                } else {
+                    v
+                };
+                unit(v)
+            })
+            .collect();
+        out.links.entry(child_path).or_default().joints.push(Joint {
+            name: j.attribute("name").unwrap_or("").to_string(),
+            kind: JointKind::parse(j.attribute("type").unwrap_or("")),
+            pose,
+            axes,
+        });
+    }
+
+    for nested in children(model, "model") {
+        read_model(nested, &path, out);
+    }
+}
+
+/// A link's pose in its model's frame, following `relative_to` through
+/// other links (at most a few deep; a loop or an unknown frame stops at
+/// the model frame).
+fn link_in_model(link: &str, raw: &HashMap<&str, (Pose, Option<String>)>, depth: u32) -> Pose {
+    let Some((pose, relative_to)) = raw.get(link) else {
+        return Pose::IDENTITY;
+    };
+    match relative_to.as_deref() {
+        Some(r) if r != "__model__" && raw.contains_key(r) && depth < 16 => {
+            mul(link_in_model(r, raw, depth + 1), *pose)
+        }
+        _ => *pose,
+    }
+}
+
+fn mesh_scale(collision: Node) -> [f64; 3] {
+    child(collision, "geometry")
+        .and_then(|g| child(g, "mesh"))
+        .map_or([1.0; 3], |m| vec3(m, "scale", [1.0; 3]))
+}
+
+fn geometry(g: Node) -> Option<GeometryDesc> {
+    let shape = elements(g).next()?;
+    let num = |tag, d| number(shape, tag).unwrap_or(d);
+    Some(match shape.tag_name().name() {
+        "box" => GeometryDesc::Box {
+            size: vec3(shape, "size", [1.0; 3]),
+        },
+        "sphere" => GeometryDesc::Sphere {
+            radius: num("radius", 1.0),
+        },
+        "cylinder" => GeometryDesc::Cylinder {
+            radius: num("radius", 1.0),
+            length: num("length", 1.0),
+        },
+        "capsule" => GeometryDesc::Capsule {
+            radius: num("radius", 0.5),
+            length: num("length", 1.0),
+        },
+        "cone" => GeometryDesc::Cone {
+            radius: num("radius", 1.0),
+            length: num("length", 1.0),
+        },
+        "ellipsoid" => GeometryDesc::Ellipsoid {
+            radii: vec3(shape, "radii", [1.0; 3]),
+        },
+        "plane" => GeometryDesc::Plane {
+            normal: vec3(shape, "normal", [0.0, 0.0, 1.0]),
+            size: match text(shape, "size").map(numbers).as_deref() {
+                Some([x, y]) => [*x, *y],
+                _ => [1.0, 1.0],
+            },
+        },
+        "mesh" => {
+            let u = text(shape, "uri")?.to_string();
+            let sub = child(shape, "submesh");
+            GeometryDesc::Mesh {
+                load_uri: uri::mesh_load_uri(&u),
+                uri: u,
+                submesh: sub.and_then(|s| text(s, "name")).map(str::to_string),
+                center_submesh: sub.and_then(|s| text(s, "center")) == Some("true"),
+            }
+        }
+        other => GeometryDesc::Unsupported(other.to_string()),
+    })
+}
+
+fn inertial(i: Node) -> Inertial {
+    let m = child(i, "inertia");
+    let get = |tag, d| m.and_then(|m| number(m, tag)).unwrap_or(d);
+    Inertial {
+        pose: pose_of(i).0,
+        mass: number(i, "mass").unwrap_or(1.0),
+        inertia: [
+            get("ixx", 1.0),
+            get("ixy", 0.0),
+            get("ixz", 0.0),
+            get("iyy", 1.0),
+            get("iyz", 0.0),
+            get("izz", 1.0),
+        ],
+    }
+}
+
+// Pose maths in f64 (quaternions `[x, y, z, w]`).
+
+fn normalize(q: [f64; 4]) -> [f64; 4] {
+    let n = q.iter().map(|c| c * c).sum::<f64>().sqrt();
+    if n > 0.0 {
+        q.map(|c| c / n)
+    } else {
+        [0.0, 0.0, 0.0, 1.0]
+    }
+}
+
+fn unit(v: [f64; 3]) -> [f64; 3] {
+    let n = v.iter().map(|c| c * c).sum::<f64>().sqrt();
+    if n > 0.0 {
+        v.map(|c| c / n)
+    } else {
+        [0.0, 0.0, 1.0]
+    }
+}
+
+/// Gazebo's roll-pitch-yaw: about fixed X, then Y, then Z.
+fn rpy(r: f64, p: f64, y: f64) -> [f64; 4] {
+    let (sr, cr) = (r / 2.0).sin_cos();
+    let (sp, cp) = (p / 2.0).sin_cos();
+    let (sy, cy) = (y / 2.0).sin_cos();
+    [
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+        cr * cp * cy + sr * sp * sy,
+    ]
+}
+
+fn qmul(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+    let [ax, ay, az, aw] = a;
+    let [bx, by, bz, bw] = b;
+    [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ]
+}
+
+fn rotate(q: [f64; 4], v: [f64; 3]) -> [f64; 3] {
+    let p = qmul(
+        qmul(q, [v[0], v[1], v[2], 0.0]),
+        [-q[0], -q[1], -q[2], q[3]],
+    );
+    [p[0], p[1], p[2]]
+}
+
+/// `a` then `b` in `a`'s frame: `b` is relative to `a`.
+fn mul(a: Pose, b: Pose) -> Pose {
+    let t = rotate(a.quat, b.pos);
+    Pose {
+        pos: [a.pos[0] + t[0], a.pos[1] + t[1], a.pos[2] + t[2]],
+        quat: normalize(qmul(a.quat, b.quat)),
+    }
+}
+
+fn inverse(p: Pose) -> Pose {
+    let q = [-p.quat[0], -p.quat[1], -p.quat[2], p.quat[3]];
+    let t = rotate(q, p.pos);
+    Pose {
+        pos: [-t[0], -t[1], -t[2]],
+        quat: q,
+    }
+}
+
+#[cfg(test)]
+mod tests;
