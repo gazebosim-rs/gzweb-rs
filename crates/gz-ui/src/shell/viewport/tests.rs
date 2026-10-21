@@ -467,3 +467,30 @@ fn addresses_normalize() {
         format!("ws://[::1]:{port}")
     );
 }
+
+#[test]
+fn the_marquee_box_follows_the_drag() {
+    use gz_bevy::view::{Marquee, MarqueeRect};
+    let mut app = shell_app((1440, 900), 1.0);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    let b = find::<super::marquee::MarqueeBox>(&mut app);
+    assert!(!displayed(&app, b));
+    let view = find::<MainCamera>(&mut app);
+    let node = find::<ViewNode>(&mut app);
+    // Dragged up and left: the box spans the two corners.
+    app.world_mut().resource_mut::<Marquee>().0 = Some(MarqueeRect {
+        view,
+        from: Vec2::new(300.0, 200.0),
+        to: Vec2::new(100.0, 150.0),
+    });
+    frames(&mut app, 2);
+    assert!(displayed(&app, b));
+    let (pos, size) = rect(&app, b);
+    let (origin, _) = rect(&app, node);
+    assert_eq!(pos - origin, Vec2::new(100.0, 150.0));
+    assert_eq!(size, Vec2::new(200.0, 50.0));
+    app.world_mut().resource_mut::<Marquee>().0 = None;
+    frames(&mut app, 2);
+    assert!(!displayed(&app, b));
+}

@@ -10,6 +10,7 @@
 pub(crate) mod banner;
 pub(crate) mod connect_card;
 pub(crate) mod hud;
+pub(crate) mod marquee;
 pub(crate) mod rail;
 pub(crate) mod view;
 pub(crate) mod view_cube;
@@ -76,6 +77,7 @@ pub(crate) fn viewport_area(theme: &Theme, map: &InputMap) -> impl Bundle {
                     v.spawn(view_cube::view_cube(&t));
                     v.spawn(rail::rail(&t, &map));
                     v.spawn(hud::scale_label(&t));
+                    v.spawn(marquee::marquee());
                 });
             a.spawn((
                 DimOverlay,
@@ -100,7 +102,12 @@ pub(crate) fn build(app: &mut App) {
     app.init_resource::<ViewPlacement>()
         .add_systems(
             Update,
-            (connect_card::prefill_address, view::show_view_image).in_set(GzUiSystems::Behaviour),
+            (
+                connect_card::prefill_address,
+                view::show_view_image,
+                marquee::marquee_box,
+            )
+                .in_set(GzUiSystems::Behaviour),
         )
         .add_systems(
             Update,
