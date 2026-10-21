@@ -130,6 +130,7 @@ impl Plugin for ShellPlugin {
                 (
                     connection::track_connection,
                     commands::shortcut_keys,
+                    commands::header_action_keys,
                     commands::apply_ui_commands,
                     regions::fit_to_window,
                     regions::apply_layout,

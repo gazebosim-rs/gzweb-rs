@@ -559,3 +559,35 @@ fn header_actions_are_enabled_at_run_time_in_place() {
     let poke = header_button(&mut app, POKE);
     assert!(app.world().get::<InteractionDisabled>(poke).is_some());
 }
+
+/// A header action's binding activates it, as its button would, while its
+/// panel is shown and the action enabled.
+#[test]
+fn a_header_action_binding_activates_it_while_shown_and_enabled() {
+    use crate::shell::{PanelStatus, SetPanelStatus};
+    let mut app = probe_app(Slot::Secondary);
+    let poke = header_button(&mut app, POKE);
+    let press = |app: &mut App| {
+        chord(app, &[KeyCode::ControlLeft, KeyCode::KeyI]);
+        std::mem::take(&mut app.world_mut().resource_mut::<ProbeActions>().0)
+    };
+    assert_eq!(press(&mut app), [(POKE, poke)]);
+    assert!(layout(&app).inspector_open, "⌘⌥I isn't ⌘I");
+    let enable = |app: &mut App, on: bool| {
+        app.world_mut()
+            .resource_mut::<PanelStatus>()
+            .set_action_enabled(PROBE, POKE, on);
+        frames(app, 1);
+    };
+    enable(&mut app, false);
+    assert_eq!(press(&mut app), []);
+    enable(&mut app, true);
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(press(&mut app), [], "the sidebar is collapsed");
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert!(layout(&app).sidebar_open);
+    assert_eq!(press(&mut app), [], "the panel isn't shown");
+}

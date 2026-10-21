@@ -173,7 +173,8 @@ pub struct HeaderAction {
     pub icon: IconId,
     /// Its tooltip's title.
     pub tooltip: &'static str,
-    /// The `shortcuts.json` binding its tooltip shows, if any.
+    /// The `shortcuts.json` binding that activates it while its panel is
+    /// shown (its tooltip shows the keys), if any.
     pub binding: Option<&'static str>,
     /// A disabled action shows dimmed, with "Not available yet". This is
     /// its state until the panel's systems set one

@@ -3,13 +3,17 @@
 //! so buttons, keys and tests share one path. Sim requests are `gz-bevy`
 //! messages (`GzCommand`, `GzReconnect`) instead.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
 use super::layout::{ShellLayout, Side, Slot};
+use super::sidebar::body::ActionButton;
+use super::sidebar::HeaderButton;
 use super::top_bar::tools::Tool;
-use crate::panels::{PanelId, PanelRegistry};
+use super::PanelStatus;
+use crate::panels::{PanelActionActivated, PanelId, PanelRegistry};
 use crate::theme::{Theme, ThemeMode};
 use crate::widgets::focus::MenuTakesEscape;
 
@@ -42,34 +46,49 @@ pub enum UiCommand {
     Show(Side),
 }
 
-/// ⌘B, ⌘⌥I and the tool keys, from the input map, in the scopes live now
-/// (none while typing; viewport keys only when the view has them). An Esc
-/// that closes a menu does only that (§13: one step per Esc).
+/// The shortcut bindings pressed this frame, from the input map in the
+/// scopes live now (none while typing; viewport keys only when the view
+/// has them). An Esc that closes a menu does only that (§13: one step per
+/// Esc).
+#[derive(SystemParam)]
+pub(crate) struct Shortcuts<'w> {
+    keys: Res<'w, ButtonInput<KeyCode>>,
+    map: Option<Res<'w, InputMap>>,
+    scopes: Option<Res<'w, ActiveScopes>>,
+    routing: Res<'w, ViewRouting>,
+    menu_esc: Res<'w, MenuTakesEscape>,
+}
+
+impl Shortcuts<'_> {
+    /// The ids of the bindings pressed this frame.
+    pub(crate) fn pressed(&self) -> Vec<String> {
+        let (Some(map), Some(scopes)) = (self.map.as_deref(), self.scopes.as_deref()) else {
+            return Vec::new();
+        };
+        if self.keys.get_just_pressed().next().is_none() {
+            return Vec::new();
+        }
+        let scopes = self.routing.key_scopes(&scopes.0);
+        map.just_pressed(&self.keys, &scopes)
+            .filter(|b| {
+                !(self.menu_esc.0
+                    && b.chords(map.platform)
+                        .iter()
+                        .any(|c| c.key == KeyCode::Escape))
+            })
+            .map(|b| b.id.clone())
+            .collect()
+    }
+}
+
+/// ⌘B, ⌘⌥I, the tool keys and the panels' own shortcuts.
 pub(crate) fn shortcut_keys(
-    keys: Res<ButtonInput<KeyCode>>,
-    map: Option<Res<InputMap>>,
-    scopes: Option<Res<ActiveScopes>>,
-    routing: Res<ViewRouting>,
+    shortcuts: Shortcuts,
     panels: Res<PanelRegistry>,
-    menu_esc: Res<MenuTakesEscape>,
     mut out: MessageWriter<UiCommand>,
 ) {
-    let (Some(map), Some(scopes)) = (map, scopes) else {
-        return;
-    };
-    if keys.get_just_pressed().next().is_none() {
-        return;
-    }
-    let scopes = routing.key_scopes(&scopes.0);
-    for b in map.just_pressed(&keys, &scopes) {
-        if menu_esc.0
-            && b.chords(map.platform)
-                .iter()
-                .any(|c| c.key == KeyCode::Escape)
-        {
-            continue;
-        }
-        let cmd = match b.id.as_str() {
+    for id in shortcuts.pressed() {
+        let cmd = match id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
             id => match Tool::ALL.into_iter().find(|t| t.binding() == id) {
@@ -84,6 +103,44 @@ pub(crate) fn shortcut_keys(
             },
         };
         out.write(cmd);
+    }
+}
+
+/// A header action's binding ([`HeaderAction::binding`]) activates it, as
+/// its button would: [`PanelActionActivated`] on the button, while its
+/// panel is shown and the action enabled.
+///
+/// [`HeaderAction::binding`]: crate::panels::HeaderAction
+pub(crate) fn header_action_keys(
+    shortcuts: Shortcuts,
+    layout: Res<ShellLayout>,
+    panels: Res<PanelRegistry>,
+    status: Res<PanelStatus>,
+    buttons: Query<(Entity, &ActionButton), With<HeaderButton>>,
+    mut commands: Commands,
+) {
+    let pressed = shortcuts.pressed();
+    if pressed.is_empty() || !layout.sidebar_open {
+        return;
+    }
+    let shown = panels.iter().filter(|d| layout.is_active(d.id));
+    for def in shown {
+        for a in &def.header_actions {
+            let bound = a.binding.is_some_and(|b| pressed.iter().any(|p| p == b));
+            if !bound || !status.header_action_enabled(def.id, a) {
+                continue;
+            }
+            let button = buttons
+                .iter()
+                .find(|(_, b)| b.panel == def.id && b.action == a.id);
+            if let Some((entity, _)) = button {
+                commands.trigger(PanelActionActivated {
+                    entity,
+                    panel: def.id,
+                    action: a.id,
+                });
+            }
+        }
     }
 }
 
