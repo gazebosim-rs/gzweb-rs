@@ -10,6 +10,9 @@ struct OutlineParams {
     // x, y: one mask texel in uv; z, w: the selection's and the hover's
     // widths in texels.
     texel_widths: vec4<f32>,
+    // Where the overlay sits on the mask: top left (xy) and size (zw), in
+    // uv.
+    rect: vec4<f32>,
 };
 
 @group(1) @binding(0) var<uniform> params: OutlineParams;
@@ -19,7 +22,8 @@ struct OutlineParams {
 @fragment
 fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     let texel = params.texel_widths.xy;
-    let here = textureSampleLevel(mask, mask_sampler, in.uv, 0.0);
+    let uv = params.rect.xy + in.uv * params.rect.zw;
+    let here = textureSampleLevel(mask, mask_sampler, uv, 0.0);
     if (here.r > 0.5) {
         return vec4<f32>(0.0);
     }
@@ -29,7 +33,7 @@ fn fragment(in: UiVertexOutput) -> @location(0) vec4<f32> {
     for (var y = -reach; y <= reach; y++) {
         for (var x = -reach; x <= reach; x++) {
             let o = vec2<f32>(f32(x), f32(y));
-            let m = textureSampleLevel(mask, mask_sampler, in.uv + o * texel, 0.0);
+            let m = textureSampleLevel(mask, mask_sampler, uv + o * texel, 0.0);
             let d = length(o);
             if (m.r > 0.5) {
                 to_selected = min(to_selected, d);

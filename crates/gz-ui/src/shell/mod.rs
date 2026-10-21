@@ -141,7 +141,9 @@ impl Plugin for ShellPlugin {
                     regions::apply_layout,
                 )
                     .chain()
-                    .in_set(ShellSystems::Layout),
+                    .in_set(ShellSystems::Layout)
+                    // Before the views see Esc cancel a marquee.
+                    .before(gz_bevy::view::controls::mouse_input),
             );
         routing::build(app);
         splitter::build(app);

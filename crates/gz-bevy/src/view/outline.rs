@@ -9,10 +9,12 @@
 //! cascades (Bevy 0.20 skips directional lights whose layers miss a
 //! view's), and it is inactive while nothing is outlined.
 
+use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, ImageRenderTarget, RenderTarget, RenderTargetInfo};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::controls::ViewPlacementSystems;
@@ -31,11 +33,14 @@ pub const HOVERED_LAYER: usize = 29;
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Hovered(pub Option<Entity>);
 
-/// The mask texture, and whether anything is outlined.
+/// The mask texture, whether anything is outlined, and where on the view
+/// (logical pixels; `None`: anywhere), so the UI draws the outline over
+/// that much of the view only.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct OutlineMask {
     pub image: Option<Handle<Image>>,
     pub active: bool,
+    pub rect: Option<Rect>,
 }
 
 /// Which outline a clone draws into.
@@ -88,10 +93,15 @@ impl Plugin for OutlinePlugin {
             .add_systems(Update, sync_clones)
             .add_systems(
                 PostUpdate,
-                (spawn_mask_camera, place_mask)
-                    .chain()
-                    .in_set(ViewPlacementSystems)
-                    .after(super::apply_view_placement),
+                (
+                    (spawn_mask_camera, place_mask)
+                        .chain()
+                        .in_set(ViewPlacementSystems)
+                        .after(super::apply_view_placement),
+                    outline_rect
+                        .in_set(OutlineRectSystems)
+                        .before(bevy::ui::UiSystems::Layout),
+                ),
             );
     }
 }
@@ -151,7 +161,9 @@ fn sync_clones(
             hovered: materials.add(flat(OutlineClone::Hovered)),
         }
     });
-    let mut want: Vec<(Entity, OutlineClone)> = Vec::new();
+    // Each mesh once: a selected model and its own selected links share
+    // meshes, and the selection wins over the hover.
+    let mut want: HashMap<Entity, OutlineClone> = HashMap::new();
     let mut found = Vec::new();
     for e in &selection.entities {
         meshes_under(*e, &children, &meshes, &skip, &mut found);
@@ -160,18 +172,15 @@ fn sync_clones(
     if let Some(h) = hovered.0 {
         meshes_under(h, &children, &meshes, &skip, &mut found);
         for m in found.drain(..) {
-            if !want.iter().any(|(w, _)| *w == m) {
-                want.push((m, OutlineClone::Hovered));
-            }
+            want.entry(m).or_insert(OutlineClone::Hovered);
         }
     }
+    let active = !want.is_empty();
     for (clone, kind, parent) in &clones {
-        let keep = want.iter().position(|w| *w == (parent.parent(), *kind));
-        match keep {
-            Some(i) => {
-                want.swap_remove(i);
-            }
-            None => commands.entity(clone).despawn(),
+        if want.get(&parent.parent()) == Some(kind) {
+            want.remove(&parent.parent());
+        } else {
+            commands.entity(clone).despawn();
         }
     }
     for (mesh, kind) in want {
@@ -195,7 +204,6 @@ fn sync_clones(
             ChildOf(mesh),
         ));
     }
-    let active = !selection.entities.is_empty() || hovered.0.is_some();
     if mask.active != active {
         mask.active = active;
     }
@@ -283,12 +291,66 @@ fn place_mask(
         let logical = size.as_vec2() / scale;
         let mut want = view.clone();
         want.update(logical.x, logical.y);
-        *projection = want;
-        camera.computed.target_info = Some(RenderTargetInfo {
+        let clip = want.get_clip_from_view();
+        if camera.computed.clip_from_view != clip {
+            *projection = want;
+            camera.computed.clip_from_view = clip;
+        }
+        let info = RenderTargetInfo {
             physical_size: size,
             scale_factor: scale,
-        });
-        camera.computed.clip_from_view = projection.get_clip_from_view();
+        };
+        let stale = camera
+            .computed
+            .target_info
+            .as_ref()
+            .is_none_or(|t| t.physical_size != size || t.scale_factor != scale);
+        if stale {
+            camera.computed.target_info = Some(info);
+        }
+    }
+}
+
+/// Where [`outline_rect`] writes [`OutlineMask::rect`]: the UI sizes its
+/// overlay after it, before layout.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct OutlineRectSystems;
+
+/// The screen rectangle the outlined meshes cover in the main view (their
+/// bounds as last placed, through the camera as it is now), or `None`
+/// while one has no bounds yet.
+pub fn outline_rect(
+    placement: Res<ViewPlacement>,
+    views: Query<(&Transform, &Projection), With<MainCamera>>,
+    clones: Query<(Option<&Aabb>, &GlobalTransform), With<OutlineClone>>,
+    mut mask: ResMut<OutlineMask>,
+) {
+    let want = (|| {
+        if !mask.active {
+            return None;
+        }
+        let size = placement.rect?.size();
+        let (t, p) = views.iter().next()?;
+        let mut out: Option<Rect> = None;
+        for (aabb, global) in &clones {
+            let aabb = aabb?;
+            let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+            let corners = std::array::from_fn(|i| {
+                let s = Vec3::new(
+                    if i & 1 == 0 { -1.0 } else { 1.0 },
+                    if i & 2 == 0 { -1.0 } else { 1.0 },
+                    if i & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                global.transform_point(c + h * s)
+            });
+            if let Some(r) = super::select::screen_rect((t, p), size, corners) {
+                out = Some(out.map_or(r, |o| o.union(r)));
+            }
+        }
+        out
+    })();
+    if mask.rect != want {
+        mask.rect = want;
     }
 }
 
@@ -427,5 +489,78 @@ mod tests {
         );
         let size = world.resource::<Assets<Image>>().get(&mask).unwrap().size();
         assert_eq!(size, UVec2::new(800, 600));
+    }
+
+    #[test]
+    fn a_selection_without_meshes_outlines_nothing() {
+        let mut app = app();
+        // A light: an entity with no meshes under it.
+        let light = app.world_mut().spawn(Transform::default()).id();
+        app.world_mut().resource_mut::<Selection>().entities = vec![light];
+        app.update();
+        assert!(!app.world().resource::<OutlineMask>().active);
+        // A model and its own link selected: one clone per mesh.
+        let (model, mesh, _) = model(&mut app);
+        let link = app.world().get::<ChildOf>(mesh).unwrap().parent();
+        app.world_mut().resource_mut::<Selection>().entities = vec![model, link];
+        app.update();
+        assert_eq!(clones(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn the_wireframe_overlay_leaves_the_mask_clones_alone() {
+        use crate::overlays::wireframe::{apply_wireframe, Wired};
+        use crate::overlays::Overlays;
+        use crate::spawn::GzWorldRoot;
+        let mut app = app();
+        app.init_resource::<Overlays>()
+            .add_systems(Update, apply_wireframe.after(sync_clones));
+        let (model, mesh, _) = model(&mut app);
+        let root = app.world_mut().spawn(GzWorldRoot).id();
+        app.world_mut().entity_mut(model).insert(ChildOf(root));
+        app.world_mut().resource_mut::<Selection>().entities = vec![model];
+        app.update();
+        app.world_mut().resource_mut::<Overlays>().wireframe = true;
+        app.update();
+        app.update();
+        assert!(app.world().get::<Wired>(mesh).is_some(), "the model's mesh");
+        let world = app.world_mut();
+        let wired_clones = world
+            .query_filtered::<(), (With<OutlineClone>, With<Wired>)>()
+            .iter(world)
+            .count();
+        assert_eq!(wired_clones, 0);
+    }
+
+    #[test]
+    fn the_outline_rect_covers_the_outlined_meshes_on_screen() {
+        let mut app = app();
+        app.add_systems(
+            PostUpdate,
+            bevy::camera::visibility::calculate_bounds.before(OutlineRectSystems),
+        );
+        app.world_mut().spawn((
+            MainCamera,
+            Camera3d::default(),
+            Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+            Projection::Perspective(PerspectiveProjection::default()),
+        ));
+        {
+            let mut placement = app.world_mut().resource_mut::<ViewPlacement>();
+            placement.rect = Some(Rect::new(0.0, 0.0, 800.0, 600.0));
+            placement.scale = 1.0;
+        }
+        let (model, ..) = model(&mut app);
+        app.world_mut().resource_mut::<Selection>().entities = vec![model];
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = app.world().resource::<OutlineMask>().rect.expect("bounds");
+        // A unit cube at the origin, 10 m away: a small square mid-view.
+        assert!(r.contains(Vec2::new(400.0, 300.0)), "{r:?}");
+        assert!(r.width() < 200.0 && r.width() > 10.0, "{r:?}");
+        app.world_mut().resource_mut::<Selection>().entities.clear();
+        app.update();
+        assert_eq!(app.world().resource::<OutlineMask>().rect, None);
     }
 }

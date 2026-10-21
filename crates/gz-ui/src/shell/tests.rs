@@ -782,6 +782,10 @@ fn slot_action(app: &mut App, which: crate::shell::sidebar::SlotAction) -> Entit
 fn space_after_a_header_chevron_doesnt_reopen_the_panel() {
     use crate::shell::sidebar::SlotAction;
     let mut app = shell_app((1440, 900), 1.0);
+    // 16 ms frames: a Space tap is the same length however slow the machine.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     frames(&mut app, 3);
     let chevron = slot_action(&mut app, SlotAction::Collapse);
     click(&mut app, chevron);
@@ -808,6 +812,10 @@ fn space_after_a_header_chevron_doesnt_reopen_the_panel() {
 #[test]
 fn space_after_an_activity_button_doesnt_press_it_again() {
     let mut app = shell_app((1440, 900), 1.0);
+    // 16 ms frames: a Space tap is the same length however slow the machine.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     frames(&mut app, 3);
     let world = app.world_mut();
     let scene = world
@@ -857,6 +865,10 @@ fn a_focused_button_takes_space_from_the_play_pause_chord() {
     use super::top_bar::transport::Transport;
     use gz_bevy::connection::GzCommand;
     let mut app = shell_app((1440, 900), 1.0);
+    // 16 ms frames: a Space tap is the same length however slow the machine.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     with_viewer_keys(&mut app);
     frames(&mut app, 2);
     go_live(&mut app, false);
@@ -897,6 +909,10 @@ fn tab_to_reset_then_space_resets_once() {
     use super::top_bar::transport::Transport;
     use gz_bevy::connection::GzCommand;
     let mut app = shell_app((1440, 900), 1.0);
+    // 16 ms frames: a Space tap is the same length however slow the machine.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     with_viewer_keys(&mut app);
     frames(&mut app, 2);
     go_live(&mut app, false);

@@ -26,8 +26,8 @@ use bevy::prelude::*;
 use super::input::{Action, InputMap, KeyMods, Platform, Scope};
 use super::{
     apply_view_commands, apply_view_placement, view_rect, BoxSelectTool, DragAction, Marquee,
-    MarqueeRect, SelectMode, Selection, ViewCamera, ViewCommand, ViewOp, ViewOrigin, ViewPlacement,
-    ZOOM_STEP,
+    MarqueeRect, SelectInViews, SelectMode, Selection, ViewCamera, ViewCommand, ViewOp, ViewOrigin,
+    ViewPlacement, ZOOM_STEP,
 };
 use crate::connection::{GzCommand, GzStatus, StepsPerClick};
 use crate::overlays::{apply_overlay_commands, OverlayCommand, Overlays};
@@ -188,6 +188,9 @@ struct Drag {
     last: Option<Vec2>,
     /// The pointer's last place in the view.
     end: Vec2,
+    /// A click on release selects (not for a Space-hold pan, nor outside
+    /// the full UI).
+    selects: bool,
     /// Gone past [`CLICK_SLOP`]: not a click.
     moved: bool,
 }
@@ -220,6 +223,7 @@ impl Plugin for ViewerControls {
             .init_resource::<Selection>()
             .init_resource::<Marquee>()
             .init_resource::<BoxSelectTool>()
+            .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
             .init_resource::<BrowserWheel>()
@@ -435,6 +439,7 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
 /// started, which (like the Box select tool's plain drag) replaces.
 fn released(drag: Drag, shift: bool, command: bool) -> Option<ViewOp> {
     match drag.gesture {
+        _ if !drag.selects => None,
         _ if !drag.moved => Some(ViewOp::Select {
             at: drag.start,
             mode: SelectMode::from_keys(shift, command),
@@ -462,6 +467,7 @@ pub fn mouse_input(
     mut state: ResMut<ControlState>,
     mut marquee: ResMut<Marquee>,
     box_tool: Res<BoxSelectTool>,
+    selecting: Res<SelectInViews>,
     mut out: MessageWriter<ViewCommand>,
 ) {
     let Some(target) = target(&windows, &views) else {
@@ -480,7 +486,18 @@ pub fn mouse_input(
     };
 
     let held = KeyMods::held(&keys);
-    let command = held.mod_key(map.platform);
+    let command = selecting.0 && held.mod_key(map.platform);
+    // Esc cancels a marquee (spec §6.3); the shell leaves the tool alone.
+    if keys.just_pressed(KeyCode::Escape)
+        && state
+            .drag
+            .is_some_and(|d| matches!(d.gesture, Gesture::Marquee { .. }))
+    {
+        state.drag = None;
+        if marquee.0.is_some() {
+            marquee.0 = None;
+        }
+    }
     if let Some(drag) = state.drag.filter(|d| !buttons.pressed(d.button)) {
         state.drag = None;
         if marquee.0.is_some() {
@@ -497,11 +514,11 @@ pub fn mouse_input(
             .into_iter()
             .find(|b| buttons.just_pressed(*b));
         if let (Some(button), Some(at)) = (pressed, cursor) {
+            let pan_hold =
+                button == MouseButton::Left && map.holding(&keys, &scopes, Action::PanHold);
             let gesture = match button {
-                MouseButton::Left if map.holding(&keys, &scopes, Action::PanHold) => {
-                    Gesture::Camera(DragAction::Pan)
-                }
-                MouseButton::Left if box_tool.0 || command => Gesture::Marquee {
+                MouseButton::Left if pan_hold => Gesture::Camera(DragAction::Pan),
+                MouseButton::Left if selecting.0 && (box_tool.0 || command) => Gesture::Marquee {
                     by_command: !box_tool.0,
                 },
                 MouseButton::Left => Gesture::Camera(target.camera.drag_action),
@@ -518,6 +535,7 @@ pub fn mouse_input(
                 start: at,
                 last: Some(at),
                 end: at,
+                selects: selecting.0 && !pan_hold,
                 moved: false,
             });
         }
