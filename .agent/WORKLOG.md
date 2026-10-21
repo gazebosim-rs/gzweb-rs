@@ -944,3 +944,44 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   yet, so ready bodies going full-bleed changes nothing on screen.
 - **Tests:** workspace 485 → 493 passing (gz-ui 119 → 127); coverage
   98.4% lines.
+
+## 2026-10-20: M3 viewport controls (D-59 to D-64)
+
+- **Rail** (`gz_ui::shell::viewport::rail`): Orbit/Pan/Zoom radio, Projection,
+  Camera mode (menu, accent look and dot when not Free, target chip beside
+  it), Focus (double-click home), Overlays (menu, count badge), Layout
+  (presets; everything but Single disabled until M6). Shows `gz-bevy`'s state
+  both ways. Compact rail below a 500 px view (UI pixels). Rail controls are
+  tab stops in the viewport area's group (no `TabGroup` of their own, per the
+  #33 review); a press or focus on them keeps the view's keys.
+- **View cube** (`view_cube`): own orthographic camera on layer 30 rendering
+  into a texture of the node's physical size; token colours by on-screen
+  facing; compass labels as UI text; picking on the image (3 × 3 per face:
+  face → snap + ortho, edge/corner → look from, projection kept); hover in
+  `accent_ring`; drag orbits. Animations ease out cubically (motion tokens).
+- **HUD** (`hud`): scale label with a 1-2-5 bar in orthographic views (D-63);
+  target chip with ×.
+- **gz-bevy:** `overlays` (new: only the grid existed) with collisions,
+  inertia, CoM and joints from `generate_world_sdf` (`gz_core::sdf`, new),
+  frames from the scene, wireframe via `WireframePlugin` natively and line
+  meshes in the browser; `view::modes` (Follow/Track, ⇧F/⇧T on the selection
+  or the model under the pointer); `ViewOp::LookFrom`; `NoViewPick`;
+  `StartView`; C/I/J/⇧F/⇧T in both modes. A `StringMsg` service reply is only
+  a failure when it says `service_not_found`.
+- **gzweb:** `--view` and `--overlays` (D-64).
+- **Browser check** (wasm release on a local page, `?ui=full`): the rail, the
+  cube (click → top view, ortho, scale label), the Overlays menu; turning on
+  Wireframe quit the app (WebGPU refuses a depth bias on line lists) — fixed,
+  the line-mesh fallback draws.
+- **Found:** with the inspector open, a window shorter than about 730 px grows
+  the shell past the window (DECISIONS.md, Open). The compact captures use
+  1100 × 560, where the inspector starts collapsed.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI):
+  light/dark 1440×900, light/dark 1100×560 (compact rail), light/dark
+  `--view top` (ortho, scale label "50 cm", snapped TOP face), light with
+  every overlay. Against board 03/01: rail order, sizes, separators, badge,
+  accent states and tooltips side match; the cube shows two faces from
+  gzweb's home view (along +X) where the board draws a corner view; the
+  scale label carries a bar (D-63).
+- **Tests:** workspace 493 → 546 passing (gz-ui 127 → 152, gz-bevy 205 →
+  226, gz-core 65 → 71, gzweb +1); coverage 98.7% lines.

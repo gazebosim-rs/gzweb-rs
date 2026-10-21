@@ -1,6 +1,8 @@
 # Gazebo UI — Design and Layout Spec
 
-Version 0.4.2 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+Version 0.4.3 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+
+Changes in 0.4.3 (M3, DECISIONS.md D-59 to D-63): §3.4: the scale label holds a bar as long as the length it shows; the rail's 1px border is inside its 4px padding (40 wide outside); the view cube's corners turn the view to look from them, its edge and corner clicks keep the projection, hovering lights what a click picks in `accent_ring`, and its labels are compass directions; §7.2: "Look through" shows once the selection has sensor cameras; §9.1 lists the viewport's controls.
 
 Changes in 0.4.2 (documentation only; DECISIONS.md D-58): §9.1 describes the panel contract as built: panels write their own views, define their own actions and header actions, and build their content in their own observer; bodies are disposable views; the regions are tab groups in §6.5's order.
 
@@ -204,10 +206,10 @@ Boards: `W2 — Main screen, split viewport`, `W2 — Viewport rail (camera cont
 
 | Element | Spec |
 |---|---|
-| View cube | 56×56, standalone, no card. Faces `cube_top` / `cube_right` / `cube_left`, edges `cube_edge`, labels mono 7 `cube_label` (TOP, N, E, …); the face the view is snapped to fills `cube_snapped`. Drop shadow per `elevation.cube`. Drag on cube = orbit. Click face = snap to that axis view and switch to orthographic. Click edge = 45° view. Orbiting away from a snapped view returns to perspective. The cube never opens a menu. Position: top 10, right 2 (visually centered over the rail). |
-| Rail | Starts 8 below the cube. Width 40, padding 4, radius 11, fill `hud`, border 1px `line`, column gap 2. Buttons rail_btn 32, icon 18. Contents in order: **Orbit**, **Pan**, **Zoom** (radio, sets the plain left-drag action for this view, Orbit default; persists per view and across Esc) · separator · **Projection** toggle (icon shows current: `proj_perspective` / `proj_ortho`; key 5) · separator · **Camera mode** (`camera_mode`; opens Camera menu §7.2; when not Free: `accent_soft` fill + 7px `accent` dot top-right; sensor camera uses `entity_sensor` on `sensor_soft`) · **Focus** (`focus`; F frames selection, double-click or H = home) · **Overlays** (`overlays`; opens Overlays menu §7.3; badge = count of overlays on, neutral `text_2`) · separator · **Layout** (`layout_split`; opens Layout popover §7.4). Separators are 22×1 `line`, margin 3 0. |
+| View cube | 56×56, standalone, no card. Faces `cube_top` / `cube_right` / `cube_left`, edges `cube_edge`, labels mono 7 `cube_label` (TOP, N, E, …); the face the view is snapped to fills `cube_snapped`. Drop shadow per `elevation.cube`. Drag on cube = orbit. Click face = snap to that axis view and switch to orthographic. Click edge = 45° view; click corner = the view from that corner; both keep the projection. Hovering lights the face, edge or corner a click would pick in `accent_ring`. Labels are compass directions (Gazebo is east-north-up): TOP, BTM, N, S, E, W. Orbiting away from a snapped view returns to perspective. The cube never opens a menu. Position: top 10, right 2 (visually centered over the rail). |
+| Rail | Starts 8 below the cube. Width 40, padding 4 (the 1px border included), radius 11, fill `hud`, border 1px `line`, column gap 2. Buttons rail_btn 32, icon 18. Contents in order: **Orbit**, **Pan**, **Zoom** (radio, sets the plain left-drag action for this view, Orbit default; persists per view and across Esc) · separator · **Projection** toggle (icon shows current: `proj_perspective` / `proj_ortho`; key 5) · separator · **Camera mode** (`camera_mode`; opens Camera menu §7.2; when not Free: `accent_soft` fill + 7px `accent` dot top-right; sensor camera uses `entity_sensor` on `sensor_soft`) · **Focus** (`focus`; F frames selection, double-click or H = home) · **Overlays** (`overlays`; opens Overlays menu §7.3; badge = count of overlays on, neutral `text_2`) · separator · **Layout** (`layout_split`; opens Layout popover §7.4). Separators are 22×1 `line`, margin 3 0. |
 | Target chip | Shown only when camera mode is Follow, Track or a sensor camera. 28 tall, `hud` fill, border `line`, radius 8: `follow` icon 13px in `accent_text`, target name 12/500, close button 20×20. Placed to the left of the Camera mode button, vertically centered on it, gap 8. × or ⇧F releases. |
-| Scale label | Bottom-right, inset 10: mono 11 `text_2` on `hud` pill (e.g. "1 m"). Ortho views only. |
+| Scale label | Bottom-right, inset 10: mono 11 `text_2` on `hud` pill (e.g. "1 m") after a 1px `text_2` bar with end ticks that long: a 1-2-5 length between 32 and 80 px at the view's scale. Ortho views only. |
 | Inactive view | Rail and chip hidden. Cube replaced by a 34px flat face marker (e.g. a square reading TOP for an ortho top view) at 80% opacity. Hovering the view shows the full cube and rail (fade 100ms). |
 
 Floating viewport controls change the view only. They MUST NOT include tools that edit the world.
@@ -465,7 +467,7 @@ Header: file name (13/600) and state line mono 11 (`warn_text` "unsaved changes 
 **Undo scope.** Undoable: every operation that dirties the world, plus Reset world and Delete. Not undoable: play/pause/step, camera moves, layout changes, Teleop commands. Reset world and Delete also show a 5-second chip in the status bar ("Reset world · Undo", "Deleted amr_01 · Undo") so the undo is one click away. Undo of a move on a running sim restores the authored pose and lets physics continue from there. The stack is per world file and clears on Open or New.
 
 ### 7.2 Camera menu (rail)
-Free · Follow ‹selection› ⇧F · Track ‹selection› ⇧T · group "Look through" listing sensor cameras of the selection · separator · Follow offset… › · FOV & speed… ›. Current mode shown as checked.
+Free · Follow ‹selection› ⇧F · Track ‹selection› ⇧T · group "Look through" listing sensor cameras of the selection (shown when there are some) · separator · Follow offset… › · FOV & speed… ›. Current mode shown as checked.
 
 ### 7.3 Overlays menu (rail)
 Checkbox items: Grid G · Collisions C · Inertia I · Center of mass · Joints J · Frames · Lidar scans / sensor data · Wireframe · separator · Apply to all views.
@@ -535,7 +537,8 @@ gz-ui/src/
                          connection, panel_status, inspector (frame)
     top_bar/             tools, transport, world_button, search
     activity_bar/ sidebar/ status_bar/
-    viewport/            view, banner, connect_card (§3.4 rail and cube come in M3)
+    viewport/            view, banner, connect_card; rail/ (and its menus), view_cube/,
+                         hud/ (scale label, target chip)
   panels/                the panel contract and PanelRegistry; one plugin per panel:
     scene/ topics/ plot/ console/ assets sensors teleop
   inspectors/            InspectorRegistry; one folder and plugin per selection kind:

@@ -205,13 +205,27 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   their own observer; slots keep bodies across a second slot and a swap; Tab walks the
   regions.
 
-### M3 — Viewport controls
+### M3 — Viewport controls — **done 2026-10-20**
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,
   view cube (render-to-texture camera + picking on the image), scale label in ortho, target chip.
   The rail's controls are tab stops inside the viewport area's tab group (D-58).
 - Overlays menu wired to existing toggles: grid, collisions, wireframe (line-mesh fallback on
   wasm), joints, frames, inertia/CoM.
 - Camera menu: Free / Follow / Track (the gzweb camera modes from PORT_PLAN Phase 5).
+- Notes: `gz_ui::shell::viewport::{rail, view_cube, hud}` on the view's node (D-59); they send
+  `ViewCommand`s and `OverlayCommand`s and show `gz-bevy`'s state. Only the grid existed, so
+  `gz_bevy::overlays` is new: collisions, inertials and joints come from the world's
+  `generate_world_sdf` (`gz_core::sdf`), drawn as Gazebo does; wireframe is `WireframePlugin`
+  natively and line meshes in the browser (D-62). Camera modes in `gz_bevy::view::modes`:
+  Follow moves with the target, Track turns to it; ⇧F/⇧T take the selection, else the model
+  under the pointer, so they work before M5; the menu's Follow/Track wait for the selection
+  (D-60). The cube picks faces (snap, ortho), edges and corners (look from, keeping the
+  projection), lights its hover, orbits on a drag (D-61). The scale label has a bar (D-63).
+  `--view` / `--overlays` start a capture in an axis view with overlays (D-64). Left for
+  M5/M6/M7: "Look through" (sensor cameras of the selection), the split layouts, Maximize,
+  Close view, Link cameras, Shared selection and Apply to all views (disabled, "Not available
+  yet"), lidar/sensor data, the inactive view's face marker, per-view overlays. Found: a
+  short window with the inspector open grows the shell past the window (DECISIONS.md, Open).
 
 ### M4 — Backend, scene sync, transport and status
 - `SimBackend` trait with the websocket implementation (see §3 item 1).
@@ -370,7 +384,8 @@ crates/gz-ui/src/
                     commands, layout (ShellLayout), regions (and their tab groups), routing,
                     splitter, collapsed_bar, connection, panel_status (PanelStatus,
                     SetPanelStatus), inspector (the frame); top_bar/ activity_bar/ sidebar/
-                    (slots, body, slot_splitter) status_bar/ viewport/
+                    (slots, body, slot_splitter) status_bar/ viewport/ (view, banner,
+                    connect_card; rail/ with its menus, view_cube/, hud/: M3)
   panels/           the panel contract (PanelId, PanelDef, PanelView, PanelAction,
                     HeaderAction, PanelActionActivated, PanelBody, PanelRegistry,
                     RegisterPanel, PanelPlugins); a folder per panel with more than one file
