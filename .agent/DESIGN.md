@@ -609,11 +609,11 @@ Bevy metres; "depth" is distance along the view axis.
   the matching depth and clears `snapped`.
 - **Orthographic clip range** (`fit_clip`, after every op and animation
   frame; DECISIONS.md D-20): the camera stands at least the world's extent
-  (the world's bounds with ground planes and the 20 m grid, measured from
-  the pivot; 50 m without a world; at most `MAX_ORTHO_EXTENT`, 10 km, so a
-  model fallen far away can't push the camera out of `f32` range) plus the
-  view's reach behind the pivot,
-  the near plane is at the reach (> 0, which keeps the atmosphere's sky
+  (the world's bounds with ground planes and the 20 m grid, without what
+  has run away (see `Focus`), measured from the pivot; 50 m without a
+  world; at most `MAX_ORTHO_EXTENT`, 10 km, so a world that large can't
+  push the camera out of `f32` range) plus the view's reach behind the
+  pivot, the near plane is at the reach (> 0, which keeps the atmosphere's sky
   rays sensible) and the far plane just past the world. Perspective far
   starts at 1000 and grows to the world's far side.
 - `Snap(face)`: about the selection centre, else the point at the view
@@ -625,8 +625,11 @@ Bevy metres; "depth" is distance along the view axis.
   without its plane visuals (over a ground model that leaves nothing, so it
   falls through), else the world's meshes without plane visuals (or with
   them if there is nothing else), else goes home. Hidden subtrees don't
-  count. Radius × 1.1 fitted to the narrower FOV; orthographic views fit
-  the height. Animated, rotation kept; the far plane grows with it.
+  count, nor (but in the selection) do meshes lying wholly more than
+  `RUNAWAY_DISTANCE` (10 km) from the world origin, which have fallen or
+  flown away; the orthographic clip range's extent above leaves them out
+  too, and a world that has all run away has only the grid. Radius × 1.1
+  fitted to the narrower FOV; orthographic views fit the height. Animated, rotation kept; the far plane grows with it.
 - `Home`: animates to gzweb's (−6, 0, 6) looking at the origin, in
   perspective.
 - `Fly { dir, secs }` at `fly_speed` (0.5) × reach per second, where reach
