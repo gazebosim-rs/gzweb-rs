@@ -157,9 +157,11 @@ pub fn build_lines(
                 materials.add(StandardMaterial {
                     base_color: WIRE_COLOR,
                     unlit: true,
+                    // Blended, so drawn after the surfaces with depth writes
+                    // off; reversed-Z's greater-or-equal test keeps the
+                    // edges lying on them. (No depth bias: WebGPU refuses
+                    // one on line lists.)
                     alpha_mode: AlphaMode::Blend,
-                    // In front of the surface the edges lie on.
-                    depth_bias: 1.0,
                     ..default()
                 })
             })

@@ -453,6 +453,21 @@ fn without_line_polygons_wireframes_are_line_meshes() {
             .collect::<Vec<_>>()
     };
     assert_eq!(lines(&mut app), [visual]);
+    // WebGPU refuses a depth bias on line lists (a validation error that
+    // quits the app).
+    let world = app.world_mut();
+    let m = world
+        .query_filtered::<&MeshMaterial3d<StandardMaterial>, With<WireLines>>()
+        .single(world)
+        .unwrap()
+        .0
+        .clone();
+    let m = app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&m)
+        .unwrap();
+    assert_eq!(m.depth_bias, 0.0);
     assert!(app.world().get::<Wired>(visual).is_some());
     assert!(app.world().get::<Wireframe>(visual).is_none());
     assert!(app.world().get::<Wired>(other).is_none());
