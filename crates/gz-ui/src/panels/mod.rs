@@ -14,8 +14,8 @@
 //! - **Static:** the [`PanelDef`]: title, icon, binding, place in the
 //!   activity bar, its [`HeaderAction`]s, the [`PanelView`] it starts
 //!   with, and the marker component its content is built under.
-//! - **What changes:** its own systems write its view, activity badge and
-//!   header count into the shell's [`PanelStatus`](crate::shell::PanelStatus)
+//! - **What changes:** its own systems write its view, activity badge,
+//!   header count and header actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
 //!   (through [`SetPanelStatus`](crate::shell::SetPanelStatus), which marks
 //!   a change only), in [`ShellSystems::Panels`](crate::shell::ShellSystems).
 //!   The shell rebuilds a body only when its view differs.
@@ -173,11 +173,12 @@ pub struct HeaderAction {
     pub icon: IconId,
     /// Its tooltip's title.
     pub tooltip: &'static str,
-    /// The `shortcuts.json` binding its tooltip shows, if any.
+    /// The `shortcuts.json` binding that activates it while its panel is
+    /// shown (its tooltip shows the keys), if any.
     pub binding: Option<&'static str>,
-    /// Whether it starts enabled. A disabled action shows dimmed, with "Not
-    /// available yet". The panel's systems change it at run time with
-    /// [`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus).
+    /// A disabled action shows dimmed, with "Not available yet". This is
+    /// its state until the panel's systems set one
+    /// ([`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus::set_action_enabled)).
     pub enabled: bool,
 }
 
@@ -223,8 +224,9 @@ pub struct PanelBody(pub PanelId);
 pub type ContentMarker = fn(&mut EntityCommands);
 
 /// What a panel registers: everything the shell shows of it that doesn't
-/// change at run time. What does (its view, activity badge and header
-/// count) its systems write into [`PanelStatus`](crate::shell::PanelStatus).
+/// change at run time. What does (its view, activity badge, header count
+/// and header actions' enabled state) its systems write into
+/// [`PanelStatus`](crate::shell::PanelStatus).
 #[derive(Clone, Debug)]
 pub struct PanelDef {
     pub id: PanelId,

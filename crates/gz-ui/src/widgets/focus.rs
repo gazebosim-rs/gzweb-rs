@@ -23,10 +23,27 @@
 //! Nor does Tab land there ([`hide_undisplayed`], DECISIONS.md D-58):
 //! Bevy's tab navigation skips only invisible entities, so a node that
 //! isn't displayed is made invisible too.
+//!
+//! A disabled control is no Tab stop ([`skip_disabled`]): Tab doesn't
+//! land on a button that does nothing.
+//!
+//! A focused widget consumes the keys it acts on ([`hide_taken_keys`],
+//! DECISIONS.md D-58a): Bevy hands a key to the focused widget first, and
+//! a widget that acts on it (a button on Space or Enter, a menu on its
+//! arrows, a slider on its keys) stops it there; only a key that reaches
+//! the window is the shortcuts' to see. So a Tab-focused Reset takes
+//! Space and the global play/pause chord doesn't fire as well.
 
-use bevy::input_focus::InputFocus;
+use bevy::ecs::change_detection::Tick;
+use bevy::ecs::system::SystemChangeTick;
+use bevy::input::keyboard::{KeyboardFocusLost, KeyboardInput};
+use bevy::input::ButtonState;
+use bevy::input_focus::tab_navigation::TabIndex;
+use bevy::input_focus::{FocusedInput, InputFocus};
 use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{MenuPopup, TextInput};
+use bevy::window::PrimaryWindow;
 use gz_bevy::view::controls::ActiveScopes;
 use gz_bevy::view::input::Scope;
 
@@ -145,9 +162,13 @@ pub(crate) fn release_focus(
     }
 }
 
-/// A node [`hide_undisplayed`] made `Visibility::Hidden`.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub(crate) struct HiddenByDisplay;
+/// A node [`hide_undisplayed`] made `Visibility::Hidden`, at this tick: a
+/// later change to its visibility is its owner's, which then wins.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct HiddenByDisplay(Tick);
+
+/// A node's display or its visibility changed.
+type DisplayOrVisibilityChanged = Or<(Changed<Node>, Changed<Visibility>)>;
 
 /// Makes a node that isn't displayed (`Display::None`: a collapsed side
 /// panel, the closed second slot, a faded-out card) `Visibility::Hidden`,
@@ -155,20 +176,32 @@ pub(crate) struct HiddenByDisplay;
 /// which skips only what `InheritedVisibility` hides, skips it and its
 /// subtree. Only a node left at `Visibility::Inherited` is touched: one
 /// that sets its own visibility (a menu's popup, the 3D view's node)
-/// keeps it. Nothing looks different: an undisplayed node draws nothing
-/// either way. Runs in PostUpdate before visibility propagates.
+/// keeps it, and so does one whose owner set its visibility while it was
+/// hidden here. Nothing looks different: an undisplayed node draws
+/// nothing either way. Runs in PostUpdate before visibility propagates.
 pub(crate) fn hide_undisplayed(
-    mut nodes: Query<(Entity, &Node, &mut Visibility, Has<HiddenByDisplay>), Changed<Node>>,
+    mut nodes: Query<
+        (Entity, &Node, &mut Visibility, Option<&HiddenByDisplay>),
+        DisplayOrVisibilityChanged,
+    >,
+    ticks: SystemChangeTick,
     mut commands: Commands,
 ) {
     for (e, node, mut visibility, hidden) in &mut nodes {
         let shown = node.display != Display::None;
-        if !shown && !hidden && *visibility == Visibility::Inherited {
+        // Hidden here, and nobody has set its visibility since.
+        let ours = hidden.is_some_and(|h| visibility.last_changed() == h.0);
+        if ours && shown {
+            *visibility = Visibility::Inherited;
+            commands.entity(e).try_remove::<HiddenByDisplay>();
+        } else if !ours && !shown && *visibility == Visibility::Inherited {
             *visibility = Visibility::Hidden;
-            commands.entity(e).insert(HiddenByDisplay);
-        } else if shown && hidden {
-            visibility.set_if_neq(Visibility::Inherited);
-            commands.entity(e).remove::<HiddenByDisplay>();
+            commands
+                .entity(e)
+                .try_insert(HiddenByDisplay(ticks.this_run()));
+        } else if hidden.is_some() && !ours {
+            // Its owner set its visibility: theirs from now on.
+            commands.entity(e).try_remove::<HiddenByDisplay>();
         }
     }
 }
@@ -191,4 +224,110 @@ pub(crate) fn menu_escape(
                 .any(|a| popups.get(a).is_ok_and(|v| *v != Visibility::Hidden))
         });
     taken.set_if_neq(MenuTakesEscape(in_menu));
+}
+
+/// Which keys focused widgets took (DECISIONS.md D-58a).
+#[derive(Resource, Clone, Debug, Default)]
+pub(crate) struct WidgetKeys {
+    /// This frame's presses that reached the window: no widget took them.
+    reached: Vec<KeyCode>,
+    /// Keys a focused widget took, hidden from the shortcuts until they
+    /// are released.
+    taken: Vec<KeyCode>,
+}
+
+/// Notes a key press that reached the window: nothing focused took it.
+/// Observes each primary window ([`watch_windows`]), where Bevy delivers
+/// a key when nothing has focus and where a focused widget's keys arrive
+/// unless it stopped them.
+pub(crate) fn note_window_key(ev: On<FocusedInput<KeyboardInput>>, mut keys: ResMut<WidgetKeys>) {
+    let input = &ev.input;
+    if input.state == ButtonState::Pressed && !input.repeat {
+        keys.reached.push(input.key_code);
+    }
+}
+
+/// Watches the primary window for keys that reach it ([`note_window_key`]).
+pub(crate) fn watch_windows(windows: Query<Entity, With<PrimaryWindow>>, mut commands: Commands) {
+    for window in &windows {
+        commands.entity(window).observe(note_window_key);
+    }
+}
+
+/// Hides a key a focused widget took from the shortcuts: a press Bevy
+/// dispatched that never reached the window is reset in
+/// `ButtonInput<KeyCode>` (with its repeats) until the key is released, so
+/// the viewer's and the shell's shortcuts, which read it, never see it: a
+/// Tab-focused button takes Space, and play/pause stays put. Runs in
+/// PreUpdate once Bevy has dispatched the frame's keys.
+pub(crate) fn hide_taken_keys(
+    mut input: MessageReader<KeyboardInput>,
+    mut lost: MessageReader<KeyboardFocusLost>,
+    windows: Query<(), With<PrimaryWindow>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut state: ResMut<WidgetKeys>,
+) {
+    let reached = std::mem::take(&mut state.reached);
+    if lost.read().count() > 0 {
+        // Every key was released.
+        state.taken.clear();
+    }
+    if windows.is_empty() {
+        // Without a window Bevy dispatches no key, so none was taken.
+        input.clear();
+        return;
+    }
+    let mut hide = state.taken.clone();
+    for ev in input.read() {
+        let k = ev.key_code;
+        match ev.state {
+            ButtonState::Pressed if !ev.repeat && !reached.contains(&k) => {
+                if !state.taken.contains(&k) {
+                    state.taken.push(k);
+                }
+                if !hide.contains(&k) {
+                    hide.push(k);
+                }
+            }
+            ButtonState::Released => state.taken.retain(|t| *t != k),
+            ButtonState::Pressed => {}
+        }
+    }
+    for k in hide {
+        keys.reset(k);
+    }
+}
+
+/// A tab stop taken out of the Tab order while it is disabled, with the
+/// index it gets back.
+#[derive(Component, Clone, Copy, Debug)]
+pub(crate) struct DisabledTabStop(i32);
+
+/// A control that becomes disabled (`InteractionDisabled`) leaves the Tab
+/// order (`TabIndex(-1)`), as a disabled HTML button does.
+pub(crate) fn skip_disabled(
+    ev: On<Add<InteractionDisabled>>,
+    mut stops: Query<&mut TabIndex>,
+    mut commands: Commands,
+) {
+    if let Ok(mut index) = stops.get_mut(ev.entity) {
+        if index.0 >= 0 {
+            commands
+                .entity(ev.entity)
+                .try_insert(DisabledTabStop(index.0));
+            index.0 = -1;
+        }
+    }
+}
+
+/// An enabled control gets its place in the Tab order back.
+pub(crate) fn restore_enabled(
+    ev: On<Remove<InteractionDisabled>>,
+    mut stops: Query<(&mut TabIndex, &DisabledTabStop)>,
+    mut commands: Commands,
+) {
+    if let Ok((mut index, stop)) = stops.get_mut(ev.entity) {
+        index.0 = stop.0;
+        commands.entity(ev.entity).try_remove::<DisabledTabStop>();
+    }
 }

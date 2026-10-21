@@ -9,10 +9,10 @@ use std::ops::DerefMut;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
-use crate::panels::{ActionId, PanelId, PanelView};
+use crate::panels::{ActionId, HeaderAction, PanelId, PanelView};
 use crate::widgets::BadgeKind;
 
-/// One panel's view, badge, count and header action states.
+/// One panel's view, badge, count and header actions' enabled state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PanelState {
     /// What its body shows (none: its [`PanelDef::view`](crate::panels::PanelDef)).
@@ -21,8 +21,10 @@ pub struct PanelState {
     pub badge: Option<(BadgeKind, u32)>,
     /// The section header's count ("19 entities").
     pub count: Option<String>,
-    /// Header actions enabled or disabled at run time, by id; an action
-    /// without an entry keeps its [`HeaderAction::enabled`](crate::panels::HeaderAction).
+    /// Its header actions' enabled state, where its systems set one: an
+    /// action without an entry keeps its
+    /// [`HeaderAction::enabled`](crate::panels::HeaderAction) (Expand all
+    /// while there is a tree, Publish while connected).
     pub actions: HashMap<ActionId, bool>,
 }
 
@@ -52,12 +54,16 @@ impl PanelStatus {
         self.get(id).and_then(|s| s.count.as_deref())
     }
 
-    /// Whether `panel`'s header action `action` is enabled, if its systems
-    /// said (else its [`HeaderAction::enabled`](crate::panels::HeaderAction)
-    /// holds).
-    pub fn action_enabled(&self, panel: PanelId, action: ActionId) -> Option<bool> {
-        self.get(panel)
-            .and_then(|s| s.actions.get(&action).copied())
+    /// Whether `id`'s header action `action` is enabled, if its systems
+    /// said so (none: as registered).
+    pub fn action_enabled(&self, id: PanelId, action: ActionId) -> Option<bool> {
+        self.get(id).and_then(|s| s.actions.get(&action).copied())
+    }
+
+    /// Whether `id`'s header action `a` is enabled now: as its systems
+    /// set it, else as registered.
+    pub(crate) fn header_action_enabled(&self, id: PanelId, a: &HeaderAction) -> bool {
+        self.action_enabled(id, a.id).unwrap_or(a.enabled)
     }
 }
 
@@ -68,8 +74,8 @@ pub trait SetPanelStatus {
     fn set_view(&mut self, id: PanelId, view: PanelView);
     fn set_badge(&mut self, id: PanelId, badge: Option<(BadgeKind, u32)>);
     fn set_count(&mut self, id: PanelId, count: Option<String>);
-    /// Enables or disables one of `id`'s header actions; the header's
-    /// button follows in place.
+    /// Enables or disables `id`'s header action `action`; the shell
+    /// updates its button in place (look, tooltip, whether it reacts).
     fn set_action_enabled(&mut self, id: PanelId, action: ActionId, enabled: bool);
 }
 

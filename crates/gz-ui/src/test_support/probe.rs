@@ -11,7 +11,8 @@ use crate::shell::{PanelStatus, SetPanelStatus, ShellSystems};
 use crate::widgets::BadgeKind;
 
 pub(crate) const PROBE: PanelId = PanelId::new("probe");
-/// Its enabled header action.
+/// Its enabled header action, on ⌘I (`file.import`, which nothing else
+/// in the shell takes).
 pub(crate) const POKE: ActionId = ActionId::new("poke");
 /// Its disabled header action.
 pub(crate) const LATER: ActionId = ActionId::new("later");
@@ -58,7 +59,7 @@ impl Plugin for ProbePanelPlugin {
         app.register_panel(
             PanelDef::new(PROBE, "Probe", IconId::ActivityPlot)
                 .place(9, 0)
-                .header_action(HeaderAction::new(POKE, IconId::Plus, "Poke").binding("edit.copy"))
+                .header_action(HeaderAction::new(POKE, IconId::Plus, "Poke").binding("file.import"))
                 .header_action(HeaderAction::new(LATER, IconId::Copy, "Later").disabled())
                 .content::<ProbeContent>(),
         )
