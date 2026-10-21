@@ -29,6 +29,7 @@ use super::{
     ViewCommand, ViewOp, ViewOrigin, ViewPlacement, ZOOM_STEP,
 };
 use crate::connection::{GzCommand, GzStatus, StepsPerClick};
+use crate::overlays::{apply_overlay_commands, OverlayCommand, Overlays};
 use crate::render::GzGrid;
 use crate::UiMode;
 
@@ -193,6 +194,8 @@ impl Plugin for ViewerControls {
     fn build(&self, app: &mut App) {
         app.add_message::<ViewCommand>()
             .add_message::<GzCommand>()
+            .add_message::<OverlayCommand>()
+            .init_resource::<Overlays>()
             .init_resource::<Selection>()
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
@@ -211,11 +214,19 @@ impl Plugin for ViewerControls {
                     key_input,
                     fly_input,
                     apply_view_commands,
+                    apply_overlay_commands,
                 )
                     .chain()
                     // A new environment respawns the camera from its state:
                     // this frame's commands go in first.
                     .before(crate::render::apply_environment),
+            )
+            // Followed targets move with this frame's poses.
+            .add_systems(
+                Update,
+                super::modes::follow_targets
+                    .after(apply_view_commands)
+                    .after(crate::spawn::apply_poses),
             );
         app.configure_sets(
             PostUpdate,
@@ -493,8 +504,8 @@ pub fn mouse_input(
     }
 }
 
-/// Viewport and sim keys → [`ViewCommand`]s, the grid and [`GzCommand`]s,
-/// including the Space tap.
+/// Viewport and sim keys → [`ViewCommand`]s, [`OverlayCommand`]s and
+/// [`GzCommand`]s, including the Space tap.
 #[allow(clippy::too_many_arguments)]
 pub fn key_input(
     windows: Query<&Window>,
@@ -509,7 +520,7 @@ pub fn key_input(
     steps: Option<Res<StepsPerClick>>,
     mut focus_lost: MessageReader<KeyboardFocusLost>,
     mut state: ResMut<ControlState>,
-    mut grid: ResMut<GzGrid>,
+    mut overlay_out: MessageWriter<OverlayCommand>,
     mut view_out: MessageWriter<ViewCommand>,
     mut sim_out: MessageWriter<GzCommand>,
 ) {
@@ -539,8 +550,14 @@ pub fn key_input(
             Action::Home => ViewOp::Home,
             Action::ToggleProjection => ViewOp::ToggleProjection,
             Action::Snap(face) => ViewOp::Snap(face),
-            Action::ToggleGrid => {
-                grid.visible = !grid.visible;
+            Action::Follow => ViewOp::Follow {
+                at: target.and_then(|t| t.cursor),
+            },
+            Action::Track => ViewOp::Track {
+                at: target.and_then(|t| t.cursor),
+            },
+            Action::ToggleOverlay(o) => {
+                overlay_out.write(OverlayCommand::toggle(o));
                 continue;
             }
             // The stats say which way to toggle; without them, nothing.

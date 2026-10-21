@@ -209,6 +209,41 @@ impl SpawnCtx<'_, '_, '_> {
     }
 }
 
+/// What spawning a visual's geometry needs, for geometry that isn't part
+/// of the scene message: the overlays' collision shapes, drawn the way a
+/// visual with the same geometry and material would be.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct GeometryAssets<'w> {
+    loads: ResMut<'w, GzLoads>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+    gz_materials: ResMut<'w, GzMaterials>,
+    asset_server: Res<'w, AssetServer>,
+}
+
+impl GeometryAssets<'_> {
+    /// Spawns `visual`'s geometry (mesh files included) under `parent`.
+    pub fn spawn(
+        &mut self,
+        commands: &mut Commands,
+        visual: &VisualDesc,
+        parent: Entity,
+        name: &str,
+    ) {
+        let mut index = GzIndex::default();
+        let mut ctx = SpawnCtx {
+            commands,
+            index: &mut index,
+            loads: &mut self.loads,
+            meshes: &mut self.meshes,
+            materials: &mut self.materials,
+            gz_materials: &mut self.gz_materials,
+            asset_server: &self.asset_server,
+        };
+        spawn_geometry(&mut ctx, visual, parent, name);
+    }
+}
+
 pub fn pose_transform(pose: &Pose, scale: [f64; 3]) -> Transform {
     let [x, y, z] = pose.pos;
     let [qx, qy, qz, qw] = pose.quat;

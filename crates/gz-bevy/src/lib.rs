@@ -14,6 +14,7 @@ pub mod hud;
 pub mod material;
 pub mod mesh_file;
 pub mod obj;
+pub mod overlays;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
@@ -183,9 +184,12 @@ impl Plugin for GzWebPlugin {
 
         if self.config.interactive() {
             // `UiMode::Full`: the app adds `gz_ui::GzUiPlugin` on top.
-            app.add_plugins(view::ViewerControls {
-                mode: self.config.ui,
-            });
+            app.add_plugins((
+                view::ViewerControls {
+                    mode: self.config.ui,
+                },
+                overlays::OverlayRenderPlugin,
+            ));
         }
         let hud = self.config.ui == UiMode::Minimal && self.config.hud;
         // The host page's own status lines go with the HUD.

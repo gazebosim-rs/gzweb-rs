@@ -37,6 +37,12 @@ const KEY_HINTS: &[(&[&str], &str)] = &[
     ),
     (&["overlay.grid"], "grid"),
     (
+        &["overlay.collisions", "overlay.inertia", "overlay.joints"],
+        "collisions, inertia, joints",
+    ),
+    (&["view.follow"], "follow"),
+    (&["view.track"], "track"),
+    (
         &[
             "view.fly_forward",
             "view.fly_left",
