@@ -1383,6 +1383,24 @@ fn the_orthographic_standoff_follows_the_world_size() {
 }
 
 #[test]
+fn a_model_fallen_far_away_does_not_push_the_orthographic_camera_out() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
+    // A model that has been falling for hours.
+    r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    r.op(ViewOp::ToggleProjection);
+    let floor = r.view().perspective.far;
+    assert!(depth(&r) < 2.0 * floor + 100.0, "{}", depth(&r));
+    // The world near the pivot still fits between the clip planes.
+    let (near, far) = ortho_near_far(&r);
+    assert!(
+        near < depth(&r) - 10.0 && far > depth(&r) + 10.0,
+        "{near} {far}"
+    );
+}
+
+#[test]
 fn f_over_the_ground_frames_the_world_not_the_ground() {
     let mut r = rig(default_view());
     let (root, model) = r.world_root();

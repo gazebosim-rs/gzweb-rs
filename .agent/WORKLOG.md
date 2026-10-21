@@ -1139,3 +1139,15 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   at any scroll (checked to fail with the old maths), the accessibility
   tree; workspace 586 → 591 passing after the merge; coverage 98.6% lines.
   check.sh passes.
+
+## 2026-10-21: Orthographic views blank in a world with a falling model (D-20 amended)
+
+- **Bug:** switching to orthographic (the rail, `O`, or a view cube face)
+  showed only the background in the Jetty `diff_drive` world. Its
+  `spawned_box` had fallen to z ≈ −6.1 × 10⁹ m, so `fit_clip` stood the
+  camera that far behind the pivot, out of `f32`'s range for the scene.
+- **Fix:** `fit_clip` caps the orthographic extent at the perspective far
+  floor (1000 m).
+- **Tests:** a model 6 × 10⁹ m away keeps the camera within the floor and
+  the scene between the clip planes (checked to fail without the fix);
+  workspace 591 → 592 passing; coverage 98.6% lines. check.sh passes.
