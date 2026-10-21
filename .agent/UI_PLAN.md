@@ -208,7 +208,8 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 ### M3 — Viewport controls
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,
   view cube (render-to-texture camera + picking on the image), scale label in ortho, target chip.
-  The rail's controls are tab stops inside the viewport area's tab group (D-58).
+  The rail's controls are tab stops inside the viewport area's tab group (D-58); the rail adds
+  no `TabGroup` of its own (§7, Focus: a nested group would jump the Tab order).
 - Overlays menu wired to existing toggles: grid, collisions, wireframe (line-mesh fallback on
   wasm), joints, frames, inertia/CoM.
 - Camera menu: Free / Follow / Track (the gzweb camera modes from PORT_PLAN Phase 5).
@@ -272,6 +273,12 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   this world" (needs the world's sensors in the scene model and M5's selection); Assets
   "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled.
   Topics' Publish and Services header actions enabled.
+- Footers (PR #33 review, N10): §3.3's optional footer has no place in the contract yet, so
+  Plot's (Add field…, Export CSV, Pop out) could only live in its ready content and its empty
+  state would lose it. Decide before Plot: likely `PanelDef::footer(..)` with `PanelAction`s
+  drawn by the shell under every state (equal-width buttons, §3.3), their enabled state in
+  `PanelState` like header actions; Console's footer is a command input, so also a footer
+  content marker, built by the panel's observer like `.content::<Marker>()`.
 - Gating (PR #30 second review, item 6): a topic echo's and a camera's `image`
   subscriptions run only while their panel is shown (`panel_shown(id)` on the systems that
   subscribe, plus unsubscribing when it hides); Plot's series and the Console's log keep
@@ -301,8 +308,8 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 ### M10 — Hardening
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
-  viewport's own tab stop, and the open item from D-52 (a Tab-focused button also takes the
-  global Space chord).
+  viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
+  Space chord, is resolved: D-58a).
 - Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
@@ -363,7 +370,8 @@ crates/gz-ui/src/
   widgets/          the §5 components, flat under widgets::; layout.rs (row, column,
                     flex_spacer, overlay, clip_box, separator, group/group_header/
                     property_row, set_shown), text.rs (set_text), shortcut.rs, focus.rs
-                    (text-field focus, released and hidden focus, D-52, D-58); a folder per
+                    (text-field focus, released and hidden focus, keys a focused widget
+                    takes, D-52, D-58, D-58a); a folder per
                     widget with more than one file or its own tests (menu/, number_field/,
                     slider/, splitter/, toggle/, tooltip/, tree_row/)
   shell/            mod.rs: ShellPlugin, ShellPlugins, ShellSystems and panel_shown only;
@@ -395,16 +403,19 @@ Rules:
   `app.register_panel(PanelDef::new(id, title, icon).place(group, order).binding(..)
   .default_open().view(..).header_action(..).content::<Marker>())`. The contract:
   - **What changes at run time** its own systems write into the shell's `PanelStatus`
-    through `SetPanelStatus` (`status.set_view(id, ..)`, `set_badge`, `set_count`, which
-    compare and mark a change only), in `ShellSystems::Panels`: its body's `PanelView`
-    (messages are `Cow<'static, str>`, so they can say what the data says), its activity
-    badge and its header count. `PanelDef::view` is the view until then; a panel whose
+    through `SetPanelStatus` (`status.set_view(id, ..)`, `set_badge`, `set_count`,
+    `set_action_enabled`, which compare and mark a change only), in `ShellSystems::Panels`:
+    its body's `PanelView` (messages are `Cow<'static, str>`, so they can say what the data
+    says), its activity badge, its header count and which header actions are enabled (an
+    action it never sets keeps its registered `enabled`; the shell updates the button in
+    place, D-58a). `PanelDef::view` is the view until then; a panel whose
     view never changes needs no system.
   - **Actions are the panel's.** An empty or error state's buttons are `PanelAction { id,
     label, enabled }`, its header's icon buttons `HeaderAction { id, icon, tooltip,
     binding, enabled }`; both trigger `PanelActionActivated { entity, panel, action }`,
-    which the panel observes (matching its id). Reconnect (`PanelAction::reconnect()`) is
-    the shell's own. A disabled action shows dimmed with "Not available yet".
+    which the panel observes (matching its id). A header action's `binding` does the same
+    while its panel is shown. Reconnect (`PanelAction::reconnect()`) is the shell's own. A
+    disabled action shows dimmed with "Not available yet" and is no Tab stop.
   - **Content** is built by the panel's own observer on `Add<Marker>` (the marker named in
     `.content::<Marker>()`, inserted on a `Ready` body), with whatever system parameters it
     needs. A ready body is full-bleed: the shell pads only the empty, loading and error
@@ -456,12 +467,22 @@ Rules:
   that all write `Text` still run one after another. A readout returns early unless what it
   shows changed. Each region's `build()` (each panel's plugin) registers its own systems:
   the layout chain in `ShellSystems::Layout` (the sidebar's after the regions'
-  `apply_layout`), the panels' own in `ShellSystems::Panels`, everything that shows state
-  (the slots' rebuild first) in `ShellSystems::Readouts`.
+  `apply_layout`), the panels' own in `ShellSystems::Panels`, the sidebar's slots (rebuild,
+  counts, header actions) in `ShellSystems::Slots`, everything else that shows state in
+  `ShellSystems::Readouts`.
 - **Focus.** Each region is a `TabGroup` in §6.5's order (`Region::tab_order`), so Tab walks
   top bar → activity bar → sidebar → viewport → inspector → status bar. A node that isn't
   displayed is made invisible (`focus::hide_undisplayed`), since Bevy's tab navigation skips
-  only invisible entities; focus on a hidden node is released (D-52).
+  only invisible entities; focus on a hidden node is released (D-52); a disabled control is
+  no Tab stop. **No nested `TabGroup`s:** Bevy sorts every non-modal group globally by its
+  `order` and doesn't descend into a group inside another, so a group inside a region (the
+  M3 rail, a panel's list) would jump the Tab order; controls inside a region are plain tab
+  stops (`TabIndex`), and only a modal (a dialog, an open menu) gets a group of its own.
+  **A focused widget consumes the keys it acts on** (D-58a): a widget handling a key in its
+  `FocusedInput` observer calls `propagate(false)`, and only keys that reach the window are
+  the shortcuts' (`focus::hide_taken_keys`), so a focused button takes Space from the
+  play/pause chord. A new widget with keys does the same; a shortcut reads
+  `ButtonInput<KeyCode>` (or the shell's `Shortcuts`), never `KeyboardInput` directly.
 - **Visibility.** `pub` is the crate's API only: the plugins and sets, `UiCommand`,
   `ShellLayout`/`Slot`/`Side`/`Tool`/`Phase`, `PanelStatus`/`SetPanelStatus`/`panel_shown`,
   the ids, registries and the panel contract's types, the theme and its looks, the fonts' and icons' builders, and the widgets (constructors, props,
