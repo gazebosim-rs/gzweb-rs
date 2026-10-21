@@ -1053,3 +1053,27 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   view, fill and perspective from home, pick inverting the projection on
   every visible patch, the shadow image (offset, tint per theme), and the
   edges' theme colour.
+
+## 2026-10-21: PR #34 review fixes (D-64a)
+
+- **SDFormat requests** (`overlays::extras`): keyed on the world and the
+  set of model names (was the count); one in flight, the next asked when
+  its reply lands; forgotten while the connection isn't `Ready` (a lost
+  reply or a reconnect asks again); `receive_extras` runs before
+  `request_extras`.
+- **Collisions** after a respawn: links without collision meshes get them
+  when links were spawned or the overlay turned on, from the held reply.
+- **`gz_core::sdf`**: `relative_to` on collisions and inertials;
+  `inner::link` frames through the nested model (`frame_in_model`
+  replaces `link_in_model`).
+- **View cube:** `turn_cube` before `TransformSystems::Propagate`,
+  `place_labels` before `UiSystems::Layout` (both a frame late before);
+  hover re-picked each frame from `CubePointerAt`; `on_cube_press` resets
+  the drag distance (a drag released off the cube swallowed the next
+  click). `click_cube` in the tests presses first; `release_on_cube` is the
+  click that ends a drag.
+- **Scale label:** below 1 mm to a thousandth ("0.05 mm").
+- **Camera menu:** the current mode's item names its target (latent).
+- **Tests:** a regression test for each (overlays 4, sdf 2, view cube 3,
+  rail 1, and the scale label's lengths test extended); workspace 558 →
+  568 passing; coverage 98.7% lines. check.sh passes.
