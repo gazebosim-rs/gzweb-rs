@@ -55,7 +55,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
-                     [--scene-filter TEXT] [--scene-expand]\n\
+                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
                      --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
@@ -218,6 +218,13 @@ fn parse_args(
                         .push(name.parse().map_err(|e| format!("--overlays: {e}"))?);
                 }
             }
+            "--select" => start.select.extend(
+                value()?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string),
+            ),
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
             "--settle-ms" => settle_ms = millis()?,
@@ -238,13 +245,17 @@ fn parse_args(
     let no_ui = snapshot.is_some() || (screenshot.is_some() && !ui_given);
     if start.is_some() && (no_ui || gallery) {
         return Err(
-            "--view and --overlays need a view: --ui full or minimal (not --snapshot, a \
-             --screenshot without --ui, or --ui gallery)"
+            "--view, --overlays and --select need a view: --ui full or minimal (not \
+             --snapshot, a --screenshot without --ui, or --ui gallery)"
                 .into(),
         );
     }
     if scene.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--scene-filter and --scene-expand need --ui full".into());
+    }
+    // Only the full UI shows (and selects) a selection.
+    if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
+        return Err("--select needs --ui full".into());
     }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
@@ -752,9 +763,16 @@ mod tests {
         ] {
             assert!(parse(no_view, None)
                 .unwrap_err()
-                .starts_with("--view and --overlays need a view"));
+                .starts_with("--view, --overlays and --select need a view"));
         }
         assert!(USAGE.contains("--view") && USAGE.contains("--overlays"));
+        let a = run_args(&["--select", " amr_01,,crate ", "--ui", "full"], None);
+        assert_eq!(a.start.unwrap().select, ["amr_01", "crate"]);
+        assert_eq!(
+            parse(&["--select", "amr_01", "--ui", "minimal"], None).unwrap_err(),
+            "--select needs --ui full"
+        );
+        assert!(USAGE.contains("--select"));
         let a = run_args(
             &["--scene-filter", "cam", "--scene-expand", "--ui", "full"],
             None,

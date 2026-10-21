@@ -1192,3 +1192,55 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   cap test uses terrain reaching 29 km, since the fallen box no longer
   reaches the cap. Workspace 593 → 599 passing; coverage 98.6% lines.
   check.sh passes.
+
+## 2026-10-21: M5a selection (D-71 to D-76, D-64b)
+
+- **Jetty service check:** the editing services exist (`set_pose`,
+  `set_pose_vector`, `create`, `remove`, `light_config`, `visual_config`,
+  `material_color`, `set_physics`), but the websocket server builds each
+  frame as a C string and splits it on `,`, so binary edit payloads with
+  zero or comma bytes (any round double) don't arrive. Decided with the
+  owner: patch the server in our image, prepare the upstream change, and
+  make editing read-only on a stock server (D-76, lands with M5c).
+- **gz-bevy:** `view::select` (click within 3 px selects the top-level
+  model, Shift adds, ⌘/Ctrl toggles; ⌘/Ctrl+drag or `BoxSelectTool`
+  draws a `Marquee` and selects what it overlaps; `prune_selection`),
+  `KeyMods::mod_key`, `Bounds::corners`; `view::outline` (mask clones,
+  `MaskCamera`, `OutlineMask`, `Hovered`); `StartView::select`.
+- **gz-ui:** tree rows select (Shift range, ⌘/Ctrl toggle, the world row
+  clears) and show `Active` for selected entities; "sel:" readout;
+  `BoxSelectTool` follows the tool; the footer's Hide others and Isolate
+  (`panels::scene::footer`); the marquee box; the outline overlay
+  (`UiMaterial`, `outline.wesl`); tree hover feeds `Hovered`.
+- **gzweb:** `--select MODEL,…`.
+- **Live check** (`--release`, Jetty `diff_drive`, `--select
+  vehicle_blue`): the outline follows the vehicle's silhouette in
+  perspective and in an orthographic top view; the tree row, the status
+  bar and the footer follow the selection.
+- **Tests:** click, Shift, ⌘/Ctrl, the slop, both marquees, hidden and
+  ground models left out of a marquee, pruning and the select modes
+  (gz-bevy view); clones, a late mesh and the mask camera's placement
+  (gz-bevy outline); tree selection, a view's selection marking its row,
+  the footer, the Box select tool, the marquee box, the outline overlay
+  and tree hover (gz-ui); `--select` (gzweb). Workspace 599 → 618
+  passing; coverage 98.5% lines. check.sh passes.
+
+## 2026-10-21: M5a review fixes (D-71 to D-75, D-64b amended)
+
+- **Wireframe:** the overlay wired the mask clones, so every triangle edge
+  was outlined; `NotVisual` skips `OutlineClone`.
+- **Minimal mode:** views select only with `SelectInViews` (the full UI);
+  `--select` needs `--ui full`.
+- **Input:** ⌘ toggles in a browser (`mod_key` on `Platform::Web`); Esc
+  cancels a marquee and the shell leaves the tool alone while one is
+  drawn; a Space-hold pan press doesn't select; a click on the ground is
+  empty space; a flat marquee picks; boxes are clipped at the near plane.
+- **Tree:** Enter and Space select the cursor row; right and middle
+  clicks don't select. `select::select` changes `Selection` only when the
+  pick changes it.
+- **Footer:** enabled while the selection is part of a model; Isolate
+  forgets a reloaded world.
+- **Outline:** one clone per mesh (a map), active only with clones, the
+  overlay sized to `OutlineMask::rect`; `place_mask` writes only changes.
+- **Tests:** a regression test for each (checked to fail without the fix
+  for the wireframe and the near-plane clipping).

@@ -9,8 +9,9 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::messages::{MessageLevel, SystemMessages};
+use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::controls::ViewRouting;
-use gz_bevy::view::{cursor_on_ground, ViewOrigin};
+use gz_bevy::view::{cursor_on_ground, Selection, ViewOrigin};
 
 use super::StatusItem;
 use crate::format;
@@ -34,20 +35,32 @@ pub(crate) struct CursorReadout(pub Option<[f32; 2]>);
 
 /// What the status bar's texts are read from.
 #[derive(SystemParam)]
-pub(crate) struct StatusSources<'w> {
+pub(crate) struct StatusSources<'w, 's> {
     status: Option<Res<'w, GzStatus>>,
     tool: Res<'w, Tool>,
     cursor: Res<'w, CursorReadout>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
+    selection: Option<Res<'w, Selection>>,
+    names: Query<'w, 's, (Option<&'static GzEntity>, Option<&'static Name>)>,
 }
 
-impl StatusSources<'_> {
+impl StatusSources<'_, '_> {
     /// Whether anything but the frame rate changed since the system's last
     /// run.
     fn changed(&self) -> bool {
         self.tool.is_changed()
             || self.cursor.is_changed()
             || self.status.as_ref().is_some_and(Res::is_changed)
+            || self.selection.as_ref().is_some_and(Res::is_changed)
+    }
+
+    /// "sel: amr_01", "3 selected" or "sel: —".
+    fn selection(&self) -> String {
+        let selected = self.selection.as_deref().map_or(&[][..], |s| &s.entities);
+        let first = selected
+            .first()
+            .map(|e| crate::shell::viewport::hud::systems::entity_name(&self.names, *e));
+        format::selection(selected.len(), first.as_deref())
     }
 
     /// The frame rate, smoothed.
@@ -68,7 +81,7 @@ impl StatusSources<'_> {
             StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
             StatusItem::Hint => self.tool.hint().into(),
-            StatusItem::Selection => "sel: —".into(),
+            StatusItem::Selection => self.selection(),
             StatusItem::Cursor => format::cursor(self.cursor.0),
             StatusItem::Message | StatusItem::Workspace => return None,
         })

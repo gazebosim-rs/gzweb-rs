@@ -648,6 +648,26 @@ Bevy metres; "depth" is distance along the view axis.
 - `apply_view_commands` does nothing on a frame without commands or
   animations, so idle frames leave the camera's `Transform`, `Projection`
   and `ViewCamera` unchanged (change detection stays quiet).
+- **Selecting** (`view::select`, DECISIONS.md D-71, D-72): a left press
+  released within `CLICK_SLOP` (3 px) sends `Select { at, mode }`, which
+  picks the top-level model under it into `Selection` (`SelectMode`:
+  replace, Shift add, ⌘/Ctrl toggle; empty space clears). A left drag
+  that starts with ⌘/Ctrl held, or while `BoxSelectTool` is on, is a
+  marquee (`Marquee` for the UI) and sends `SelectRect`, which picks the
+  models whose focus bounds overlap it on screen. `prune_selection` drops
+  despawned entities before the commands are applied. Views select only
+  with `SelectInViews` (the full UI); Esc cancels a marquee.
+
+**Selection outline** (`view::outline`, gz-ui `viewport::outline`,
+DECISIONS.md D-75): the selection's meshes, and the Scene tree's hovered
+entity's (`outline::Hovered`), get unlit clones (red, green) on layers 28
+and 29; `MaskCamera`, a child of the main camera with its projection and
+`ViewPlacement`'s size, renders them into `OutlineMask`'s texture while
+anything is outlined (`place_mask`, after `apply_view_placement`); a
+`UiMaterial` node first under the view's controls, covering only the
+outlined meshes' screen rectangle (`outline_rect`), draws
+`selection_outline` outside the silhouettes (2 px; the hover 1 px at
+50%). No lights are on those layers, so the mask camera has no cascades.
 
 **Orthographic rendering** (`render::projection_effects`, DECISIONS.md
 D-19): Bevy 0.20's depth-dependent effects assume perspective, so an

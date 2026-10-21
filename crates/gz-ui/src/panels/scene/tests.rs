@@ -769,3 +769,256 @@ fn the_accessibility_tree_has_only_the_rows_shown() {
     frames(&mut app, 2);
     assert!(items(&mut app).iter().filter(|i| !i.1).count() > 20);
 }
+
+// ------------------------------------------------------- selection (M5a)
+
+fn entity(app: &mut App, name: &str) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &GzEntity)>()
+        .iter(world)
+        .find(|(_, g)| g.name == name)
+        .unwrap_or_else(|| panic!("no entity {name}"))
+        .0
+}
+
+fn selected(app: &App) -> Vec<Entity> {
+    app.world()
+        .resource::<gz_bevy::view::Selection>()
+        .entities
+        .clone()
+}
+
+/// Clicks the row showing `name` with `held` down.
+fn click_row(app: &mut App, name: &str, held: &[KeyCode]) {
+    let r = row(app, name);
+    for k in held {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(*k);
+    }
+    app.world_mut().trigger(Activate { entity: r });
+    for k in held {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(*k);
+    }
+    frames(app, 2);
+}
+
+fn row_active(app: &mut App, name: &str) -> bool {
+    let r = row(app, name);
+    app.world().get::<Active>(r).is_some()
+}
+
+#[test]
+fn rows_select_with_shift_ranges_and_ctrl_toggles() {
+    let (mut app, _) = live_tree();
+    let (amr, krate, sun) = (
+        entity(&mut app, "amr_01"),
+        entity(&mut app, "crate_01"),
+        entity(&mut app, "sun"),
+    );
+    click_row(&mut app, "amr_01", &[]);
+    assert_eq!(selected(&app), [amr]);
+    assert!(row_active(&mut app, "amr_01") && !row_active(&mut app, "crate_01"));
+    assert!(all_text(&mut app).contains("sel: amr_01"));
+    click_row(&mut app, "crate_01", &[KeyCode::ControlLeft]);
+    assert_eq!(selected(&app), [amr, krate]);
+    assert!(all_text(&mut app).contains("2 selected"));
+    click_row(&mut app, "amr_01", &[KeyCode::ControlLeft]);
+    assert_eq!(selected(&app), [krate]);
+    // Shift: from the last row clicked without Shift (amr_01) to sun.
+    click_row(&mut app, "sun", &[KeyCode::ShiftLeft]);
+    assert_eq!(selected(&app), [amr, krate, sun]);
+    // The world row clears the selection (its inspector shows).
+    click_row(&mut app, "warehouse_demo", &[]);
+    assert_eq!(selected(&app), []);
+    assert!(!row_active(&mut app, "amr_01"));
+    assert!(all_text(&mut app).contains("sel: —"));
+}
+
+#[test]
+fn a_selection_made_in_a_view_marks_its_row() {
+    let (mut app, _) = live_tree();
+    let krate = entity(&mut app, "crate_01");
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::Selection>()
+        .entities = vec![krate];
+    frames(&mut app, 2);
+    assert!(row_active(&mut app, "crate_01"));
+    assert!(all_text(&mut app).contains("sel: crate_01"));
+    app.world_mut().entity_mut(krate).despawn();
+    frames(&mut app, 2);
+    assert_eq!(selected(&app), []);
+}
+
+fn footer(app: &mut App, which: super::footer::FooterButton) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &super::footer::FooterButton)>()
+        .iter(world)
+        .find(|(_, b)| **b == which)
+        .unwrap()
+        .0
+}
+
+fn press_footer(app: &mut App, which: super::footer::FooterButton) {
+    let b = footer(app, which);
+    app.world_mut().trigger(Activate { entity: b });
+    frames(app, 2);
+}
+
+#[test]
+fn hide_others_and_isolate_act_on_the_selection() {
+    use super::footer::FooterButton::{HideOthers, Isolate, NewGroup};
+    let (mut app, _) = live_tree();
+    let (amr, krate) = (entity(&mut app, "amr_01"), entity(&mut app, "crate_01"));
+    let disabled = |app: &mut App, b| {
+        let e = footer(app, b);
+        app.world().get::<InteractionDisabled>(e).is_some()
+    };
+    // Nothing selected: all three off.
+    assert!(disabled(&mut app, NewGroup) && disabled(&mut app, HideOthers));
+    assert!(disabled(&mut app, Isolate));
+    let vis = |app: &App, e| *app.world().get::<Visibility>(e).unwrap();
+
+    // Isolate a link's model: the other model hides, then comes back.
+    let wheel = entity(&mut app, "wheel_left");
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::Selection>()
+        .entities = vec![wheel];
+    frames(&mut app, 2);
+    assert!(!disabled(&mut app, Isolate) && disabled(&mut app, NewGroup));
+    press_footer(&mut app, Isolate);
+    assert_eq!(vis(&app, krate), Visibility::Hidden);
+    assert_eq!(vis(&app, amr), Visibility::Inherited);
+    let iso = footer(&mut app, Isolate);
+    assert!(app.world().get::<Active>(iso).is_some());
+    // Still on with nothing selected, to turn it off.
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::Selection>()
+        .entities
+        .clear();
+    frames(&mut app, 2);
+    assert!(!disabled(&mut app, Isolate) && disabled(&mut app, HideOthers));
+    press_footer(&mut app, Isolate);
+    assert_eq!(vis(&app, krate), Visibility::Inherited);
+    let iso = footer(&mut app, Isolate);
+    assert!(app.world().get::<Active>(iso).is_none());
+
+    // Hide others: models only (the sun stays lit).
+    click_row(&mut app, "crate_01", &[]);
+    press_footer(&mut app, HideOthers);
+    assert_eq!(vis(&app, amr), Visibility::Hidden);
+    assert_eq!(vis(&app, krate), Visibility::Inherited);
+    let sun = entity(&mut app, "sun");
+    assert_eq!(vis(&app, sun), Visibility::Inherited);
+    assert_eq!(rows(&mut app)[1], "  > M amr_01 (hidden)");
+}
+
+#[test]
+fn the_box_select_tool_tells_the_views() {
+    let (mut app, _) = live_tree();
+    let on = |app: &App| app.world().resource::<gz_bevy::view::BoxSelectTool>().0;
+    assert!(!on(&app));
+    app.world_mut()
+        .write_message(UiCommand::SetTool(crate::shell::Tool::BoxSelect));
+    frames(&mut app, 2);
+    assert!(on(&app));
+    app.world_mut()
+        .write_message(UiCommand::SetTool(crate::shell::Tool::Navigate));
+    frames(&mut app, 2);
+    assert!(!on(&app));
+}
+
+#[test]
+fn a_hovered_row_outlines_its_entity() {
+    use bevy::picking::hover::Hovered;
+    let (mut app, _) = live_tree();
+    let krate = entity(&mut app, "crate_01");
+    let hovered = |app: &App| app.world().resource::<gz_bevy::view::outline::Hovered>().0;
+    let r = row(&mut app, "crate_01");
+    app.world_mut().entity_mut(r).insert(Hovered(true));
+    frames(&mut app, 2);
+    assert_eq!(hovered(&app), Some(krate));
+    // The world row has no scene entity.
+    app.world_mut().entity_mut(r).insert(Hovered(false));
+    let w = row(&mut app, "warehouse_demo");
+    app.world_mut().entity_mut(w).insert(Hovered(true));
+    frames(&mut app, 2);
+    assert_eq!(hovered(&app), None);
+}
+
+#[test]
+fn enter_selects_the_cursor_row_and_a_right_click_doesnt() {
+    let (mut app, _) = live_tree();
+    let amr = entity(&mut app, "amr_01");
+    // Focus the tree, then put its cursor on amr_01.
+    let list = find::<TreeList>(&mut app);
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(list, bevy::input_focus::FocusCause::Navigated);
+    let press = |app: &mut App, k: KeyCode| {
+        key(app, k, ButtonState::Pressed);
+        app.update();
+        key(app, k, ButtonState::Released);
+        frames(app, 2);
+    };
+    press(&mut app, KeyCode::ArrowDown);
+    press(&mut app, KeyCode::ArrowDown);
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(selected(&app), [amr]);
+    // A right click on another row leaves the selection alone.
+    app.world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .press(MouseButton::Right);
+    let r = row(&mut app, "crate_01");
+    app.world_mut().trigger(Activate { entity: r });
+    app.world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .release(MouseButton::Right);
+    frames(&mut app, 2);
+    assert_eq!(selected(&app), [amr]);
+}
+
+#[test]
+fn the_footer_needs_a_model_and_isolate_forgets_a_gone_world() {
+    use super::footer::FooterButton::{HideOthers, Isolate};
+    use super::footer::Isolated;
+    let (mut app, _) = live_tree();
+    let (sun, krate) = (entity(&mut app, "sun"), entity(&mut app, "crate_01"));
+    let disabled = |app: &mut App, b| {
+        let e = footer(app, b);
+        app.world().get::<InteractionDisabled>(e).is_some()
+    };
+    // A world-level light is part of no model: nothing to hide others of.
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::Selection>()
+        .entities = vec![sun];
+    frames(&mut app, 2);
+    assert!(disabled(&mut app, HideOthers) && disabled(&mut app, Isolate));
+    // Isolated, then every model it saved goes (a reload): forgotten.
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::Selection>()
+        .entities = vec![krate];
+    frames(&mut app, 2);
+    press_footer(&mut app, Isolate);
+    assert!(app.world().resource::<Isolated>().0.is_some());
+    let models: Vec<Entity> = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &GzEntity)>()
+            .iter(world)
+            .filter(|(_, g)| g.kind == NodeKind::Model)
+            .map(|(e, _)| e)
+            .collect()
+    };
+    for m in models {
+        app.world_mut().entity_mut(m).despawn();
+    }
+    frames(&mut app, 2);
+    assert!(app.world().resource::<Isolated>().0.is_none());
+    let iso = footer(&mut app, Isolate);
+    assert!(app.world().get::<Active>(iso).is_none());
+}

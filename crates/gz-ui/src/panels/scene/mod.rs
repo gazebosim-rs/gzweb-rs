@@ -20,6 +20,7 @@
 //! its cursor (§6.5). Systems that only feed the shown tree run under
 //! `panel_shown(SCENE)`.
 
+mod footer;
 pub(crate) mod model;
 mod systems;
 mod view;
@@ -79,6 +80,8 @@ impl Plugin for ScenePanelPlugin {
         .init_resource::<model::TreeState>()
         .init_resource::<model::TreeScroll>()
         .init_resource::<systems::TreeRows>()
+        .init_resource::<footer::Isolated>()
+        .init_resource::<gz_bevy::view::outline::Hovered>()
         .add_systems(
             Update,
             (
@@ -94,12 +97,14 @@ impl Plugin for ScenePanelPlugin {
                 )
                     .chain(),
                 systems::want_sdf,
+                systems::hover_outline,
                 (
                     systems::filter_text,
                     systems::compute_rows,
                     systems::place_rows,
                     systems::chip_states,
                     systems::cursor_ring,
+                    footer::footer_states,
                 )
                     .chain()
                     .after(systems::rebuild_model)
@@ -111,6 +116,7 @@ impl Plugin for ScenePanelPlugin {
         .add_observer(systems::on_expand)
         .add_observer(systems::on_visibility)
         .add_observer(systems::on_row_activate)
+        .add_observer(footer::on_footer)
         .add_observer(systems::on_chip)
         .add_observer(systems::on_filter_button)
         .add_observer(systems::on_header_action)

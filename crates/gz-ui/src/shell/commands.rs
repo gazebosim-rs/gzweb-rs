@@ -57,6 +57,9 @@ pub(crate) struct Shortcuts<'w> {
     scopes: Option<Res<'w, ActiveScopes>>,
     routing: Res<'w, ViewRouting>,
     menu_esc: Res<'w, MenuTakesEscape>,
+    /// A marquee being drawn takes Esc too (spec §6.3: cancel the drag
+    /// before returning to Navigate); the views cancel it.
+    marquee: Option<Res<'w, gz_bevy::view::Marquee>>,
 }
 
 impl Shortcuts<'_> {
@@ -69,9 +72,10 @@ impl Shortcuts<'_> {
             return Vec::new();
         }
         let scopes = self.routing.key_scopes(&scopes.0);
+        let esc_taken = self.menu_esc.0 || self.marquee.as_ref().is_some_and(|m| m.0.is_some());
         map.just_pressed(&self.keys, &scopes)
             .filter(|b| {
-                !(self.menu_esc.0
+                !(esc_taken
                     && b.chords(map.platform)
                         .iter()
                         .any(|c| c.key == KeyCode::Escape))

@@ -17,6 +17,9 @@ use bevy::ui_widgets::{Activate, ValueChange};
 use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
+use gz_bevy::view::input::{InputMap, KeyMods, Platform};
+use gz_bevy::view::select::select;
+use gz_bevy::view::{SelectMode, Selection};
 use gz_core::scene::NodeKind;
 
 use super::model::{ModelBuilder, NodeKey, Row, TreeModel, TreeScroll, TreeState};
@@ -36,6 +39,16 @@ use crate::widgets::{EntityKind, TreeRowExpand, TreeRowSpec, TreeRowVisibility};
 type StructureChanged = Or<(Added<GzEntity>, Changed<GzSensors>)>;
 /// The list's content node.
 type ContentOnly = (With<TreeContent>, Without<TreeSlot>);
+/// A pooled row: what it shows, its node and parent, and whether it shows
+/// a selected entity.
+type PooledRow = (
+    Entity,
+    &'static mut TreeSlot,
+    &'static mut TreeRowSpec,
+    &'static mut Node,
+    &'static ChildOf,
+    Has<Active>,
+);
 /// The "No entities match" line.
 type NoMatchesOnly = (With<NoMatches>, Without<TreeSlot>, Without<TreeContent>);
 
@@ -300,17 +313,7 @@ pub(super) struct Pool<'w, 's> {
         With<TreeList>,
     >,
     contents: Query<'w, 's, (Entity, &'static mut Node), ContentOnly>,
-    slots: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static mut TreeSlot,
-            &'static mut TreeRowSpec,
-            &'static mut Node,
-            &'static ChildOf,
-        ),
-    >,
+    slots: Query<'w, 's, PooledRow>,
     no_matches: Query<'w, 's, &'static mut Node, NoMatchesOnly>,
     shown: Query<'w, 's, (), (With<GzEntity>, Changed<Visibility>)>,
     access: Query<'w, 's, &'static mut AccessibilityNode, With<TreeSlot>>,
@@ -332,7 +335,8 @@ pub(super) fn place_rows(
     };
     let visibility = !pool.shown.is_empty();
     // The model too: a row's name or kind can change with its place.
-    let repaint = src.rows.is_changed() || src.model.is_changed() || visibility;
+    let repaint =
+        src.rows.is_changed() || src.model.is_changed() || src.selection.is_changed() || visibility;
     if !repaint && !pos.is_changed() && !computed.is_changed() {
         return;
     }
@@ -370,7 +374,7 @@ pub(super) fn place_rows(
     ours.sort_unstable();
     let mut k = 0;
     for e in ours {
-        let Ok((_, mut slot, mut spec, mut node, _)) = pool.slots.get_mut(e) else {
+        let Ok((_, mut slot, mut spec, mut node, _, active)) = pool.slots.get_mut(e) else {
             continue;
         };
         let i = first + k;
@@ -391,13 +395,21 @@ pub(super) fn place_rows(
             }
             spec.set_if_neq(src.spec(rows[i]));
         }
+        let selected = at.is_some_and(|i| src.selected(rows[i]));
+        if selected != active {
+            if selected {
+                commands.entity(e).insert(Active);
+            } else {
+                commands.entity(e).remove::<Active>();
+            }
+        }
     }
     // Grow the pool to cover the view.
     if k < want {
         let t = src.theme.clone();
         commands.entity(content).with_children(|c| {
             for i in (first + k..rows.len()).take(want - k) {
-                spawn_slot(c, &t, Some(i), src.spec(rows[i]));
+                spawn_slot(c, &t, Some(i), src.spec(rows[i]), src.selected(rows[i]));
             }
         });
     }
@@ -527,19 +539,83 @@ pub(super) fn on_visibility(
     }
 }
 
-/// A row click moves the tree's cursor there (selection is M5's).
+/// A row click moves the tree's cursor there and selects it
+/// ([`select_row`]); a right or middle click doesn't (a context menu comes
+/// in M5).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn on_row_activate(
     ev: On<Activate>,
     slots: Query<&TreeSlot>,
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
+    mut selection: ResMut<Selection>,
 ) {
-    if let Some((_, row)) = row_of(&slots, &rows, ev.entity) {
-        let key = model.node(row).key.clone();
-        if state.cursor.as_ref() != Some(&key) {
-            state.cursor = Some(key);
+    let others = [MouseButton::Right, MouseButton::Middle];
+    if mouse.any_pressed(others) || mouse.any_just_released(others) {
+        return;
+    }
+    if let Some((i, _)) = row_of(&slots, &rows, ev.entity) {
+        let platform = map.map_or(Platform::current(), |m| m.platform);
+        let held = KeyMods::held(&keys);
+        select_row(
+            i,
+            &rows.0,
+            &model,
+            &mut state,
+            &mut selection.reborrow(),
+            held,
+            platform,
+        );
+    }
+}
+
+/// Moves the cursor to row `i` and selects (spec §5.7, §6.4): the row's
+/// model, link or light, or nothing for the world (its inspector). Shift
+/// selects the shown rows from the anchor (the last row picked without
+/// Shift) to this one; ⌘/Ctrl toggles the row. Joints and sensors have no
+/// scene entity: they only move the cursor.
+fn select_row(
+    i: usize,
+    rows: &[Row],
+    model: &TreeModel,
+    state: &mut TreeState,
+    selection: &mut Mut<Selection>,
+    held: KeyMods,
+    platform: Platform,
+) {
+    let node = model.node(rows[i]);
+    let key = node.key.clone();
+    if state.cursor.as_ref() != Some(&key) {
+        state.cursor = Some(key.clone());
+    }
+    let toggle = held.mod_key(platform);
+    let anchor = state
+        .anchor
+        .as_ref()
+        .and_then(|a| rows.iter().position(|r| &model.node(*r).key == a));
+    match (
+        anchor.filter(|_| held.shift),
+        node.key == NodeKey::World,
+        node.entity,
+    ) {
+        (Some(a), _, _) => {
+            let range: Vec<Entity> = rows[a.min(i)..=a.max(i)]
+                .iter()
+                .filter_map(|r| model.node(*r).entity)
+                .collect();
+            select(selection, SelectMode::Replace, &range);
+            return;
         }
+        (None, true, _) if !toggle => select(selection, SelectMode::Replace, &[]),
+        (None, false, Some(e)) => select(selection, SelectMode::from_keys(false, toggle), &[e]),
+        _ => {}
+    }
+    if state.anchor.as_ref() != Some(&key) {
+        state.anchor = Some(key);
     }
 }
 
@@ -596,15 +672,20 @@ pub(super) fn on_header_action(
 
 /// Arrow keys in the focused tree (§6.5): up and down move the cursor,
 /// right opens its row or goes to its first child, left closes it or goes
-/// to its parent; Home, End and the page keys jump. The view scrolls to
-/// keep the cursor in sight.
+/// to its parent; Home, End and the page keys jump; Enter and Space select
+/// the cursor's row (with Shift and ⌘/Ctrl, as a click). The view scrolls
+/// to keep the cursor in sight.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn on_tree_key(
     mut ev: On<FocusedInput<KeyboardInput>>,
     mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<TreeList>>,
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
     theme: Res<crate::theme::Theme>,
+    keys: Res<ButtonInput<KeyCode>>,
+    map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
+    mut selection: ResMut<Selection>,
 ) {
     let Ok((computed, mut scroll)) = lists.get_mut(ev.focused_entity) else {
         return;
@@ -644,6 +725,20 @@ pub(super) fn on_tree_key(
                 .parent(rows[i].node)
                 .and_then(|p| rows.iter().position(|r| r.node == p)),
         },
+        (KeyCode::Enter | KeyCode::Space, Some(i)) => {
+            let platform = map.map_or(Platform::current(), |m| m.platform);
+            let held = KeyMods::held(&keys);
+            select_row(
+                i,
+                rows,
+                &model,
+                &mut state,
+                &mut selection.reborrow(),
+                held,
+                platform,
+            );
+            None
+        }
         _ => return,
     };
     ev.propagate(false);
@@ -679,4 +774,21 @@ fn toggle(state: &mut TreeState, model: &TreeModel, row: Row, open: bool) {
     } else {
         state.expanded.remove(&key);
     }
+}
+
+/// The entity of the row under the pointer, which the views outline
+/// faintly (spec §6.4); none once no row is (or the tree is gone).
+pub(super) fn hover_outline(
+    slots: Query<(&TreeSlot, &bevy::picking::hover::Hovered)>,
+    rows: Res<TreeRows>,
+    model: Res<TreeModel>,
+    mut hovered: ResMut<gz_bevy::view::outline::Hovered>,
+) {
+    let entity = slots
+        .iter()
+        .find(|(_, h)| h.get())
+        .and_then(|(slot, _)| slot.0)
+        .and_then(|i| rows.0.get(i))
+        .and_then(|r| model.node(*r).entity);
+    hovered.set_if_neq(gz_bevy::view::outline::Hovered(entity));
 }

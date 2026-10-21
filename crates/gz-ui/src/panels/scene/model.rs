@@ -167,6 +167,9 @@ pub(crate) struct TreeState {
     pub(crate) filter_collapsed: HashSet<NodeKey>,
     /// The keyboard's row (§6.5: arrow keys move within the tree).
     pub(crate) cursor: Option<NodeKey>,
+    /// Where a Shift+click range starts: the row last clicked without
+    /// Shift.
+    pub(crate) anchor: Option<NodeKey>,
     /// The chip row shows (the filter button toggles it).
     pub(crate) chips_shown: bool,
 }
@@ -179,6 +182,7 @@ impl Default for TreeState {
             chip: Chip::All,
             filter_collapsed: HashSet::new(),
             cursor: None,
+            anchor: None,
             chips_shown: true,
         }
     }

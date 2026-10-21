@@ -481,7 +481,9 @@ fn binding_shaped(s: &str) -> bool {
             && w.chars()
                 .all(|c| c.is_ascii_lowercase() || c == '_' || (digits && c.is_ascii_digit()))
     };
-    word(group, false) && word(name, true) && !["json", "png", "rs", "ttf", "svg"].contains(&name)
+    word(group, false)
+        && word(name, true)
+        && !["json", "png", "rs", "ttf", "svg", "wesl"].contains(&name)
 }
 
 /// Every shortcut binding the code names is one `shortcuts.json` has: a
