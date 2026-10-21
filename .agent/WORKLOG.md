@@ -1224,3 +1224,23 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   the footer, the Box select tool, the marquee box, the outline overlay
   and tree hover (gz-ui); `--select` (gzweb). Workspace 599 → 618
   passing; coverage 98.5% lines. check.sh passes.
+
+## 2026-10-21: M5a review fixes (D-71 to D-75, D-64b amended)
+
+- **Wireframe:** the overlay wired the mask clones, so every triangle edge
+  was outlined; `NotVisual` skips `OutlineClone`.
+- **Minimal mode:** views select only with `SelectInViews` (the full UI);
+  `--select` needs `--ui full`.
+- **Input:** ⌘ toggles in a browser (`mod_key` on `Platform::Web`); Esc
+  cancels a marquee and the shell leaves the tool alone while one is
+  drawn; a Space-hold pan press doesn't select; a click on the ground is
+  empty space; a flat marquee picks; boxes are clipped at the near plane.
+- **Tree:** Enter and Space select the cursor row; right and middle
+  clicks don't select. `select::select` changes `Selection` only when the
+  pick changes it.
+- **Footer:** enabled while the selection is part of a model; Isolate
+  forgets a reloaded world.
+- **Outline:** one clone per mesh (a map), active only with clones, the
+  overlay sized to `OutlineMask::rect`; `place_mask` writes only changes.
+- **Tests:** a regression test for each (checked to fail without the fix
+  for the wireframe and the near-plane clipping).

@@ -134,13 +134,14 @@ impl KeyMods {
         self.ctrl || self.alt || self.super_key
     }
 
-    /// The platform's `mod` key (⌘ on a Mac, Ctrl elsewhere) is held: it
+    /// The platform's `mod` key is held (⌘ on a Mac, Ctrl on Linux and
+    /// Windows, either in a browser, as `mod` chords match there): it
     /// toggles in the selection (spec §6.2).
     pub fn mod_key(self, platform: Platform) -> bool {
-        if platform == Platform::Mac {
-            self.super_key
-        } else {
-            self.ctrl
+        match platform {
+            Platform::Mac => self.super_key,
+            Platform::Web => self.ctrl || self.super_key,
+            _ => self.ctrl,
         }
     }
 }

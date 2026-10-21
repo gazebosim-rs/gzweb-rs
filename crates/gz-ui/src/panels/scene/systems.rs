@@ -18,6 +18,7 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
 use gz_bevy::view::input::{InputMap, KeyMods, Platform};
+use gz_bevy::view::select::select;
 use gz_bevy::view::{SelectMode, Selection};
 use gz_core::scene::NodeKind;
 
@@ -538,11 +539,9 @@ pub(super) fn on_visibility(
     }
 }
 
-/// A row click moves the tree's cursor there and selects (spec §5.7,
-/// §6.4): the row's model, link or light, or nothing for the world (its
-/// inspector). Shift selects the shown rows from the anchor (the last row
-/// clicked without Shift) to this one; ⌘/Ctrl toggles the row. Joints and
-/// sensors have no scene entity: they only move the cursor.
+/// A row click moves the tree's cursor there and selects it
+/// ([`select_row`]); a right or middle click doesn't (a context menu comes
+/// in M5).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn on_row_activate(
     ev: On<Activate>,
@@ -550,39 +549,69 @@ pub(super) fn on_row_activate(
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
     mut selection: ResMut<Selection>,
 ) {
-    let Some((i, row)) = row_of(&slots, &rows, ev.entity) else {
+    let others = [MouseButton::Right, MouseButton::Middle];
+    if mouse.any_pressed(others) || mouse.any_just_released(others) {
         return;
-    };
-    let node = model.node(row);
+    }
+    if let Some((i, _)) = row_of(&slots, &rows, ev.entity) {
+        let platform = map.map_or(Platform::current(), |m| m.platform);
+        let held = KeyMods::held(&keys);
+        select_row(
+            i,
+            &rows.0,
+            &model,
+            &mut state,
+            &mut selection.reborrow(),
+            held,
+            platform,
+        );
+    }
+}
+
+/// Moves the cursor to row `i` and selects (spec §5.7, §6.4): the row's
+/// model, link or light, or nothing for the world (its inspector). Shift
+/// selects the shown rows from the anchor (the last row picked without
+/// Shift) to this one; ⌘/Ctrl toggles the row. Joints and sensors have no
+/// scene entity: they only move the cursor.
+fn select_row(
+    i: usize,
+    rows: &[Row],
+    model: &TreeModel,
+    state: &mut TreeState,
+    selection: &mut Mut<Selection>,
+    held: KeyMods,
+    platform: Platform,
+) {
+    let node = model.node(rows[i]);
     let key = node.key.clone();
     if state.cursor.as_ref() != Some(&key) {
         state.cursor = Some(key.clone());
     }
-    let held = KeyMods::held(&keys);
-    let platform = map.map_or(Platform::current(), |m| m.platform);
+    let toggle = held.mod_key(platform);
     let anchor = state
         .anchor
         .as_ref()
-        .and_then(|a| rows.0.iter().position(|r| &model.node(*r).key == a));
-    match (node.key == NodeKey::World, node.entity) {
-        _ if held.shift && anchor.is_some() => {
-            let a = anchor.unwrap_or(i);
-            let range: Vec<Entity> = rows.0[a.min(i)..=a.max(i)]
+        .and_then(|a| rows.iter().position(|r| &model.node(*r).key == a));
+    match (
+        anchor.filter(|_| held.shift),
+        node.key == NodeKey::World,
+        node.entity,
+    ) {
+        (Some(a), _, _) => {
+            let range: Vec<Entity> = rows[a.min(i)..=a.max(i)]
                 .iter()
                 .filter_map(|r| model.node(*r).entity)
                 .collect();
-            selection.apply(SelectMode::Replace, &range);
+            select(selection, SelectMode::Replace, &range);
             return;
         }
-        (true, _) if !held.mod_key(platform) => selection.apply(SelectMode::Replace, &[]),
-        (false, Some(e)) => {
-            let mode = SelectMode::from_keys(false, held.mod_key(platform));
-            selection.apply(mode, &[e]);
-        }
+        (None, true, _) if !toggle => select(selection, SelectMode::Replace, &[]),
+        (None, false, Some(e)) => select(selection, SelectMode::from_keys(false, toggle), &[e]),
         _ => {}
     }
     if state.anchor.as_ref() != Some(&key) {
@@ -643,15 +672,20 @@ pub(super) fn on_header_action(
 
 /// Arrow keys in the focused tree (§6.5): up and down move the cursor,
 /// right opens its row or goes to its first child, left closes it or goes
-/// to its parent; Home, End and the page keys jump. The view scrolls to
-/// keep the cursor in sight.
+/// to its parent; Home, End and the page keys jump; Enter and Space select
+/// the cursor's row (with Shift and ⌘/Ctrl, as a click). The view scrolls
+/// to keep the cursor in sight.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn on_tree_key(
     mut ev: On<FocusedInput<KeyboardInput>>,
     mut lists: Query<(&ComputedNode, &mut ScrollPosition), With<TreeList>>,
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
     theme: Res<crate::theme::Theme>,
+    keys: Res<ButtonInput<KeyCode>>,
+    map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
+    mut selection: ResMut<Selection>,
 ) {
     let Ok((computed, mut scroll)) = lists.get_mut(ev.focused_entity) else {
         return;
@@ -691,6 +725,20 @@ pub(super) fn on_tree_key(
                 .parent(rows[i].node)
                 .and_then(|p| rows.iter().position(|r| r.node == p)),
         },
+        (KeyCode::Enter | KeyCode::Space, Some(i)) => {
+            let platform = map.map_or(Platform::current(), |m| m.platform);
+            let held = KeyMods::held(&keys);
+            select_row(
+                i,
+                rows,
+                &model,
+                &mut state,
+                &mut selection.reborrow(),
+                held,
+                platform,
+            );
+            None
+        }
         _ => return,
     };
     ev.propagate(false);

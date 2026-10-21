@@ -45,8 +45,13 @@ pub fn native_wireframes(device: Option<&RenderDevice>) -> bool {
     })
 }
 
-/// What isn't a visual mesh: overlay geometry and the fallback's lines.
-type NotVisual = Or<(With<CollisionOverlay>, With<WireLines>)>;
+/// What isn't a visual mesh: overlay geometry, the fallback's lines and
+/// the selection outline's mask clones.
+type NotVisual = Or<(
+    With<CollisionOverlay>,
+    With<WireLines>,
+    With<crate::view::outline::OutlineClone>,
+)>;
 
 /// The scene's visual meshes: under the world root, not part of an
 /// overlay or a fallback line mesh.

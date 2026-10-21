@@ -2300,9 +2300,11 @@ fn the_start_view_applies_once_the_world_has_loaded() {
 // ------------------------------------------------------- selection (M5a)
 
 /// Two models at gz (0, 0, 0.5) and gz (0, 3, 0.5), each a link holding
-/// a cube: (rig, near model, far model). Ctrl toggles (Linux).
+/// a cube: (rig, near model, far model). Ctrl toggles (Linux); the views
+/// select, as in the full UI.
 fn two_models() -> (Rig, Entity, Entity) {
     let mut r = rig(default_view());
+    r.app.insert_resource(SelectInViews(true));
     r.app.world_mut().resource_mut::<InputMap>().platform = Platform::Linux;
     let (root, a) = r.world_root();
     let b = r
@@ -2514,14 +2516,137 @@ fn select_modes_replace_add_and_toggle() {
         Entity::from_raw_u32(3).unwrap(),
     );
     let mut s = Selection::default();
-    s.apply(SelectMode::Replace, &[a, b]);
-    assert_eq!(s.entities, [a, b]);
-    s.apply(SelectMode::Add, &[b, c]);
-    assert_eq!(s.entities, [a, b, c]);
-    s.apply(SelectMode::Toggle, &[a, c]);
-    assert_eq!(s.entities, [b]);
-    s.apply(SelectMode::Replace, &[]);
-    assert_eq!(s.entities, []);
+    let mut step = |mode, picked: &[Entity]| {
+        s.entities = s.applied(mode, picked);
+        s.entities.clone()
+    };
+    assert_eq!(step(SelectMode::Replace, &[a, b, a]), [a, b]);
+    assert_eq!(step(SelectMode::Add, &[b, c]), [a, b, c]);
+    assert_eq!(step(SelectMode::Toggle, &[a, c]), [b]);
+    assert_eq!(step(SelectMode::Replace, &[]), []);
     assert_eq!(SelectMode::from_keys(true, true), SelectMode::Toggle);
     assert_eq!(SelectMode::from_keys(true, false), SelectMode::Add);
+}
+
+#[test]
+fn views_select_only_in_the_full_ui() {
+    let (mut r, a, _) = two_models();
+    r.app.insert_resource(SelectInViews(false));
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), []);
+    // ⌘/Ctrl+drag orbits, as before there was a selection.
+    let before = r.transform();
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.drag(MouseButton::Left, pa, &[pa + Vec2::new(40.0, 0.0)]);
+    r.key(KeyCode::ControlLeft, ButtonState::Released);
+    assert_ne!(r.transform(), before);
+    assert_eq!(r.app.world().resource::<Marquee>().0, None);
+    let _ = a;
+}
+
+#[test]
+fn esc_cancels_a_marquee() {
+    let (mut r, a, _) = two_models();
+    r.app.world_mut().resource_mut::<BoxSelectTool>().0 = true;
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    r.cursor(Some(pa - Vec2::splat(10.0)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.cursor(Some(pa + Vec2::splat(10.0)));
+    r.app.update();
+    assert!(r.app.world().resource::<Marquee>().0.is_some());
+    r.key(KeyCode::Escape, ButtonState::Pressed);
+    r.app.update();
+    r.key(KeyCode::Escape, ButtonState::Released);
+    assert_eq!(r.app.world().resource::<Marquee>().0, None);
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    assert_eq!(selected(&r), [], "the cancelled marquee selects nothing");
+    let _ = a;
+}
+
+#[test]
+fn a_click_on_the_ground_is_empty_space() {
+    let (mut r, a, _) = two_models();
+    let root = {
+        let world = r.app.world_mut();
+        world
+            .query_filtered::<Entity, With<GzWorldRoot>>()
+            .single(world)
+            .unwrap()
+    };
+    let ground = r
+        .app
+        .world_mut()
+        .spawn((Transform::default(), Visibility::default(), ChildOf(root)))
+        .id();
+    let plane = r.cube(Some(ground), Vec3::new(0.0, 0.0, -0.05), 50.0);
+    r.app.world_mut().entity_mut(plane).insert(plane_visual());
+    r.make_visible();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [a]);
+    // Below the models: the ground plane, which clears.
+    click(&mut r, Vec2::new(400.0, 590.0), &[]);
+    assert_eq!(selected(&r), []);
+}
+
+#[test]
+fn a_space_pan_click_and_a_flat_marquee() {
+    let (mut r, a, _) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    // Space held: a temporary pan, which never selects.
+    r.key(KeyCode::Space, ButtonState::Pressed);
+    r.drag(MouseButton::Left, pa, &[]);
+    r.key(KeyCode::Space, ButtonState::Released);
+    r.app.update();
+    assert_eq!(selected(&r), []);
+    // A marquee dragged straight across the model still picks it.
+    r.app.world_mut().resource_mut::<BoxSelectTool>().0 = true;
+    r.drag(
+        MouseButton::Left,
+        pa - Vec2::new(30.0, 0.0),
+        &[pa + Vec2::new(30.0, 0.0)],
+    );
+    assert_eq!(selected(&r), [a]);
+}
+
+#[test]
+fn a_box_reaching_behind_the_camera_covers_the_screen_it_fills() {
+    // From 10 m in front of the eye to 10 m behind it, off to the left:
+    // its front corners alone stop short of the screen's left edge; the
+    // part between them and the eye reaches past it.
+    let t = Transform::default();
+    let p = Projection::Perspective(PerspectiveProjection::default());
+    let b = Bounds {
+        min: Vec3::new(-5.0, -1.0, -10.0),
+        max: Vec3::new(-1.0, 1.0, 10.0),
+    };
+    let size = Vec2::new(800.0, 600.0);
+    let r = select::screen_rect((&t, &p), size, b.corners()).unwrap();
+    assert!(r.min.x < 0.0, "{r:?}");
+    assert!(r.max.x > 0.0 && r.max.x < 400.0, "{r:?}");
+    // All behind: nothing.
+    let behind = Bounds {
+        min: Vec3::new(-1.0, -1.0, 1.0),
+        max: Vec3::new(1.0, 1.0, 3.0),
+    };
+    assert!(select::screen_rect((&t, &p), size, behind.corners()).is_none());
+}
+
+#[test]
+fn mod_toggles_with_ctrl_or_cmd_in_a_browser() {
+    use super::input::KeyMods;
+    let ctrl = KeyMods {
+        ctrl: true,
+        ..default()
+    };
+    let cmd = KeyMods {
+        super_key: true,
+        ..default()
+    };
+    assert!(ctrl.mod_key(Platform::Web) && cmd.mod_key(Platform::Web));
+    assert!(cmd.mod_key(Platform::Mac) && !ctrl.mod_key(Platform::Mac));
+    assert!(ctrl.mod_key(Platform::Linux) && !cmd.mod_key(Platform::Linux));
 }

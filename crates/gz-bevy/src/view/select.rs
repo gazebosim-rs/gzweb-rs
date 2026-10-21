@@ -31,34 +31,33 @@ impl SelectMode {
 }
 
 impl Selection {
-    /// Applies a pick of `picked` (in order, without repeats): replace
-    /// selects exactly them, so picking nothing clears; add appends the
+    /// The selection after a pick of `picked`: replace selects exactly
+    /// them (without repeats), so picking nothing clears; add appends the
     /// new ones; toggle removes the selected ones and appends the others.
-    pub fn apply(&mut self, mode: SelectMode, picked: &[Entity]) {
-        match mode {
-            SelectMode::Replace => {
-                if self.entities != picked {
-                    self.entities = picked.to_vec();
+    pub fn applied(&self, mode: SelectMode, picked: &[Entity]) -> Vec<Entity> {
+        let mut out = match mode {
+            SelectMode::Replace => Vec::new(),
+            _ => self.entities.clone(),
+        };
+        for e in picked {
+            match out.iter().position(|s| s == e) {
+                Some(i) if mode == SelectMode::Toggle => {
+                    out.remove(i);
                 }
-            }
-            SelectMode::Add => {
-                for e in picked {
-                    if !self.entities.contains(e) {
-                        self.entities.push(*e);
-                    }
-                }
-            }
-            SelectMode::Toggle => {
-                for e in picked {
-                    match self.entities.iter().position(|s| s == e) {
-                        Some(i) => {
-                            self.entities.remove(i);
-                        }
-                        None => self.entities.push(*e),
-                    }
-                }
+                Some(_) => {}
+                None => out.push(*e),
             }
         }
+        out
+    }
+}
+
+/// Applies a pick to the selection, changing it (and so its change
+/// detection) only if the pick changes what is selected.
+pub fn select(selection: &mut Mut<Selection>, mode: SelectMode, picked: &[Entity]) {
+    let next = selection.applied(mode, picked);
+    if next != selection.entities {
+        selection.entities = next;
     }
 }
 
@@ -74,6 +73,11 @@ pub struct MarqueeRect {
     pub to: Vec2,
 }
 
+/// Whether clicks and marquees in the views select: in the full UI only,
+/// which shows the selection (minimal mode has none, DECISIONS.md D-14).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SelectInViews(pub bool);
+
 /// Set by the full UI while its Box select tool is on: a plain left drag
 /// draws a marquee instead of moving the camera.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -81,12 +85,14 @@ pub struct BoxSelectTool(pub bool);
 
 impl ViewScene<'_, '_> {
     /// The top-level model the mesh under `ray` belongs to, if it is in
-    /// the Gazebo tree.
+    /// the Gazebo tree. A model of only plane visuals (the ground) is empty
+    /// space, as for a marquee and focus.
     pub(super) fn model_under(&mut self, ray: Ray3d) -> Option<Entity> {
         let (hit, _) = self.hit(ray)?;
         let model = self.model_of(hit);
         let parent = self.parents.get(model).ok()?.parent();
-        self.roots.contains(parent).then_some(model)
+        let solid = self.bounds_of(model, Skip::RUNAWAY_AND_PLANES).is_some();
+        (self.roots.contains(parent) && solid).then_some(model)
     }
 
     /// The top-level models whose bounds, as `camera` sees them, overlap
@@ -111,31 +117,65 @@ impl ViewScene<'_, '_> {
             .filter(|model| {
                 self.bounds_of(*model, Skip::RUNAWAY_AND_PLANES)
                     .and_then(|bounds| screen_rect(camera, size, bounds.corners()))
-                    .is_some_and(|r| !r.intersect(rect).is_empty())
+                    .is_some_and(|r| overlap(r, rect))
             })
             .collect()
     }
 }
 
-/// The screen rectangle (logical pixels, y down) that `corners` cover, from
-/// the corners in front of the camera; `None` if none is.
-fn screen_rect((t, p): (&Transform, &Projection), size: Vec2, corners: [Vec3; 8]) -> Option<Rect> {
+/// Whether two rectangles overlap, touching edges included (a marquee
+/// dragged straight across is a line).
+fn overlap(a: Rect, b: Rect) -> bool {
+    a.min.x <= b.max.x && b.min.x <= a.max.x && a.min.y <= b.max.y && b.min.y <= a.max.y
+}
+
+/// The box's twelve edges, as pairs of [`Bounds::corners`](super::Bounds::corners)
+/// indices.
+const EDGES: [(usize, usize); 12] = [
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
+];
+
+/// The screen rectangle (logical pixels, y down) that a box with these
+/// corners covers, clipped where it passes behind the camera (its edges
+/// cut at a plane just in front of the eye, so a long model that reaches
+/// behind still covers the screen it fills); `None` if it is all behind.
+pub(super) fn screen_rect(
+    (t, p): (&Transform, &Projection),
+    size: Vec2,
+    corners: [Vec3; 8],
+) -> Option<Rect> {
     if size.x <= 0.0 || size.y <= 0.0 {
         return None;
     }
     let mut p = p.clone();
     p.update(size.x, size.y);
     let clip_from_world = p.get_clip_from_view() * t.to_matrix().inverse();
-    corners
-        .into_iter()
-        .filter_map(|c| {
-            let clip = clip_from_world * c.extend(1.0);
-            (clip.w > f32::EPSILON).then(|| {
-                let ndc = clip.truncate() / clip.w;
-                Vec2::new((ndc.x + 1.0) / 2.0 * size.x, (1.0 - ndc.y) / 2.0 * size.y)
-            })
+    let clip = corners.map(|c| clip_from_world * c.extend(1.0));
+    let near = 1e-4;
+    let cut = EDGES.iter().filter_map(|&(a, b)| {
+        let (a, b) = (clip[a], clip[b]);
+        ((a.w > near) != (b.w > near)).then(|| a + (b - a) * ((near - a.w) / (b.w - a.w)))
+    });
+    clip.iter()
+        .copied()
+        .filter(|c| c.w > near)
+        .chain(cut)
+        .map(|c| {
+            let ndc = c.truncate() / c.w;
+            let q = Vec2::new((ndc.x + 1.0) / 2.0 * size.x, (1.0 - ndc.y) / 2.0 * size.y);
+            Rect::from_corners(q, q)
         })
-        .map(|q| Rect::from_corners(q, q))
         .reduce(|a, b| a.union(b))
 }
 

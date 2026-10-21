@@ -253,6 +253,10 @@ fn parse_args(
     if scene.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--scene-filter and --scene-expand need --ui full".into());
     }
+    // Only the full UI shows (and selects) a selection.
+    if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
+        return Err("--select needs --ui full".into());
+    }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
@@ -764,6 +768,10 @@ mod tests {
         assert!(USAGE.contains("--view") && USAGE.contains("--overlays"));
         let a = run_args(&["--select", " amr_01,,crate ", "--ui", "full"], None);
         assert_eq!(a.start.unwrap().select, ["amr_01", "crate"]);
+        assert_eq!(
+            parse(&["--select", "amr_01", "--ui", "minimal"], None).unwrap_err(),
+            "--select needs --ui full"
+        );
         assert!(USAGE.contains("--select"));
         let a = run_args(
             &["--scene-filter", "cam", "--scene-expand", "--ui", "full"],

@@ -12,7 +12,7 @@ use gz_bevy::view::ViewPlacement;
 
 use crate::shell::regions::pass_through;
 use crate::theme::{ColorRole, Theme};
-use crate::widgets::layout::{display, overlay};
+use crate::widgets::layout::display;
 
 const SHADER: &str = "embedded://gz_ui/shell/viewport/outline/outline.wesl";
 
@@ -41,6 +41,8 @@ pub(crate) struct OutlineParams {
     pub(crate) hovered: Vec4,
     /// One mask texel in uv; the two widths in texels.
     pub(crate) texel_widths: Vec4,
+    /// Where the overlay sits on the mask: its top left and size, in uv.
+    pub(crate) rect: Vec4,
 }
 
 impl UiMaterial for OutlineMaterial {
@@ -56,7 +58,12 @@ pub(crate) fn build(app: &mut App) {
         app.add_plugins(UiMaterialPlugin::<OutlineMaterial>::default());
     }
     app.add_plugins(gz_bevy::view::outline::OutlinePlugin)
-        .add_systems(PostUpdate, outline_overlay);
+        .add_systems(
+            PostUpdate,
+            outline_overlay
+                .after(gz_bevy::view::outline::OutlineRectSystems)
+                .before(bevy::ui::UiSystems::Layout),
+        );
 }
 
 /// A hidden overlay; [`outline_overlay`] gives it its material.
@@ -65,14 +72,17 @@ pub(crate) fn outline() -> impl Bundle {
         OutlineOverlay,
         Node {
             display: Display::None,
-            ..overlay()
+            position_type: PositionType::Absolute,
+            ..default()
         },
         pass_through(),
     )
 }
 
-/// The overlay shows while anything is outlined, with the mask, the
-/// theme's colour and the widths at the window's scale.
+/// The overlay shows while anything is outlined, over the outlined
+/// meshes' part of the view (with room for the outline; all of it until
+/// they have bounds), with the mask, the theme's colour and the widths at
+/// the window's scale.
 #[allow(clippy::type_complexity)]
 pub(crate) fn outline_overlay(
     mask: Res<OutlineMask>,
@@ -90,6 +100,18 @@ pub(crate) fn outline_overlay(
     };
     let size = placement.physical_size().unwrap_or(UVec2::ONE).as_vec2();
     let scale = placement.scale.max(f32::EPSILON);
+    let view = placement
+        .rect
+        .map_or(Vec2::ONE, |r| r.size().max(Vec2::ONE));
+    let pad = SELECTED_WIDTH.max(HOVERED_WIDTH) + 2.0;
+    let area = mask
+        .rect
+        .map(|r| {
+            r.inflate(pad)
+                .intersect(Rect::from_corners(Vec2::ZERO, view))
+        })
+        .filter(|r| !r.is_empty())
+        .unwrap_or(Rect::from_corners(Vec2::ZERO, view));
     let colour = theme.color(ColorRole::SelectionOutline).to_linear();
     let params = OutlineParams {
         selected: colour.to_vec4(),
@@ -100,11 +122,22 @@ pub(crate) fn outline_overlay(
             SELECTED_WIDTH * scale,
             HOVERED_WIDTH * scale,
         ),
+        rect: (area.min / view).extend(0.0).extend(0.0)
+            + Vec4::new(0.0, 0.0, area.width() / view.x, area.height() / view.y),
     };
     for (e, mut node, material) in &mut overlays {
         let want = display(mask.active && mask.image.is_some());
         if node.display != want {
             node.display = want;
+        }
+        let place = (
+            px(area.min.x),
+            px(area.min.y),
+            px(area.width()),
+            px(area.height()),
+        );
+        if (node.left, node.top, node.width, node.height) != place {
+            (node.left, node.top, node.width, node.height) = place;
         }
         let stale = material
             .and_then(|m| materials.get(&m.0))

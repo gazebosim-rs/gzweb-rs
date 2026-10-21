@@ -531,3 +531,84 @@ fn the_outline_overlay_shows_while_anything_is_outlined() {
     assert_eq!(m.params.selected, want);
     assert_eq!(m.params.hovered.w, want.w * 0.5);
 }
+
+#[test]
+fn the_outline_overlay_covers_only_the_outlined_part_of_the_view() {
+    use super::outline::{OutlineMaterial, OutlineOverlay};
+    use bevy::camera::primitives::Aabb;
+    use gz_bevy::view::outline::{OutlineClone, OutlineMask};
+    let mut app = shell_app((1440, 900), 1.0);
+    app.init_asset::<OutlineMaterial>();
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    // A clone at the origin, which the main camera looks at.
+    app.world_mut().spawn((
+        OutlineClone::Selected,
+        Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+        GlobalTransform::default(),
+    ));
+    app.world_mut().resource_mut::<OutlineMask>().active = true;
+    frames(&mut app, 3);
+    let want = app
+        .world()
+        .resource::<OutlineMask>()
+        .rect
+        .expect("the clone's screen rect");
+    let overlay = find::<OutlineOverlay>(&mut app);
+    let node = find::<ViewNode>(&mut app);
+    let (pos, size) = rect(&app, overlay);
+    let (origin, view) = rect(&app, node);
+    // The rect with room for the outline (2 px and 2 more).
+    let near = |a: Vec2, b: Vec2| (a - b).abs().max_element() < 0.6;
+    assert!(
+        near(pos - origin, want.min - Vec2::splat(4.0)),
+        "{pos} {want:?}"
+    );
+    assert!(
+        near(size, want.size() + Vec2::splat(8.0)),
+        "{size} {want:?}"
+    );
+    assert!(size.x < view.x / 2.0, "only part of the view");
+    let handle = app
+        .world()
+        .get::<MaterialNode<OutlineMaterial>>(overlay)
+        .unwrap()
+        .0
+        .clone();
+    let m = app
+        .world()
+        .resource::<Assets<OutlineMaterial>>()
+        .get(&handle)
+        .unwrap();
+    let r = m.params.rect;
+    let area = want.inflate(4.0);
+    assert!((r.x - area.min.x / view.x).abs() < 1e-4, "{r}");
+    assert!((r.z - area.width() / view.x).abs() < 1e-4, "{r}");
+}
+
+#[test]
+fn esc_during_a_marquee_leaves_the_tool_alone() {
+    use crate::shell::Tool;
+    use gz_bevy::view::{Marquee, MarqueeRect};
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::BoxSelect));
+    frames(&mut app, 2);
+    let view = find::<MainCamera>(&mut app);
+    app.world_mut().resource_mut::<Marquee>().0 = Some(MarqueeRect {
+        view,
+        from: Vec2::ZERO,
+        to: Vec2::splat(50.0),
+    });
+    chord(&mut app, &[KeyCode::Escape]);
+    frames(&mut app, 1);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::BoxSelect);
+    // Without a marquee, Esc returns to Navigate as before.
+    app.world_mut().resource_mut::<Marquee>().0 = None;
+    chord(&mut app, &[KeyCode::Escape]);
+    frames(&mut app, 1);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+}

@@ -40,7 +40,7 @@ use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
 pub use controls::ViewerControls;
 pub use input::InputMap;
 pub use modes::CameraMode;
-pub use select::{BoxSelectTool, Marquee, MarqueeRect, SelectMode};
+pub use select::{BoxSelectTool, Marquee, MarqueeRect, SelectInViews, SelectMode};
 
 /// How long snaps, focus and home animate (spec §12: cube snaps in 250 ms).
 pub const ANIMATION_SECS: f32 = 0.25;
@@ -212,7 +212,7 @@ pub fn apply_start_view(
             .filter_map(|name| index.by_name.get(name))
             .flat_map(|es| es.iter().filter(top).copied())
             .collect();
-        selection.apply(SelectMode::Replace, &picked);
+        select::select(&mut selection.reborrow(), SelectMode::Replace, &picked);
     }
     commands.remove_resource::<StartView>();
 }
@@ -1104,11 +1104,11 @@ fn apply(
     match op {
         ViewOp::Select { at, mode } => {
             let picked = select::pick_at(scene, (t, p), f.size, at);
-            scene.selection.apply(mode, picked.as_slice());
+            select::select(&mut scene.selection.reborrow(), mode, picked.as_slice());
         }
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
-            scene.selection.apply(mode, &picked);
+            select::select(&mut scene.selection.reborrow(), mode, &picked);
         }
         ViewOp::SetDragAction(action) => view.drag_action = action,
         ViewOp::PivotAt { at, orbit } => {

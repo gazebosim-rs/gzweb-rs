@@ -39,7 +39,7 @@ impl FooterButton {
     fn tooltip(self, enabled: bool, isolating: bool) -> Tooltip {
         let detail = match self {
             FooterButton::NewGroup => "Not available yet",
-            _ if !enabled => "Select a model first",
+            _ if !enabled => "Select a model, or a part of one, first",
             FooterButton::HideOthers => "Hide every model but the selected ones",
             FooterButton::Isolate if isolating => "Show the models Isolate hid",
             FooterButton::Isolate => "Show only the selected models, and frame them",
@@ -81,24 +81,38 @@ fn models(
     (all, picked)
 }
 
-/// Enabled with a selection (Isolate also while on, to turn it off);
-/// Isolate shows `Active` while on.
+/// Enabled while the selection is part of a model (Isolate also while
+/// on, to turn it off); Isolate shows `Active` while on. Isolate forgets a
+/// world it no longer applies to (none of the models it saved exist, as
+/// after a reload).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn footer_states(
     selection: Res<Selection>,
-    isolated: Res<Isolated>,
+    index: Res<GzIndex>,
+    nodes: Query<(Entity, &GzEntity, &ChildOf)>,
+    parents: Query<&ChildOf>,
+    mut isolated: ResMut<Isolated>,
     buttons: Query<(Entity, &FooterButton, Has<InteractionDisabled>, Has<Active>)>,
     added: Query<(), Added<FooterButton>>,
     mut commands: Commands,
 ) {
+    let stale = isolated
+        .0
+        .as_ref()
+        .is_some_and(|saved| !saved.iter().any(|(e, _)| nodes.contains(*e)));
+    if stale {
+        isolated.0 = None;
+    }
     if !selection.is_changed() && !isolated.is_changed() && added.is_empty() {
         return;
     }
+    let (_, picked) = models(&index, &selection, &nodes, &parents);
     let on = isolated.0.is_some();
     for (e, which, disabled, active) in &buttons {
         let enabled = match which {
             FooterButton::NewGroup => false,
-            FooterButton::HideOthers => !selection.entities.is_empty(),
-            FooterButton::Isolate => on || !selection.entities.is_empty(),
+            FooterButton::HideOthers => !picked.is_empty(),
+            FooterButton::Isolate => on || !picked.is_empty(),
         };
         let mut entity = commands.entity(e);
         if enabled == disabled {
@@ -140,6 +154,9 @@ pub(crate) fn on_footer(
         return;
     };
     let (all, picked) = models(&index, &selection, &nodes, &parents);
+    if picked.is_empty() && isolated.0.is_none() {
+        return;
+    }
     let mut set = |e: Entity, v: Visibility| {
         if let Ok(mut current) = visibility.get_mut(e) {
             current.set_if_neq(v);
