@@ -945,6 +945,43 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** workspace 485 → 493 passing (gz-ui 119 → 127); coverage
   98.4% lines.
 
+## 2026-10-20: PR #33 review fixes (D-58a)
+
+- **M1, Space on a focused button:** with the regions tab groups, Tab to
+  Reset then Space reset the world and toggled pause (gz-bevy's global
+  chord fired too), and Space on Play/Pause toggled twice. A focused widget
+  now consumes the keys it acts on: Bevy dispatches a key to the focused
+  entity and a widget that handles it stops it, so `focus::note_window_key`
+  notes the presses that reach the window and `focus::hide_taken_keys`
+  resets the rest (and their repeats, until release) in
+  `ButtonInput<KeyCode>`, which every shortcut reads. With nothing focused
+  Space still toggles; ⌘B still works with a button focused.
+- **S1:** with no panels the sidebar stays collapsed through start-up's
+  refits, ⌘B and its bar's button.
+- **S2:** the second slot opening or closing rebuilds only a header's slot
+  buttons; a focused header action keeps focus.
+- **S3:** `PanelState::actions`, `PanelStatus::action_enabled`,
+  `SetPanelStatus::set_action_enabled`; the header button changes in place.
+- **S4:** a header action's binding triggers `PanelActionActivated` while
+  its panel is shown and the action enabled (`header_action_keys`).
+- **Nits:** `hide_undisplayed` leaves a visibility its owner set (N1); the
+  slots despawn only bodies they host (N2); ready bodies have no row gap
+  (N3); disabled controls are no Tab stops (N4); no nested `TabGroup`s,
+  UI_PLAN §7 (N5); an unknown activity id is ignored (N6);
+  `ShellSystems::Slots` orders the slots before the readouts (N7);
+  `BAR_SEPARATOR_H` in `widgets::layout` (N8); the binding scanner reads
+  raw strings (N9); the footer is filed under UI_PLAN M7 (N10); tests for
+  each, plus Shift+Tab and Tab walks after reopening the sidebar and around
+  the second slot (N11).
+- **Web check** (release wasm, `?ui=full` against `allmesh` on
+  ws://localhost:9004): Tab ×8 to Play, Space plays once and Space again
+  pauses (before, the two toggles cancelled); with the view clicked
+  (nothing focused) Space toggles; Tab ×9 to Step, Space steps 1 ms and
+  the sim stays paused. No console errors. The world was left paused.
+- **Tests:** workspace 493 → 502 passing (gz-ui 127 → 136); coverage
+  98.7% lines. check.sh, clippy on 1.99.1 (native and wasm32) and
+  `./build.sh` pass.
+
 ## 2026-10-20: M3 viewport controls (D-59 to D-64)
 
 - **Rail** (`gz_ui::shell::viewport::rail`): Orbit/Pan/Zoom radio, Projection,

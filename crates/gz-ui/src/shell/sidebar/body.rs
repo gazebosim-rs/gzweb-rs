@@ -70,7 +70,13 @@ pub(super) fn spawn_body(
                 AlignItems::Stretch
             },
             overflow: Overflow::clip(),
-            ..column(if centred { SPACE[5] } else { SPACE[1] })
+            // Ready content lays itself out from the edges (tree rows
+            // abut); skeleton rows sit 2 apart.
+            ..column(match view {
+                PanelView::Ready => 0.0,
+                PanelView::Loading => SPACE[1],
+                PanelView::Empty { .. } | PanelView::Error { .. } => SPACE[5],
+            })
         },
         ChildOf(slot),
     ));

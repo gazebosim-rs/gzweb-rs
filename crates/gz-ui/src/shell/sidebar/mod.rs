@@ -76,9 +76,10 @@ fn slot_node(slot: Slot) -> impl Bundle {
     )
 }
 
-/// A panel's section header in a slot: rebuilt when its panel or the
-/// number of slots changes (its slot buttons depend on both), never for
-/// the body's sake. Its count changes in place ([`slot_counts`]).
+/// A panel's section header in a slot: rebuilt when its panel changes,
+/// never for the body's sake. When the number of slots changes only its
+/// slot buttons are (`two`: what they were built for); its count changes
+/// in place ([`slot_counts`]).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PanelHeader {
     pub panel: PanelId,
@@ -118,14 +119,17 @@ impl SlotSources<'_> {
 
 /// Keeps each slot's header and body in step with the layout and the
 /// panels' views, rebuilding as little as it can (DECISIONS.md D-58): a
-/// header when its panel or the number of slots changes; a body only when
-/// its panel's view changes. A body whose panel moved to the other slot
-/// (a swap) moves with it, and a second slot opening or closing leaves
-/// the first slot's body alone, so its entities (M4's tree) survive.
+/// header when its panel changes, only its slot buttons when the number
+/// of slots does (so a focused header action keeps focus); a body only
+/// when its panel's view changes. A body whose panel moved to the other
+/// slot (a swap) moves with it, and a second slot opening or closing
+/// leaves the first slot's body alone, so its entities (M4's tree)
+/// survive.
 pub(crate) fn rebuild_slots(
     sources: SlotSources,
     slots: Query<(Entity, &SlotView)>,
     headers: Query<(Entity, &PanelHeader, &ChildOf)>,
+    slot_actions: Query<(Entity, &ChildOf), With<SlotAction>>,
     bodies: Query<(Entity, &PanelBody, &BodyView, &ChildOf)>,
     mut commands: Commands,
 ) {
@@ -133,8 +137,12 @@ pub(crate) fn rebuild_slots(
         return;
     }
     let two = sources.layout.secondary.is_some();
-    // Bodies not claimed by a slot below are despawned.
-    let mut spare: Vec<_> = bodies.iter().collect();
+    // The slots' bodies not claimed by a slot below are despawned; a body
+    // hosted elsewhere (M7's pop-outs) isn't the slots' to keep.
+    let mut spare: Vec<_> = bodies
+        .iter()
+        .filter(|b| slots.contains(b.3.parent()))
+        .collect();
     for (slot_e, slot) in &slots {
         let def = sources
             .layout
@@ -142,13 +150,27 @@ pub(crate) fn rebuild_slots(
             .and_then(|p| sources.panels.get(p));
         let want = def.map(|d| PanelHeader { panel: d.id, two });
         let header = headers.iter().find(|h| h.2.parent() == slot_e);
-        if header.map(|h| *h.1) != want {
-            if let Some((e, ..)) = header {
-                commands.entity(e).despawn();
+        match (header, def, want) {
+            (Some((_, have, _)), _, Some(want)) if *have == want => {}
+            (Some((e, have, _)), _, Some(want)) if have.panel == want.panel => {
+                // Only the number of slots changed: new slot buttons.
+                for (b, _) in slot_actions.iter().filter(|b| b.1.parent() == e) {
+                    commands.entity(b).despawn();
+                }
+                let (t, map) = (&sources.theme, sources.map());
+                commands
+                    .entity(e)
+                    .insert(want)
+                    .with_children(|h| slot_buttons(h, t, &map, slot.0, two));
             }
-            if let (Some(def), Some(want)) = (def, want) {
-                let h = spawn_header(&mut commands, &sources, def, slot.0, want);
-                commands.entity(slot_e).insert_children(0, &[h]);
+            (header, def, want) => {
+                if let Some((e, ..)) = header {
+                    commands.entity(e).despawn();
+                }
+                if let (Some(def), Some(want)) = (def, want) {
+                    let h = spawn_header(&mut commands, &sources, def, slot.0, want);
+                    commands.entity(slot_e).insert_children(0, &[h]);
+                }
             }
         }
         let Some(def) = def else {
@@ -191,7 +213,7 @@ fn spawn_header(
         .spawn((section_header(t, def.title, count), header))
         .with_children(|h| {
             for a in &def.header_actions {
-                header_action(h, t, &map, def.id, a);
+                header_action(h, t, &map, &sources.status, def.id, a);
             }
             slot_buttons(h, t, &map, slot, header.two);
         })
@@ -217,20 +239,28 @@ pub(crate) fn slot_counts(
     }
 }
 
+/// A header action's button (with its [`ActionButton`]): its enabled
+/// state follows [`PanelStatus`] in place ([`header_action_states`]).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct HeaderButton;
+
 /// A panel's header action: an icon button that triggers
-/// [`PanelActionActivated`](crate::panels::PanelActionActivated).
+/// [`PanelActionActivated`](crate::panels::PanelActionActivated), enabled
+/// as the panel's status says.
 fn header_action(
     h: &mut ChildSpawnerCommands,
     theme: &Theme,
     map: &InputMap,
+    status: &PanelStatus,
     panel: PanelId,
     a: &HeaderAction,
 ) {
+    let enabled = status.header_action_enabled(panel, a);
     let mut tip = Tooltip::new(a.tooltip);
     if let Some(b) = a.binding {
         tip = tip.binding(map, b);
     }
-    if !a.enabled {
+    if !enabled {
         tip = tip.detail(body::NOT_YET);
     }
     let mut e = h.spawn((
@@ -239,9 +269,49 @@ fn header_action(
             panel,
             action: a.id,
         },
+        HeaderButton,
     ));
-    if !a.enabled {
+    if !enabled {
         e.insert(InteractionDisabled);
+    }
+}
+
+/// Each header action's button follows its panel's [`PanelStatus`] in
+/// place: dimmed, saying "Not available yet" and inert while disabled.
+pub(crate) fn header_action_states(
+    status: Res<PanelStatus>,
+    panels: Res<PanelRegistry>,
+    mut buttons: Query<
+        (
+            Entity,
+            &ActionButton,
+            &mut Tooltip,
+            Has<InteractionDisabled>,
+        ),
+        With<HeaderButton>,
+    >,
+    mut commands: Commands,
+) {
+    if !status.is_changed() {
+        return;
+    }
+    for (e, b, mut tip, disabled) in &mut buttons {
+        let Some(a) = panels
+            .get(b.panel)
+            .and_then(|d| d.header_actions.iter().find(|a| a.id == b.action))
+        else {
+            continue;
+        };
+        let enabled = status.header_action_enabled(b.panel, a);
+        if enabled == !disabled {
+            continue;
+        }
+        if enabled {
+            commands.entity(e).remove::<InteractionDisabled>();
+        } else {
+            commands.entity(e).insert(InteractionDisabled);
+        }
+        tip.detail = (!enabled).then(|| body::NOT_YET.to_string());
     }
 }
 
@@ -339,12 +409,12 @@ pub(crate) fn build(app: &mut App) {
             .in_set(ShellSystems::Layout)
             .after(super::regions::apply_layout),
     )
-    // After the panels have written their views.
+    // After the panels have written their views, before the readouts.
     .add_systems(
         Update,
-        (rebuild_slots, slot_counts)
+        (rebuild_slots, slot_counts, header_action_states)
             .chain()
-            .in_set(ShellSystems::Readouts),
+            .in_set(ShellSystems::Slots),
     )
     .add_observer(on_slot_action)
     .add_observer(body::on_action_button)

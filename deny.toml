@@ -17,6 +17,10 @@ ignore = [
   { id = "RUSTSEC-2026-0344", reason = "transitive via bevy_image 0.20; no compatible fix" },
   # Unmaintained, no known vulnerability; transitive via Bevy.
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, transitive via bevy_text" },
+  # webpki-roots 0.26.11 (required by tungstenite 0.26) is a shim that
+  # re-exports webpki-roots 1.x, locked at the fixed 1.0.10, so its roots
+  # are the fixed ones. Drop when tungstenite moves to webpki-roots 1.x.
+  { id = "RUSTSEC-2026-0381", reason = "webpki-roots 0.26.11 shim re-exports the fixed 1.0.10" },
 ]
 
 [licenses]

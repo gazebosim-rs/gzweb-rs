@@ -83,6 +83,10 @@ pub enum Orientation {
     Vertical,
 }
 
+/// The length of the top bar's vertical separators between its groups
+/// (§3.1 item 3: 1×18), for the shell and the gallery's copy of the bar.
+pub(crate) const BAR_SEPARATOR_H: f32 = 18.0;
+
 /// A 1px `line` rule `length` long, with `margin` on both sides across it:
 /// vertical between the items of a row (the top bar's groups), horizontal
 /// between those of a column (the activity bar's groups).

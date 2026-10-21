@@ -155,6 +155,15 @@ pub(crate) fn layout(app: &App) -> ShellLayout {
     app.world().resource::<ShellLayout>().clone()
 }
 
+/// Adds the viewer's own keys (`gz_bevy`'s `key_input`: Space taps
+/// play/pause, ⌘→ steps), which the app runs beside the shell's.
+pub(crate) fn with_viewer_keys(app: &mut App) {
+    app.init_resource::<gz_bevy::view::controls::ControlState>()
+        .init_resource::<GzGrid>()
+        .add_message::<ViewCommand>()
+        .add_systems(Update, gz_bevy::view::controls::key_input);
+}
+
 pub(crate) fn key(app: &mut App, key_code: KeyCode, state: ButtonState) {
     let window = find::<Window>(app);
     app.world_mut().write_message(KeyboardInput {
