@@ -23,10 +23,20 @@
 //! Nor does Tab land there ([`hide_undisplayed`], DECISIONS.md D-58):
 //! Bevy's tab navigation skips only invisible entities, so a node that
 //! isn't displayed is made invisible too.
+//!
+//! A focused widget consumes the keys it acts on ([`hide_taken_keys`],
+//! DECISIONS.md D-58a): Bevy hands a key to the focused widget first, and
+//! a widget that acts on it (a button on Space or Enter, a menu on its
+//! arrows, a slider on its keys) stops it there; only a key that reaches
+//! the window is the shortcuts' to see. So a Tab-focused Reset takes
+//! Space and the global play/pause chord doesn't fire as well.
 
-use bevy::input_focus::InputFocus;
+use bevy::input::keyboard::{KeyboardFocusLost, KeyboardInput};
+use bevy::input::ButtonState;
+use bevy::input_focus::{FocusedInput, InputFocus};
 use bevy::prelude::*;
 use bevy::ui_widgets::{MenuPopup, TextInput};
+use bevy::window::PrimaryWindow;
 use gz_bevy::view::controls::ActiveScopes;
 use gz_bevy::view::input::Scope;
 
@@ -191,4 +201,76 @@ pub(crate) fn menu_escape(
                 .any(|a| popups.get(a).is_ok_and(|v| *v != Visibility::Hidden))
         });
     taken.set_if_neq(MenuTakesEscape(in_menu));
+}
+
+/// Which keys focused widgets took (DECISIONS.md D-58a).
+#[derive(Resource, Clone, Debug, Default)]
+pub(crate) struct WidgetKeys {
+    /// This frame's presses that reached the window: no widget took them.
+    reached: Vec<KeyCode>,
+    /// Keys a focused widget took, hidden from the shortcuts until they
+    /// are released.
+    taken: Vec<KeyCode>,
+}
+
+/// Notes a key press that reached the window: nothing focused took it.
+/// Observes each primary window ([`watch_windows`]), where Bevy delivers
+/// a key when nothing has focus and where a focused widget's keys arrive
+/// unless it stopped them.
+pub(crate) fn note_window_key(ev: On<FocusedInput<KeyboardInput>>, mut keys: ResMut<WidgetKeys>) {
+    let input = &ev.input;
+    if input.state == ButtonState::Pressed && !input.repeat {
+        keys.reached.push(input.key_code);
+    }
+}
+
+/// Watches the primary window for keys that reach it ([`note_window_key`]).
+pub(crate) fn watch_windows(windows: Query<Entity, With<PrimaryWindow>>, mut commands: Commands) {
+    for window in &windows {
+        commands.entity(window).observe(note_window_key);
+    }
+}
+
+/// Hides a key a focused widget took from the shortcuts: a press Bevy
+/// dispatched that never reached the window is reset in
+/// `ButtonInput<KeyCode>` (with its repeats) until the key is released, so
+/// the viewer's and the shell's shortcuts, which read it, never see it: a
+/// Tab-focused button takes Space, and play/pause stays put. Runs in
+/// PreUpdate once Bevy has dispatched the frame's keys.
+pub(crate) fn hide_taken_keys(
+    mut input: MessageReader<KeyboardInput>,
+    mut lost: MessageReader<KeyboardFocusLost>,
+    windows: Query<(), With<PrimaryWindow>>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut state: ResMut<WidgetKeys>,
+) {
+    let reached = std::mem::take(&mut state.reached);
+    if lost.read().count() > 0 {
+        // Every key was released.
+        state.taken.clear();
+    }
+    if windows.is_empty() {
+        // Without a window Bevy dispatches no key, so none was taken.
+        input.clear();
+        return;
+    }
+    let mut hide = state.taken.clone();
+    for ev in input.read() {
+        let k = ev.key_code;
+        match ev.state {
+            ButtonState::Pressed if !ev.repeat && !reached.contains(&k) => {
+                if !state.taken.contains(&k) {
+                    state.taken.push(k);
+                }
+                if !hide.contains(&k) {
+                    hide.push(k);
+                }
+            }
+            ButtonState::Released => state.taken.retain(|t| *t != k),
+            ButtonState::Pressed => {}
+        }
+    }
+    for k in hide {
+        keys.reset(k);
+    }
 }

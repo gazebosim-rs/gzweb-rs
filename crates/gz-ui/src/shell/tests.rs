@@ -838,6 +838,82 @@ fn a_tab_focused_button_still_takes_enter() {
     assert!(!layout(&app).sidebar_open);
 }
 
+fn transport(app: &mut App, which: super::top_bar::transport::Transport) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &super::top_bar::transport::Transport)>()
+        .iter(world)
+        .find(|(_, t)| **t == which)
+        .unwrap()
+        .0
+}
+
+/// Tab, then Space: the focused button takes Space, and the global
+/// play/pause chord (gz-bevy's Space tap) stands down (DECISIONS.md
+/// D-58a). Reset resets once without toggling the sim; Play/Pause
+/// toggles exactly once; with nothing focused Space still toggles.
+#[test]
+fn a_focused_button_takes_space_from_the_play_pause_chord() {
+    use super::top_bar::transport::Transport;
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    sent(&mut app);
+    let space = |app: &mut App| {
+        chord(app, &[KeyCode::Space]);
+        frames(app, 1);
+        sent(app)
+    };
+    assert_eq!(space(&mut app), [GzCommand::Pause], "no focus: the chord");
+    let reset = transport(&mut app, Transport::Reset);
+    tab_to(&mut app, reset);
+    assert_eq!(space(&mut app), [GzCommand::Reset]);
+    assert_eq!(focused(&app), Some(reset));
+    let play = transport(&mut app, Transport::PlayPause);
+    tab_to(&mut app, play);
+    assert_eq!(space(&mut app), [GzCommand::Pause]);
+    // Held: the repeats are the button's too, and the release is no tap.
+    key(&mut app, KeyCode::Space, ButtonState::Pressed);
+    frames(&mut app, 3);
+    key(&mut app, KeyCode::Space, ButtonState::Released);
+    frames(&mut app, 2);
+    assert_eq!(sent(&mut app), [GzCommand::Pause]);
+    // Focus gone: Space is the chord's again.
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    assert_eq!(space(&mut app), [GzCommand::Pause]);
+    // A shortcut on another key still works with a button focused.
+    tab_to(&mut app, reset);
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyB]);
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// Tab pressed for real to Reset, then Space: one reset, no pause.
+#[test]
+fn tab_to_reset_then_space_resets_once() {
+    use super::top_bar::transport::Transport;
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    let reset = transport(&mut app, Transport::Reset);
+    for _ in 0..50 {
+        chord(&mut app, &[KeyCode::Tab]);
+        if focused(&app) == Some(reset) {
+            break;
+        }
+    }
+    assert_eq!(focused(&app), Some(reset));
+    sent(&mut app);
+    chord(&mut app, &[KeyCode::Space]);
+    frames(&mut app, 1);
+    assert_eq!(sent(&mut app), [GzCommand::Reset]);
+}
+
 /// Reset works in the top bar and the inspector alike: with a live world,
 /// stats or not. Play/Pause needs the stats.
 #[test]

@@ -119,10 +119,13 @@ impl Plugin for GzUiPlugin {
             .configure_sets(PostUpdate, GzUiSystems::Resolve.before(UiSystems::Prepare))
             .init_resource::<focus::MenuTakesEscape>()
             .init_resource::<focus::PointerLed>()
+            .init_resource::<focus::WidgetKeys>()
+            .add_systems(Startup, focus::watch_windows)
             .add_systems(
                 PreUpdate,
                 (
                     focus::text_focus_system.after(InputFocusSystems::Dispatch),
+                    focus::hide_taken_keys.after(InputFocusSystems::Dispatch),
                     (focus::note_input, focus::menu_escape).in_set(GzUiSystems::Input),
                 ),
             )
