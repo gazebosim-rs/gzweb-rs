@@ -129,6 +129,65 @@ impl SnapView {
     }
 }
 
+impl std::str::FromStr for SnapView {
+    type Err = String;
+
+    /// `top`, `bottom`, `front`, `back`, `right` or `left` (any case).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "top" => SnapView::Top,
+            "bottom" => SnapView::Bottom,
+            "front" => SnapView::Front,
+            "back" => SnapView::Back,
+            "right" => SnapView::Right,
+            "left" => SnapView::Left,
+            _ => {
+                return Err(format!(
+                    "unknown view '{s}' (top, bottom, front, back, right or left)"
+                ))
+            }
+        })
+    }
+}
+
+/// How the view starts once the first world loads: an axis view and
+/// overlays turned on (`gzweb --view`, `--overlays`; DECISIONS.md D-64),
+/// so a capture can show them. Applied once.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct StartView {
+    pub view: Option<SnapView>,
+    pub overlays: Vec<crate::overlays::Overlay>,
+}
+
+/// Applies [`StartView`] when the first scene has arrived, then removes
+/// it.
+pub fn apply_start_view(
+    start: Option<Res<StartView>>,
+    index: Option<Res<crate::spawn::GzIndex>>,
+    views: Query<Entity, With<ViewCamera>>,
+    mut view_out: MessageWriter<ViewCommand>,
+    mut overlay_out: MessageWriter<crate::overlays::OverlayCommand>,
+    mut commands: Commands,
+) {
+    let Some(start) = start else { return };
+    if index.is_none_or(|i| i.scene.is_none()) {
+        return;
+    }
+    let Some(view) = views.iter().next() else {
+        return;
+    };
+    if let Some(face) = start.view {
+        view_out.write(ViewCommand {
+            view,
+            op: ViewOp::Snap(face),
+        });
+    }
+    for o in &start.overlays {
+        overlay_out.write(crate::overlays::OverlayCommand::set(*o, true));
+    }
+    commands.remove_resource::<StartView>();
+}
+
 /// Fly-key directions (minimal mode's W A S D / arrows and Q / E).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlyDir {

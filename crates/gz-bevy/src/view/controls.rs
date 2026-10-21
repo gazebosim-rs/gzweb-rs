@@ -210,6 +210,7 @@ impl Plugin for ViewerControls {
                 Update,
                 (
                     drop_command_chord_keys,
+                    super::apply_start_view,
                     mouse_input,
                     key_input,
                     fly_input,

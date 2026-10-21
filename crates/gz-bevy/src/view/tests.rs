@@ -2107,3 +2107,43 @@ fn overlay_keys_toggle_the_overlays() {
         assert!(!get(r.app.world().resource::<Overlays>()), "{key:?}");
     }
 }
+
+#[test]
+fn the_start_view_applies_once_the_world_has_loaded() {
+    use crate::overlays::{Overlay, Overlays};
+    let mut r = rig(default_view());
+    r.app.insert_resource(StartView {
+        view: Some(SnapView::Top),
+        overlays: vec![Overlay::Frames, Overlay::Grid],
+    });
+    r.app.init_resource::<crate::spawn::GzIndex>();
+    r.frames(2);
+    assert!(
+        r.app.world().contains_resource::<StartView>(),
+        "waits for a world"
+    );
+    r.app
+        .world_mut()
+        .resource_mut::<crate::spawn::GzIndex>()
+        .scene = Some(gz_core::scene::SceneDesc::from_msg(
+        &Default::default(),
+        Default::default(),
+    ));
+    r.frames(1);
+    r.settle();
+    assert!(!r.app.world().contains_resource::<StartView>());
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
+    let o = *r.app.world().resource::<Overlays>();
+    assert!(o.frames && o.grid);
+    for (s, v) in [
+        ("TOP", SnapView::Top),
+        (" left", SnapView::Left),
+        ("back", SnapView::Back),
+        ("front", SnapView::Front),
+        ("right", SnapView::Right),
+        ("bottom", SnapView::Bottom),
+    ] {
+        assert_eq!(s.parse::<SnapView>(), Ok(v));
+    }
+    assert!("iso".parse::<SnapView>().is_err());
+}
