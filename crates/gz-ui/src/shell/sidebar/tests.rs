@@ -168,6 +168,31 @@ fn without_the_default_panel_the_first_one_opens() {
     frames(&mut app, 2);
     let l = layout(&app);
     assert_eq!((l.primary, l.sidebar_open), (None, false));
+    // Nor does it open when the window's real size arrives during
+    // start-up, from ⌘B, from its collapsed bar or for an activity.
+    let window = find::<Window>(&mut app);
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .resolution
+        .set(1300.0, 900.0);
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert!(l.startup && l.window_w == 1300.0 && !l.sidebar_open);
+    for cmd in [
+        UiCommand::ToggleSidebar,
+        UiCommand::Show(crate::shell::Side::Sidebar),
+        UiCommand::Activity {
+            panel: PLOT,
+            shift: false,
+        },
+    ] {
+        app.world_mut().write_message(cmd.clone());
+        frames(&mut app, 2);
+        assert!(!layout(&app).sidebar_open, "{cmd:?}");
+    }
+    let sidebar = region(&mut app, crate::shell::regions::Region::Sidebar);
+    assert!(!displayed(&app, sidebar));
 }
 
 /// The probe panel opened in `slot` (Scene is live in the primary).
