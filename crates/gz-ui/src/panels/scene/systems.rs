@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
@@ -20,8 +21,8 @@ use gz_core::scene::NodeKind;
 
 use super::model::{ModelBuilder, NodeKey, Row, TreeModel, TreeScroll, TreeState};
 use super::view::{
-    spawn_slot, ChipChoice, ChipRow, FilterButton, FilterField, NoMatches, TreeContent, TreeList,
-    TreeSlot, TreeSources,
+    expose, first_row, pool_size, spawn_slot, ChipChoice, ChipRow, FilterButton, FilterField,
+    NoMatches, TreeContent, TreeList, TreeSlot, TreeSources,
 };
 use super::{COLLAPSE_ALL, EXPAND_ALL, NEW_WORLD, OPEN_WORLD, SCENE};
 use crate::panels::{PanelAction, PanelActionActivated, PanelView};
@@ -109,15 +110,23 @@ pub(super) struct SceneSources<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     added: Query<'w, 's, (), StructureChanged>,
     removed: RemovedComponents<'w, 's, GzEntity>,
+    /// The world the tree was last built for (`GzStatus` changes with every
+    /// stats message; only its world matters here).
+    world: Local<'s, Option<String>>,
 }
 
 impl SceneSources<'_, '_> {
     /// Entities came or went, or the world or its SDFormat changed.
     fn changed(&mut self) -> bool {
         let removed = self.removed.read().count() > 0;
+        let world = self.status.as_ref().and_then(|s| s.world.as_deref());
+        let new_world = world != self.world.as_deref();
+        if new_world {
+            *self.world = world.map(str::to_owned);
+        }
         removed
+            || new_world
             || !self.added.is_empty()
-            || self.status.as_ref().is_some_and(Res::is_changed)
             || self.extras.as_ref().is_some_and(Res::is_changed)
             || self.index.as_ref().is_some_and(Res::is_changed)
     }
@@ -196,31 +205,39 @@ pub(super) fn rebuild_model(mut sources: SceneSources, mut model: ResMut<TreeMod
     }
 }
 
-/// A [`SceneTreeStart`](super::SceneTreeStart), once there is a tree.
+/// A [`SceneTreeStart`](super::SceneTreeStart), once there is a tree: the
+/// filter on the first one; every row open, as rows arrive, until the tree
+/// has more than the world (a world that starts empty gets its models
+/// later), then it is removed.
 pub(super) fn apply_start(
-    start: Option<Res<super::SceneTreeStart>>,
+    start: Option<ResMut<super::SceneTreeStart>>,
     model: Res<TreeModel>,
     mut state: ResMut<TreeState>,
     inputs: Query<(Entity, &ChildOf), With<EditableText>>,
     fields: Query<(), With<FilterField>>,
     mut commands: Commands,
 ) {
-    let Some(start) = start.filter(|_| !model.nodes.is_empty()) else {
+    let Some(mut start) = start.filter(|_| !model.nodes.is_empty()) else {
         return;
     };
-    if start.expand_all {
-        state.expanded = model.branches().cloned().collect();
+    if start.expand_all && (model.is_changed() || start.is_added()) {
+        state.expanded.extend(model.branches().cloned());
     }
-    state.filter.clone_from(&start.filter);
-    // A body built before the tree shows the filter too.
-    for (e, parent) in &inputs {
-        if fields.contains(parent.parent()) {
-            commands
-                .entity(e)
-                .insert(EditableText::new(start.filter.as_str()));
+    if !start.filter.is_empty() {
+        state.filter = std::mem::take(&mut start.filter);
+        // A body built before the tree shows the filter too.
+        for (e, parent) in &inputs {
+            if fields.contains(parent.parent()) {
+                commands
+                    .entity(e)
+                    .insert(EditableText::new(state.filter.as_str()));
+            }
         }
     }
-    commands.remove_resource::<super::SceneTreeStart>();
+    let waiting = start.expand_all && model.branches().all(|k| *k == NodeKey::World);
+    if !waiting {
+        commands.remove_resource::<super::SceneTreeStart>();
+    }
 }
 
 /// The tree asks for the world's SDFormat (its joints) while it shows.
@@ -296,6 +313,7 @@ pub(super) struct Pool<'w, 's> {
     >,
     no_matches: Query<'w, 's, &'static mut Node, NoMatchesOnly>,
     shown: Query<'w, 's, (), (With<GzEntity>, Changed<Visibility>)>,
+    access: Query<'w, 's, &'static mut AccessibilityNode, With<TreeSlot>>,
 }
 
 /// Places the pooled rows over what is in view (DECISIONS.md D-66): the
@@ -313,7 +331,9 @@ pub(super) fn place_rows(
         return;
     };
     let visibility = !pool.shown.is_empty();
-    if !src.rows.is_changed() && !pos.is_changed() && !computed.is_changed() && !visibility {
+    // The model too: a row's name or kind can change with its place.
+    let repaint = src.rows.is_changed() || src.model.is_changed() || visibility;
+    if !repaint && !pos.is_changed() && !computed.is_changed() {
         return;
     }
     let row_h = src.row_h();
@@ -334,8 +354,8 @@ pub(super) fn place_rows(
     for mut node in &mut pool.no_matches {
         set_shown(&mut node, rows.is_empty() && src.state.filtering());
     }
-    let first = (y / row_h).floor() as usize;
-    let want = (view_h / row_h).ceil() as usize + 1;
+    let first = first_row(y, row_h);
+    let want = pool_size(view_h, row_h);
     let Ok((content, _)) = pool.contents.single() else {
         return;
     };
@@ -359,6 +379,11 @@ pub(super) fn place_rows(
         let at = shown.then_some(i);
         slot.set_if_neq(TreeSlot(at));
         set_shown(&mut node, shown);
+        if let Ok(mut access) = pool.access.get_mut(e) {
+            if access.0.is_hidden() == shown {
+                expose(&mut access, shown);
+            }
+        }
         if let Some(i) = at {
             let top = px(i as f32 * row_h);
             if node.top != top {

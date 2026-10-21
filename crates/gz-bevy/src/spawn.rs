@@ -658,6 +658,8 @@ pub fn apply_deletions(
         for e in std::iter::once(top).chain(children.iter_descendants(top)) {
             let Ok(gz) = entities.get(e) else { continue };
             gone.insert(e);
+            // A model spawned again under the name gets the same paths.
+            index.paths.free(&gz.path);
             if index.by_id.get(&gz.id) == Some(&e) {
                 index.by_id.remove(&gz.id);
             }
@@ -1108,12 +1110,22 @@ mod tests {
         assert!(!index.model_names.contains("r"));
         assert!(app.world().get_entity(r).is_err() && app.world().get_entity(base).is_err());
 
-        // Deleted and spawned again in one frame: the new one stays.
+        // Deleted and spawned again in one frame: the new one stays, with
+        // the paths the first had (the SDFormat's links and joints, and the
+        // tree's state, are keyed on them).
+        let paths = |app: &mut App, id: u32| {
+            let index = app.world().resource::<GzIndex>();
+            let (m, l) = (index.by_id[&id], index.by_id[&(id + 1)]);
+            let path = |e| app.world().get::<GzEntity>(e).unwrap().path.clone();
+            (path(m), path(l))
+        };
         update_with(&mut app, vec![robot("r", 30)], vec![]);
+        assert_eq!(paths(&mut app, 30), ("r".into(), "r/base".into()));
         update_with(&mut app, vec![robot("r", 40)], vec![30]);
         let index = app.world().resource::<GzIndex>();
         assert_eq!(index.by_name["r"].len(), 1);
         assert!(index.by_id.contains_key(&40) && !index.by_id.contains_key(&30));
+        assert_eq!(paths(&mut app, 40), ("r".into(), "r/base".into()));
         // Spawned and deleted in one frame: gone on the next.
         update_with(&mut app, vec![robot("brief", 50)], vec![50]);
         app.update();

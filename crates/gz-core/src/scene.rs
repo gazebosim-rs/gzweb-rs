@@ -5,7 +5,7 @@
 //! instantiate. All poses are in Gazebo's Z-up frame and are *local* to the
 //! parent node, exactly like gzweb's three.js `Object3D` tree.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use gz_proto::msgs;
 
@@ -460,10 +460,18 @@ impl SceneDesc {
 }
 
 /// Assigns unique name paths: names joined with `/`; a repeated sibling name
-/// gets `#1`, `#2`, ... in order of appearance.
+/// gets `#1`, `#2`, ... in order of appearance. A path [`free`]d (its entity
+/// deleted) is given out again, the lowest first, so a model deleted and
+/// spawned again keeps its path and what is keyed on it (its SDFormat
+/// links and joints, its tree row's state).
+///
+/// [`free`]: PathAllocator::free
 #[derive(Debug, Default, Clone)]
 pub struct PathAllocator {
-    seen: HashMap<String, usize>,
+    /// Each base path's suffixes in use (0 is the bare path).
+    used: HashMap<String, BTreeSet<usize>>,
+    /// Each path given out: its base and suffix.
+    given: HashMap<String, (String, usize)>,
 }
 
 impl PathAllocator {
@@ -473,14 +481,37 @@ impl PathAllocator {
         } else {
             format!("{parent}/{name}")
         };
-        let count = self.seen.entry(base.clone()).or_insert(0);
-        let path = if *count == 0 {
-            base
-        } else {
-            format!("{base}#{count}")
+        let used = self.used.entry(base.clone()).or_default();
+        let with = |n: usize| {
+            if n == 0 {
+                base.clone()
+            } else {
+                format!("{base}#{n}")
+            }
         };
-        *count += 1;
+        // The lowest free suffix whose path no other name took (a model
+        // named `a#1` has `a#1`, so the second `a` is `a#2`).
+        let (n, path) = (0..)
+            .map(|n| (n, with(n)))
+            .find(|(n, path)| !used.contains(n) && !self.given.contains_key(path))
+            .expect("a free suffix");
+        used.insert(n);
+        self.given.insert(path.clone(), (base, n));
         path
+    }
+
+    /// Gives `path` back: the next [`alloc`](Self::alloc) of its name
+    /// under the same parent may return it.
+    pub fn free(&mut self, path: &str) {
+        let Some((base, n)) = self.given.remove(path) else {
+            return;
+        };
+        if let Some(used) = self.used.get_mut(&base) {
+            used.remove(&n);
+            if used.is_empty() {
+                self.used.remove(&base);
+            }
+        }
     }
 }
 
@@ -1169,6 +1200,32 @@ mod tests {
         assert_eq!(p.alloc("a", "x"), "a/x");
         assert_eq!(p.alloc("a#1", "x"), "a#1/x");
         assert_eq!(p.alloc("a", "x"), "a/x#1");
+    }
+
+    #[test]
+    fn freed_paths_are_given_out_again_lowest_first() {
+        let mut p = PathAllocator::default();
+        for _ in 0..3 {
+            p.alloc("", "a");
+        }
+        p.alloc("a", "x");
+        p.free("a");
+        p.free("a/x");
+        assert_eq!(p.alloc("", "a"), "a");
+        assert_eq!(p.alloc("a", "x"), "a/x");
+        assert_eq!(p.alloc("", "a"), "a#3");
+        p.free("a#1");
+        p.free("a#2");
+        p.free("unknown");
+        assert_eq!(p.alloc("", "a"), "a#1");
+        // A name with `#` in it never shares a path with a suffix.
+        assert_eq!(p.alloc("", "a#2"), "a#2");
+        assert_eq!(p.alloc("", "a"), "a#4");
+        assert_eq!(p.alloc("", "a#2"), "a#2#1");
+        let mut q = PathAllocator::default();
+        assert_eq!(q.alloc("", "b#1"), "b#1");
+        assert_eq!(q.alloc("", "b"), "b");
+        assert_eq!(q.alloc("", "b"), "b#2");
     }
 
     fn header(key: &str, value: &str) -> Option<msgs::Header> {

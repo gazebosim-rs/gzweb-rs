@@ -598,3 +598,174 @@ fn a_start_filter_and_expansion_apply_once() {
     set_filter(&mut app, "");
     assert_eq!(rows(&mut app).len(), 8);
 }
+
+/// `--scene-expand` on a world that starts with no models keeps the world
+/// open and opens the models that come later.
+#[test]
+fn a_start_expansion_waits_for_models() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(super::SceneTreeStart {
+        filter: String::new(),
+        expand_all: true,
+    });
+    frames(&mut app, 2);
+    let root = {
+        let world = app.world_mut();
+        let root = world
+            .spawn((Transform::default(), Visibility::default()))
+            .id();
+        let mut index = world.resource_mut::<GzIndex>();
+        index.root = Some(root);
+        index.scene = Some(gz_core::scene::SceneDesc::from_msg(
+            &Default::default(),
+            Default::default(),
+        ));
+        root
+    };
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    assert_eq!(rows(&mut app), ["W warehouse_demo"]);
+    assert!(app.world().contains_resource::<super::SceneTreeStart>());
+    let w = World3 { root };
+    let amr = w.add(&mut app, root, "amr_01", "amr_01", NodeKind::Model);
+    w.add(
+        &mut app,
+        amr,
+        "base_link",
+        "amr_01/base_link",
+        NodeKind::Link,
+    );
+    frames(&mut app, 2);
+    assert_eq!(
+        rows(&mut app),
+        ["v W warehouse_demo", "  v M amr_01", "    K base_link"]
+    );
+    assert!(!app.world().contains_resource::<super::SceneTreeStart>());
+}
+
+/// The sim's stats change `GzStatus` several times a second; the tree is
+/// rebuilt only when its world or its entities change. (A name changed in
+/// place is no structural change: it shows only once something else
+/// rebuilds the tree, which a stats message no longer does.)
+#[test]
+fn stats_messages_leave_the_tree_alone() {
+    let (mut app, _) = live_tree();
+    let crate_01 = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &GzEntity)>()
+            .iter(world)
+            .find(|(_, g)| g.name == "crate_01")
+            .unwrap()
+            .0
+    };
+    app.world_mut().get_mut::<GzEntity>(crate_01).unwrap().name = "renamed".into();
+    for k in 0..3 {
+        if let Some(sim) = app.world_mut().resource_mut::<GzStatus>().sim.as_mut() {
+            sim.iterations += 1 + k;
+        }
+        app.world_mut().resource_mut::<GzStatus>().set_changed();
+        app.update();
+    }
+    assert!(rows(&mut app).iter().any(|r| r.ends_with("crate_01")));
+    app.world_mut().resource_mut::<GzStatus>().world = Some("other".into());
+    frames(&mut app, 2);
+    let shown = rows(&mut app);
+    assert!(shown.iter().any(|r| r.ends_with("renamed")), "{shown:?}");
+    assert!(shown[0].ends_with("other"), "{shown:?}");
+}
+
+/// Scrolled by any amount, the shown rows cover the list from its top to
+/// its bottom: rows sit inside the list's padding, so the row above a
+/// boundary still shows for the padding's height after it.
+#[test]
+fn the_pool_covers_the_list_at_any_scroll() {
+    let (mut app, w) = live_tree();
+    for i in 0..300 {
+        let name = format!("box_{i:04}");
+        w.add(&mut app, w.root, &name, &name, NodeKind::Model);
+    }
+    frames(&mut app, 2);
+    let list = find::<TreeList>(&mut app);
+    for y in [0.0, 2800.0, 2804.0, 2810.0, 2827.0, 4000.0] {
+        app.world_mut().get_mut::<ScrollPosition>(list).unwrap().y = y;
+        frames(&mut app, 3);
+        let (top, size) = rect(&app, list);
+        let world = app.world_mut();
+        let shown: Vec<Entity> = world
+            .query::<(Entity, &TreeSlot, &Node)>()
+            .iter(world)
+            .filter(|(_, s, n)| s.0.is_some() && n.display != Display::None)
+            .map(|(e, ..)| e)
+            .collect();
+        let spans: Vec<(f32, f32)> = shown
+            .into_iter()
+            .map(|e| {
+                let (at, s) = rect(&app, e);
+                (at.y, at.y + s.y)
+            })
+            .collect();
+        let first = spans.iter().map(|s| s.0).fold(f32::MAX, f32::min);
+        let last = spans.iter().map(|s| s.1).fold(f32::MIN, f32::max);
+        assert!(
+            first <= top.y + 8.0 + 0.5,
+            "{y}: first row at {first}, list at {}",
+            top.y
+        );
+        if y > 8.0 {
+            assert!(first <= top.y + 0.5, "{y}: a gap above the first row");
+        }
+        assert!(
+            last >= top.y + size.y - 0.5,
+            "{y}: a gap below the last row"
+        );
+    }
+}
+
+/// What a screen reader gets: the tree's items under the Tree (through the
+/// content node: Bevy links an accessibility node to its parent's only),
+/// and only the rows shown; pooled rows with nothing to show are hidden.
+#[test]
+fn the_accessibility_tree_has_only_the_rows_shown() {
+    use bevy::a11y::AccessibilityNode;
+    let (mut app, w) = live_tree();
+    for i in 0..300 {
+        let name = format!("box_{i:04}");
+        w.add(&mut app, w.root, &name, &name, NodeKind::Model);
+    }
+    frames(&mut app, 2);
+    let items = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query::<(&TreeSlot, &AccessibilityNode, &ChildOf)>()
+            .iter(world)
+            .map(|(s, a, p)| {
+                (
+                    s.0.is_some(),
+                    a.is_hidden(),
+                    a.label().map(str::to_owned),
+                    p.parent(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = items(&mut app);
+    assert!(before.len() > 20);
+    let content = before[0].3;
+    let tree = app.world().get::<ChildOf>(content).unwrap().parent();
+    assert!(app.world().get::<AccessibilityNode>(content).is_some());
+    assert_eq!(
+        app.world().get::<AccessibilityNode>(tree).map(|a| a.role()),
+        Some(accesskit::Role::Tree)
+    );
+    assert!(before.iter().all(|(shown, hidden, ..)| shown != hidden));
+    caret(&mut app, "warehouse_demo");
+    frames(&mut app, 2);
+    let after = items(&mut app);
+    let exposed: Vec<_> = after.iter().filter(|i| !i.1).collect();
+    assert_eq!(exposed.len(), 1, "{exposed:?}");
+    assert_eq!(exposed[0].2.as_deref(), Some("warehouse_demo"));
+    caret(&mut app, "warehouse_demo");
+    frames(&mut app, 2);
+    assert!(items(&mut app).iter().filter(|i| !i.1).count() > 20);
+}

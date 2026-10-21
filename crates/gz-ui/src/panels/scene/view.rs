@@ -4,6 +4,7 @@
 //! D-58, D-66).
 
 use accesskit::Role;
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
@@ -93,8 +94,22 @@ impl TreeSources<'_, '_> {
     /// with, so it shows its rows in its first frame.
     fn first_pool(&self) -> usize {
         let h = self.windows.single().map_or(900.0, Window::height);
-        (h / self.row_h()).ceil() as usize + 1
+        pool_size(h, self.row_h())
     }
+}
+
+/// The first row any of which shows with the list scrolled `y` down. The
+/// rows sit inside the list's top padding and the list clips at its
+/// padding box, so the row above `y / row_h` shows for the padding's
+/// height after each row boundary.
+pub(crate) fn first_row(y: f32, row_h: f32) -> usize {
+    ((y - SPACE[4]).max(0.0) / row_h).floor() as usize
+}
+
+/// The rows that cover a view `view_h` tall from [`first_row`]: both ends
+/// can be partly in view.
+pub(crate) fn pool_size(view_h: f32, row_h: f32) -> usize {
+    (view_h / row_h).ceil() as usize + 2
 }
 
 /// Builds the ready body's content from the panel's resources.
@@ -107,7 +122,7 @@ pub(crate) fn build_tree(
     let t = src.theme.clone();
     let row_h = src.row_h();
     let rows = &src.rows.0;
-    let first = (scroll.0 / row_h).floor().max(0.0) as usize;
+    let first = first_row(scroll.0, row_h);
     let slots: Vec<(usize, TreeRowSpec)> = (first..rows.len())
         .take(src.first_pool())
         .map(|i| (i, src.spec(rows[i])))
@@ -185,6 +200,9 @@ pub(crate) fn build_tree(
             .with_children(|list| {
                 list.spawn((
                     TreeContent,
+                    // Bevy links an accessibility node only to its parent's,
+                    // so the rows reach the Tree through this one.
+                    AccessibilityNode(accesskit::Node::new(Role::GenericContainer)),
                     Node {
                         height: px(content_h),
                         flex_shrink: 0.0,
@@ -249,7 +267,10 @@ pub(super) fn spawn_slot(
     spec: TreeRowSpec,
 ) {
     let row_h = theme.s.tree_row_h;
+    let mut access = a11y(Role::TreeItem, spec.name.clone());
+    expose(&mut access, i.is_some());
     parent.spawn(tree_row(theme, spec)).insert((
+        access,
         TreeSlot(i),
         Node {
             position_type: PositionType::Absolute,
@@ -265,6 +286,18 @@ pub(super) fn spawn_slot(
             ..default()
         },
     ));
+}
+
+/// Hides a pooled row's accessibility node while the row shows nothing, so
+/// a screen reader skips it (Bevy exposes every node, displayed or not).
+pub(super) fn expose(access: &mut AccessibilityNode, shown: bool) {
+    if access.0.is_hidden() == shown {
+        if shown {
+            access.0.clear_hidden();
+        } else {
+            access.0.set_hidden();
+        }
+    }
 }
 
 /// The filter bar's button (board 04): a bordered 30 px square with the

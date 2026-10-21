@@ -84,7 +84,8 @@ impl Plugin for ScenePanelPlugin {
             (
                 systems::scene_view,
                 (
-                    systems::rebuild_model,
+                    // After the scene's entities spawn, in the same frame.
+                    systems::rebuild_model.after(gz_bevy::spawn::apply_scene),
                     (
                         systems::entity_count,
                         systems::header_actions,
