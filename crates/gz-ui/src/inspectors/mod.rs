@@ -1,10 +1,15 @@
 //! The inspector's bodies (spec §3.5), one folder and one plugin per kind
 //! of selection, the same way as the [panels](crate::panels): each
-//! registers an [`InspectorDef`] under its [`InspectorId`] (an open id),
-//! and the inspector frame (`shell::inspector`: header, pin, collapse,
-//! splitter) hosts the body for what is selected. With nothing selected
-//! that is the World inspector, the only one until M5 adds Model, Link,
-//! Joint, Light, Sensor and multi-select (DECISIONS.md D-51, D-57).
+//! registers an [`InspectorDef`] under its [`InspectorId`] (an open id)
+//! for an [`InspectKind`], and the inspector frame (`shell::inspector`:
+//! header, pin, collapse, splitter) hosts the body for what is
+//! [`Inspected`]. With nothing selected that is the World inspector
+//! (DECISIONS.md D-51, D-57).
+//!
+//! A body is built like a panel's content (D-58): the frame inserts the
+//! inspector's marker on a fresh body whenever the subject changes, and the
+//! inspector's observer on `Add<Marker>` builds it from [`Inspected`] and
+//! whatever else it reads; its systems keep the values current.
 //!
 //! The built-in inspectors come as [`InspectorPlugins`], part of
 //! [`ShellPlugins`](crate::shell::ShellPlugins); an app replaces one by
@@ -12,6 +17,7 @@
 //! registered twice panics). Inspectors register while the app is built:
 //! the shell closes the registry when it spawns.
 
+pub(crate) mod common;
 mod world;
 
 pub use world::{WorldInspectorPlugin, WORLD};
@@ -19,8 +25,8 @@ pub use world::{WorldInspectorPlugin, WORLD};
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
 
+use crate::panels::ContentMarker;
 use crate::registry::{self, ui_id, Registered, Registry};
-use crate::theme::Theme;
 
 ui_id! {
     /// An inspector's id: a short, stable name ("world"), like
@@ -28,14 +34,61 @@ ui_id! {
     InspectorId
 }
 
-/// Spawns an inspector's body under the frame's header.
-pub type BodyFn = fn(&mut ChildSpawner, &Theme);
+/// The kinds of selection an inspector can be for (spec §3.5's table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum InspectKind {
+    /// Nothing selected.
+    #[default]
+    World,
+    Model,
+    Link,
+    Light,
+    Joint,
+    Sensor,
+    /// More than one thing selected: the common fields.
+    Multi,
+}
 
-/// What an inspector registers.
+/// What the inspector shows: the kind, and the scene entity (none for the
+/// world and a multi-selection). `removed` once that entity is gone and
+/// nothing replaced it (§2 states: "(removed)", until dismissed).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Inspected {
+    pub kind: InspectKind,
+    pub entity: Option<Entity>,
+    /// The entity's scene path, to follow it when it respawns.
+    pub path: Option<String>,
+    pub removed: bool,
+    /// The header's Pin: keep showing this when the selection changes.
+    pub pinned: bool,
+}
+
+/// What an inspector registers: its id, the kind of selection it is for,
+/// and its content marker ([`InspectorDef::content`]).
 #[derive(Clone, Debug)]
 pub struct InspectorDef {
     pub id: InspectorId,
-    pub body: BodyFn,
+    pub kind: InspectKind,
+    pub content: Option<ContentMarker>,
+}
+
+impl InspectorDef {
+    pub fn new(id: InspectorId, kind: InspectKind) -> Self {
+        Self {
+            id,
+            kind,
+            content: None,
+        }
+    }
+
+    /// Its body: a fresh body gets `C::default()`, and the inspector's own
+    /// observer on `Add<C>` builds it (as a panel's content, D-58).
+    pub fn content<C: Component + Default>(mut self) -> Self {
+        self.content = Some(|body| {
+            body.insert(C::default());
+        });
+        self
+    }
 }
 
 impl Registered for InspectorDef {
@@ -53,10 +106,9 @@ impl Registered for InspectorDef {
 pub type InspectorRegistry = Registry<InspectorDef>;
 
 impl Registry<InspectorDef> {
-    /// The inspector for the current selection: always the world's until
-    /// there is a selection (M5).
-    pub fn for_selection(&self) -> Option<&InspectorDef> {
-        self.get(WORLD)
+    /// The first inspector registered for `kind`.
+    pub fn for_kind(&self, kind: InspectKind) -> Option<&InspectorDef> {
+        self.iter().find(|i| i.kind == kind)
     }
 }
 

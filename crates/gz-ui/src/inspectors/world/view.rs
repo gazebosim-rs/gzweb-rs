@@ -3,16 +3,14 @@
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 
+use bevy::ecs::spawn::SpawnWith;
+
 use crate::assets::text;
 use crate::assets::IconId;
-use crate::theme::{border, radius, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
+use crate::inspectors::common::{CRUMB_TYPE, TAG_TYPE};
+use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{self, column, flex_spacer, group_header, property_row, row};
 use crate::widgets::{button, icon_button, rounded, ButtonVariant, IconButtonSize, Tooltip};
-
-/// The type tag's type: mono 11/500 (§3.5).
-pub(super) const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 500);
-/// The breadcrumb's type: mono 11 `text_3`.
-pub(super) const CRUMB_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 400);
 
 /// The world quick actions (§3.5): Save (M8), Reset, Statistics (M4).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,8 +28,22 @@ pub(super) enum WorldField {
     Step,
 }
 
+/// The World inspector's content marker.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct WorldBody;
+
+/// Builds the body into a fresh content entity.
+pub(super) fn build_world(ev: On<Add<WorldBody>>, theme: Res<Theme>, mut commands: Commands) {
+    let t = theme.clone();
+    commands
+        .entity(ev.entity)
+        .insert(Children::spawn(SpawnWith(move |b: &mut ChildSpawner| {
+            world_inspector(b, &t);
+        })));
+}
+
 /// The body: title row, source, quick actions, groups and links.
-pub(super) fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
+fn world_inspector(body: &mut ChildSpawner, t: &Theme) {
     // Title row: padding 14 16 10.
     body.spawn(Node {
         padding: UiRect {
