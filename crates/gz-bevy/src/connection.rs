@@ -1192,13 +1192,10 @@ mod tests {
         // A reader waiting for /m.stl makes pump send the request.
         let fetch = std::thread::spawn(move || bevy::tasks::block_on(store.fetch("/m.stl")));
         let mut sent = Vec::new();
-        for _ in 0..1000 {
+        crate::test_util::wait_until(|| {
             sent = h.feed(DriverEvent::Message(Vec::new()));
-            if !sent.is_empty() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+            !sent.is_empty()
+        });
         assert_eq!(sent, ["asset,,,/m.stl"]);
         let bytes = msgs::Bytes {
             data: vec![7],

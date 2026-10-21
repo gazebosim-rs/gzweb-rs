@@ -385,13 +385,10 @@ endsolid t
         let server = app.world().resource::<AssetServer>().clone();
         let good: Handle<Mesh> = server.load("t.stl");
         let bad: Handle<Mesh> = server.load("bad.stl");
-        for _ in 0..200 {
+        crate::test_util::wait_until(|| {
             app.update();
-            if server.is_loaded(&good) && server.load_state(&bad).is_failed() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+            server.is_loaded(&good) && server.load_state(&bad).is_failed()
+        });
         let meshes = app.world().resource::<Assets<Mesh>>();
         assert_eq!(meshes.get(&good).unwrap().count_vertices(), 3);
         assert!(server.load_state(&bad).is_failed());

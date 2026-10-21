@@ -303,16 +303,12 @@ mod tests {
         let server = app.world().resource::<AssetServer>().clone();
         let handles: Vec<Handle<WorldAsset>> =
             files.iter().map(|(n, ..)| server.load(*n)).collect();
-        for _ in 0..500 {
+        crate::test_util::wait_until(|| {
             app.update();
-            let done = handles
+            handles
                 .iter()
-                .all(|h| server.is_loaded(h) || server.load_state(h).is_failed());
-            if done {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+                .all(|h| server.is_loaded(h) || server.load_state(h).is_failed())
+        });
         let mut scenes = app.world_mut().resource_mut::<Assets<WorldAsset>>();
         for ((name, _, meshes), h) in files.iter().zip(&handles) {
             match scenes.get_mut_untracked(h) {

@@ -281,6 +281,20 @@ pub(crate) mod test_util {
         );
         app
     }
+
+    /// How long [`wait_until`] waits. Asset loads and other threads'
+    /// work finish in milliseconds on a desktop, but a busy CI runner
+    /// measuring coverage can starve them for seconds.
+    pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Calls `step` until it returns true or [`WAIT`] has passed, pausing
+    /// briefly between calls; the caller asserts on what it waited for.
+    pub(crate) fn wait_until(mut step: impl FnMut() -> bool) {
+        let start = std::time::Instant::now();
+        while !step() && start.elapsed() < WAIT {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
 }
 
 #[cfg(test)]
