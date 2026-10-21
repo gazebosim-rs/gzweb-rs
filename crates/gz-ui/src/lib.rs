@@ -121,6 +121,8 @@ impl Plugin for GzUiPlugin {
             .init_resource::<focus::PointerLed>()
             .init_resource::<focus::WidgetKeys>()
             .add_systems(Startup, focus::watch_windows)
+            .add_observer(focus::skip_disabled)
+            .add_observer(focus::restore_enabled)
             .add_systems(
                 PreUpdate,
                 (

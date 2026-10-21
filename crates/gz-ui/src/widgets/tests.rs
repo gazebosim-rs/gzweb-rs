@@ -504,3 +504,81 @@ fn readout_setters_mark_changed_only_on_a_change() {
     set_shown(&mut n, false);
     assert!(n.is_changed() && n.display == Display::None);
 }
+
+/// A node that isn't displayed is made invisible (so Tab skips it) and
+/// visible again when it is displayed; a node whose owner set its own
+/// visibility in between keeps the owner's (DECISIONS.md D-58, D-58a).
+#[test]
+fn undisplayed_nodes_are_hidden_until_their_owner_says_otherwise() {
+    use super::focus::HiddenByDisplay;
+    let mut app = ui_app(ThemeMode::Light);
+    frames(&mut app, 1);
+    let spawn = |app: &mut App| {
+        app.world_mut()
+            .spawn(Node {
+                display: Display::None,
+                ..default()
+            })
+            .id()
+    };
+    let show = |app: &mut App, e: Entity| {
+        app.world_mut().get_mut::<Node>(e).unwrap().display = Display::Flex;
+        frames(app, 1);
+    };
+    let vis = |app: &App, e: Entity| *app.world().get::<Visibility>(e).unwrap();
+    let (plain, owned_hidden, owned_visible) = (spawn(&mut app), spawn(&mut app), spawn(&mut app));
+    frames(&mut app, 2);
+    for e in [plain, owned_hidden, owned_visible] {
+        assert_eq!(vis(&app, e), Visibility::Hidden);
+        assert!(app.world().get::<HiddenByDisplay>(e).is_some());
+    }
+    show(&mut app, plain);
+    assert_eq!(vis(&app, plain), Visibility::Inherited);
+    assert!(app.world().get::<HiddenByDisplay>(plain).is_none());
+    // The owners write while the nodes are hidden: their value stays.
+    *app.world_mut().get_mut::<Visibility>(owned_hidden).unwrap() = Visibility::Hidden;
+    *app.world_mut()
+        .get_mut::<Visibility>(owned_visible)
+        .unwrap() = Visibility::Visible;
+    frames(&mut app, 1);
+    show(&mut app, owned_hidden);
+    show(&mut app, owned_visible);
+    assert_eq!(vis(&app, owned_hidden), Visibility::Hidden);
+    assert_eq!(vis(&app, owned_visible), Visibility::Visible);
+    // Despawned in the frame it hides: no panic.
+    let gone = spawn(&mut app);
+    app.world_mut().get_mut::<Node>(gone).unwrap().display = Display::None;
+    app.update();
+    app.world_mut().despawn(gone);
+    frames(&mut app, 1);
+}
+
+/// A disabled control is no Tab stop; enabled again, it is.
+#[test]
+fn disabled_controls_are_no_tab_stops() {
+    use bevy::input_focus::tab_navigation::TabIndex;
+    use bevy::ui::InteractionDisabled;
+    let mut app = ui_app(ThemeMode::Light);
+    frames(&mut app, 1);
+    let theme = app.world().resource::<Theme>().clone();
+    let b = app
+        .world_mut()
+        .spawn(button(&theme, "Go", ButtonVariant::Normal))
+        .id();
+    let index = |app: &App| app.world().get::<TabIndex>(b).unwrap().0;
+    assert_eq!(index(&app), 0);
+    app.world_mut().entity_mut(b).insert(InteractionDisabled);
+    assert_eq!(index(&app), -1);
+    app.world_mut()
+        .entity_mut(b)
+        .remove::<InteractionDisabled>();
+    assert_eq!(index(&app), 0);
+    let off = app
+        .world_mut()
+        .spawn((
+            button(&theme, "Later", ButtonVariant::Normal),
+            InteractionDisabled,
+        ))
+        .id();
+    assert_eq!(app.world().get::<TabIndex>(off).unwrap().0, -1);
+}
