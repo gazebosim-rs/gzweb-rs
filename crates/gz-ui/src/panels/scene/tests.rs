@@ -931,3 +931,21 @@ fn the_box_select_tool_tells_the_views() {
     frames(&mut app, 2);
     assert!(!on(&app));
 }
+
+#[test]
+fn a_hovered_row_outlines_its_entity() {
+    use bevy::picking::hover::Hovered;
+    let (mut app, _) = live_tree();
+    let krate = entity(&mut app, "crate_01");
+    let hovered = |app: &App| app.world().resource::<gz_bevy::view::outline::Hovered>().0;
+    let r = row(&mut app, "crate_01");
+    app.world_mut().entity_mut(r).insert(Hovered(true));
+    frames(&mut app, 2);
+    assert_eq!(hovered(&app), Some(krate));
+    // The world row has no scene entity.
+    app.world_mut().entity_mut(r).insert(Hovered(false));
+    let w = row(&mut app, "warehouse_demo");
+    app.world_mut().entity_mut(w).insert(Hovered(true));
+    frames(&mut app, 2);
+    assert_eq!(hovered(&app), None);
+}

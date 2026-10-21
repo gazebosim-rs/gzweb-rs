@@ -2263,6 +2263,7 @@ fn the_start_view_applies_once_the_world_has_loaded() {
     r.app.insert_resource(StartView {
         view: Some(SnapView::Top),
         overlays: vec![Overlay::Frames, Overlay::Grid],
+        ..default()
     });
     r.app.init_resource::<crate::spawn::GzIndex>();
     r.frames(2);

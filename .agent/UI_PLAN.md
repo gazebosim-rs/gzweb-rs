@@ -266,6 +266,16 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   groups (M10).
 
 ### M5 — Selection, inspector, transform tools, undo
+In four PRs: **M5a** selection, **M5b** inspectors, **M5c** transform tools (with the patched
+websocket server, DECISIONS.md D-76), **M5d** undo.
+
+- **M5a notes:** views select top-level models by click (3 px slop), Shift adds, ⌘/Ctrl toggles,
+  and the Box select tool or ⌘/Ctrl+drag draws a marquee (D-71, D-72); the tree selects rows,
+  Shift ranges, ⌘/Ctrl toggles, the world row clears, and selected rows show it (D-73); "sel:"
+  in the status bar; Hide others and Isolate (D-74); the outline: a mask camera and a UI edge
+  shader, 2 px for the selection, 1 px at 50% for the tree's hover (D-75); `gzweb --select`
+  (D-64b). Follow/Track, focus and snaps use the selection as they were built to. Left for
+  M5b: joint and sensor rows selecting, with their inspectors.
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
   selection outline (second render layer).
 - Inspectors: World, Model, Link, Joint, Light, Sensor, multi-select. Live-value streaming and

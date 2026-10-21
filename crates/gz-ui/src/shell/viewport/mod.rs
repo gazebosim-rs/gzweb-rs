@@ -11,6 +11,7 @@ pub(crate) mod banner;
 pub(crate) mod connect_card;
 pub(crate) mod hud;
 pub(crate) mod marquee;
+pub(crate) mod outline;
 pub(crate) mod rail;
 pub(crate) mod view;
 pub(crate) mod view_cube;
@@ -74,6 +75,8 @@ pub(crate) fn viewport_area(theme: &Theme, map: &InputMap) -> impl Bundle {
         Children::spawn(SpawnWith(move |a: &mut ChildSpawner| {
             a.spawn((ViewNode, overlay(), pass_through()))
                 .with_children(|v| {
+                    // First, under the view's controls.
+                    v.spawn(outline::outline());
                     v.spawn(view_cube::view_cube(&t));
                     v.spawn(rail::rail(&t, &map));
                     v.spawn(hud::scale_label(&t));
@@ -99,6 +102,7 @@ pub(crate) fn build(app: &mut App) {
     rail::build(app);
     view_cube::build(app);
     hud::build(app);
+    outline::build(app);
     app.init_resource::<ViewPlacement>()
         .add_systems(
             Update,

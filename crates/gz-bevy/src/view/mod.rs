@@ -21,6 +21,7 @@
 pub mod controls;
 pub mod input;
 pub mod modes;
+pub mod outline;
 pub mod select;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -158,27 +159,33 @@ impl std::str::FromStr for SnapView {
     }
 }
 
-/// How the view starts once the first world loads: an axis view and
-/// overlays turned on (`gzweb --view`, `--overlays`; DECISIONS.md D-64),
-/// so a capture can show them. Applied once.
+/// How the view starts once the first world loads: an axis view,
+/// overlays turned on and top-level models selected (`gzweb --view`,
+/// `--overlays`, `--select`; DECISIONS.md D-64), so a capture can show
+/// them. Applied once.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct StartView {
     pub view: Option<SnapView>,
     pub overlays: Vec<crate::overlays::Overlay>,
+    /// Top-level model names.
+    pub select: Vec<String>,
 }
 
 /// Applies [`StartView`] when the first scene has arrived, then removes
 /// it.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_start_view(
     start: Option<Res<StartView>>,
     index: Option<Res<crate::spawn::GzIndex>>,
     views: Query<Entity, With<ViewCamera>>,
+    parents: Query<&ChildOf>,
+    mut selection: ResMut<Selection>,
     mut view_out: MessageWriter<ViewCommand>,
     mut overlay_out: MessageWriter<crate::overlays::OverlayCommand>,
     mut commands: Commands,
 ) {
     let Some(start) = start else { return };
-    if index.is_none_or(|i| i.scene.is_none()) {
+    if index.as_ref().is_none_or(|i| i.scene.is_none()) {
         return;
     }
     let Some(view) = views.iter().next() else {
@@ -192,6 +199,20 @@ pub fn apply_start_view(
     }
     for o in &start.overlays {
         overlay_out.write(crate::overlays::OverlayCommand::set(*o, true));
+    }
+    if let Some(index) = index.filter(|_| !start.select.is_empty()) {
+        let top = |e: &&Entity| {
+            parents
+                .get(**e)
+                .is_ok_and(|p| Some(p.parent()) == index.root)
+        };
+        let picked: Vec<Entity> = start
+            .select
+            .iter()
+            .filter_map(|name| index.by_name.get(name))
+            .flat_map(|es| es.iter().filter(top).copied())
+            .collect();
+        selection.apply(SelectMode::Replace, &picked);
     }
     commands.remove_resource::<StartView>();
 }

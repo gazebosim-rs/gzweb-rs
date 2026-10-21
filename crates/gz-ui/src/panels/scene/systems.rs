@@ -727,3 +727,20 @@ fn toggle(state: &mut TreeState, model: &TreeModel, row: Row, open: bool) {
         state.expanded.remove(&key);
     }
 }
+
+/// The entity of the row under the pointer, which the views outline
+/// faintly (spec §6.4); none once no row is (or the tree is gone).
+pub(super) fn hover_outline(
+    slots: Query<(&TreeSlot, &bevy::picking::hover::Hovered)>,
+    rows: Res<TreeRows>,
+    model: Res<TreeModel>,
+    mut hovered: ResMut<gz_bevy::view::outline::Hovered>,
+) {
+    let entity = slots
+        .iter()
+        .find(|(_, h)| h.get())
+        .and_then(|(slot, _)| slot.0)
+        .and_then(|i| rows.0.get(i))
+        .and_then(|r| model.node(*r).entity);
+    hovered.set_if_neq(gz_bevy::view::outline::Hovered(entity));
+}

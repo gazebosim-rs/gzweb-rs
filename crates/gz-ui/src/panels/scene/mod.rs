@@ -81,6 +81,7 @@ impl Plugin for ScenePanelPlugin {
         .init_resource::<model::TreeScroll>()
         .init_resource::<systems::TreeRows>()
         .init_resource::<footer::Isolated>()
+        .init_resource::<gz_bevy::view::outline::Hovered>()
         .add_systems(
             Update,
             (
@@ -96,6 +97,7 @@ impl Plugin for ScenePanelPlugin {
                 )
                     .chain(),
                 systems::want_sdf,
+                systems::hover_outline,
                 (
                     systems::filter_text,
                     systems::compute_rows,

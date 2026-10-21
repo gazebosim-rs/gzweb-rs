@@ -494,3 +494,40 @@ fn the_marquee_box_follows_the_drag() {
     frames(&mut app, 2);
     assert!(!displayed(&app, b));
 }
+
+#[test]
+fn the_outline_overlay_shows_while_anything_is_outlined() {
+    use super::outline::{OutlineMaterial, OutlineOverlay, SELECTED_WIDTH};
+    use gz_bevy::view::outline::OutlineMask;
+    let mut app = shell_app((1440, 900), 2.0);
+    // No renderer here: the material's assets alone.
+    app.init_asset::<OutlineMaterial>();
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    let overlay = find::<OutlineOverlay>(&mut app);
+    assert!(!displayed(&app, overlay));
+    let mask = app.world().resource::<OutlineMask>().image.clone();
+    assert!(mask.is_some(), "the mask follows the view's placement");
+    app.world_mut().resource_mut::<OutlineMask>().active = true;
+    frames(&mut app, 2);
+    assert!(displayed(&app, overlay));
+    let handle = app
+        .world()
+        .get::<MaterialNode<OutlineMaterial>>(overlay)
+        .unwrap()
+        .0
+        .clone();
+    let materials = app.world().resource::<Assets<OutlineMaterial>>();
+    let m = materials.get(&handle).unwrap();
+    assert_eq!(m.mask, mask);
+    // 2 logical px at scale 2; the theme's selection_outline.
+    assert_eq!(m.params.texel_widths.z, SELECTED_WIDTH * 2.0);
+    let want = app
+        .world()
+        .resource::<Theme>()
+        .color(ColorRole::SelectionOutline)
+        .to_linear()
+        .to_vec4();
+    assert_eq!(m.params.selected, want);
+    assert_eq!(m.params.hovered.w, want.w * 0.5);
+}
