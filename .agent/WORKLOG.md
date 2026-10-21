@@ -1146,11 +1146,16 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   showed only the background in the Jetty `diff_drive` world. Its
   `spawned_box` had fallen to z ≈ −6.1 × 10⁹ m, so `fit_clip` stood the
   camera that far behind the pivot, out of `f32`'s range for the scene.
-- **Fix:** `fit_clip` caps the orthographic extent at the perspective far
-  floor (1000 m).
-- **Tests:** a model 6 × 10⁹ m away keeps the camera within the floor and
-  the scene between the clip planes (checked to fail without the fix);
-  workspace 591 → 592 passing; coverage 98.6% lines. check.sh passes.
+- **Fix:** `fit_clip` caps the orthographic extent at `MAX_ORTHO_EXTENT`
+  (10 km, where `f32` steps are about a millimetre). Review (PR #37): the
+  first cap, the perspective far floor (1000 m), clipped kilometre-scale
+  worlds that perspective shows.
+- **Tests:** with a model 6 × 10⁹ m away, the toggle and a front snap
+  stand the camera the cap plus the reach from the pivot, with the clip
+  range bounded by the cap; a model 3 km away stays in the orthographic
+  view (checked to fail with the 1000 m cap). Both checked to fail against
+  what they guard; workspace 591 → 593 passing; coverage 98.6% lines.
+  check.sh passes.
 
 ## 2026-10-21: Asset-load tests wait on the clock, not a frame count
 

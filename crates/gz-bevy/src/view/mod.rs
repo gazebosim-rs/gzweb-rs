@@ -49,6 +49,9 @@ pub const ZOOM_STEP: f32 = 0.95;
 /// How much closer than the nearest world point an orthographic camera's
 /// near plane stays, at least.
 pub const ORTHO_MARGIN: f32 = 1.0;
+/// How much of the world an orthographic camera backs off for, at most:
+/// `f32` still places points to about a millimetre this far out.
+pub const MAX_ORTHO_EXTENT: f32 = 10_000.0;
 /// How far the world reaches from the pivot when there is no world to
 /// measure (nothing under `GzWorldRoot`).
 pub const DEFAULT_EXTENT: f32 = 50.0;
@@ -1121,16 +1124,16 @@ fn to_ortho_centred(
 /// orthographic camera backs off until the whole world is in front of its
 /// near plane, which sits at the view's reach, so rays the atmosphere
 /// traces through it spread like the matching perspective view's; its far
-/// plane is just behind the world. The world it backs off from reaches no
-/// further than [`ViewCamera::perspective`]'s far plane, so a model that
-/// has fallen away doesn't send the camera so far out that `f32` can't
-/// place anything. A perspective far plane grows past that floor to the
-/// world's far side.
+/// plane is just behind the world. The world it backs off from reaches at
+/// most [`MAX_ORTHO_EXTENT`] from the pivot, so a model that has fallen
+/// away doesn't send the camera so far out that `f32` can't place
+/// anything. A perspective far plane grows past
+/// [`ViewCamera::perspective`]'s to the world's far side.
 fn fit_clip(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, f: &Frame) {
     let floor = view.perspective.far;
     match p {
         Projection::Orthographic(_) => {
-            let extent = f.extent_from(view.pivot).min(floor);
+            let extent = f.extent_from(view.pivot).min(MAX_ORTHO_EXTENT);
             let reach = reach(view, t, p);
             let mut off = offset(view, t);
             let standoff = extent + reach.max(ORTHO_MARGIN);

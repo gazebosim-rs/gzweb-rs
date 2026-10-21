@@ -1299,8 +1299,9 @@ fn ortho_near_far(r: &Rig) -> (f32, f32) {
     }
 }
 
-/// After every op an orthographic view keeps the whole world in front of
-/// its near plane, with the near plane at the view's reach.
+/// After every op an orthographic view keeps the whole world (up to
+/// [`MAX_ORTHO_EXTENT`] from the pivot) in front of its near plane, with
+/// the near plane at the view's reach.
 fn assert_world_in_front(r: &Rig, extent: f32) {
     let (near, far) = ortho_near_far(r);
     let reach = reach(&r.view(), &r.transform(), &r.projection());
@@ -1389,15 +1390,32 @@ fn a_model_fallen_far_away_does_not_push_the_orthographic_camera_out() {
     r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
     // A model that has been falling for hours.
     r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    // The toggle and a cube face (a snap) both end in an orthographic view
+    // that backs off by the cap, not the 6e9 m world, and keeps the cap's
+    // depth in front of the camera.
+    for op in [ViewOp::ToggleProjection, ViewOp::Snap(SnapView::Front)] {
+        r.op(op);
+        r.settle();
+        assert_world_in_front(&r, MAX_ORTHO_EXTENT);
+        let (_, far) = ortho_near_far(&r);
+        let reach = reach(&r.view(), &r.transform(), &r.projection());
+        let standoff = MAX_ORTHO_EXTENT + reach.max(ORTHO_MARGIN);
+        assert!((depth(&r) - standoff).abs() < 1.0, "{}", depth(&r));
+        assert!(far <= depth(&r) + MAX_ORTHO_EXTENT + 2.0, "{far}");
+    }
+}
+
+#[test]
+fn a_world_a_few_kilometres_across_stays_in_the_orthographic_view() {
+    // What a perspective view shows: a model 3 km away is inside the clip
+    // range too.
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
+    r.cube(Some(model), Vec3::new(3000.0, 0.0, 0.5), 0.5);
     r.op(ViewOp::ToggleProjection);
-    let floor = r.view().perspective.far;
-    assert!(depth(&r) < 2.0 * floor + 100.0, "{}", depth(&r));
-    // The world near the pivot still fits between the clip planes.
-    let (near, far) = ortho_near_far(&r);
-    assert!(
-        near < depth(&r) - 10.0 && far > depth(&r) + 10.0,
-        "{near} {far}"
-    );
+    let far_corner = Vec3::new(3000.5, 1.0, 10.0);
+    assert_world_in_front(&r, (far_corner - r.pivot()).length());
 }
 
 #[test]
