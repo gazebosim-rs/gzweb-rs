@@ -145,8 +145,9 @@ pub(crate) fn header_action_keys(
 }
 
 /// Applies [`UiCommand`]s. A panel id nothing registered stands for the
-/// first panel in the activity bar ([`PanelRegistry::resolve`]); with no
-/// panels at all, the command does nothing.
+/// first panel in the activity bar when opening a panel
+/// ([`PanelRegistry::resolve`]) and is ignored for an activity click; with
+/// no panels at all, the command does nothing.
 pub(crate) fn apply_ui_commands(
     mut commands: MessageReader<UiCommand>,
     panels: Res<PanelRegistry>,
@@ -158,9 +159,14 @@ pub(crate) fn apply_ui_commands(
         match *cmd {
             UiCommand::ToggleSidebar => layout.toggle(Side::Sidebar),
             UiCommand::ToggleInspector => layout.toggle(Side::Inspector),
+            // An activity click names a button's own panel: an unknown id
+            // is ignored (standing for the first panel, it would collapse
+            // the sidebar when that one is active).
             UiCommand::Activity { panel, shift } => {
-                if let Some(panel) = panels.resolve(panel) {
+                if panels.get(panel).is_some() {
                     layout.activity_click(panel, shift);
+                } else {
+                    warn!("no panel '{panel}' is registered; ignoring its activity click");
                 }
             }
             UiCommand::OpenPanel { panel, slot } => {

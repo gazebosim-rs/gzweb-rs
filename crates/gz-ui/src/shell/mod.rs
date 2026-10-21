@@ -56,12 +56,16 @@ use crate::GzUiSystems;
 pub enum ShellSystems {
     /// The connection phase, keys, commands and the layout, in a chain.
     Layout,
-    /// The panels' own systems: they write their views, badges and counts
-    /// into [`PanelStatus`] (gate one that only feeds a shown panel with
-    /// [`panel_shown`]).
+    /// The panels' own systems: they write their views, badges, counts and
+    /// header actions' state into [`PanelStatus`] (gate one that only
+    /// feeds a shown panel with [`panel_shown`]).
     Panels,
-    /// Everything that shows state: the sidebar's slots, readouts, button
-    /// states, overlays. Each region adds its own.
+    /// The sidebar's slots rebuild what changed (headers, bodies), then
+    /// their headers' counts and actions follow [`PanelStatus`]; before
+    /// the readouts, so those find this frame's entities.
+    Slots,
+    /// Everything else that shows state: readouts, button states,
+    /// overlays. Each region adds its own.
     Readouts,
 }
 
@@ -117,6 +121,7 @@ impl Plugin for ShellPlugin {
                 (
                     ShellSystems::Layout,
                     ShellSystems::Panels,
+                    ShellSystems::Slots,
                     ShellSystems::Readouts,
                 )
                     .chain()

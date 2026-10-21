@@ -409,12 +409,12 @@ pub(crate) fn build(app: &mut App) {
             .in_set(ShellSystems::Layout)
             .after(super::regions::apply_layout),
     )
-    // After the panels have written their views.
+    // After the panels have written their views, before the readouts.
     .add_systems(
         Update,
         (rebuild_slots, slot_counts, header_action_states)
             .chain()
-            .in_set(ShellSystems::Readouts),
+            .in_set(ShellSystems::Slots),
     )
     .add_observer(on_slot_action)
     .add_observer(body::on_action_button)

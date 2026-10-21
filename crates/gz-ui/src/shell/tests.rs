@@ -965,21 +965,30 @@ fn the_shell_needs_the_ui_plugin() {
 /// Tab pressed for real walks the shell's regions in the spec's order
 /// (§6.5: top bar → activity bar → sidebar → viewport → inspector →
 /// status bar) and comes round again, never landing in a region that
-/// isn't displayed: a collapsed sidebar gives its turn to its bar.
+/// isn't displayed: a collapsed sidebar gives its turn to its bar, and
+/// gets it back when reopened. Shift+Tab walks the other way; the second
+/// slot's buttons are stops while it is open, and the walk is as before
+/// once it closes.
 #[test]
 fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 3);
     // From no focus, Tab by Tab until focus comes back to the first stop.
-    let walk = |app: &mut App| -> Vec<Region> {
+    let walk = |app: &mut App, back: bool| -> Vec<(Entity, Region)> {
         app.world_mut()
             .resource_mut::<bevy::input_focus::InputFocus>()
             .clear();
         let mut seen: Vec<(Entity, Region)> = Vec::new();
         for _ in 0..200 {
+            if back {
+                key(app, KeyCode::ShiftLeft, ButtonState::Pressed);
+            }
             key(app, KeyCode::Tab, ButtonState::Pressed);
             app.update();
             key(app, KeyCode::Tab, ButtonState::Released);
+            if back {
+                key(app, KeyCode::ShiftLeft, ButtonState::Released);
+            }
             app.update();
             let e = focused(app).expect("Tab focuses something");
             if seen.first().is_some_and(|s| s.0 == e) {
@@ -992,26 +1001,36 @@ fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
                     .expect("in a region");
             seen.push((e, region));
         }
-        let mut regions: Vec<Region> = seen.into_iter().map(|s| s.1).collect();
-        regions.dedup();
-        regions
+        seen
+    };
+    let regions = |seen: &[(Entity, Region)]| {
+        let mut r: Vec<Region> = seen.iter().map(|s| s.1).collect();
+        r.dedup();
+        r
     };
     use Region::*;
-    assert_eq!(
-        walk(&mut app),
-        [
-            TopBar,
-            ActivityBar,
-            Sidebar,
-            ViewportArea,
-            Inspector,
-            StatusBar
-        ]
-    );
+    let all = [
+        TopBar,
+        ActivityBar,
+        Sidebar,
+        ViewportArea,
+        Inspector,
+        StatusBar,
+    ];
+    let first = walk(&mut app, false);
+    assert_eq!(regions(&first), all);
+    // Disabled controls are no stops (Scene's Expand all, Collapse all).
+    for (e, _) in &first {
+        assert!(app.world().get::<InteractionDisabled>(*e).is_none());
+    }
+    // Shift+Tab: the same stops the other way round.
+    let mut back = walk(&mut app, true);
+    back.reverse();
+    assert_eq!(back, first);
     app.world_mut().write_message(UiCommand::ToggleSidebar);
     frames(&mut app, 2);
     assert_eq!(
-        walk(&mut app),
+        regions(&walk(&mut app, false)),
         [
             TopBar,
             ActivityBar,
@@ -1021,4 +1040,32 @@ fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
             StatusBar
         ]
     );
+    // Reopened: the sidebar is visible to Tab again.
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(walk(&mut app, false), first);
+    // A second slot adds its header's buttons, and takes them away again.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: CONSOLE,
+        slot: crate::shell::Slot::Secondary,
+    });
+    frames(&mut app, 2);
+    let two = walk(&mut app, false);
+    assert_eq!(regions(&two), all);
+    assert!(two.len() > first.len());
+    let secondary = |app: &App, e: Entity| {
+        let world = app.world();
+        std::iter::successors(Some(e), |x| world.get::<ChildOf>(*x).map(ChildOf::parent)).any(|a| {
+            world.get::<crate::shell::sidebar::SlotView>(a)
+                == Some(&crate::shell::sidebar::SlotView(
+                    crate::shell::Slot::Secondary,
+                ))
+        })
+    };
+    assert!(two.iter().any(|(e, _)| secondary(&app, *e)));
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    frames(&mut app, 2);
+    let closed = walk(&mut app, false);
+    assert_eq!(closed.len(), first.len());
+    assert_eq!(regions(&closed), all);
 }

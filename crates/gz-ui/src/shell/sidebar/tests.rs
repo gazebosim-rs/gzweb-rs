@@ -146,6 +146,17 @@ fn an_unknown_panel_id_opens_the_first_panel() {
     assert_eq!((l.primary, l.secondary), (Some(SCENE), None));
     let shown: Vec<PanelId> = bodies(&mut app).into_iter().map(|b| b.1).collect();
     assert_eq!(shown, [SCENE]);
+    // An activity click names its button's own panel: an unknown one is
+    // ignored rather than taken for the (active) first panel, which would
+    // collapse the sidebar.
+    app.world_mut().write_message(UiCommand::Activity {
+        panel: PanelId::new("nope"),
+        shift: false,
+    });
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert!(l.sidebar_open);
+    assert_eq!(l.primary, Some(SCENE));
 }
 
 /// Without its default panel (an app disabled Scene's plugin), the first
@@ -291,6 +302,8 @@ fn a_body_is_rebuilt_only_for_its_view_and_built_from_panel_state() {
     assert_eq!(rows(&mut app), [(0, probe), (1, probe)]);
     let padding = |app: &App, e: Entity| app.world().get::<Node>(e).unwrap().padding;
     assert_eq!(padding(&app, probe), UiRect::ZERO, "content is full-bleed");
+    let gap = |app: &App, e: Entity| app.world().get::<Node>(e).unwrap().row_gap;
+    assert_eq!(gap(&app, probe), px(0), "and lays itself out");
     {
         let mut p = app.world_mut().resource_mut::<Probe>();
         p.count = Some("2 rows".into());
@@ -310,6 +323,7 @@ fn a_body_is_rebuilt_only_for_its_view_and_built_from_panel_state() {
     assert_ne!(loading, probe);
     assert!(app.world().get_entity(probe).is_err());
     assert_eq!(padding(&app, loading), UiRect::all(px(SPACE[4])));
+    assert_eq!(gap(&app, loading), px(SPACE[1]));
     assert!(rows(&mut app).is_empty());
     assert_eq!(body_of(&mut app, SCENE), scene, "the other body stays");
     app.world_mut().resource_mut::<Probe>().view = PanelView::Ready;

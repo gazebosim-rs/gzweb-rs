@@ -9,12 +9,11 @@ use super::{card_node, sample_row};
 use crate::assets::brand::logo;
 use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
-use crate::shell::top_bar::BAR_SEPARATOR_H;
 use crate::theme::visuals::{Active, ForceState};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::button::TextButtonProps;
 use crate::widgets::chip::dot;
-use crate::widgets::layout::{column, flex_spacer, row, separator, Orientation};
+use crate::widgets::layout::{column, flex_spacer, row, separator, Orientation, BAR_SEPARATOR_H};
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::MenuItemProps;
 use crate::widgets::{

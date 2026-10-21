@@ -421,12 +421,32 @@ fn icon_ids_follow_icons_json() {
     }
 }
 
-/// The string literals in `code`, in order (escapes left as written).
+/// The string literals in `code`, in order (escapes left as written):
+/// plain and byte strings, and raw ones (`r"…"`, `r#"…"#`). A scanner,
+/// not a parser (comments are stripped before it; of char literals it
+/// knows only `'"'`), which is enough for the binding-id check: a stray
+/// literal shaped like a binding fails it loudly rather than passing.
 fn string_literals(code: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     let b = code.as_bytes();
+    let ident = |i: usize| i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
     let mut i = 0;
     while i < b.len() {
+        // A raw string: r, then hashes, then a quote; it ends at a quote
+        // followed by as many hashes, and has no escapes.
+        let byte = i > 0 && b[i - 1] == b'b' && !ident(i - 1);
+        if b[i] == b'r' && (!ident(i) || byte) {
+            let hashes = b[i + 1..].iter().take_while(|c| **c == b'#').count();
+            let open = i + 1 + hashes;
+            if b.get(open) == Some(&b'"') {
+                let start = open + 1;
+                let close = format!("\"{}", "#".repeat(hashes));
+                let end = code[start..].find(&close).map_or(b.len(), |n| start + n);
+                out.push((start, &code[start..end]));
+                i = end + close.len();
+                continue;
+            }
+        }
         if b[i] == b'"' && (i == 0 || b[i - 1] != b'\'') {
             let start = i + 1;
             let mut j = start;
@@ -440,6 +460,15 @@ fn string_literals(code: &str) -> Vec<(usize, &str)> {
         }
     }
     out
+}
+
+/// The scanner finds plain, byte and raw strings, and isn't fooled by a
+/// quote inside a raw string or a char literal.
+#[test]
+fn string_literals_include_raw_strings() {
+    let code = r##"let a = "x.y"; let q = '"'; let b = r"panel.scene"; let c = r#"say "hi""#; let d = br#"z"#;"##;
+    let found: Vec<&str> = string_literals(code).into_iter().map(|s| s.1).collect();
+    assert_eq!(found, ["x.y", "panel.scene", "say \"hi\"", "z"]);
 }
 
 /// A binding id's shape: `group.name`, lowercase (`panel.scene`).
