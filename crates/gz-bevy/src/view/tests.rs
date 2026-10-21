@@ -1299,19 +1299,23 @@ fn ortho_near_far(r: &Rig) -> (f32, f32) {
     }
 }
 
-/// After every op an orthographic view keeps the whole world in front of
-/// its near plane, with the near plane at the view's reach.
+/// After every op an orthographic view keeps the whole world (up to
+/// [`MAX_ORTHO_EXTENT`] from the pivot) in front of its near plane, with
+/// the near plane at the view's reach.
 fn assert_world_in_front(r: &Rig, extent: f32) {
     let (near, far) = ortho_near_far(r);
     let reach = reach(&r.view(), &r.transform(), &r.projection());
     assert!((near - reach).abs() < 1e-3, "near {near} reach {reach}");
     assert!(near > 0.0);
     let d = depth(r);
+    // A few f32 steps at the camera's distance: 10 km out a step is about
+    // a millimetre, and the depth is a chain of dot products.
+    let tolerance = 1e-3_f32.max((d + extent) * 1e-6);
     assert!(
-        d - extent >= near - 1e-3,
+        d - extent >= near - tolerance,
         "depth {d} extent {extent} near {near}"
     );
-    assert!(far >= d + extent, "far {far}");
+    assert!(far >= d + extent - tolerance, "far {far}");
 }
 
 #[test]
@@ -1380,6 +1384,41 @@ fn the_orthographic_standoff_follows_the_world_size() {
     assert!(depth(&r) > extent, "{} vs {extent}", depth(&r));
     let (_, far) = ortho_near_far(&r);
     assert!(far > depth(&r) + extent - 1.0);
+}
+
+#[test]
+fn a_model_fallen_far_away_does_not_push_the_orthographic_camera_out() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
+    // A model that has been falling for hours.
+    r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    // The toggle and a cube face (a snap) both end in an orthographic view
+    // that backs off by the cap, not the 6e9 m world, and keeps the cap's
+    // depth in front of the camera.
+    for op in [ViewOp::ToggleProjection, ViewOp::Snap(SnapView::Front)] {
+        r.op(op);
+        r.settle();
+        assert_world_in_front(&r, MAX_ORTHO_EXTENT);
+        let (_, far) = ortho_near_far(&r);
+        let reach = reach(&r.view(), &r.transform(), &r.projection());
+        let standoff = MAX_ORTHO_EXTENT + reach.max(ORTHO_MARGIN);
+        assert!((depth(&r) - standoff).abs() < 1.0, "{}", depth(&r));
+        assert!(far <= depth(&r) + MAX_ORTHO_EXTENT + 2.0, "{far}");
+    }
+}
+
+#[test]
+fn a_world_a_few_kilometres_across_stays_in_the_orthographic_view() {
+    // What a perspective view shows: a model 3 km away is inside the clip
+    // range too.
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
+    r.cube(Some(model), Vec3::new(3000.0, 0.0, 0.5), 0.5);
+    r.op(ViewOp::ToggleProjection);
+    let far_corner = Vec3::new(3000.5, 1.0, 10.0);
+    assert_world_in_front(&r, (far_corner - r.pivot()).length());
 }
 
 #[test]

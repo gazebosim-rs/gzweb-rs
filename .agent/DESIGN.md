@@ -610,7 +610,9 @@ Bevy metres; "depth" is distance along the view axis.
 - **Orthographic clip range** (`fit_clip`, after every op and animation
   frame; DECISIONS.md D-20): the camera stands at least the world's extent
   (the world's bounds with ground planes and the 20 m grid, measured from
-  the pivot; 50 m without a world) plus the view's reach behind the pivot,
+  the pivot; 50 m without a world; at most `MAX_ORTHO_EXTENT`, 10 km, so a
+  model fallen far away can't push the camera out of `f32` range) plus the
+  view's reach behind the pivot,
   the near plane is at the reach (> 0, which keeps the atmosphere's sky
   rays sensible) and the far plane just past the world. Perspective far
   starts at 1000 and grows to the world's far side.
