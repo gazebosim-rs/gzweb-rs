@@ -985,3 +985,34 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   scale label carries a bar (D-63).
 - **Tests:** workspace 493 → 546 passing (gz-ui 127 → 152, gz-bevy 205 →
   226, gz-core 65 → 71, gzweb +1); coverage 98.7% lines.
+
+## 2026-10-20: M3 view cube fix (D-61 amended)
+
+- **Found:** the cube drew about 30 px wide in its 56 px node and, from
+  gzweb's home view, as two flat rectangles (TOP over W). Cause: its
+  orthographic camera was framed to the cube's bounding sphere (3.7 units
+  across the node), so a face took 2 / 3.7 of it; the texture and node sizes
+  and the scale factor were right. Its shadow, a 3D box slightly larger than
+  the cube, also came in front of the face looking at the camera after the
+  1 px offset (the west face rendered 12 levels darker than `cube_left`).
+- **Fix** (`view_cube`): a perspective camera (4 half-sides away, 57°, about
+  the view's 60°) framed so the bounding sphere fills 52 of 56 px: a corner
+  view fills the node, nothing clips, the size never changes as the view
+  turns; home is about 42 × 40 px with the near edge standing out, a face on
+  36 px. Picking casts rays from the cube camera (`pick::project` and
+  `pick` invert each other); labels sit at the projected face middles and
+  show by the angle to the camera. A side facing the camera squarely is
+  `cube_left` (it was `cube_right` or `cube_left` by rounding, and
+  `cube_right` is barely off white next to `cube_top`). The drop shadow is a
+  second UI image of the same texture tinted `shadow`, 1 px lower, under the
+  cube's image. Edges 0.07 of the half side (about 1 px).
+- **Captures** (release, `allmesh` on ws://localhost:9004, full UI,
+  scratchpad `cube/`): light/dark 1440×900, light/dark `--view top`, and
+  light at scale factor 2 (2880×1800 with a local, uncommitted
+  scale-factor override in the capture window). Face colours match the
+  tokens exactly; the shadow shows as a 1 px line under the cube; at scale 2
+  the labels are sharp (at scale 1 the mono 7 W is a blur, as before).
+- **Tests:** gz-ui view cube 11 → 14 tests: no clipping from any roll-free
+  view, fill and perspective from home, pick inverting the projection on
+  every visible patch, the shadow image (offset, tint per theme), and the
+  edges' theme colour.

@@ -1,12 +1,12 @@
 //! The view cube's own little scene: the cube's 54 face patches and 12
-//! edges, a shadow, and the orthographic camera that renders them into
-//! the cube node's texture. All on [`CUBE_LAYER`] at [`CUBE_ORIGIN`], far
+//! edges, and the perspective camera that renders them into the cube
+//! node's texture. All on [`CUBE_LAYER`] at [`CUBE_ORIGIN`], far
 //! from the world, unlit and casting no shadows, and passed through by the
 //! views' picks ([`NoViewPick`]).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{ImageRenderTarget, RenderTarget, ScalingMode};
+use bevy::camera::{ImageRenderTarget, RenderTarget};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -17,27 +17,22 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::spawn::gz_to_bevy;
 use gz_bevy::view::{view_texture, NoViewPick};
 
-use super::pick::{self, CubeRegion, Shade, VIEW_HALF};
+use super::pick::{self, CubeRegion, Shade, CAMERA_DISTANCE, EDGE};
 use super::systems::CubeHover;
-use super::ViewCube;
+use super::{CubeImage, CubeShadow, ViewCube};
 use crate::shell::viewport::MainView;
-use crate::theme::{ColorRole, Theme};
+use crate::theme::{elevation, ColorRole, Theme};
 
 /// The render layer only the cube camera sees.
 pub(crate) const CUBE_LAYER: usize = 30;
 /// Where the cube sits, far below the world.
 pub(crate) const CUBE_ORIGIN: Vec3 = Vec3::new(0.0, -10_000.0, 0.0);
-/// The edges' thickness, in cube units (about a pixel at 56 px).
-const EDGE: f32 = 0.05;
-/// The camera's distance from the cube.
-const CAMERA_DISTANCE: f32 = 6.0;
 
-/// The cube's texture, its camera and its shadow.
+/// The cube's texture and its camera.
 #[derive(Resource, Debug, Clone)]
 pub(crate) struct CubeScene {
     pub image: Handle<Image>,
     pub camera: Entity,
-    pub shadow: Entity,
 }
 
 /// One face patch: its region, its face, its material and the role it
@@ -49,22 +44,16 @@ pub(crate) struct CubePatch {
     pub role: Option<ColorRole>,
 }
 
-/// A part with one role: the edges (`cube_edge`) and the shadow.
+/// A part with one role: the edges (`cube_edge`).
 #[derive(Component, Debug, Clone, Copy)]
 pub(crate) struct CubeInk {
     pub role: ColorRole,
-    pub alpha: Option<f32>,
 }
 
 /// A material per part, so each can change on its own.
-fn material(materials: &mut Assets<StandardMaterial>, alpha: bool) -> Handle<StandardMaterial> {
+fn material(materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
     materials.add(StandardMaterial {
         unlit: true,
-        alpha_mode: if alpha {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
         ..default()
     })
 }
@@ -94,8 +83,8 @@ fn part(mesh: Handle<Mesh>, material: Handle<StandardMaterial>, parent: Entity) 
     )
 }
 
-/// Spawns the cube, its edges and shadow, and its camera rendering into a
-/// 1 × 1 texture until the node is laid out.
+/// Spawns the cube, its edges, and its camera rendering into a 1 × 1
+/// texture until the node is laid out.
 pub(crate) fn spawn_cube_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -113,7 +102,7 @@ pub(crate) fn spawn_cube_scene(
         .id();
     for n in CubeRegion::FACES {
         for (region, corners) in pick::face_patches(n) {
-            let m = material(&mut materials, false);
+            let m = material(&mut materials);
             commands.spawn((
                 part(meshes.add(quad(corners)), m, root),
                 CubePatch {
@@ -126,7 +115,7 @@ pub(crate) fn spawn_cube_scene(
     }
     // The twelve edges: along each axis, at each pair of signs of the
     // other two.
-    let edge_material = material(&mut materials, false);
+    let edge_material = material(&mut materials);
     for axis in 0..3 {
         for (sa, sb) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
             let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
@@ -144,27 +133,10 @@ pub(crate) fn spawn_cube_scene(
                 Transform::from_translation(centre),
                 CubeInk {
                     role: ColorRole::CubeEdge,
-                    alpha: None,
                 },
             ));
         }
     }
-    // The drop shadow (`elevation.cube`: 1 px down): the cube's silhouette
-    // in `shadow`, a pixel lower, behind it.
-    let shadow = commands
-        .spawn((
-            part(
-                meshes.add(Cuboid::from_size(Vec3::splat(2.0 + EDGE))),
-                material(&mut materials, true),
-                root,
-            ),
-            Transform::default(),
-            CubeInk {
-                role: ColorRole::Shadow,
-                alpha: None,
-            },
-        ))
-        .id();
     let camera = commands
         .spawn((
             Name::new("view cube camera"),
@@ -179,13 +151,12 @@ pub(crate) fn spawn_cube_scene(
                 handle: image.clone(),
                 scale_factor: 1.0,
             }),
-            Projection::Orthographic(OrthographicProjection {
+            Projection::Perspective(PerspectiveProjection {
+                fov: 2.0 * pick::tan_half_fov().atan(),
+                aspect_ratio: 1.0,
                 near: 0.1,
                 far: 2.0 * CAMERA_DISTANCE,
-                scaling_mode: ScalingMode::FixedVertical {
-                    viewport_height: 2.0 * VIEW_HALF,
-                },
-                ..OrthographicProjection::default_3d()
+                ..default()
             }),
             // The tokens' colours, as they are.
             Tonemapping::None,
@@ -195,25 +166,20 @@ pub(crate) fn spawn_cube_scene(
             Transform::from_translation(CUBE_ORIGIN + Vec3::Z * CAMERA_DISTANCE),
         ))
         .id();
-    commands.insert_resource(CubeScene {
-        image,
-        camera,
-        shadow,
-    });
+    commands.insert_resource(CubeScene { image, camera });
 }
 
 /// Sizes the cube's texture to its node's physical pixels (after UI
-/// layout, so a scale change shows at once) and shows it in the node.
+/// layout, so a scale change shows at once).
 pub(crate) fn size_cube_texture(
     scene: Option<Res<CubeScene>>,
     mut images: ResMut<Assets<Image>>,
-    mut nodes: Query<(Entity, &ComputedNode, Option<&mut ImageNode>), With<ViewCube>>,
+    nodes: Query<&ComputedNode, With<ViewCube>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     mut targets: Query<&mut RenderTarget>,
-    mut commands: Commands,
 ) {
     let Some(scene) = scene else { return };
-    let Ok((e, node, image_node)) = nodes.single_mut() else {
+    let Ok(node) = nodes.single() else {
         return;
     };
     let size = node.size().round().as_uvec2().max(UVec2::ONE);
@@ -236,19 +202,45 @@ pub(crate) fn size_cube_texture(
             });
         }
     }
-    if image_node.is_none() {
-        commands
-            .entity(e)
-            .insert(ImageNode::new(scene.image.clone()));
+}
+
+/// The cube node's image and its drop shadow.
+type CubeImages = Or<(With<CubeImage>, With<CubeShadow>)>;
+
+/// Shows the cube's texture in the node's image and, tinted, in its drop
+/// shadow: the texture's colour times the shadow's (near black), its
+/// alpha times the shadow's alpha.
+pub(crate) fn show_cube_texture(
+    scene: Option<Res<CubeScene>>,
+    theme: Res<Theme>,
+    mut shown: Query<(Entity, Option<&mut ImageNode>, Has<CubeShadow>), CubeImages>,
+    mut commands: Commands,
+) {
+    let Some(scene) = scene else { return };
+    let tint = theme.color(elevation::CUBE.color.unwrap_or(ColorRole::Shadow));
+    // An image node's own colour leaves the texture as it is.
+    let plain = ImageNode::default().color;
+    for (e, image_node, shadow) in &mut shown {
+        let color = if shadow { tint } else { plain };
+        match image_node {
+            Some(mut i) => {
+                if i.color != color {
+                    i.color = color;
+                }
+            }
+            None => {
+                commands
+                    .entity(e)
+                    .insert(ImageNode::new(scene.image.clone()).with_color(color));
+            }
+        }
     }
 }
 
-/// Turns the cube camera as the view's camera is turned, and keeps the
-/// shadow a pixel below the cube on screen.
+/// Turns the cube camera as the view's camera is turned.
 pub(crate) fn turn_cube(
     scene: Option<Res<CubeScene>>,
     view: MainView,
-    nodes: Query<&ComputedNode, With<ViewCube>>,
     mut transforms: Query<&mut Transform, Without<gz_bevy::camera::MainCamera>>,
 ) {
     let (Some(scene), Some((_, _, t, _))) = (scene, view.get()) else {
@@ -260,17 +252,6 @@ pub(crate) fn turn_cube(
             .with_rotation(rotation);
         if *camera != want {
             *camera = want;
-        }
-    }
-    // A pixel, in cube units, down the screen and a little back.
-    let px = nodes
-        .single()
-        .map_or(1.0, |n| n.size().y.max(1.0) * n.inverse_scale_factor());
-    let offset = rotation * Vec3::new(0.0, -2.0 * VIEW_HALF / px, -0.1);
-    if let Ok(mut shadow) = transforms.get_mut(scene.shadow) {
-        let want = Transform::from_translation(gz_to_bevy().inverse() * offset);
-        if *shadow != want {
-            *shadow = want;
         }
     }
 }
@@ -297,7 +278,7 @@ pub(crate) fn patch_role(
 }
 
 /// Colours the patches (when the view turns, the hover or the snap
-/// changes) and the edges and shadow (with the theme).
+/// changes) and the edges (with the theme).
 pub(crate) fn paint_cube(
     view: MainView,
     hover: Res<CubeHover>,
@@ -325,8 +306,7 @@ pub(crate) fn paint_cube(
     if new_theme {
         for (ink, m) in &inks {
             if let Some(mut mat) = materials.get_mut(&m.0) {
-                let c = theme.color(ink.role);
-                mat.base_color = ink.alpha.map_or(c, |a| c.with_alpha(a));
+                mat.base_color = theme.color(ink.role);
             }
         }
         *painted_theme = Some(theme.is_dark);

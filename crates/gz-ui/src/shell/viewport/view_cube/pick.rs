@@ -13,9 +13,38 @@ use gz_bevy::view::{SnapView, ViewOp};
 /// How far an edge or corner region reaches into a face, of the face's
 /// half side (1).
 pub(crate) const BAND: f32 = 0.32;
-/// The cube camera's orthographic half height, in cube units: the cube's
-/// largest silhouette (√3, corner on) with a little room.
-pub(crate) const VIEW_HALF: f32 = 1.85;
+/// The edges' thickness, in cube units (about a pixel at 56 px).
+pub(crate) const EDGE: f32 = 0.07;
+/// The cube camera's distance from the cube's middle, in cube units: a
+/// perspective about as wide as the view's own (57° across where the
+/// view's is 60°), so the near edge or corner stands out and a view along
+/// an axis reads as a box, not as flat rectangles.
+pub(crate) const CAMERA_DISTANCE: f32 = 4.0;
+/// How much of the image the cube may take at most, side to side: 52 of
+/// 56 pixels, two pixels' room on each side for the edges' antialiasing
+/// and the drop shadow.
+pub(crate) const FILL: f32 = 52.0 / 56.0;
+
+/// The tangent of the cube camera's half field of view: the cone round the
+/// cube's bounding sphere (its corners and the edges' ends) fills
+/// [`FILL`] of the image. The camera never rolls away from the view's, so
+/// that sphere is the cube's silhouette in the worst case, a corner view
+/// (the board's): the cube fills the node there and is smaller, never
+/// clipped, from anywhere else (gzweb's home view about 42 × 40 pixels,
+/// a face on 36 × 36).
+pub(crate) fn tan_half_fov() -> f32 {
+    let r = 3f32.sqrt() * (1.0 + EDGE / 2.0);
+    r / (CAMERA_DISTANCE * CAMERA_DISTANCE - r * r).sqrt() / FILL
+}
+
+/// Where the point `p` (Gazebo axes, cube units) lands on the cube's image
+/// (-1..1, x right, y up) for a camera turned by `rot`, and its distance
+/// in front of the camera.
+pub(crate) fn project(rot: Quat, p: Vec3) -> (Vec2, f32) {
+    let v = rot.inverse() * p;
+    let depth = CAMERA_DISTANCE - v.z;
+    (v.truncate() / (depth * tan_half_fov()), depth)
+}
 
 /// A face, edge or corner: each component -1, 0 or 1, not all 0.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -71,10 +100,10 @@ pub(crate) fn gz_rotation(bevy_rotation: Quat) -> Quat {
 /// The region under `uv` (-1..1, x right, y up, over the cube image) for
 /// a camera turned by `rot` (Gazebo axes), if the cube is there.
 pub(crate) fn pick(rot: Quat, uv: Vec2) -> Option<CubeRegion> {
-    let right = rot * Vec3::X;
-    let up = rot * Vec3::Y;
-    let fwd = rot * Vec3::NEG_Z;
-    let origin = (right * uv.x + up * uv.y) * VIEW_HALF - fwd * 10.0;
+    // The ray from the camera through `uv`, in the cube camera's
+    // perspective (the inverse of [`project`]).
+    let origin = rot * Vec3::Z * CAMERA_DISTANCE;
+    let fwd = rot * (uv * tan_half_fov()).extend(-1.0);
     // Slab test against the cube.
     let (mut t0, mut t1) = (f32::NEG_INFINITY, f32::INFINITY);
     for i in 0..3 {
@@ -110,6 +139,10 @@ pub(crate) fn region_at(p: Vec3) -> CubeRegion {
     CubeRegion(IVec3::new(s(p.x), s(p.y), s(p.z)))
 }
 
+/// How far a side face may turn right and still count as facing the
+/// camera squarely (the sine of about 6°).
+const SQUARE: f32 = 0.1;
+
 /// How a face is shaded, by where it faces on screen (spec §3.4: faces
 /// `cube_top`, `cube_right`, `cube_left`; the isometric icon's light).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,12 +154,13 @@ pub(crate) enum Shade {
 
 /// The shade of the face with normal `n` (Gazebo axes) seen by a camera
 /// turned by `rot`: facing up the screen is the top; else the side it
-/// faces.
+/// faces, and a side facing the camera squarely (gzweb's home view looks
+/// at the west face so) is the left, the darker, to stand off the top.
 pub(crate) fn shade(rot: Quat, n: Vec3) -> Shade {
     let v = rot.inverse() * n;
     if v.y > 0.35 {
         Shade::Top
-    } else if v.x >= 0.0 {
+    } else if v.x > SQUARE {
         Shade::Right
     } else {
         Shade::Left
@@ -135,13 +169,15 @@ pub(crate) fn shade(rot: Quat, n: Vec3) -> Shade {
 
 /// Where the middle of the face with normal `n` lands on the cube image of
 /// side `size` (pixels from its top left), and how squarely it faces the
-/// camera (1 face on, 0 edge on, negative facing away).
+/// camera (the cosine between its normal and the way to the camera: 1
+/// face on, 0 edge on, negative facing away).
 pub(crate) fn label_at(rot: Quat, n: Vec3, size: f32) -> (Vec2, f32) {
-    let v = rot.inverse() * n;
+    let (uv, _) = project(rot, n);
+    let to_camera = rot * Vec3::Z * CAMERA_DISTANCE - n;
     let half = size / 2.0;
     (
-        Vec2::new(half + v.x / VIEW_HALF * half, half - v.y / VIEW_HALF * half),
-        v.z,
+        Vec2::new(half + uv.x * half, half - uv.y * half),
+        n.dot(to_camera.normalize()),
     )
 }
 

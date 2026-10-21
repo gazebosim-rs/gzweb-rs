@@ -9,10 +9,10 @@ use bevy::window::PrimaryWindow;
 use gz_bevy::view::{ViewCommand, ViewOp};
 
 use super::pick::{self, CubeRegion};
-use super::{CubeLabel, ViewCube};
+use super::{CubeImage, CubeLabel, CubeShadow, ViewCube};
 use crate::assets::fonts::text;
 use crate::shell::viewport::MainView;
-use crate::theme::{ColorRole, FontFamily, Theme, TypeStyle};
+use crate::theme::{elevation, ColorRole, FontFamily, Theme, TypeStyle};
 use crate::widgets::layout::node_rect;
 
 /// The region under the pointer, lit up.
@@ -137,14 +137,33 @@ pub(crate) fn on_cube_click(
     }
 }
 
-/// Gives a new cube its six face labels: UI text over the image, which
-/// the pointer passes through.
-pub(crate) fn spawn_labels(
+/// A child filling the cube node, `down` pixels lower, which the pointer
+/// passes through.
+fn layer(down: f32) -> impl Bundle {
+    (
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(down),
+            left: px(0.0),
+            width: percent(100.0),
+            height: percent(100.0),
+            ..default()
+        },
+        Pickable::IGNORE,
+    )
+}
+
+/// Gives a new cube its drop shadow, its image (both shown once the
+/// texture is) and its six face labels: UI text over the image. The
+/// pointer passes through them all to the cube node.
+pub(crate) fn spawn_parts(
     cubes: Query<Entity, Added<ViewCube>>,
     theme: Res<Theme>,
     mut commands: Commands,
 ) {
     for cube in &cubes {
+        commands.spawn((CubeShadow, layer(elevation::CUBE.y), ChildOf(cube)));
+        commands.spawn((CubeImage, layer(0.0), ChildOf(cube)));
         for n in CubeRegion::FACES {
             commands.spawn((
                 CubeLabel(n),

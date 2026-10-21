@@ -6,14 +6,22 @@
 //! of its own ([`scene`]) renders the cube, on its own render layer and
 //! far from the world, into a texture the node shows as a UI image, sized
 //! to the node's physical pixels (so it is sharp at any scale factor and
-//! UI scale, like the 3D view's, D-31). Its faces are unlit in the
+//! UI scale, like the 3D view's, D-31), with the same texture tinted in
+//! `shadow` a pixel lower under it for its drop shadow (the cube's own
+//! silhouette, which never draws over it). Its faces are unlit in the
 //! `cube_top` / `cube_right` / `cube_left` tokens by where they face on
 //! screen, with `cube_edge` edges and the snapped face in `cube_snapped`.
 //! Labels (TOP, N, E, …: Gazebo is east-north-up) are UI text placed over
 //! the faces that face the camera.
 //!
+//! The cube camera is a perspective (about the view's own) at a fixed
+//! distance, framed so
+//! the cube's bounding sphere (its corner view, the board's) fills the
+//! node less a 2 px margin; from anywhere else it is smaller, never
+//! clipped, and doesn't change size as the view turns.
+//!
 //! Picking ([`pick`]) works on the image: the pointer's place on it is a
-//! ray through the cube in the cube camera's orthographic projection,
+//! ray through the cube in the cube camera's perspective,
 //! which lands on a face's middle (snap to that axis view, orthographic),
 //! an edge strip (the 45° view) or a corner square. Hovering lights up
 //! what a click would pick; a drag on the cube orbits the view; a click
@@ -33,6 +41,15 @@ use crate::GzUiSystems;
 /// The cube's image node.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct ViewCube;
+
+/// The child showing the cube's texture.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct CubeImage;
+
+/// The child under [`CubeImage`] showing the same texture tinted in
+/// `shadow`, `elevation.cube`'s offset lower: the cube's drop shadow.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct CubeShadow;
 
 /// A face's label over the cube.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,11 +84,12 @@ pub(crate) fn build(app: &mut App) {
             Startup,
             scene::spawn_cube_scene.run_if(resource_exists::<Assets<StandardMaterial>>),
         )
-        .add_systems(Update, systems::spawn_labels.in_set(GzUiSystems::Behaviour))
+        .add_systems(Update, systems::spawn_parts.in_set(GzUiSystems::Behaviour))
         .add_systems(
             PostUpdate,
             (
                 scene::size_cube_texture,
+                scene::show_cube_texture,
                 scene::turn_cube,
                 scene::paint_cube,
                 systems::place_labels,

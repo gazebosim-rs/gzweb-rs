@@ -12,12 +12,12 @@ use gz_bevy::view::{home_transform, SnapView, ViewCommand, ViewOp};
 use std::time::Duration;
 
 use super::pick::*;
-use super::scene::{patch_role, CubePatch, CubeScene};
+use super::scene::{patch_role, CubeInk, CubePatch, CubeScene};
 use super::systems::{cube_uv, CubeDrag, CubeHover};
 use super::*;
 use crate::test_support::frames;
 use crate::test_support::shell::*;
-use crate::theme::{ColorRole, Theme};
+use crate::theme::{ColorRole, Theme, ThemeMode};
 
 // The maths.
 
@@ -54,7 +54,10 @@ fn picking_finds_faces_edges_and_corners() {
     // midpoints the top's edges, its corners the top's corners. Top view
     // has +X up the screen (D-13), so up is +X, right is -Y.
     let rot = top_rotation();
-    let side = 1.0 / VIEW_HALF;
+    // The top face's half side on the image: its edge is 1 from the
+    // middle, at the near face's depth.
+    let side = 1.0 / ((CAMERA_DISTANCE - 1.0) * tan_half_fov());
+    assert!((project(rot, Vec3::new(1.0, 0.0, 1.0)).0.y - side).abs() < 1e-5);
     assert_eq!(pick(rot, Vec2::ZERO), Some(CubeRegion(IVec3::Z)));
     assert_eq!(
         pick(rot, Vec2::new(0.0, 0.95 * side)),
@@ -79,6 +82,99 @@ fn picking_finds_faces_edges_and_corners() {
         pick(home, Vec2::new(0.0, -0.4)),
         Some(CubeRegion(IVec3::NEG_X))
     );
+}
+
+/// Views with no roll, as the view's camera turns (yaw, then elevation
+/// from straight down to straight up), and the corner views.
+fn views() -> Vec<Quat> {
+    let mut out = vec![top_rotation(), home_rotation()];
+    for yaw in 0..24 {
+        for el in -6..=6 {
+            let (yaw, el) = (
+                yaw as f32 * 15f32.to_radians(),
+                el as f32 * 15f32.to_radians(),
+            );
+            let eye = Vec3::new(el.cos() * yaw.cos(), el.cos() * yaw.sin(), el.sin());
+            let up = if el.abs() > 1.5 { Vec3::X } else { Vec3::Z };
+            out.push(
+                Transform::from_translation(eye)
+                    .looking_at(Vec3::ZERO, up)
+                    .rotation,
+            );
+        }
+    }
+    for c in [
+        Vec3::ONE,
+        Vec3::new(1.0, -1.0, 1.0),
+        Vec3::new(-1.0, 1.0, -1.0),
+    ] {
+        out.push(
+            Transform::from_translation(c)
+                .looking_at(Vec3::ZERO, Vec3::Z)
+                .rotation,
+        );
+    }
+    out
+}
+
+#[test]
+fn the_cube_fills_the_image_less_a_margin_from_any_view() {
+    // Every corner, edges included, stays inside the margin from every
+    // view: the cube is never clipped.
+    let r = 1.0 + EDGE / 2.0;
+    let corners: Vec<Vec3> = (0..8)
+        .map(|i| {
+            Vec3::new(r, r, r)
+                * Vec3::select(
+                    BVec3::new(i & 1 != 0, i & 2 != 0, i & 4 != 0),
+                    Vec3::ONE,
+                    Vec3::NEG_ONE,
+                )
+        })
+        .collect();
+    let extent = |rot: Quat| {
+        corners
+            .iter()
+            .map(|c| project(rot, *c).0.abs().max_element())
+            .fold(0.0, f32::max)
+    };
+    for rot in views() {
+        assert!(extent(rot) <= FILL + 1e-4, "{rot}");
+    }
+    // A corner view (the board's) fills it; a face on is well over half
+    // of it (it was 30 of 56 px from the orthographic camera's framing).
+    let corner = Transform::from_translation(Vec3::ONE)
+        .looking_at(Vec3::ZERO, Vec3::Z)
+        .rotation;
+    assert!(extent(corner) > 0.95 * FILL, "{}", extent(corner));
+    let face = extent(top_rotation());
+    assert!(face > 0.6 && face < 0.7, "{face}");
+    let home = extent(home_rotation());
+    assert!(home > 0.75, "{home}");
+    // From home the top and the west face both show, and the near edge
+    // is wider than the far ones (the perspective).
+    let home = home_rotation();
+    let near = project(home, Vec3::new(-1.0, 1.0, 1.0)).0.x.abs();
+    let far = project(home, Vec3::new(1.0, 1.0, 1.0)).0.x.abs();
+    assert!(near > 1.2 * far, "{near} {far}");
+}
+
+#[test]
+fn picking_finds_what_the_image_shows() {
+    // Pick undoes the projection: the middle of every patch the camera
+    // sees picks that patch's region.
+    for rot in views() {
+        let camera = rot * Vec3::Z * CAMERA_DISTANCE;
+        for n in CubeRegion::FACES {
+            if n.as_vec3().dot(camera - n.as_vec3()) <= 1e-3 {
+                continue;
+            }
+            for (region, c) in face_patches(n) {
+                let mid = (c[0] + c[2]) / 2.0;
+                assert_eq!(pick(rot, project(rot, mid).0), Some(region), "{rot} {mid}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -110,7 +206,8 @@ fn regions_split_each_face_three_by_three() {
 fn faces_shade_by_where_they_face_and_labels_sit_on_them() {
     let home = home_rotation();
     assert_eq!(shade(home, Vec3::Z), Shade::Top);
-    assert_eq!(shade(home, Vec3::NEG_X), Shade::Right);
+    // The west face, squarely facing it, in the darker side shade.
+    assert_eq!(shade(home, Vec3::NEG_X), Shade::Left);
     // Turned 45° about Z from home, two sides show: one left, one right.
     let turned = Quat::from_rotation_z(std::f32::consts::FRAC_PI_4) * home;
     let a = shade(turned, Vec3::NEG_X);
@@ -144,7 +241,7 @@ fn patches_show_hover_then_the_snapped_face_then_their_shade() {
         face: IVec3::NEG_X,
         role: None,
     };
-    assert_eq!(patch_role(&side, home, top, top), ColorRole::CubeRight);
+    assert_eq!(patch_role(&side, home, top, top), ColorRole::CubeLeft);
 }
 
 #[test]
@@ -266,9 +363,9 @@ fn the_cube_picks_at_any_scale_factor() {
         .unwrap()
         .size();
     assert_eq!(size, UVec2::splat(112));
-    let cube = find::<ViewCube>(&mut app);
+    let image = find::<CubeImage>(&mut app);
     assert_eq!(
-        app.world().get::<ImageNode>(cube).map(|i| i.image.clone()),
+        app.world().get::<ImageNode>(image).map(|i| i.image.clone()),
         Some(scene.image.clone())
     );
     let target = app.world().get::<bevy::camera::RenderTarget>(scene.camera);
@@ -402,5 +499,62 @@ fn the_cube_turns_with_the_view_and_labels_its_facing_faces() {
         .query_filtered::<&bevy::camera::visibility::RenderLayers, With<Mesh3d>>()
         .iter(world)
         .count();
-    assert_eq!(parts, 6 * 9 + 12 + 1);
+    assert_eq!(parts, 6 * 9 + 12);
+}
+
+#[test]
+fn the_cube_casts_its_own_shadow_a_pixel_down_in_either_theme() {
+    let mut app = cube_app(1.0);
+    let scene = app.world().resource::<CubeScene>().clone();
+    let (cube, image, shadow) = (
+        find::<ViewCube>(&mut app),
+        find::<CubeImage>(&mut app),
+        find::<CubeShadow>(&mut app),
+    );
+    // Under the image, the same texture, a pixel lower, the cube's size.
+    let children: Vec<Entity> = app.world().get::<Children>(cube).unwrap().to_vec();
+    assert_eq!(children[..2], [shadow, image]);
+    let ((c, cs), (i, is), (s, ss)) = (rect(&app, cube), rect(&app, image), rect(&app, shadow));
+    assert_eq!((i, is), (c, cs));
+    assert_eq!((s - c, ss), (Vec2::new(0.0, 1.0), cs));
+    let tint = |app: &App, e| {
+        app.world()
+            .get::<ImageNode>(e)
+            .map(|n| (n.image.clone(), n.color))
+    };
+    assert_eq!(
+        tint(&app, image),
+        Some((scene.image.clone(), ImageNode::default().color))
+    );
+    for dark in [false, true] {
+        let mode = if dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        };
+        app.world_mut().resource_mut::<Theme>().set_mode(mode);
+        frames(&mut app, 2);
+        let want = app.world().resource::<Theme>().color(ColorRole::Shadow);
+        assert_eq!(
+            tint(&app, shadow),
+            Some((scene.image.clone(), want)),
+            "{mode:?}"
+        );
+        // The edges follow the theme too.
+        let edge = app.world().resource::<Theme>().color(ColorRole::CubeEdge);
+        let world = app.world_mut();
+        let handle = world
+            .query::<(&CubeInk, &MeshMaterial3d<StandardMaterial>)>()
+            .iter(world)
+            .next()
+            .map(|(_, m)| m.0.clone())
+            .unwrap();
+        let got = app
+            .world()
+            .resource::<Assets<StandardMaterial>>()
+            .get(&handle)
+            .unwrap()
+            .base_color;
+        assert_eq!(got, edge);
+    }
 }
