@@ -1251,13 +1251,10 @@ mod tests {
         assert!(!has::<AtmosphereSettings>(&mut app));
         assert_eq!(planets(&mut app), 0);
         assert!(app.world().resource::<PendingSky>().0.is_some());
-        for _ in 0..200 {
+        crate::test_util::wait_until(|| {
             app.update();
-            if app.world().resource::<PendingSky>().0.is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+            app.world().resource::<PendingSky>().0.is_none()
+        });
         assert!(has::<GeneratedEnvironmentMapLight>(&mut app));
         assert!(!has::<Skybox>(&mut app));
     }

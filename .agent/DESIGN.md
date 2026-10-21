@@ -37,19 +37,43 @@ can be tested without a GPU. `gz-bevy` only instantiates them.
 
 ```
 socket ─► driver (native thread / web_sys callbacks)
-       ─► DriverEvent ─► connection::pump ─► Transport::on_message
-                                               │ events
+       ─► DriverEvent ─► connection::pump ─► Backend (dyn SimBackend: WebsocketBackend)
+                                               │ Transport::on_message → events
             ┌──────────────────────────────────┼───────────────────────────┐
             ▼                                  ▼                           ▼
      GzInbox.scene / scene_updates      GzInbox.poses              WsAssetStore.deliver
-            ▼                                  ▼                           ▼
-     spawn::apply_scene                 spawn::apply_poses          WsAssetReader wakes
-     (SceneDesc → entities)             (set local Transform)       (Bevy loaders)
+       / deletions                             ▼                           ▼
+            ▼                           spawn::apply_poses          WsAssetReader wakes
+     spawn::apply_deletions,            (set local Transform)       (Bevy loaders)
+     spawn::apply_scene
+     (SceneDesc → entities)
 ```
 
 Outgoing frames go the other way: `Transport::poll_outgoing` → `Driver::send`.
 Asset requests start in `WsAssetReader`, which queues the URI in the store.
 `pump` then turns it into an `asset,,,<uri>` frame.
+
+Everything above `gz-bevy` reaches the simulation through messages
+(`GzCommand`, `GzReconnect` in; `GzStatus`, `GzInbox`, `GzPublish`,
+`GzServiceReply` out). `pump` runs the app's `Backend`, a `dyn SimBackend`
+(`backend.rs`, spec §9.4: `connect`, `poll`, `subscribe`, `unsubscribe`,
+`throttle`, `publish`, `request`, `world_control`, `flush`), each frame:
+reconnects, poll, the commands, flush. `WebsocketBackend` is the Gazebo
+websocket server's; it refuses `publish` (no released server takes
+`pub_in`). A gz-transport backend would implement the same trait
+(DECISIONS.md D-65).
+
+The interactive modes also subscribe to `/world/<w>/stats` and
+`/world/<w>/scene/deletion` (`gz.msgs.UInt32_V` of removed entity ids,
+published by gz-sim's `SceneBroadcaster`); the capture modes keep gzweb's
+subscriptions for the parity check. `apply_deletions` runs before
+`apply_scene`, despawns the named entities with their children and
+forgets them in `GzIndex`; an id it doesn't know yet is tried once more
+on the next frame. `GzIndex` is marked changed only when entities come or
+go. Links carry their sensors from the scene message as `GzSensors`
+(not nodes: the snapshot walk is gzweb's). Warnings and errors of our
+crates also go to `messages::SystemMessages` through a tracing layer
+(`messages::log_layer`, installed by gzweb's `LogPlugin`).
 
 ## Coordinate frames
 
@@ -98,6 +122,7 @@ open → auth,,,<key> (if key) → "authorized" → protos,,,
 pub,worlds    → scene,<world>,,
 pub,scene                                         status Ready
 Ready → sub,/world/<w>/dynamic_pose/info,,   sub,/world/<w>/scene/info,,
+        (interactive: sub,/world/<w>/stats,,  sub,/world/<w>/scene/deletion,,)
 asset,,,<uri> → asset,<uri>,gz.msgs.Bytes,<Bytes>   (or gz.msgs.StringMsg error code)
 ```
 
@@ -989,7 +1014,8 @@ scene, such as the connect card or the disconnected banner).
 
 - Platform code uses `#[cfg(target_arch = "wasm32")]` / `not(...)`, never runtime
   flags. Platform-specific dependencies go under `[target.'cfg(...)'.dependencies]`.
-- `GzConnection` is a **non-send** resource: the wasm socket is a JS object.
+- `Backend` (the `WebsocketBackend`) is a **non-send** resource: the wasm
+  socket is a JS object.
 - Keep the Bevy `webgpu` feature; WebGPU is a hard requirement. On wasm,
   Bevy's `webgpu` feature *overrides* `webgl2`, so the current browser build is
   WebGPU-only and panics with "Unable to find a GPU" where WebGPU is missing.

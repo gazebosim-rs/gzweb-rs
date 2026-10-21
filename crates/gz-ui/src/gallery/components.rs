@@ -51,18 +51,21 @@ pub(super) fn top_bar(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMa
                 g.spawn(tool_button(
                     theme,
                     IconId::Navigate,
+                    IconButtonSize::Regular,
                     Tooltip::new("Navigate").binding(map, "tool.navigate"),
                     true,
                 ));
                 g.spawn(tool_button(
                     theme,
                     IconId::Plus,
+                    IconButtonSize::Regular,
                     Tooltip::new("Translate").binding(map, "tool.translate"),
                     false,
                 ));
                 g.spawn(tool_button(
                     theme,
                     IconId::Rotate,
+                    IconButtonSize::Regular,
                     Tooltip::new("Rotate").binding(map, "tool.rotate"),
                     false,
                 ));

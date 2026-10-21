@@ -13,9 +13,14 @@
 //! Following gzweb's patched three.js `OrbitControls`, the camera is never
 //! re-aimed at its pivot: orbiting rotates the camera about the pivot, which
 //! stays where it is on screen.
+//!
+//! A view's [`CameraMode`] (spec §7.2, gzweb's and the Gazebo GUI's camera
+//! tracking) can follow an entity, moving with it, or track it, turning to
+//! keep it in view ([`modes`], DECISIONS.md D-60).
 
 pub mod controls;
 pub mod input;
+pub mod modes;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
 
@@ -32,6 +37,7 @@ use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
 
 pub use controls::ViewerControls;
 pub use input::InputMap;
+pub use modes::CameraMode;
 
 /// How long snaps, focus and home animate (spec §12: cube snaps in 250 ms).
 pub const ANIMATION_SECS: f32 = 0.25;
@@ -123,6 +129,65 @@ impl SnapView {
     }
 }
 
+impl std::str::FromStr for SnapView {
+    type Err = String;
+
+    /// `top`, `bottom`, `front`, `back`, `right` or `left` (any case).
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.trim().to_ascii_lowercase().as_str() {
+            "top" => SnapView::Top,
+            "bottom" => SnapView::Bottom,
+            "front" => SnapView::Front,
+            "back" => SnapView::Back,
+            "right" => SnapView::Right,
+            "left" => SnapView::Left,
+            _ => {
+                return Err(format!(
+                    "unknown view '{s}' (top, bottom, front, back, right or left)"
+                ))
+            }
+        })
+    }
+}
+
+/// How the view starts once the first world loads: an axis view and
+/// overlays turned on (`gzweb --view`, `--overlays`; DECISIONS.md D-64),
+/// so a capture can show them. Applied once.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct StartView {
+    pub view: Option<SnapView>,
+    pub overlays: Vec<crate::overlays::Overlay>,
+}
+
+/// Applies [`StartView`] when the first scene has arrived, then removes
+/// it.
+pub fn apply_start_view(
+    start: Option<Res<StartView>>,
+    index: Option<Res<crate::spawn::GzIndex>>,
+    views: Query<Entity, With<ViewCamera>>,
+    mut view_out: MessageWriter<ViewCommand>,
+    mut overlay_out: MessageWriter<crate::overlays::OverlayCommand>,
+    mut commands: Commands,
+) {
+    let Some(start) = start else { return };
+    if index.is_none_or(|i| i.scene.is_none()) {
+        return;
+    }
+    let Some(view) = views.iter().next() else {
+        return;
+    };
+    if let Some(face) = start.view {
+        view_out.write(ViewCommand {
+            view,
+            op: ViewOp::Snap(face),
+        });
+    }
+    for o in &start.overlays {
+        overlay_out.write(crate::overlays::OverlayCommand::set(*o, true));
+    }
+    commands.remove_resource::<StartView>();
+}
+
 /// Fly-key directions (minimal mode's W A S D / arrows and Q / E).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlyDir {
@@ -190,6 +255,23 @@ pub enum ViewOp {
     /// Animate back to gzweb's default view.
     Home,
     SetDragAction(DragAction),
+    /// Animate to look at the pivot from `from` (a direction in Gazebo
+    /// axes, pivot to camera), keeping the distance and the projection:
+    /// the view cube's edges and corners. Leaves a snapped view.
+    LookFrom(Vec3),
+    /// Free the camera, or follow or track an entity: the view turns to it
+    /// (animated), then moves with it (follow) or keeps turning to it
+    /// (track). See [`CameraMode`].
+    SetMode(CameraMode),
+    /// ⇧F: release the follow if following; else follow the selection,
+    /// else the model under `at`.
+    Follow {
+        at: Option<Vec2>,
+    },
+    /// ⇧T: as [`ViewOp::Follow`], tracking.
+    Track {
+        at: Option<Vec2>,
+    },
     /// Move camera and pivot: `dir` is x right and z forward in the ground
     /// plane, y world up (orthographic: the screen plane, and y zooms);
     /// `secs` of travel at the view's fly speed.
@@ -232,6 +314,10 @@ pub struct ViewCamera {
     pub pan_speed: f32,
     /// Fly keys travel this many view distances per second.
     pub fly_speed: f32,
+    /// Free, or following or tracking an entity.
+    pub mode: CameraMode,
+    /// Where the followed entity was last frame.
+    follow_last: Option<Vec3>,
     animation: Option<Animation>,
 }
 
@@ -246,6 +332,8 @@ impl ViewCamera {
             zoom_speed: 1.0,
             pan_speed: 1.0,
             fly_speed: 0.5,
+            mode: CameraMode::Free,
+            follow_last: None,
             animation: None,
         }
     }
@@ -669,6 +757,11 @@ fn focus_distance(view: &ViewCamera, r: f32, aspect: f32) -> f32 {
     r.max(MIN_FOCUS_RADIUS) * FOCUS_MARGIN / fit.sin()
 }
 
+/// A mesh that view picks pass through: the full UI's view cube, which
+/// renders on its own layer but lives in the same world.
+#[derive(Component, Debug, Clone, Copy, Default)]
+pub struct NoViewPick;
+
 /// A scene node's bounds, placement, children, visual and visibility, for
 /// framing.
 type NodeData = (
@@ -688,15 +781,34 @@ pub struct ViewScene<'w, 's> {
     nodes: Query<'w, 's, NodeData>,
     parents: Query<'w, 's, &'static ChildOf>,
     roots: Query<'w, 's, Entity, With<GzWorldRoot>>,
+    skip: Query<'w, 's, (), With<NoViewPick>>,
 }
 
 impl ViewScene<'_, '_> {
     /// The nearest visible mesh on the ray.
     fn hit(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
+        let skip = &self.skip;
+        let filter = |e: Entity| !skip.contains(e);
+        let settings = MeshRayCastSettings::default().with_filter(&filter);
         self.ray_cast
-            .cast_ray(ray, &MeshRayCastSettings::default())
+            .cast_ray(ray, &settings)
             .first()
             .map(|(e, hit)| (*e, hit.point))
+    }
+
+    /// What ⇧F and ⇧T follow: the first selected entity, else the
+    /// top-level model on `ray`.
+    fn target(&mut self, ray: Option<Ray3d>) -> Option<Entity> {
+        if let Some(e) = self.selection.entities.first() {
+            return Some(*e);
+        }
+        let (hit, _) = self.hit(ray?)?;
+        Some(self.model_of(hit))
+    }
+
+    /// Where `e` is in the world (last frame's placement).
+    fn position(&self, e: Entity) -> Option<Vec3> {
+        self.nodes.get(e).ok().map(|(_, g, ..)| g.translation())
     }
 
     /// The nearest mesh on the ray, else where it meets the ground, within
@@ -889,7 +1001,14 @@ fn apply(
     // and home start their own from where the view is.
     if !matches!(
         op,
-        ViewOp::Snap(_) | ViewOp::Focus { .. } | ViewOp::Home | ViewOp::SetDragAction(_)
+        ViewOp::Snap(_)
+            | ViewOp::Focus { .. }
+            | ViewOp::Home
+            | ViewOp::SetDragAction(_)
+            | ViewOp::LookFrom(_)
+            | ViewOp::SetMode(_)
+            | ViewOp::Follow { .. }
+            | ViewOp::Track { .. }
     ) {
         finish(view, t, p);
     }
@@ -945,7 +1064,29 @@ fn apply(
                 None => home(view, t, p),
             }
         }
-        ViewOp::Home => home(view, t, p),
+        ViewOp::Home => {
+            view.mode = CameraMode::Free;
+            home(view, t, p);
+        }
+        ViewOp::LookFrom(from) => look_from(view, t, p, from, f),
+        ViewOp::SetMode(mode) => modes::set_mode(view, t, p, mode, scene),
+        ViewOp::Follow { at } | ViewOp::Track { at } => {
+            let follow = matches!(op, ViewOp::Follow { .. });
+            let same = matches!(
+                (view.mode, follow),
+                (CameraMode::Follow(_), true) | (CameraMode::Track(_), false)
+            );
+            if same {
+                modes::set_mode(view, t, p, CameraMode::Free, scene);
+            } else if let Some(e) = scene.target(at.and_then(|at| ray(p, t, at))) {
+                let mode = if follow {
+                    CameraMode::Follow(e)
+                } else {
+                    CameraMode::Track(e)
+                };
+                modes::set_mode(view, t, p, mode, scene);
+            }
+        }
         ViewOp::Fly { dir, secs } => {
             let reach = match ortho_height(p) {
                 Some(_) => reach(view, t, p),
@@ -1143,6 +1284,37 @@ fn snap(
     start(view, from, to, Some(face));
 }
 
+/// Animates to look at the pivot from `from` (Gazebo axes), keeping the
+/// distance (the reach, if orthographic) and the projection; up is
+/// Gazebo +Z, or +X looking straight down or up.
+fn look_from(view: &mut ViewCamera, t: &Transform, p: &Projection, from: Vec3, f: &Frame) {
+    let Some(dir) = (gz_to_bevy() * from).try_normalize() else {
+        return;
+    };
+    view.snapped = None;
+    let start_pose = Pose::of(view, t, p);
+    let distance = match ortho_height(p) {
+        Some(_) => reach(view, t, p),
+        None => (t.translation - view.pivot).length(),
+    };
+    let up = if dir.y.abs() > 1.0 - 1e-4 {
+        gz_to_bevy() * Vec3::X
+    } else {
+        Vec3::Y
+    };
+    let to = Pose {
+        pivot: view.pivot,
+        rotation: Transform::default().looking_to(-dir, up).rotation,
+        offset: Vec3::new(
+            0.0,
+            0.0,
+            -distance.clamp(MIN_DISTANCE, f.max_distance(view)),
+        ),
+        ortho_height: start_pose.ortho_height,
+    };
+    start(view, start_pose, to, None);
+}
+
 /// Animates to frame `bounds` from the current direction.
 fn focus(view: &mut ViewCamera, t: &Transform, p: &Projection, bounds: Bounds, f: &Frame) {
     let from = Pose::of(view, t, p);
@@ -1183,9 +1355,15 @@ fn animate(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, dt: f32
         finish(view, t, p);
         return;
     }
-    let eased = k * k * (3.0 - 2.0 * k);
+    let eased = ease(k);
     let pose = anim.from.lerp(&anim.to, eased);
     pose.apply(view, t, p);
+}
+
+/// The motion tokens' easing (`motion.easing`: cubic-out), for `k` in
+/// 0..=1.
+pub fn ease(k: f32) -> f32 {
+    1.0 - (1.0 - k.clamp(0.0, 1.0)).powi(3)
 }
 
 /// Jumps a running animation to its end: the final pose, and for a snap

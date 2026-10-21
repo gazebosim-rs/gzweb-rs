@@ -201,6 +201,12 @@ pub(crate) fn spawn_shell(
         Region::Root,
         Node {
             flex_direction: FlexDirection::Column,
+            // Bevy places UI roots in an implicit grid, whose items are at
+            // least as tall as their content: without this a long panel
+            // (or a short window, DECISIONS.md D-69) grows the shell past
+            // the window.
+            min_width: px(0),
+            min_height: px(0),
             ..fill_parent()
         },
         pass_through(),
@@ -220,7 +226,7 @@ pub(crate) fn spawn_shell(
                 body.spawn(activity_bar::activity_bar(&t, &map, &panels));
                 body.spawn(sidebar::sidebar(&t, &l));
                 body.spawn(collapsed_bar(&t, Side::Sidebar, &map));
-                body.spawn(viewport::viewport_area(&t));
+                body.spawn(viewport::viewport_area(&t, &map));
                 body.spawn(collapsed_bar(&t, Side::Inspector, &map));
                 body.spawn(inspector::inspector(&t, &l, &map, &inspectors));
             });

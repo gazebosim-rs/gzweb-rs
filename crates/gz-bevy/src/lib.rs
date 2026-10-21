@@ -5,6 +5,7 @@
 //! [`GzWebPlugin`] after.
 
 pub mod assets;
+pub mod backend;
 pub mod camera;
 pub mod collada;
 pub mod connection;
@@ -13,7 +14,9 @@ pub mod heightmap;
 pub mod hud;
 pub mod material;
 pub mod mesh_file;
+pub mod messages;
 pub mod obj;
+pub mod overlays;
 pub mod render;
 pub mod snapshot;
 pub mod spawn;
@@ -155,6 +158,7 @@ impl Plugin for GzWebPlugin {
                 Update,
                 (
                     connection::pump,
+                    spawn::apply_deletions,
                     spawn::apply_scene,
                     spawn::instance_gltf,
                     heightmap::build,
@@ -183,9 +187,12 @@ impl Plugin for GzWebPlugin {
 
         if self.config.interactive() {
             // `UiMode::Full`: the app adds `gz_ui::GzUiPlugin` on top.
-            app.add_plugins(view::ViewerControls {
-                mode: self.config.ui,
-            });
+            app.add_plugins((
+                view::ViewerControls {
+                    mode: self.config.ui,
+                },
+                overlays::OverlayRenderPlugin,
+            ));
         }
         let hud = self.config.ui == UiMode::Minimal && self.config.hud;
         // The host page's own status lines go with the HUD.
@@ -193,6 +200,10 @@ impl Plugin for GzWebPlugin {
         if !hud {
             hud::remove_dom_status();
         }
+        // Client-side warnings and errors (the full UI's message chip),
+        // fed by `messages::log_layer` when the app installs it.
+        app.init_resource::<messages::SystemMessages>()
+            .add_systems(Update, messages::drain_log);
         // The frame rate: the HUD's and the full UI's status bar.
         if self.config.interactive() {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
@@ -257,6 +268,7 @@ pub(crate) mod test_util {
         .add_systems(
             Update,
             (
+                spawn::apply_deletions,
                 spawn::apply_scene,
                 spawn::instance_gltf,
                 heightmap::build,
@@ -268,6 +280,20 @@ pub(crate) mod test_util {
                 .chain(),
         );
         app
+    }
+
+    /// How long [`wait_until`] waits. Asset loads and other threads'
+    /// work finish in milliseconds on a desktop, but a busy CI runner
+    /// measuring coverage can starve them for seconds.
+    pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    /// Calls `step` until it returns true or [`WAIT`] has passed, pausing
+    /// briefly between calls; the caller asserts on what it waited for.
+    pub(crate) fn wait_until(mut step: impl FnMut() -> bool) {
+        let start = std::time::Instant::now();
+        while !step() && start.elapsed() < WAIT {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }
 

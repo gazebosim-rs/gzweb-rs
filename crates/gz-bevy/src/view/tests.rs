@@ -1906,3 +1906,244 @@ fn a_placed_view_renders_to_its_texture_and_offsets_the_cursor() {
         Some(RenderTarget::Image(_))
     ));
 }
+
+// Camera modes (follow, track), the cube's look-from views and the
+// overlay keys (DECISIONS.md D-60, D-61, D-62).
+
+fn mode(r: &Rig) -> CameraMode {
+    r.view().mode
+}
+
+/// Moves `e` (a world-root child, so `at` is in Gazebo axes).
+fn move_to(r: &mut Rig, e: Entity, at: Vec3) {
+    r.app
+        .world_mut()
+        .get_mut::<Transform>(e)
+        .unwrap()
+        .translation = at;
+}
+
+#[test]
+fn follow_turns_to_the_target_then_moves_with_it() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.frames(2);
+    r.op(ViewOp::SetMode(CameraMode::Follow(model)));
+    assert_eq!(mode(&r), CameraMode::Follow(model));
+    r.settle();
+    assert_near(r.pivot(), Vec3::ZERO, 1e-4);
+    let before = r.transform().translation;
+    // gz (1, 2, 0) is Bevy (1, 0, -2).
+    move_to(&mut r, model, Vec3::new(1.0, 2.0, 0.0));
+    r.frames(2);
+    assert_near(r.pivot(), Vec3::new(1.0, 0.0, -2.0), 1e-4);
+    assert_near(
+        r.transform().translation - before,
+        Vec3::new(1.0, 0.0, -2.0),
+        1e-4,
+    );
+    // Orbiting still works about the target.
+    r.op(ViewOp::Orbit(Vec2::new(40.0, 0.0)));
+    assert_near(r.pivot(), Vec3::new(1.0, 0.0, -2.0), 1e-4);
+    assert_eq!(mode(&r), CameraMode::Follow(model));
+    // Home frees the camera.
+    r.op(ViewOp::Home);
+    assert_eq!(mode(&r), CameraMode::Free);
+}
+
+#[test]
+fn a_target_moving_during_the_turn_is_followed_too() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.frames(2);
+    r.op(ViewOp::SetMode(CameraMode::Follow(model)));
+    move_to(&mut r, model, Vec3::new(0.0, 0.0, 3.0));
+    r.settle();
+    assert_near(r.pivot(), Vec3::new(0.0, 3.0, 0.0), 1e-4);
+}
+
+#[test]
+fn track_stays_put_and_turns_to_the_target() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.frames(2);
+    r.op(ViewOp::SetMode(CameraMode::Track(model)));
+    r.settle();
+    let at = r.transform().translation;
+    move_to(&mut r, model, Vec3::new(0.0, 4.0, 0.0));
+    r.frames(2);
+    let target = Vec3::new(0.0, 0.0, -4.0);
+    assert_near(r.transform().translation, at, 1e-4);
+    assert_near(*r.transform().forward(), (target - at).normalize(), 1e-4);
+    assert_near(r.pivot(), target, 1e-4);
+    // A target that goes away frees the camera.
+    r.app.world_mut().despawn(model);
+    r.frames(2);
+    assert_eq!(mode(&r), CameraMode::Free);
+}
+
+#[test]
+fn a_mode_without_a_target_in_the_scene_stays_free() {
+    let mut r = rig(default_view());
+    let ghost = r.app.world_mut().spawn_empty().id();
+    r.app.world_mut().despawn(ghost);
+    r.op(ViewOp::SetMode(CameraMode::Track(ghost)));
+    assert_eq!(mode(&r), CameraMode::Free);
+    assert_eq!(CameraMode::Free.target(), None);
+    assert_eq!(CameraMode::Follow(ghost).target(), Some(ghost));
+    // A target straight below keeps the camera's own up.
+    let (_, model) = r.world_root();
+    r.frames(2);
+    let start = Transform::from_xyz(0.0, 5.0, 0.0).looking_at(Vec3::ZERO, Vec3::Z);
+    *r.app.world_mut().get_mut::<Transform>(r.camera).unwrap() = start;
+    r.op(ViewOp::SetMode(CameraMode::Track(model)));
+    r.settle();
+    assert_near(*r.transform().forward(), Vec3::NEG_Y, 1e-4);
+}
+
+#[test]
+fn shift_f_and_shift_t_pick_the_model_under_the_cursor_and_release() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(2.0, 0.0, 0.5), 0.5);
+    r.cursor(Some(r.screen(Vec3::new(2.0, 0.5, 0.0))));
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    assert_eq!(mode(&r), CameraMode::Follow(model));
+    // ⇧T switches to tracking it; ⇧T again releases.
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyT]);
+    assert_eq!(mode(&r), CameraMode::Track(model));
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyT]);
+    assert_eq!(mode(&r), CameraMode::Free);
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    assert_eq!(mode(&r), CameraMode::Free);
+    // Esc never releases (spec §6.3).
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    r.chord(&[KeyCode::Escape]);
+    assert_eq!(mode(&r), CameraMode::Follow(model));
+    // Over the sky with no selection there is nothing to follow.
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    r.cursor(Some(Vec2::new(W / 2.0, 5.0)));
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyF]);
+    assert_eq!(mode(&r), CameraMode::Free);
+    // The selection comes first.
+    let other = r.app.world_mut().spawn(Transform::default()).id();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![other];
+    r.frames(1);
+    r.chord(&[KeyCode::ShiftLeft, KeyCode::KeyT]);
+    assert_eq!(mode(&r), CameraMode::Track(other));
+}
+
+#[test]
+fn look_from_animates_to_an_edge_or_corner_view_keeping_the_projection() {
+    let mut r = rig(default_view());
+    let d0 = distance(&r);
+    // The top-east edge: from +X and +Z, looking down 45°.
+    r.op(ViewOp::LookFrom(Vec3::new(1.0, 0.0, 1.0)));
+    assert!(r.view().animating());
+    r.settle();
+    let want = -(gz_to_bevy() * Vec3::new(1.0, 0.0, 1.0)).normalize();
+    assert_near(*r.transform().forward(), want, 1e-4);
+    assert!((distance(&r) - d0).abs() < 1e-3);
+    assert!(r.ortho().is_none());
+    // Snapped orthographic: stays orthographic, no longer snapped.
+    r.op(ViewOp::Snap(SnapView::Top));
+    r.settle();
+    r.op(ViewOp::LookFrom(Vec3::new(-1.0, -1.0, 1.0)));
+    r.settle();
+    assert!(r.ortho().is_some());
+    assert_eq!(r.view().snapped, None);
+    // Straight down: +X up the screen, like the top view.
+    r.op(ViewOp::LookFrom(Vec3::Z));
+    r.settle();
+    assert_near(
+        r.transform().rotation * Vec3::Y,
+        gz_to_bevy() * Vec3::X,
+        1e-4,
+    );
+    // No direction: nothing.
+    let t = r.transform();
+    r.op(ViewOp::LookFrom(Vec3::ZERO));
+    assert_eq!(r.transform(), t);
+}
+
+#[test]
+fn animations_ease_out_cubically() {
+    assert_eq!(ease(0.0), 0.0);
+    assert_eq!(ease(1.0), 1.0);
+    assert!((ease(0.5) - 0.875).abs() < 1e-6);
+    assert_eq!(ease(2.0), 1.0);
+}
+
+#[test]
+fn view_picks_pass_through_no_view_pick_meshes() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    let cube = r.cube(Some(model), Vec3::new(2.0, 0.0, 0.5), 0.5);
+    r.app.world_mut().entity_mut(cube).insert(NoViewPick);
+    r.frames(1);
+    let at = r.screen(Vec3::new(2.0, 0.5, 0.0));
+    r.op(ViewOp::PivotAt { at, orbit: false });
+    // The ground behind it, not the cube's top.
+    assert!(r.pivot().y.abs() < 1e-3, "{}", r.pivot());
+}
+
+#[test]
+fn overlay_keys_toggle_the_overlays() {
+    use crate::overlays::Overlays;
+    let mut r = rig(default_view());
+    for (key, get) in [
+        (
+            KeyCode::KeyC,
+            (|o: &Overlays| o.collisions) as fn(&Overlays) -> bool,
+        ),
+        (KeyCode::KeyI, |o: &Overlays| o.inertia),
+        (KeyCode::KeyJ, |o: &Overlays| o.joints),
+        (KeyCode::KeyG, |o: &Overlays| o.grid),
+    ] {
+        r.chord(&[key]);
+        assert!(get(r.app.world().resource::<Overlays>()), "{key:?}");
+        r.chord(&[key]);
+        assert!(!get(r.app.world().resource::<Overlays>()), "{key:?}");
+    }
+}
+
+#[test]
+fn the_start_view_applies_once_the_world_has_loaded() {
+    use crate::overlays::{Overlay, Overlays};
+    let mut r = rig(default_view());
+    r.app.insert_resource(StartView {
+        view: Some(SnapView::Top),
+        overlays: vec![Overlay::Frames, Overlay::Grid],
+    });
+    r.app.init_resource::<crate::spawn::GzIndex>();
+    r.frames(2);
+    assert!(
+        r.app.world().contains_resource::<StartView>(),
+        "waits for a world"
+    );
+    r.app
+        .world_mut()
+        .resource_mut::<crate::spawn::GzIndex>()
+        .scene = Some(gz_core::scene::SceneDesc::from_msg(
+        &Default::default(),
+        Default::default(),
+    ));
+    r.frames(1);
+    r.settle();
+    assert!(!r.app.world().contains_resource::<StartView>());
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
+    let o = *r.app.world().resource::<Overlays>();
+    assert!(o.frames && o.grid);
+    for (s, v) in [
+        ("TOP", SnapView::Top),
+        (" left", SnapView::Left),
+        ("back", SnapView::Back),
+        ("front", SnapView::Front),
+        ("right", SnapView::Right),
+        ("bottom", SnapView::Bottom),
+    ] {
+        assert_eq!(s.parse::<SnapView>(), Ok(v));
+    }
+    assert!("iso".parse::<SnapView>().is_err());
+}

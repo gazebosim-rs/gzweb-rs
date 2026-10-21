@@ -976,16 +976,12 @@ mod tests {
                     .load(p)
             })
             .collect();
-        for _ in 0..500 {
+        crate::test_util::wait_until(|| {
             app.update();
-            if handles
+            handles
                 .iter()
                 .all(|h| server.is_loaded(h) || server.load_state(h).is_failed())
-            {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
+        });
         let images = app.world().resource::<Assets<Image>>();
         let red = images.get(&handles[0]).expect("DDS loads");
         assert_eq!(red.get_color_at(0, 0).unwrap().to_srgba().red, 1.0);

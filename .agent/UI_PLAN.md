@@ -205,7 +205,7 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   their own observer; slots keep bodies across a second slot and a swap; Tab walks the
   regions.
 
-### M3 — Viewport controls
+### M3 — Viewport controls — **done 2026-10-20**
 - Rail (Orbit/Pan/Zoom radio, projection, camera mode, focus, overlays, layout), compact rail,
   view cube (render-to-texture camera + picking on the image), scale label in ortho, target chip.
   The rail's controls are tab stops inside the viewport area's tab group (D-58); the rail adds
@@ -213,8 +213,22 @@ and orthographic views. The browser input items of M10 moved here (see M10).
 - Overlays menu wired to existing toggles: grid, collisions, wireframe (line-mesh fallback on
   wasm), joints, frames, inertia/CoM.
 - Camera menu: Free / Follow / Track (the gzweb camera modes from PORT_PLAN Phase 5).
+- Notes: `gz_ui::shell::viewport::{rail, view_cube, hud}` on the view's node (D-59); they send
+  `ViewCommand`s and `OverlayCommand`s and show `gz-bevy`'s state. Only the grid existed, so
+  `gz_bevy::overlays` is new: collisions, inertials and joints come from the world's
+  `generate_world_sdf` (`gz_core::sdf`), drawn as Gazebo does; wireframe is `WireframePlugin`
+  natively and line meshes in the browser (D-62). Camera modes in `gz_bevy::view::modes`:
+  Follow moves with the target, Track turns to it; ⇧F/⇧T take the selection, else the model
+  under the pointer, so they work before M5; the menu's Follow/Track wait for the selection
+  (D-60). The cube picks faces (snap, ortho), edges and corners (look from, keeping the
+  projection), lights its hover, orbits on a drag (D-61). The scale label has a bar (D-63).
+  `--view` / `--overlays` start a capture in an axis view with overlays (D-64). Left for
+  M5/M6/M7: "Look through" (sensor cameras of the selection), the split layouts, Maximize,
+  Close view, Link cameras, Shared selection and Apply to all views (disabled, "Not available
+  yet"), lidar/sensor data, the inactive view's face marker, per-view overlays. Found: a
+  short window with the inspector open grows the shell past the window (DECISIONS.md, Open).
 
-### M4 — Backend, scene sync, transport and status
+### M4 — Backend, scene sync, transport and status — **done 2026-10-20**
 - `SimBackend` trait with the websocket implementation (see §3 item 1).
 - Top-bar transport: play/pause/step/steps-per-click/reset, sim clock, RTF from `/stats`.
   Status bar: connection, engine/step, fps, iterations, messages chip, tool hint, selection,
@@ -233,6 +247,23 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   eye and opacity), so a virtualized row can be reused. The eye becomes controlled: it emits
   an event and the panel (and M5's undo) owns visibility, instead of `on_eye_activate`
   toggling `spec.hidden` itself (the feathers controlled pattern).
+- Notes: `gz_bevy::backend::SimBackend` with `WebsocketBackend` behind the message API
+  (D-65); `scene/deletion` in the interactive modes, `apply_deletions` before
+  `apply_scene`; sensors on links (`GzSensors`); `GzIndex` changes only with the
+  structure; `SdfWanted`. Header actions' enabled state at run time through
+  `PanelStatus` (`set_action_enabled`, its own commit for PR #33). The Scene panel
+  (`panels/scene/{model,view,systems}`): the tree of world, models, links, lights,
+  sensors and joints (from the SDFormat), virtualized over a `ScrollArea` with a
+  recycled pool, filter field and controlled type chips, Expand/Collapse all,
+  visibility on the scene entity, one tab stop with arrow keys (D-66, D-67). The
+  status bar's message chip from the client's warnings and errors
+  (`gz_bevy::messages`, D-68); the transport and the other readouts were done in M2
+  (checked against §3.1/§3.6; engine reads "—", the server doesn't say; "sel: —" until
+  M5). The shell's root has min sizes of 0, which fixes M3's short-window open item
+  (D-69). `gzweb --scene-filter`, `--scene-expand` (D-70). Verified live against
+  Jetty (`/create`, `/remove`). Left: selection, Hide others/Isolate, row context
+  menu and drag to re-parent (M5); the message tray (M8); arrow keys in the other
+  groups (M10).
 
 ### M5 — Selection, inspector, transform tools, undo
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
@@ -378,7 +409,8 @@ crates/gz-ui/src/
                     commands, layout (ShellLayout), regions (and their tab groups), routing,
                     splitter, collapsed_bar, connection, panel_status (PanelStatus,
                     SetPanelStatus), inspector (the frame); top_bar/ activity_bar/ sidebar/
-                    (slots, body, slot_splitter) status_bar/ viewport/
+                    (slots, body, slot_splitter) status_bar/ viewport/ (view, banner,
+                    connect_card; rail/ with its menus, view_cube/, hud/: M3)
   panels/           the panel contract (PanelId, PanelDef, PanelView, PanelAction,
                     HeaderAction, PanelActionActivated, PanelBody, PanelRegistry,
                     RegisterPanel, PanelPlugins); a folder per panel with more than one file

@@ -35,7 +35,7 @@ pub(crate) enum StatusItem {
     Fps,
     /// 4: "iter 134,380".
     Iterations,
-    /// 5: the latest message's chip (none yet; the slot stays empty).
+    /// 5: the latest warning's or error's chip (only when one exists).
     Message,
     /// 7: the active tool's hint.
     Hint,
@@ -217,6 +217,7 @@ pub(crate) fn build(app: &mut App) {
             // The cursor's ground point first, so its text is this frame's.
             (readouts::cursor_readout, readouts::status_texts).chain(),
             readouts::connection_dot,
+            readouts::message_chip,
             narrow_rules,
         )
             .in_set(ShellSystems::Readouts),

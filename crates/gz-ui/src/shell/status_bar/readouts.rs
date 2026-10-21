@@ -1,6 +1,6 @@
 //! The status bar's readouts (spec §3.6): the connection's address and
-//! dot, physics, frame rate, iterations, the tool hint, the selection and
-//! the ground point under the cursor.
+//! dot, physics, frame rate, iterations, the latest system message's chip,
+//! the tool hint, the selection and the ground point under the cursor.
 
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
+use gz_bevy::messages::{MessageLevel, SystemMessages};
 use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::{cursor_on_ground, ViewOrigin};
 
@@ -15,8 +16,9 @@ use super::StatusItem;
 use crate::format;
 use crate::shell::connection::{dot_role, CurrentPhase};
 use crate::shell::Tool;
-use crate::theme::Fill;
+use crate::theme::{Fill, Theme};
 use crate::widgets::text::set_text;
+use crate::widgets::{status_chip, StatusKind, Tooltip, TooltipSide};
 
 /// The text of an item.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,4 +132,79 @@ pub(crate) fn cursor_readout(
         })
         .map(|v| [v.x, v.y]);
     readout.set_if_neq(CursorReadout(at));
+}
+
+/// The message chip in item 5's slot.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub(crate) struct MessageChip {
+    pub kind: StatusKind,
+    pub text: String,
+    pub count: String,
+}
+
+impl MessageChip {
+    /// The chip for the latest warning or error, if there is one (§3.6
+    /// item 5: "only when one exists"): its text and how many of its kind
+    /// there have been ("2 warnings").
+    pub(crate) fn of(messages: &SystemMessages) -> Option<Self> {
+        let m = messages.latest_problem()?;
+        let (kind, n, one, many) = match m.level {
+            MessageLevel::Error => (StatusKind::Error, messages.errors, "error", "errors"),
+            _ => (
+                StatusKind::Warning,
+                messages.warnings,
+                "warning",
+                "warnings",
+            ),
+        };
+        Some(Self {
+            kind,
+            text: m.text.clone(),
+            count: format!("{n} {}", if n == 1 { one } else { many }),
+        })
+    }
+}
+
+/// Item 5: the latest warning or error as a status chip, its whole text
+/// and source in the tooltip (the chip clips it). Rebuilt when it
+/// changes; the message tray it opens comes with the menus (M8).
+pub(crate) fn message_chip(
+    messages: Option<Res<SystemMessages>>,
+    theme: Res<Theme>,
+    slots: Query<(Entity, &StatusItem)>,
+    chips: Query<(Entity, &MessageChip)>,
+    mut commands: Commands,
+) {
+    let Some(messages) = messages.filter(|m| m.is_changed()) else {
+        return;
+    };
+    let want = MessageChip::of(&messages);
+    let have = chips.iter().next();
+    if have.map(|c| c.1) == want.as_ref() {
+        return;
+    }
+    if let Some((e, _)) = have {
+        commands.entity(e).despawn();
+    }
+    let Some(want) = want else { return };
+    let Some((slot, _)) = slots.iter().find(|(_, i)| **i == StatusItem::Message) else {
+        return;
+    };
+    let source = messages
+        .latest_problem()
+        .map(|m| m.source.clone())
+        .unwrap_or_default();
+    let tip = Tooltip::new(want.text.clone())
+        .detail(source)
+        .side(TooltipSide::Above);
+    commands.entity(slot).with_child((
+        status_chip(
+            &theme,
+            want.kind,
+            want.text.clone(),
+            Some(want.count.clone()),
+        ),
+        tip,
+        want,
+    ));
 }

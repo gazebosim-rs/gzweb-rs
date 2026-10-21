@@ -107,3 +107,24 @@ pub(crate) fn capture_gallery(capture: Option<ResMut<GalleryCapture>>, mut comma
             .observe(gz_bevy::snapshot::save_screenshot(capture.path.clone()));
     }
 }
+
+/// The sample tree rows are controlled: the gallery owns their state and
+/// answers their caret and eye.
+pub(crate) fn on_tree_row_expand(
+    ev: On<crate::widgets::TreeRowExpand>,
+    mut rows: Query<&mut crate::widgets::TreeRowSpec>,
+) {
+    if let Ok(mut spec) = rows.get_mut(ev.entity) {
+        spec.expanded = Some(ev.expanded);
+    }
+}
+
+/// See [`on_tree_row_expand`].
+pub(crate) fn on_tree_row_visibility(
+    ev: On<crate::widgets::TreeRowVisibility>,
+    mut rows: Query<&mut crate::widgets::TreeRowSpec>,
+) {
+    if let Ok(mut spec) = rows.get_mut(ev.entity) {
+        spec.hidden = ev.hidden;
+    }
+}

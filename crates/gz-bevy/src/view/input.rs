@@ -21,6 +21,7 @@ use serde::de::IgnoredAny;
 use serde::Deserialize;
 
 use super::{FlyDir, SnapView};
+use crate::overlays::Overlay;
 
 /// `design/ui/shortcuts.json`, from the crate's copy.
 pub const SHORTCUTS_JSON: &str = include_str!("shortcuts.json");
@@ -253,7 +254,11 @@ pub enum Action {
     Snap(SnapView),
     /// Space held: left drag pans.
     PanHold,
-    ToggleGrid,
+    /// ⇧F: follow the selection (or the model under the cursor), or release.
+    Follow,
+    /// ⇧T: track it, or release.
+    Track,
+    ToggleOverlay(Overlay),
     PlayPause,
     Step,
     Fly(FlyDir),
@@ -272,7 +277,12 @@ impl Action {
             "view.right" => Action::Snap(SnapView::Right),
             "view.left" => Action::Snap(SnapView::Left),
             "view.pan_hold" => Action::PanHold,
-            "overlay.grid" => Action::ToggleGrid,
+            "view.follow" => Action::Follow,
+            "view.track" => Action::Track,
+            "overlay.grid" => Action::ToggleOverlay(Overlay::Grid),
+            "overlay.collisions" => Action::ToggleOverlay(Overlay::Collisions),
+            "overlay.inertia" => Action::ToggleOverlay(Overlay::Inertia),
+            "overlay.joints" => Action::ToggleOverlay(Overlay::Joints),
             "sim.play_pause" => Action::PlayPause,
             "sim.step" => Action::Step,
             "view.fly_forward" => Action::Fly(FlyDir::Forward),
@@ -871,7 +881,7 @@ mod tests {
         assert_eq!(ids.len(), map.bindings.len(), "ids are unique");
         // Every action gzweb-rs implements is bound in the file or the
         // minimal table.
-        assert_eq!(map.bindings.iter().filter_map(|b| b.action).count(), 19);
+        assert_eq!(map.bindings.iter().filter_map(|b| b.action).count(), 24);
 
         let step = map.binding("sim.step").unwrap();
         assert_eq!(step.scope, Scope::Global);

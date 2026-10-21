@@ -1,6 +1,10 @@
 # Gazebo UI — Design and Layout Spec
 
-Version 0.4.2 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+Version 0.4.4 · October 2026 · Target: Rust + Bevy (`bevy_ui`), desktop and WASM
+
+Changes in 0.4.4 (M4, DECISIONS.md D-65 to D-69): §3.3: the Scene tree lists the world, models, links, lights, sensors and joints (no visuals); the filter button shows and hides the type chips and looks active while a chip filters; a filter shows the matches and the paths to them; §5.7: the tree is one tab stop whose arrow keys move a cursor (rows aren't tab stops); its caret and eye ask the tree's owner (controlled); §5.12: filter chips are padded 8 each side; §3.6: the message chip shows the client's own warnings and errors; §9.4: the backend trait as built.
+
+Changes in 0.4.3 (M3, DECISIONS.md D-59 to D-63): §3.4: the scale label holds a bar as long as the length it shows; the rail's 1px border is inside its 4px padding (40 wide outside); the view cube's corners turn the view to look from them, its edge and corner clicks keep the projection, hovering lights what a click picks in `accent_ring`, and its labels are compass directions; §7.2: "Look through" shows once the selection has sensor cameras; §9.1 lists the viewport's controls.
 
 Changes in 0.4.2 (documentation only; DECISIONS.md D-58, D-58a): §9.1 describes the panel contract as built: panels write their own views, define their own actions and header actions, and build their content in their own observer; bodies are disposable views; the regions are tab groups in §6.5's order; a focused control consumes the keys it acts on and a disabled one is no Tab stop (§6.3, §6.5).
 
@@ -153,7 +157,7 @@ Board: `W2 — Activity panels`. Every panel shares this shell:
 
 | Panel | Content (top to bottom) | Gazebo source |
 |---|---|---|
-| **Scene** | Header actions: expand all, collapse all. Filter input + type-filter icon button. Filter chips (All, Models, Lights, Sensors, Joints). Tree (§5.7). Footer: New group, Hide others, Isolate. | EntityTree |
+| **Scene** | Header actions: expand all, collapse all. Filter input + type-filter icon button (shows or hides the chip row; active look while a chip other than All filters). Filter chips (All, Models, Lights, Sensors, Joints; one at a time). Tree (§5.7): the world, then models, links, lights, the links' sensors and the models' joints (joints come from the world's SDFormat), no visuals; a filter shows the matches (name contains the text, kind matches the chip) and the paths to them, opened. Footer: New group, Hide others, Isolate. | EntityTree |
 | **Assets** | Tabs: Shapes, Lights, Fuel, Local. Shapes tab: 3-column grid of 64px tiles (box, sphere, cylinder, capsule, cone, plane). Hint line "Click to place at cursor · Shift to place several". Fuel section: search input, result rows (44px thumb, name, owner · size, Insert button). | Shapes, Lights, ResourceSpawner |
 | **Topics** | Header actions: publish, services. Filter input. Chips (All, Sensors, Models, Quiet). Topic list rows (mono 12, name ellipsized left-aligned, rate right in `text_2`). Echo section: header with topic, message type + rate + pub/sub counts, live message as monospace text. Footer: Plot field, Copy, Publish… | TopicViewer, TopicEcho, Publisher |
 | **Plot** | Time window chips (10 s, 30 s, 2 min, All). One or more charts stacked: title, unit, legend rows (12px swatch + field path + live value mono). Footer: Add field…, Export CSV, Pop out. | Plot |
@@ -204,10 +208,10 @@ Boards: `W2 — Main screen, split viewport`, `W2 — Viewport rail (camera cont
 
 | Element | Spec |
 |---|---|
-| View cube | 56×56, standalone, no card. Faces `cube_top` / `cube_right` / `cube_left`, edges `cube_edge`, labels mono 7 `cube_label` (TOP, N, E, …); the face the view is snapped to fills `cube_snapped`. Drop shadow per `elevation.cube`. Drag on cube = orbit. Click face = snap to that axis view and switch to orthographic. Click edge = 45° view. Orbiting away from a snapped view returns to perspective. The cube never opens a menu. Position: top 10, right 2 (visually centered over the rail). |
-| Rail | Starts 8 below the cube. Width 40, padding 4, radius 11, fill `hud`, border 1px `line`, column gap 2. Buttons rail_btn 32, icon 18. Contents in order: **Orbit**, **Pan**, **Zoom** (radio, sets the plain left-drag action for this view, Orbit default; persists per view and across Esc) · separator · **Projection** toggle (icon shows current: `proj_perspective` / `proj_ortho`; key 5) · separator · **Camera mode** (`camera_mode`; opens Camera menu §7.2; when not Free: `accent_soft` fill + 7px `accent` dot top-right; sensor camera uses `entity_sensor` on `sensor_soft`) · **Focus** (`focus`; F frames selection, double-click or H = home) · **Overlays** (`overlays`; opens Overlays menu §7.3; badge = count of overlays on, neutral `text_2`) · separator · **Layout** (`layout_split`; opens Layout popover §7.4). Separators are 22×1 `line`, margin 3 0. |
+| View cube | 56×56, standalone, no card. Faces `cube_top` / `cube_right` / `cube_left`, edges `cube_edge`, labels mono 7 `cube_label` (TOP, N, E, …); the face the view is snapped to fills `cube_snapped`. Drop shadow per `elevation.cube`. Drag on cube = orbit. Click face = snap to that axis view and switch to orthographic. Click edge = 45° view; click corner = the view from that corner; both keep the projection. Hovering lights the face, edge or corner a click would pick in `accent_ring`. Labels are compass directions (Gazebo is east-north-up): TOP, BTM, N, S, E, W. Orbiting away from a snapped view returns to perspective. The cube never opens a menu. Position: top 10, right 2 (visually centered over the rail). |
+| Rail | Starts 8 below the cube. Width 40, padding 4 (the 1px border included), radius 11, fill `hud`, border 1px `line`, column gap 2. Buttons rail_btn 32, icon 18. Contents in order: **Orbit**, **Pan**, **Zoom** (radio, sets the plain left-drag action for this view, Orbit default; persists per view and across Esc) · separator · **Projection** toggle (icon shows current: `proj_perspective` / `proj_ortho`; key 5) · separator · **Camera mode** (`camera_mode`; opens Camera menu §7.2; when not Free: `accent_soft` fill + 7px `accent` dot top-right; sensor camera uses `entity_sensor` on `sensor_soft`) · **Focus** (`focus`; F frames selection, double-click or H = home) · **Overlays** (`overlays`; opens Overlays menu §7.3; badge = count of overlays on, neutral `text_2`) · separator · **Layout** (`layout_split`; opens Layout popover §7.4). Separators are 22×1 `line`, margin 3 0. |
 | Target chip | Shown only when camera mode is Follow, Track or a sensor camera. 28 tall, `hud` fill, border `line`, radius 8: `follow` icon 13px in `accent_text`, target name 12/500, close button 20×20. Placed to the left of the Camera mode button, vertically centered on it, gap 8. × or ⇧F releases. |
-| Scale label | Bottom-right, inset 10: mono 11 `text_2` on `hud` pill (e.g. "1 m"). Ortho views only. |
+| Scale label | Bottom-right, inset 10: mono 11 `text_2` on `hud` pill (e.g. "1 m") after a 1px `text_2` bar with end ticks that long: a 1-2-5 length between 32 and 80 px at the view's scale. Ortho views only. |
 | Inactive view | Rail and chip hidden. Cube replaced by a 34px flat face marker (e.g. a square reading TOP for an ortho top view) at 80% opacity. Hovering the view shows the full cube and rail (fade 100ms). |
 
 Floating viewport controls change the view only. They MUST NOT include tools that edit the world.
@@ -263,7 +267,7 @@ Row flex, height 28, gap 16, padding 0 12, mono 12 `text_2`. Left to right:
 2. Physics engine and step: "dart · 1 ms".
 3. Render rate: "60 fps".
 4. Iteration count: "iter 134,380".
-5. Latest system message chip (only when one exists): 22 tall, radius 5, fill `warn_soft`/`danger_soft`/transparent for info, text `warn_text`/`danger`, Geist 12/500, icon `warning` 13px, message ellipsized at `message_chip_max_w` (420px), count "2 warnings". Click opens the Message tray (§7.5). Undo chips (§7.1) use the same slot with `accent_soft`/`accent_text` and an **Undo** button.
+5. Latest system message chip (only when one exists; the client's own warnings and errors, DECISIONS.md D-68): 22 tall, radius 5, fill `warn_soft`/`danger_soft`/transparent for info, text `warn_text`/`danger`, Geist 12/500, icon `warning` 13px, message ellipsized at `message_chip_max_w` (420px), count "2 warnings". Click opens the Message tray (§7.5). Undo chips (§7.1) use the same slot with `accent_soft`/`accent_text` and an **Undo** button.
 6. flex spacer
 7. Tool hint: Geist 12 `text_3`, changes with the active tool (e.g. Navigate: "Click select · Drag orbit · Right-drag pan · Wheel zoom"; Translate: "Drag an axis to move · Shift to snap · Esc to finish").
 8. Selection: "sel: amr_01" (or "3 selected").
@@ -353,6 +357,7 @@ See §3.3.
 Height 28, radius 6, padding 0 8, gap 6, Geist 13. Children: indent spacer (depth × 14), caret 14 wide (▾ expanded, ▸ collapsed, empty for leaves; mono 10 `text_3`), entity badge 16×16 radius 4 (mono 10/500, fg = entity color, bg `entity_badge_bg`; letters: **W** world `entity_world`, **M** model `entity_model`, **L** light `entity_light`, **K** link `entity_link`, **J** joint `entity_joint`, **S** sensor `entity_sensor`), name (ellipsized), visibility toggle 16×16 at the right: hidden entities show `eye_off` in `text_3` and the row at 50% opacity; visible rows show `eye` only on hover.
 Selected: fill `accent_soft`, weight 500, badge inverts (fg `surface`, bg `accent`). Hover: `hover`. Multi-select with Shift+click (range) and ⌘/Ctrl+click (toggle; same meaning in the viewport and box select). Right-click opens the entity context menu (§7.9). Drag rows to re-parent where Gazebo allows.
 Virtualize the list: only build nodes for visible rows (worlds can have thousands of entities).
+Keyboard (§6.5): the tree is one tab stop; rows aren't. Arrow keys move a cursor (up/down; right opens or goes to the first child; left closes or goes to the parent; Home, End, Page up/down), drawn as the 2px `accent` focus ring inside the row while the tree has focus. The caret and the eye ask the tree's owner, which answers by changing the row (DECISIONS.md D-67).
 
 ### 5.8 NumberField (axis-tagged)
 Height 32, radius 6, 1px `line`, fill `field`, padding 0 8, gap 6, mono 12/500. Leading tag (X/Y/Z/R/P/Yw or a short label like "mass") weight 600: axis tags colored `axis_x_text/axis_y_text/axis_z_text` (R→x, P→y, Yw→z), other tags `text_2`. Optional trailing unit in `text_3`. Focus: border `accent` + 3px `accent_soft` halo. Laid out in 3-column (pose) or 2-column grids, gap 6.
@@ -367,7 +372,7 @@ Height 32, radius 6, `field` fill, `line` border, Geist 13; opens a Menu.
 Track 4px `line`, filled part `accent`, thumb 16 circle with 2px `accent` border and `surface` fill. Label left (12 `text_2`, fixed width), value right (mono 12 `text`). Arrow keys step; Shift = coarse (×10), Alt = fine (÷10).
 
 ### 5.12 Chip
-- Filter chip: 24 tall, radius 12, 1px `line`, Geist 12/500 `text_2`; selected = fill `text`, label `surface`.
+- Filter chip: 24 tall, radius 12, padding 0 8, 1px `line`, Geist 12/500 `text_2`; selected = fill `text`, label `surface`.
 - Status chip: see §3.6 item 5.
 - Target chip: see §3.4.
 
@@ -465,7 +470,7 @@ Header: file name (13/600) and state line mono 11 (`warn_text` "unsaved changes 
 **Undo scope.** Undoable: every operation that dirties the world, plus Reset world and Delete. Not undoable: play/pause/step, camera moves, layout changes, Teleop commands. Reset world and Delete also show a 5-second chip in the status bar ("Reset world · Undo", "Deleted amr_01 · Undo") so the undo is one click away. Undo of a move on a running sim restores the authored pose and lets physics continue from there. The stack is per world file and clears on Open or New.
 
 ### 7.2 Camera menu (rail)
-Free · Follow ‹selection› ⇧F · Track ‹selection› ⇧T · group "Look through" listing sensor cameras of the selection · separator · Follow offset… › · FOV & speed… ›. Current mode shown as checked.
+Free · Follow ‹selection› ⇧F · Track ‹selection› ⇧T · group "Look through" listing sensor cameras of the selection (shown when there are some) · separator · Follow offset… › · FOV & speed… ›. Current mode shown as checked.
 
 ### 7.3 Overlays menu (rail)
 Checkbox items: Grid G · Collisions C · Inertia I · Center of mass · Joints J · Frames · Lidar scans / sensor data · Wireframe · separator · Apply to all views.
@@ -535,7 +540,8 @@ gz-ui/src/
                          connection, panel_status, inspector (frame)
     top_bar/             tools, transport, world_button, search
     activity_bar/ sidebar/ status_bar/
-    viewport/            view, banner, connect_card (§3.4 rail and cube come in M3)
+    viewport/            view, banner, connect_card; rail/ (and its menus), view_cube/,
+                         hud/ (scale label, target chip)
   panels/                the panel contract and PanelRegistry; one plugin per panel:
     scene/ topics/ plot/ console/ assets sensors teleop
   inspectors/            InspectorRegistry; one folder and plugin per selection kind:
@@ -554,7 +560,7 @@ UI systems read state and write `Event`s / `Message`s (`SetTool`, `Select`, `Set
 Each view is a UI `Node` placeholder in the viewport area plus a `Camera3d` that renders into a texture of the node's physical size (scale factor applied), which the node shows; the texture and the camera's target size and projection follow the node's computed position and size in the same frame, after UI layout (DECISIONS.md D-31: a `Camera::viewport` of the window breaks TAA and SSAO in Bevy 0.20). Overlays (cube, rail, chip, labels) are UI children of the placeholder node. One render layer for the scene; gizmos and selection outlines on a second layer drawn by all scene cameras.
 
 ### 9.4 Backend
-`trait SimBackend { connect, subscribe(topic), publish(topic, msg), request(service, req), world_control(cmd) }`.
+`trait SimBackend { connect, subscribe(topic), publish(topic, msg), request(service, req), world_control(cmd) }`. As built (DECISIONS.md D-65): `gz_bevy::backend::SimBackend`, which also has `poll` and `flush` for the frame; the app talks to it only through messages, and the websocket server's is the one implementation on both targets for now.
 - Native (decision Q7): a gz-transport client in Rust, speaking its wire protocol directly (ZeroMQ for topics and services, UDP multicast discovery, gz-msgs protobuf payloads decoded with `prost`). No bridge process. Verify the protocol details against the gz-transport version shipped with the targeted Gazebo release and keep the client in its own crate (`gz_transport_rs`) so it can be reused.
 - Web (decision Q7): a websocket client to a Gazebo websocket server (the one gzweb uses, or a thin server shipped with this project if that one is missing features). Subscriptions, publishing, service calls and world control all go over the socket; payloads stay protobuf, framed with topic name and type.
 Both implement `SimBackend` and deliver the same internal message types, so every panel is backend-agnostic.

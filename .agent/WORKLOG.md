@@ -981,3 +981,171 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** workspace 493 → 502 passing (gz-ui 127 → 136); coverage
   98.7% lines. check.sh, clippy on 1.99.1 (native and wasm32) and
   `./build.sh` pass.
+
+## 2026-10-20: M3 viewport controls (D-59 to D-64)
+
+- **Rail** (`gz_ui::shell::viewport::rail`): Orbit/Pan/Zoom radio, Projection,
+  Camera mode (menu, accent look and dot when not Free, target chip beside
+  it), Focus (double-click home), Overlays (menu, count badge), Layout
+  (presets; everything but Single disabled until M6). Shows `gz-bevy`'s state
+  both ways. Compact rail below a 500 px view (UI pixels). Rail controls are
+  tab stops in the viewport area's group (no `TabGroup` of their own, per the
+  #33 review); a press or focus on them keeps the view's keys.
+- **View cube** (`view_cube`): own orthographic camera on layer 30 rendering
+  into a texture of the node's physical size; token colours by on-screen
+  facing; compass labels as UI text; picking on the image (3 × 3 per face:
+  face → snap + ortho, edge/corner → look from, projection kept); hover in
+  `accent_ring`; drag orbits. Animations ease out cubically (motion tokens).
+- **HUD** (`hud`): scale label with a 1-2-5 bar in orthographic views (D-63);
+  target chip with ×.
+- **gz-bevy:** `overlays` (new: only the grid existed) with collisions,
+  inertia, CoM and joints from `generate_world_sdf` (`gz_core::sdf`, new),
+  frames from the scene, wireframe via `WireframePlugin` natively and line
+  meshes in the browser; `view::modes` (Follow/Track, ⇧F/⇧T on the selection
+  or the model under the pointer); `ViewOp::LookFrom`; `NoViewPick`;
+  `StartView`; C/I/J/⇧F/⇧T in both modes. A `StringMsg` service reply is only
+  a failure when it says `service_not_found`.
+- **gzweb:** `--view` and `--overlays` (D-64).
+- **Browser check** (wasm release on a local page, `?ui=full`): the rail, the
+  cube (click → top view, ortho, scale label), the Overlays menu; turning on
+  Wireframe quit the app (WebGPU refuses a depth bias on line lists) — fixed,
+  the line-mesh fallback draws.
+- **Found:** with the inspector open, a window shorter than about 730 px grows
+  the shell past the window (DECISIONS.md, Open). The compact captures use
+  1100 × 560, where the inspector starts collapsed.
+- **Captures** (release, `allmesh` on ws://localhost:9004 paused, full UI):
+  light/dark 1440×900, light/dark 1100×560 (compact rail), light/dark
+  `--view top` (ortho, scale label "50 cm", snapped TOP face), light with
+  every overlay. Against board 03/01: rail order, sizes, separators, badge,
+  accent states and tooltips side match; the cube shows two faces from
+  gzweb's home view (along +X) where the board draws a corner view; the
+  scale label carries a bar (D-63).
+- **Tests:** workspace 493 → 546 passing (gz-ui 127 → 152, gz-bevy 205 →
+  226, gz-core 65 → 71, gzweb +1); coverage 98.7% lines.
+
+## 2026-10-20: M3 view cube fix (D-61 amended)
+
+- **Found:** the cube drew about 30 px wide in its 56 px node and, from
+  gzweb's home view, as two flat rectangles (TOP over W). Cause: its
+  orthographic camera was framed to the cube's bounding sphere (3.7 units
+  across the node), so a face took 2 / 3.7 of it; the texture and node sizes
+  and the scale factor were right. Its shadow, a 3D box slightly larger than
+  the cube, also came in front of the face looking at the camera after the
+  1 px offset (the west face rendered 12 levels darker than `cube_left`).
+- **Fix** (`view_cube`): a perspective camera (4 half-sides away, 57°, about
+  the view's 60°) framed so the bounding sphere fills 52 of 56 px: a corner
+  view fills the node, nothing clips, the size never changes as the view
+  turns; home is about 42 × 40 px with the near edge standing out, a face on
+  36 px. Picking casts rays from the cube camera (`pick::project` and
+  `pick` invert each other); labels sit at the projected face middles and
+  show by the angle to the camera. A side facing the camera squarely is
+  `cube_left` (it was `cube_right` or `cube_left` by rounding, and
+  `cube_right` is barely off white next to `cube_top`). The drop shadow is a
+  second UI image of the same texture tinted `shadow`, 1 px lower, under the
+  cube's image. Edges 0.07 of the half side (about 1 px).
+- **Captures** (release, `allmesh` on ws://localhost:9004, full UI,
+  scratchpad `cube/`): light/dark 1440×900, light/dark `--view top`, and
+  light at scale factor 2 (2880×1800 with a local, uncommitted
+  scale-factor override in the capture window). Face colours match the
+  tokens exactly; the shadow shows as a 1 px line under the cube; at scale 2
+  the labels are sharp (at scale 1 the mono 7 W is a blur, as before).
+- **Tests:** gz-ui view cube 11 → 14 tests: no clipping from any roll-free
+  view, fill and perspective from home, pick inverting the projection on
+  every visible patch, the shadow image (offset, tint per theme), and the
+  edges' theme colour.
+
+## 2026-10-20: M4 backend, scene sync, scene tree, status (D-65 to D-70)
+
+- **Backend** (D-65): `gz_bevy::backend::SimBackend` (spec §9.4, plus
+  `poll`/`flush`) with `WebsocketBackend` (was `GzConnection`) as the
+  non-send `Backend`; `pump` maps `GzCommand`/`GzReconnect` to trait calls;
+  the backend writes `GzStatus`/`GzInbox` through `Mut`, so a quiet frame
+  marks nothing changed. `GzCommand::Publish` is refused by the websocket
+  backend (no released server takes `pub_in`).
+- **Scene sync**: `scene/deletion` (interactive modes only; the capture
+  modes keep gzweb's protocol), `apply_deletions` before `apply_scene`
+  (delete-and-respawn in one frame works; an unknown id is retried once);
+  `GzIndex` was marked changed every frame by `apply_scene`'s `&mut`
+  reborrow and now changes only with the structure; sensors on links
+  (`SensorDesc`, `GzSensors`; checked against Jetty's `sensors_demo`: the
+  scene message carries sensors, not joints); `SdfWanted` and one
+  `generate_world_sdf` in flight.
+- **Header actions** at run time through `PanelStatus` (separate commit
+  1e7a162 for PR #33, which now carries the same API).
+- **TreeRow** (D-67): recyclable (every part follows the spec, AccessKit
+  label/expanded/level/selected too), controlled caret and eye
+  (`TreeRowExpand`, `TreeRowVisibility`), not a tab stop, cursor ring
+  inside the row.
+- **Scene panel** (D-66): `panels/scene/{model,view,systems}`; the tree
+  model in preorder with subtree sizes (rows in one pass; 20,000 nodes
+  well under a frame in debug), state in `TreeState`/`TreeScroll`, the
+  body built by `Add<SceneTree>`; a `ScrollArea` whose content is as tall
+  as the rows and a recycled pool over the view (a 3,000-model world
+  builds about 30 rows); filter field (`filter_field`, placeholder),
+  controlled type chips (`choice_chip`), Expand/Collapse all enabled,
+  visibility on the scene entity, arrow keys, footer disabled until M5.
+- **Status bar** (D-68): `gz_bevy::messages` (a tracing layer gzweb
+  installs through `LogPlugin::custom_layer`; the newest 500 of our
+  crates' warnings and errors) and the message chip in item 5. The
+  transport and the other readouts are M2's; checked against §3.1/§3.6.
+- **Found and fixed** (D-69): Bevy puts UI roots in an implicit grid
+  whose items are at least as tall as their content; a long tree made
+  the shell 84,000 px tall and a short window with the inspector open
+  grew it past the window (M3's open item). The root has min sizes 0.
+- **gzweb** (D-70): `--scene-filter TEXT`, `--scene-expand`.
+
+## 2026-10-21: PR #34 review fixes (D-64a)
+
+- **SDFormat requests** (`overlays::extras`): keyed on the world and the
+  set of model names (was the count); one in flight, the next asked when
+  its reply lands; forgotten while the connection isn't `Ready` (a lost
+  reply or a reconnect asks again); `receive_extras` runs before
+  `request_extras`.
+- **Collisions** after a respawn: links without collision meshes get them
+  when links were spawned or the overlay turned on, from the held reply.
+- **`gz_core::sdf`**: `relative_to` on collisions and inertials;
+  `inner::link` frames through the nested model (`frame_in_model`
+  replaces `link_in_model`).
+- **View cube:** `turn_cube` before `TransformSystems::Propagate`,
+  `place_labels` before `UiSystems::Layout` (both a frame late before);
+  hover re-picked each frame from `CubePointerAt`; `on_cube_press` resets
+  the drag distance (a drag released off the cube swallowed the next
+  click). `click_cube` in the tests presses first; `release_on_cube` is the
+  click that ends a drag.
+- **Scale label:** below 1 mm to a thousandth ("0.05 mm").
+- **Camera menu:** the current mode's item names its target (latent).
+- **Tests:** a regression test for each (overlays 4, sdf 2, view cube 3,
+  rail 1, and the scale label's lengths test extended); workspace 558 →
+  568 passing; coverage 98.7% lines. check.sh passes.
+
+## 2026-10-21: PR #35 review fixes (D-70a)
+
+- **Merged** M3's review fixes first: `extras.rs` takes M3's request
+  logic with M4's `SdfWanted` (which covers the replaced-model finding).
+- **Paths:** `PathAllocator::free`; `apply_deletions` frees the subtree's
+  paths; the lowest free suffix, skipping paths another name has (`a#1`
+  named so collided with the second `a`).
+- **`--scene-expand`:** extends the open rows, waits for more than the
+  world; `rebuild_model` after `gz_bevy::spawn::apply_scene`.
+- **Rebuilds:** on the world's name, not every `GzStatus` change; rows
+  repaint when the model changes (found while testing it: a renamed
+  world kept its old name).
+- **Scrolling:** `first_row` allows for the list's top padding,
+  `pool_size` is a row longer.
+- **AccessKit:** `TreeContent` has a `GenericContainer` node; empty pool
+  rows are hidden.
+- **Tests:** path reuse (gz-core), respawned paths (gz-bevy), scene expand
+  on an empty world, stats leave the tree alone, the pool covers the list
+  at any scroll (checked to fail with the old maths), the accessibility
+  tree; workspace 586 → 591 passing after the merge; coverage 98.6% lines.
+  check.sh passes.
+
+## 2026-10-21: Asset-load tests wait on the clock, not a frame count
+
+- **Flake:** three of the last eight CI runs failed in `gz-bevy` tests that
+  wait for a load on another thread (mesh, STL, DDS/TGA, heightmap, sky,
+  the asset request): each polled for a fixed number of frames, about 1 s,
+  which a busy runner measuring coverage can exceed. PR #36's run failed
+  this way on a tree that passed as #35.
+- **Fix:** `test_util::wait_until` polls until the condition holds or 30 s
+  pass, so a fast machine is no slower. The six loops use it.
