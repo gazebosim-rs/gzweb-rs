@@ -4,7 +4,7 @@
 
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{
-    Pointer, PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut,
+    Pointer, PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut, PointerPress,
 };
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use gz_bevy::camera::MainCamera;
@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use super::pick::*;
 use super::scene::{patch_role, CubeInk, CubePatch, CubeScene};
-use super::systems::{cube_uv, CubeDrag, CubeHover};
+use super::systems::{cube_uv, CubeDrag, CubeHover, CubePointerAt, CLICK_SLOP};
 use super::*;
 use crate::test_support::frames;
 use crate::test_support::shell::*;
@@ -316,7 +316,22 @@ fn hit() -> HitData {
     HitData::new(Entity::PLACEHOLDER, 0.0, None, None)
 }
 
+/// A press and release in place at `uv`.
 fn click_cube(app: &mut App, uv: Vec2) {
+    let entity = find::<ViewCube>(app);
+    let p = at_uv(app, uv);
+    app.world_mut().trigger(PointerPress {
+        entity,
+        pointer: pointer_at(p),
+        button: PointerButton::Primary,
+        hit: hit(),
+        count: 1,
+    });
+    release_on_cube(app, uv);
+}
+
+/// The click a release at `uv` sends (after a press, or the drag it ends).
+fn release_on_cube(app: &mut App, uv: Vec2) {
     let entity = find::<ViewCube>(app);
     let p = at_uv(app, uv);
     app.world_mut().trigger(PointerClick {
@@ -431,7 +446,7 @@ fn hovering_lights_the_region_and_dragging_orbits() {
         });
     }
     frames(&mut app, 1);
-    click_cube(&mut app, Vec2::new(0.0, 0.4));
+    release_on_cube(&mut app, Vec2::new(0.0, 0.4));
     // The first 2 px are within the click slop.
     assert_eq!(
         ops(&mut app),
@@ -557,4 +572,86 @@ fn the_cube_casts_its_own_shadow_a_pixel_down_in_either_theme() {
             .base_color;
         assert_eq!(got, edge);
     }
+}
+
+/// The cube camera's transform is final in the frame the view turns, so the
+/// cube is drawn with the view's own rotation, not the last frame's.
+#[test]
+fn the_cube_turns_in_the_frame_the_view_does() {
+    let mut app = cube_app(1.0);
+    let camera = app.world().resource::<CubeScene>().camera;
+    for _ in 0..5 {
+        send(&mut app, ViewOp::Orbit(Vec2::new(15.0, 3.0)));
+        let world = app.world_mut();
+        let view = *world
+            .query_filtered::<&Transform, With<MainCamera>>()
+            .single(world)
+            .unwrap();
+        let drawn = app.world().get::<GlobalTransform>(camera).unwrap();
+        // A frame behind is a whole orbit step (about 0.1 rad); f32 leaves
+        // about 1e-3.
+        assert!(drawn.rotation().angle_between(view.rotation) < 0.01);
+    }
+}
+
+/// The hover lights what a click would pick, also after the view turns
+/// under a pointer that hasn't moved; leaving the cube clears it.
+#[test]
+fn the_hover_follows_the_view_under_a_still_pointer() {
+    let mut app = cube_app(1.0);
+    let entity = find::<ViewCube>(&mut app);
+    let p = at_uv(&mut app, Vec2::ZERO);
+    app.world_mut().trigger(PointerMove {
+        entity,
+        pointer: pointer_at(p),
+        hit: hit(),
+        delta: Vec2::ONE,
+    });
+    frames(&mut app, 1);
+    assert_eq!(
+        app.world().resource::<CubeHover>().0,
+        pick(home_rotation(), Vec2::ZERO)
+    );
+    send(&mut app, ViewOp::Snap(SnapView::Top));
+    frames(&mut app, 30);
+    let want = pick(top_rotation(), Vec2::ZERO);
+    assert_ne!(want, pick(home_rotation(), Vec2::ZERO));
+    assert_eq!(app.world().resource::<CubeHover>().0, want);
+    app.world_mut().trigger(PointerOut {
+        entity,
+        pointer: pointer_at(p),
+        hit: hit(),
+    });
+    frames(&mut app, 1);
+    assert_eq!(app.world().resource::<CubeHover>().0, None);
+    assert_eq!(app.world().resource::<CubePointerAt>().0, None);
+}
+
+/// A drag that starts on the cube and is released off it (no click on the
+/// cube to end it) leaves the next click in place to pick.
+#[test]
+fn a_drag_released_off_the_cube_leaves_the_next_click_alone() {
+    let mut app = cube_app(1.0);
+    let entity = find::<ViewCube>(&mut app);
+    let p = at_uv(&mut app, Vec2::new(0.0, 0.4));
+    app.world_mut().trigger(PointerDragStart {
+        entity,
+        pointer: pointer_at(p),
+        button: PointerButton::Primary,
+        hit: hit(),
+    });
+    for _ in 0..5 {
+        app.world_mut().trigger(PointerDrag {
+            entity,
+            pointer: pointer_at(p),
+            button: PointerButton::Primary,
+            distance: Vec2::ZERO,
+            delta: Vec2::new(4.0, 0.0),
+        });
+    }
+    assert!(app.world().resource::<CubeDrag>().0 > CLICK_SLOP);
+    frames(&mut app, 30);
+    ops(&mut app);
+    click_cube(&mut app, Vec2::new(0.0, 0.4));
+    assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Top)]);
 }

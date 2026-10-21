@@ -169,7 +169,9 @@ pub(crate) fn scale_bar(metres_per_px: f32) -> Option<(f32, f32)> {
     Some((metres, metres / metres_per_px))
 }
 
-/// A length as the scale label reads: "1 m", "50 cm", "2 mm", "5 km".
+/// A length as the scale label reads: "1 m", "50 cm", "2 mm", "5 km";
+/// under a millimetre, to a thousandth ("0.05 mm", not f32's
+/// "0.049999997 mm").
 pub(crate) fn scale_text(metres: f32) -> String {
     let (v, unit) = if metres >= 1000.0 {
         (metres / 1000.0, "km")
@@ -180,7 +182,11 @@ pub(crate) fn scale_text(metres: f32) -> String {
     } else {
         (metres * 1000.0, "mm")
     };
-    let v = if v >= 1.0 { v.round() } else { v };
+    let v = if v >= 1.0 {
+        v.round()
+    } else {
+        (v * 1000.0).round() / 1000.0
+    };
     format!("{v} {unit}")
 }
 

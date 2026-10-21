@@ -1,7 +1,9 @@
 //! The view cube's pointer handling (hover, click, drag) and its face
 //! labels.
 
-use bevy::picking::events::{PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut};
+use bevy::picking::events::{
+    PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut, PointerPress,
+};
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
@@ -18,6 +20,12 @@ use crate::widgets::layout::node_rect;
 /// The region under the pointer, lit up.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CubeHover(pub Option<CubeRegion>);
+
+/// Where the pointer is on the cube's image ([`cube_uv`]) while it is over
+/// it, so the hover follows the cube as the view turns under a still
+/// pointer.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct CubePointerAt(pub Option<Vec2>);
 
 /// How far the current drag on the cube has gone (logical pixels): a
 /// press that moved further than [`CLICK_SLOP`] is an orbit, not a click.
@@ -53,13 +61,18 @@ pub(crate) struct CubePointer<'w, 's> {
 }
 
 impl CubePointer<'_, '_> {
-    /// The region at `at` on cube `e`, and the view to act on.
-    fn region(&self, e: Entity, at: Vec2) -> Option<(Entity, Option<CubeRegion>)> {
+    /// Where `at` is on cube `e`'s image, the region there, and the view to
+    /// act on.
+    fn region(&self, e: Entity, at: Vec2) -> Option<(Entity, Vec2, Option<CubeRegion>)> {
         let (node, t) = self.cubes.get(e).ok()?;
         let (view, _, transform, _) = self.view.get()?;
         let scale = self.windows.single().map_or(1.0, Window::scale_factor);
         let uv = cube_uv(at, node_rect(node, t), scale);
-        Some((view, pick::pick(pick::gz_rotation(transform.rotation), uv)))
+        Some((
+            view,
+            uv,
+            pick::pick(pick::gz_rotation(transform.rotation), uv),
+        ))
     }
 }
 
@@ -67,9 +80,11 @@ impl CubePointer<'_, '_> {
 pub(crate) fn on_cube_move(
     ev: On<PointerMove>,
     pointer: CubePointer,
+    mut at: ResMut<CubePointerAt>,
     mut hover: ResMut<CubeHover>,
 ) {
-    if let Some((_, region)) = pointer.region(ev.event_target(), ev.pointer.position) {
+    if let Some((_, uv, region)) = pointer.region(ev.event_target(), ev.pointer.position) {
+        at.set_if_neq(CubePointerAt(Some(uv)));
         hover.set_if_neq(CubeHover(region));
     }
 }
@@ -78,14 +93,37 @@ pub(crate) fn on_cube_move(
 pub(crate) fn on_cube_out(
     ev: On<PointerOut>,
     cubes: Query<(), With<ViewCube>>,
+    mut at: ResMut<CubePointerAt>,
     mut hover: ResMut<CubeHover>,
 ) {
     if cubes.contains(ev.event_target()) {
+        at.set_if_neq(CubePointerAt(None));
         hover.set_if_neq(CubeHover(None));
     }
 }
 
-/// A drag on the cube starts from nothing.
+/// The hover follows the view as it turns (a key, a snap, a menu) under a
+/// pointer that stays put.
+pub(crate) fn follow_hover(at: Res<CubePointerAt>, view: MainView, mut hover: ResMut<CubeHover>) {
+    let (Some(uv), Some((_, _, t, _))) = (at.0, view.get()) else {
+        return;
+    };
+    hover.set_if_neq(CubeHover(pick::pick(pick::gz_rotation(t.rotation), uv)));
+}
+
+/// A press on the cube, and a drag from it, start from nothing (a drag
+/// released off the cube ends with no click to clear it).
+pub(crate) fn on_cube_press(
+    ev: On<PointerPress>,
+    cubes: Query<(), With<ViewCube>>,
+    mut drag: ResMut<CubeDrag>,
+) {
+    if cubes.contains(ev.event_target()) {
+        drag.0 = 0.0;
+    }
+}
+
+/// See [`on_cube_press`].
 pub(crate) fn on_cube_drag_start(
     ev: On<PointerDragStart>,
     cubes: Query<(), With<ViewCube>>,
@@ -129,7 +167,7 @@ pub(crate) fn on_cube_click(
     if dragged {
         return;
     }
-    if let Some((view, Some(region))) = pointer.region(ev.event_target(), ev.pointer.position) {
+    if let Some((view, _, Some(region))) = pointer.region(ev.event_target(), ev.pointer.position) {
         out.write(ViewCommand {
             view,
             op: region.op(),

@@ -17,9 +17,9 @@
 //!
 //! Frames, as SDFormat 1.7+ defines them: a link's pose is relative to its
 //! model, a collision's and an inertial's to their link, and a joint's to
-//! its child link, unless `relative_to` names another link or `__model__`.
-//! Other frames (`<frame>` elements, nested models' frames) are not
-//! resolved: they count as the model frame.
+//! its child link, unless `relative_to` names another link, a nested
+//! model's link (`inner::link`) or `__model__`. Other frames (`<frame>`
+//! elements) are not resolved: they count as the model frame.
 
 use std::collections::HashMap;
 
@@ -235,14 +235,15 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
     } else {
         format!("{parent}/{name}")
     };
-    // Each link's pose in the model frame, for joints posed relative to
-    // another link or the model.
     let links: Vec<Node> = children(model, "link").collect();
-    let raw: HashMap<&str, (Pose, Option<String>)> = links
-        .iter()
-        .map(|l| (l.attribute("name").unwrap_or(""), pose_of(*l)))
-        .collect();
-    let in_model = |link: &str| link_in_model(link, &raw, 0);
+    let in_model = |frame: &str| frame_in_model(model, frame, 0);
+    // A pose that belongs to `owner` (a link), in that link's frame.
+    let in_link =
+        |owner: &str, (pose, relative_to): (Pose, Option<String>)| match relative_to.as_deref() {
+            None => pose,
+            Some(r) if r == owner => pose,
+            Some(r) => mul(inverse(in_model(owner)), mul(in_model(r), pose)),
+        };
 
     for link in &links {
         let lname = link.attribute("name").unwrap_or("");
@@ -251,14 +252,17 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
             if let Some(geometry) = child(c, "geometry").and_then(geometry) {
                 extras.collisions.push(Collision {
                     name: c.attribute("name").unwrap_or("").to_string(),
-                    pose: pose_of(c).0,
+                    pose: in_link(lname, pose_of(c)),
                     scale: mesh_scale(c),
                     geometry,
                 });
             }
         }
         if let Some(i) = child(*link, "inertial") {
-            extras.inertial = Some(inertial(i));
+            extras.inertial = Some(Inertial {
+                pose: in_link(lname, pose_of(i)),
+                ..inertial(i)
+            });
         }
     }
 
@@ -268,19 +272,7 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
         };
         // A nested model's link: `inner::link` is `path/inner/link`.
         let child_path = format!("{path}/{}", child_name.replace("::", "/"));
-        let (pose, relative_to) = pose_of(j);
-        let pose = match relative_to.as_deref() {
-            None => pose,
-            Some(r) if r == child_name => pose,
-            Some(r) => {
-                let frame = if r == "__model__" {
-                    Pose::IDENTITY
-                } else {
-                    in_model(r)
-                };
-                mul(inverse(in_model(child_name)), mul(frame, pose))
-            }
-        };
+        let pose = in_link(child_name, pose_of(j));
         let axes = ["axis", "axis2"]
             .into_iter()
             .filter_map(|tag| child(j, tag))
@@ -317,18 +309,36 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
     }
 }
 
-/// A link's pose in its model's frame, following `relative_to` through
-/// other links (at most a few deep; a loop or an unknown frame stops at
-/// the model frame).
-fn link_in_model(link: &str, raw: &HashMap<&str, (Pose, Option<String>)>, depth: u32) -> Pose {
-    let Some((pose, relative_to)) = raw.get(link) else {
+/// A frame's pose in `model`'s frame: `__model__`, one of its links, or a
+/// nested model's link (`inner::link`, `a::b::link`), following
+/// `relative_to` through the others (at most a few deep; a loop or an
+/// unknown frame stops at the model frame).
+fn frame_in_model(model: Node, frame: &str, depth: u32) -> Pose {
+    if depth >= 16 || frame == "__model__" {
         return Pose::IDENTITY;
-    };
-    match relative_to.as_deref() {
-        Some(r) if r != "__model__" && raw.contains_key(r) && depth < 16 => {
-            mul(link_in_model(r, raw, depth + 1), *pose)
+    }
+    let named = |tag| children(model, tag).find(|n| n.attribute("name") == Some(frame));
+    let (element, inner) = match frame.split_once("::") {
+        Some((nested, rest)) => {
+            let Some(m) = children(model, "model").find(|n| n.attribute("name") == Some(nested))
+            else {
+                return Pose::IDENTITY;
+            };
+            (m, Some(rest))
         }
-        _ => *pose,
+        None => match named("link") {
+            Some(l) => (l, None),
+            None => return Pose::IDENTITY,
+        },
+    };
+    let (pose, relative_to) = pose_of(element);
+    let pose = match relative_to.as_deref() {
+        Some(r) if r != "__model__" => mul(frame_in_model(model, r, depth + 1), pose),
+        _ => pose,
+    };
+    match inner {
+        Some(rest) => mul(pose, frame_in_model(element, rest, depth + 1)),
+        None => pose,
     }
 }
 

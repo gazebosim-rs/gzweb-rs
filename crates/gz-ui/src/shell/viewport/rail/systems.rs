@@ -237,12 +237,17 @@ impl CameraReadout<'_, '_> {
             .and_then(|s| s.entities.first().copied())
     }
 
-    /// What Follow and Track name: the selection, else what the camera
-    /// follows or tracks.
-    fn subject(&self) -> Option<String> {
-        self.selected()
-            .or(self.mode().target())
-            .map(|e| entity_name(&self.names, e))
+    /// What Follow or Track names: the camera's target while it is the
+    /// current mode (choosing it then changes nothing), else the
+    /// selection, else the target.
+    fn subject(&self, current: bool) -> Option<String> {
+        let target = self.mode().target();
+        let e = if current {
+            target
+        } else {
+            self.selected().or(target)
+        };
+        e.map(|e| entity_name(&self.names, e))
     }
 }
 
@@ -283,7 +288,6 @@ pub(crate) fn camera_state(
     for mut dot in &mut dots {
         set_shown(&mut dot, on);
     }
-    let subject = readout.subject();
     let selected = readout.selected().is_some();
     for (e, item, children, active, disabled, tip) in &mut items {
         let (current, verb, key) = match item {
@@ -306,6 +310,7 @@ pub(crate) fn camera_state(
         mark::<Active>(&mut commands, e, active, current);
         let enabled = selected || current;
         mark::<InteractionDisabled>(&mut commands, e, disabled, !enabled);
+        let subject = readout.subject(current);
         let label = format!("{verb} {}", subject.as_deref().unwrap_or("selection"));
         if let Some(t) = children.iter().find(|c| texts.contains(*c)) {
             if let Ok(mut t) = texts.get_mut(t) {

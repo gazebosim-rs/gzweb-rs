@@ -33,6 +33,7 @@ pub(crate) mod scene;
 pub(crate) mod systems;
 
 use bevy::prelude::*;
+use bevy::transform::TransformSystems;
 use bevy::ui::UiSystems;
 
 use crate::theme::Theme;
@@ -79,26 +80,33 @@ pub(crate) const CUBE_RIGHT: f32 = 2.0;
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<systems::CubeHover>()
+        .init_resource::<systems::CubePointerAt>()
         .init_resource::<systems::CubeDrag>()
         .add_systems(
             Startup,
             scene::spawn_cube_scene.run_if(resource_exists::<Assets<StandardMaterial>>),
         )
         .add_systems(Update, systems::spawn_parts.in_set(GzUiSystems::Behaviour))
+        // The cube turns, and its labels move, in the frame the view does:
+        // the camera before transforms propagate, the labels before layout.
         .add_systems(
             PostUpdate,
             (
-                scene::size_cube_texture,
-                scene::show_cube_texture,
-                scene::turn_cube,
-                scene::paint_cube,
-                systems::place_labels,
-            )
-                .chain()
-                .after(UiSystems::Layout),
+                scene::turn_cube.before(TransformSystems::Propagate),
+                systems::place_labels.before(UiSystems::Layout),
+                (
+                    scene::size_cube_texture,
+                    scene::show_cube_texture,
+                    systems::follow_hover,
+                    scene::paint_cube,
+                )
+                    .chain()
+                    .after(UiSystems::Layout),
+            ),
         )
         .add_observer(systems::on_cube_move)
         .add_observer(systems::on_cube_out)
+        .add_observer(systems::on_cube_press)
         .add_observer(systems::on_cube_drag_start)
         .add_observer(systems::on_cube_drag)
         .add_observer(systems::on_cube_click);

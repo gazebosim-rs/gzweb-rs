@@ -16,6 +16,7 @@ use bevy::pbr::wireframe::Wireframe;
 use gz_core::msgs;
 use gz_core::scene::{GeometryDesc, NodeKind, Pose, SceneDesc};
 use gz_core::sdf::Inertial;
+use gz_core::transport::Status;
 use prost::Message as _;
 
 #[derive(Resource, Default)]
@@ -48,6 +49,7 @@ fn app() -> App {
     .init_resource::<GzMaterials>()
     .init_resource::<Sent>()
     .insert_resource(GzStatus {
+        status: Status::Ready,
         world: Some("w".into()),
         ..GzStatus::new("ws://test")
     })
@@ -239,6 +241,128 @@ fn the_sdf_is_asked_for_once_per_world_and_model_set() {
     assert_eq!(app.world().resource::<SdfExtras>().generation, 1);
     app.update();
     assert!(requests(&mut app).is_empty());
+}
+
+const SDF_REQUEST: &str = "/world/w/generate_world_sdf";
+
+fn model_names(app: &mut App) -> Mut<'_, std::collections::HashSet<String>> {
+    app.world_mut()
+        .resource_mut::<GzIndex>()
+        .map_unchanged(|i| &mut i.model_names)
+}
+
+fn set_status(app: &mut App, status: Status) {
+    app.world_mut().resource_mut::<GzStatus>().status = status;
+    app.update();
+}
+
+/// The set of models, not their number: one model replacing another asks
+/// again.
+#[test]
+fn a_replaced_model_asks_again() {
+    let mut app = app();
+    model_names(&mut app).insert("a".into());
+    set(&mut app, Overlay::Joints, true);
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+    reply(&mut app, SDF_REQUEST, SDF);
+    let mut names = model_names(&mut app);
+    names.remove("a");
+    names.insert("b".into());
+    app.update();
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+}
+
+/// One request at a time: a change while it is out is asked for when its
+/// reply lands, so the last reply used is for the latest set.
+#[test]
+fn a_change_while_a_request_is_out_is_asked_for_after_its_reply() {
+    let mut app = app();
+    set(&mut app, Overlay::Joints, true);
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+    model_names(&mut app).insert("late".into());
+    app.update();
+    assert!(requests(&mut app).is_empty(), "one in flight");
+    reply(&mut app, SDF_REQUEST, SDF);
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+    let late = SDF.replace(
+        "</world>",
+        r#"<model name="late"><link name="l"><inertial><mass>1</mass></inertial></link></model></world>"#,
+    );
+    reply(&mut app, SDF_REQUEST, &late);
+    let extras = app.world().resource::<SdfExtras>();
+    assert_eq!(extras.generation, 2);
+    assert!(extras.extras.as_ref().unwrap().link("late/l").is_some());
+    app.update();
+    assert!(requests(&mut app).is_empty());
+}
+
+/// A reply lost to a disconnect is asked for again once the connection is
+/// back; so is the world after any reconnect.
+#[test]
+fn a_reconnect_asks_again() {
+    let mut app = app();
+    set(&mut app, Overlay::Inertia, true);
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+    set_status(&mut app, Status::Disconnected);
+    assert!(requests(&mut app).is_empty());
+    set_status(&mut app, Status::Ready);
+    assert_eq!(requests(&mut app), [SDF_REQUEST], "the lost reply");
+    reply(&mut app, SDF_REQUEST, SDF);
+    set_status(&mut app, Status::Connecting);
+    set_status(&mut app, Status::Ready);
+    assert_eq!(requests(&mut app), [SDF_REQUEST], "after a reconnect");
+}
+
+fn collisions(app: &mut App) -> Vec<Entity> {
+    let world = app.world_mut();
+    world
+        .query_filtered::<&ChildOf, With<CollisionOverlay>>()
+        .iter(world)
+        .map(ChildOf::parent)
+        .collect()
+}
+
+/// Links spawned again under the same paths (the scene after a reconnect,
+/// a model deleted and respawned) get their collisions back, from the
+/// reply they already have, whether the overlay was on then or not.
+#[test]
+fn respawned_links_get_their_collisions_back() {
+    let mut app = app();
+    model_names(&mut app).insert("robot".into());
+    let (base, _) = robot(&mut app);
+    set(&mut app, Overlay::Collisions, true);
+    reply(&mut app, SDF_REQUEST, SDF);
+    app.update();
+    assert_eq!(collisions(&mut app), [base]);
+    let despawn_world = |app: &mut App| {
+        let world = app.world_mut();
+        let roots: Vec<Entity> = world
+            .query_filtered::<Entity, With<GzWorldRoot>>()
+            .iter(world)
+            .collect();
+        for r in roots {
+            world.entity_mut(r).despawn();
+        }
+    };
+    despawn_world(&mut app);
+    let (base, _) = robot(&mut app);
+    app.update();
+    assert_eq!(collisions(&mut app), [base]);
+    // With the overlay off while they respawn: when it comes back on.
+    set(&mut app, Overlay::Collisions, false);
+    despawn_world(&mut app);
+    let (base, _) = robot(&mut app);
+    app.update();
+    assert!(collisions(&mut app).is_empty());
+    set(&mut app, Overlay::Collisions, true);
+    app.update();
+    assert_eq!(collisions(&mut app), [base]);
+    // Nothing doubles up on a later toggle.
+    set(&mut app, Overlay::Collisions, false);
+    set(&mut app, Overlay::Collisions, true);
+    app.update();
+    assert_eq!(collisions(&mut app), [base]);
+    assert!(requests(&mut app).iter().all(|r| r == SDF_REQUEST));
 }
 
 #[test]
