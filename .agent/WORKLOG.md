@@ -1151,3 +1151,13 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** a model 6 × 10⁹ m away keeps the camera within the floor and
   the scene between the clip planes (checked to fail without the fix);
   workspace 591 → 592 passing; coverage 98.6% lines. check.sh passes.
+
+## 2026-10-21: Asset-load tests wait on the clock, not a frame count
+
+- **Flake:** three of the last eight CI runs failed in `gz-bevy` tests that
+  wait for a load on another thread (mesh, STL, DDS/TGA, heightmap, sky,
+  the asset request): each polled for a fixed number of frames, about 1 s,
+  which a busy runner measuring coverage can exceed. PR #36's run failed
+  this way on a tree that passed as #35.
+- **Fix:** `test_util::wait_until` polls until the condition holds or 30 s
+  pass, so a fast machine is no slower. The six loops use it.

@@ -766,14 +766,11 @@ mod tests {
                 spawn(&mut commands, &server, &desc, parent)
             })
             .unwrap();
-        for _ in 0..200 {
+        crate::test_util::wait_until(|| {
             app.update();
             let world = app.world_mut();
-            if world.query::<&GzHeightmap>().iter(world).all(|t| t.built) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+            world.query::<&GzHeightmap>().iter(world).all(|t| t.built)
+        });
         let world = app.world_mut();
         let entity = world
             .query_filtered::<Entity, With<GzHeightmap>>()
