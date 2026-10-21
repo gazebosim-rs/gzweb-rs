@@ -5,6 +5,7 @@
 //! [`GzWebPlugin`] after.
 
 pub mod assets;
+pub mod backend;
 pub mod camera;
 pub mod collada;
 pub mod connection;
@@ -13,6 +14,7 @@ pub mod heightmap;
 pub mod hud;
 pub mod material;
 pub mod mesh_file;
+pub mod messages;
 pub mod obj;
 pub mod overlays;
 pub mod render;
@@ -156,6 +158,7 @@ impl Plugin for GzWebPlugin {
                 Update,
                 (
                     connection::pump,
+                    spawn::apply_deletions,
                     spawn::apply_scene,
                     spawn::instance_gltf,
                     heightmap::build,
@@ -197,6 +200,10 @@ impl Plugin for GzWebPlugin {
         if !hud {
             hud::remove_dom_status();
         }
+        // Client-side warnings and errors (the full UI's message chip),
+        // fed by `messages::log_layer` when the app installs it.
+        app.init_resource::<messages::SystemMessages>()
+            .add_systems(Update, messages::drain_log);
         // The frame rate: the HUD's and the full UI's status bar.
         if self.config.interactive() {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());
@@ -261,6 +268,7 @@ pub(crate) mod test_util {
         .add_systems(
             Update,
             (
+                spawn::apply_deletions,
                 spawn::apply_scene,
                 spawn::instance_gltf,
                 heightmap::build,

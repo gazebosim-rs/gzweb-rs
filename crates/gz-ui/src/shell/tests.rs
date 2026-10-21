@@ -1069,3 +1069,19 @@ fn tab_walks_the_regions_in_order_and_skips_hidden_ones() {
     assert_eq!(closed.len(), first.len());
     assert_eq!(regions(&closed), all);
 }
+
+/// A window shorter than the inspector's content, or a panel with a long
+/// list, never grows the shell past the window (DECISIONS.md D-69: Bevy
+/// puts UI roots in a grid whose items are at least as tall as their
+/// content).
+#[test]
+fn the_shell_never_grows_past_a_short_window() {
+    let mut app = shell_app((1440, 520), 1.0);
+    frames(&mut app, 3);
+    assert!(layout(&app).inspector_open);
+    let root = region(&mut app, Region::Root);
+    assert_eq!(rect(&app, root).1, Vec2::new(1440.0, 520.0));
+    let status = region(&mut app, Region::StatusBar);
+    let (min, size) = rect(&app, status);
+    assert_eq!(min.y + size.y, 520.0);
+}

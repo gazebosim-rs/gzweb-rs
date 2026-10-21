@@ -55,7 +55,9 @@ impl Plugin for GalleryPlugin {
                     .in_set(GzUiSystems::Behaviour),
             )
             .add_systems(Last, systems::capture_gallery)
-            .add_observer(systems::on_theme_button);
+            .add_observer(systems::on_theme_button)
+            .add_observer(systems::on_tree_row_expand)
+            .add_observer(systems::on_tree_row_visibility);
     }
 }
 

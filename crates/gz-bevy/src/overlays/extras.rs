@@ -6,7 +6,8 @@
 //! `generate_world_sdf` service (included models expanded) and parses the
 //! reply. It asks again when the set of models changes (a spawn, a
 //! deletion) or the connection comes back, while one of those overlays is
-//! on. One request is in flight at a time: a change while it is out is
+//! on or something else wants it ([`SdfWanted`]: the UI's scene tree lists
+//! the joints). One request is in flight at a time: a change while it is out is
 //! asked for when its reply lands, so the last reply is always for the
 //! latest set. A server without the service, or a reply that isn't
 //! SDFormat, is logged once per world and model set.
@@ -35,13 +36,20 @@ pub struct SdfExtras {
     pending: Option<String>,
 }
 
-/// Asks for the world's SDFormat when an overlay needs it and the world
+/// The world's SDFormat is wanted beyond the overlays (the UI's scene tree
+/// sets it while it shows, for the joints).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SdfWanted(pub bool);
+
+/// Asks for the world's SDFormat when an overlay (or [`SdfWanted`]) needs
+/// it and the world
 /// (or its set of models) is new since the last request, once no request
 /// is in flight. While the connection isn't ready, it forgets what it
 /// asked: a reply lost to a disconnect is asked for again, and so is the
 /// world after a reconnect.
 pub fn request_extras(
     overlays: Res<Overlays>,
+    wanted: Option<Res<SdfWanted>>,
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     mut state: ResMut<SdfExtras>,
@@ -55,7 +63,8 @@ pub fn request_extras(
         }
         return;
     }
-    if !overlays.need_sdf() || state.pending.is_some() {
+    let needed = overlays.need_sdf() || wanted.is_some_and(|w| w.0);
+    if !needed || state.pending.is_some() {
         return;
     }
     let (Some(world), Some(index)) = (status.world.as_deref(), index) else {

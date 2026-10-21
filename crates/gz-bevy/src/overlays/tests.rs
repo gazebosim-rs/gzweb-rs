@@ -365,6 +365,18 @@ fn respawned_links_get_their_collisions_back() {
     assert!(requests(&mut app).iter().all(|r| r == SDF_REQUEST));
 }
 
+/// The scene tree wants the SDFormat without an overlay.
+#[test]
+fn the_sdf_is_asked_for_when_wanted() {
+    use super::extras::SdfWanted;
+    let mut app = app();
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    app.insert_resource(SdfWanted(true));
+    app.update();
+    assert_eq!(requests(&mut app), [SDF_REQUEST]);
+}
+
 #[test]
 fn no_request_without_a_world() {
     let mut app = app();

@@ -1054,6 +1054,46 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   every visible patch, the shadow image (offset, tint per theme), and the
   edges' theme colour.
 
+## 2026-10-20: M4 backend, scene sync, scene tree, status (D-65 to D-70)
+
+- **Backend** (D-65): `gz_bevy::backend::SimBackend` (spec §9.4, plus
+  `poll`/`flush`) with `WebsocketBackend` (was `GzConnection`) as the
+  non-send `Backend`; `pump` maps `GzCommand`/`GzReconnect` to trait calls;
+  the backend writes `GzStatus`/`GzInbox` through `Mut`, so a quiet frame
+  marks nothing changed. `GzCommand::Publish` is refused by the websocket
+  backend (no released server takes `pub_in`).
+- **Scene sync**: `scene/deletion` (interactive modes only; the capture
+  modes keep gzweb's protocol), `apply_deletions` before `apply_scene`
+  (delete-and-respawn in one frame works; an unknown id is retried once);
+  `GzIndex` was marked changed every frame by `apply_scene`'s `&mut`
+  reborrow and now changes only with the structure; sensors on links
+  (`SensorDesc`, `GzSensors`; checked against Jetty's `sensors_demo`: the
+  scene message carries sensors, not joints); `SdfWanted` and one
+  `generate_world_sdf` in flight.
+- **Header actions** at run time through `PanelStatus` (separate commit
+  1e7a162 for PR #33, which now carries the same API).
+- **TreeRow** (D-67): recyclable (every part follows the spec, AccessKit
+  label/expanded/level/selected too), controlled caret and eye
+  (`TreeRowExpand`, `TreeRowVisibility`), not a tab stop, cursor ring
+  inside the row.
+- **Scene panel** (D-66): `panels/scene/{model,view,systems}`; the tree
+  model in preorder with subtree sizes (rows in one pass; 20,000 nodes
+  well under a frame in debug), state in `TreeState`/`TreeScroll`, the
+  body built by `Add<SceneTree>`; a `ScrollArea` whose content is as tall
+  as the rows and a recycled pool over the view (a 3,000-model world
+  builds about 30 rows); filter field (`filter_field`, placeholder),
+  controlled type chips (`choice_chip`), Expand/Collapse all enabled,
+  visibility on the scene entity, arrow keys, footer disabled until M5.
+- **Status bar** (D-68): `gz_bevy::messages` (a tracing layer gzweb
+  installs through `LogPlugin::custom_layer`; the newest 500 of our
+  crates' warnings and errors) and the message chip in item 5. The
+  transport and the other readouts are M2's; checked against §3.1/§3.6.
+- **Found and fixed** (D-69): Bevy puts UI roots in an implicit grid
+  whose items are at least as tall as their content; a long tree made
+  the shell 84,000 px tall and a short window with the inspector open
+  grew it past the window (M3's open item). The root has min sizes 0.
+- **gzweb** (D-70): `--scene-filter TEXT`, `--scene-expand`.
+
 ## 2026-10-21: PR #34 review fixes (D-64a)
 
 - **SDFormat requests** (`overlays::extras`): keyed on the world and the
@@ -1077,3 +1117,25 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** a regression test for each (overlays 4, sdf 2, view cube 3,
   rail 1, and the scale label's lengths test extended); workspace 558 →
   568 passing; coverage 98.7% lines. check.sh passes.
+
+## 2026-10-21: PR #35 review fixes (D-70a)
+
+- **Merged** M3's review fixes first: `extras.rs` takes M3's request
+  logic with M4's `SdfWanted` (which covers the replaced-model finding).
+- **Paths:** `PathAllocator::free`; `apply_deletions` frees the subtree's
+  paths; the lowest free suffix, skipping paths another name has (`a#1`
+  named so collided with the second `a`).
+- **`--scene-expand`:** extends the open rows, waits for more than the
+  world; `rebuild_model` after `gz_bevy::spawn::apply_scene`.
+- **Rebuilds:** on the world's name, not every `GzStatus` change; rows
+  repaint when the model changes (found while testing it: a renamed
+  world kept its old name).
+- **Scrolling:** `first_row` allows for the list's top padding,
+  `pool_size` is a row longer.
+- **AccessKit:** `TreeContent` has a `GenericContainer` node; empty pool
+  rows are hidden.
+- **Tests:** path reuse (gz-core), respawned paths (gz-bevy), scene expand
+  on an empty world, stats leave the tree alone, the pool covers the list
+  at any scroll (checked to fail with the old maths), the accessibility
+  tree; workspace 586 → 591 passing after the merge; coverage 98.6% lines.
+  check.sh passes.

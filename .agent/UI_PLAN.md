@@ -228,7 +228,7 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   yet"), lidar/sensor data, the inactive view's face marker, per-view overlays. Found: a
   short window with the inspector open grows the shell past the window (DECISIONS.md, Open).
 
-### M4 — Backend, scene sync, transport and status
+### M4 — Backend, scene sync, transport and status — **done 2026-10-20**
 - `SimBackend` trait with the websocket implementation (see §3 item 1).
 - Top-bar transport: play/pause/step/steps-per-click/reset, sim clock, RTF from `/stats`.
   Status bar: connection, engine/step, fps, iterations, messages chip, tool hint, selection,
@@ -247,6 +247,23 @@ and orthographic views. The browser input items of M10 moved here (see M10).
   eye and opacity), so a virtualized row can be reused. The eye becomes controlled: it emits
   an event and the panel (and M5's undo) owns visibility, instead of `on_eye_activate`
   toggling `spec.hidden` itself (the feathers controlled pattern).
+- Notes: `gz_bevy::backend::SimBackend` with `WebsocketBackend` behind the message API
+  (D-65); `scene/deletion` in the interactive modes, `apply_deletions` before
+  `apply_scene`; sensors on links (`GzSensors`); `GzIndex` changes only with the
+  structure; `SdfWanted`. Header actions' enabled state at run time through
+  `PanelStatus` (`set_action_enabled`, its own commit for PR #33). The Scene panel
+  (`panels/scene/{model,view,systems}`): the tree of world, models, links, lights,
+  sensors and joints (from the SDFormat), virtualized over a `ScrollArea` with a
+  recycled pool, filter field and controlled type chips, Expand/Collapse all,
+  visibility on the scene entity, one tab stop with arrow keys (D-66, D-67). The
+  status bar's message chip from the client's warnings and errors
+  (`gz_bevy::messages`, D-68); the transport and the other readouts were done in M2
+  (checked against §3.1/§3.6; engine reads "—", the server doesn't say; "sel: —" until
+  M5). The shell's root has min sizes of 0, which fixes M3's short-window open item
+  (D-69). `gzweb --scene-filter`, `--scene-expand` (D-70). Verified live against
+  Jetty (`/create`, `/remove`). Left: selection, Hide others/Isolate, row context
+  menu and drag to re-parent (M5); the message tray (M8); arrow keys in the other
+  groups (M10).
 
 ### M5 — Selection, inspector, transform tools, undo
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a

@@ -221,6 +221,7 @@ impl Plugin for OverlayRenderPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Overlays>()
             .init_resource::<extras::SdfExtras>()
+            .init_resource::<extras::SdfWanted>()
             .init_resource::<wireframe::WireframeLines>()
             .init_gizmo_group::<draw::OverlayGizmos>()
             .add_plugins(bevy::pbr::wireframe::WireframePlugin::default())
