@@ -563,3 +563,38 @@ fn the_tree_takes_tab_and_the_arrow_keys() {
     frames(&mut app, 1);
     assert_eq!(cursor(&app), Some(NodeKey::Entity("sun".into())));
 }
+
+/// `SceneTreeStart` (a capture's `--scene-filter`, `--scene-expand`)
+/// applies once the first tree exists, to the state and the field.
+#[test]
+fn a_start_filter_and_expansion_apply_once() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(super::SceneTreeStart {
+        filter: "cam".into(),
+        expand_all: true,
+    });
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    assert!(app.world().contains_resource::<super::SceneTreeStart>());
+    World3::spawn(&mut app);
+    frames(&mut app, 3);
+    assert!(!app.world().contains_resource::<super::SceneTreeStart>());
+    assert_eq!(
+        rows(&mut app),
+        [
+            "v W warehouse_demo",
+            "  v M amr_01",
+            "    v K base_link",
+            "      S front_camera"
+        ]
+    );
+    let field = find::<FilterField>(&mut app);
+    let text = descendants(app.world(), field)
+        .into_iter()
+        .find_map(|e| app.world().get::<EditableText>(e))
+        .map(|t| t.value().to_string());
+    assert_eq!(text.as_deref(), Some("cam"));
+    set_filter(&mut app, "");
+    assert_eq!(rows(&mut app).len(), 8);
+}

@@ -149,8 +149,8 @@ pub(crate) fn build_tree(
                 a11y(Role::RadioGroup, "Entity type"),
                 Node {
                     flex_wrap: FlexWrap::Wrap,
-                    column_gap: px(SPACE[3]),
-                    row_gap: px(SPACE[3]),
+                    column_gap: px(SPACE[2]),
+                    row_gap: px(SPACE[2]),
                     padding: UiRect {
                         left: px(SPACE[4]),
                         right: px(SPACE[4]),

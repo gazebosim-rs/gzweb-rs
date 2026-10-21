@@ -196,6 +196,33 @@ pub(super) fn rebuild_model(mut sources: SceneSources, mut model: ResMut<TreeMod
     }
 }
 
+/// A [`SceneTreeStart`](super::SceneTreeStart), once there is a tree.
+pub(super) fn apply_start(
+    start: Option<Res<super::SceneTreeStart>>,
+    model: Res<TreeModel>,
+    mut state: ResMut<TreeState>,
+    inputs: Query<(Entity, &ChildOf), With<EditableText>>,
+    fields: Query<(), With<FilterField>>,
+    mut commands: Commands,
+) {
+    let Some(start) = start.filter(|_| !model.nodes.is_empty()) else {
+        return;
+    };
+    if start.expand_all {
+        state.expanded = model.branches().cloned().collect();
+    }
+    state.filter.clone_from(&start.filter);
+    // A body built before the tree shows the filter too.
+    for (e, parent) in &inputs {
+        if fields.contains(parent.parent()) {
+            commands
+                .entity(e)
+                .insert(EditableText::new(start.filter.as_str()));
+        }
+    }
+    commands.remove_resource::<super::SceneTreeStart>();
+}
+
 /// The tree asks for the world's SDFormat (its joints) while it shows.
 pub(super) fn want_sdf(
     layout: Option<Res<crate::shell::ShellLayout>>,

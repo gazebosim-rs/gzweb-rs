@@ -41,6 +41,17 @@ pub(crate) const OPEN_WORLD: ActionId = ActionId::new("open_world");
 /// Its empty state's New world (M8).
 pub(crate) const NEW_WORLD: ActionId = ActionId::new("new_world");
 
+/// How the tree starts, for a capture (`gzweb --scene-filter`,
+/// `--scene-expand`; DECISIONS.md D-70): applied once the first tree is
+/// built, then removed.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneTreeStart {
+    /// The filter text.
+    pub filter: String,
+    /// Every row open.
+    pub expand_all: bool,
+}
+
 /// The Scene panel's content marker: its ready body.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct SceneTree;
@@ -74,7 +85,11 @@ impl Plugin for ScenePanelPlugin {
                 systems::scene_view,
                 (
                     systems::rebuild_model,
-                    (systems::entity_count, systems::header_actions),
+                    (
+                        systems::entity_count,
+                        systems::header_actions,
+                        systems::apply_start,
+                    ),
                 )
                     .chain(),
                 systems::want_sdf,

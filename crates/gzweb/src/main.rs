@@ -20,6 +20,8 @@
 //!   (orthographic) once the world loads, and `--overlays grid,frames,…`
 //!   with those overlays on (`gz_bevy::overlays::Overlay` names), so a
 //!   capture can show them (DECISIONS.md D-64). Not with `--snapshot`.
+//! - `--scene-filter TEXT` and `--scene-expand` start the full UI's Scene
+//!   tree filtered or with every row open (DECISIONS.md D-70).
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
 //! plus `ui=full|minimal|gallery` (default minimal), `theme=` and `hud=0`.
@@ -43,6 +45,8 @@ struct Args {
     window: Option<(u32, u32)>,
     /// `--view`, `--overlays`.
     start: Option<gz_bevy::view::StartView>,
+    /// `--scene-filter`, `--scene-expand`.
+    scene: Option<gz_ui::panels::SceneTreeStart>,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
@@ -50,7 +54,8 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--ui full|minimal|gallery] [--theme system|light|dark] [--no-hud] \
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
-                     [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe]\n\
+                     [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
+                     [--scene-filter TEXT] [--scene-expand]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
                      --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
@@ -160,6 +165,7 @@ fn parse_args(
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
+    let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut timeout_ms = 60000.0;
 
     let mut args = args.into_iter();
@@ -212,6 +218,8 @@ fn parse_args(
                         .push(name.parse().map_err(|e| format!("--overlays: {e}"))?);
                 }
             }
+            "--scene-filter" => scene.filter = value()?,
+            "--scene-expand" => scene.expand_all = true,
             "--settle-ms" => settle_ms = millis()?,
             "--timeout-ms" => timeout_ms = millis()?,
             "-h" | "--help" => return Ok(Command::Help),
@@ -223,6 +231,7 @@ fn parse_args(
         return Err("--snapshot doesn't apply to --ui gallery (use --screenshot)".into());
     }
     let start = (start != gz_bevy::view::StartView::default()).then_some(start);
+    let scene = (scene != gz_ui::panels::SceneTreeStart::default()).then_some(scene);
     let capture = snapshot.is_some() || screenshot.is_some();
     // A screenshot keeps a UI mode asked for by name; a snapshot has no
     // window to show one in.
@@ -233,6 +242,9 @@ fn parse_args(
              --screenshot without --ui, or --ui gallery)"
                 .into(),
         );
+    }
+    if scene.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--scene-filter and --scene-expand need --ui full".into());
     }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
@@ -265,6 +277,7 @@ fn parse_args(
         theme,
         window,
         start,
+        scene,
     })))
 }
 
@@ -331,6 +344,7 @@ fn command() -> Result<Command, String> {
             .unwrap_or_default(),
         window: None,
         start: None,
+        scene: None,
     })))
 }
 
@@ -523,6 +537,9 @@ fn main() -> AppExit {
             gz_ui::GzUiPlugin { theme: args.theme },
             gz_ui::shell::ShellPlugins,
         ));
+        if let Some(scene) = args.scene {
+            app.insert_resource(scene);
+        }
     }
     if let Some(req) = args.snapshot {
         app.insert_resource(req)
@@ -738,6 +755,22 @@ mod tests {
                 .starts_with("--view and --overlays need a view"));
         }
         assert!(USAGE.contains("--view") && USAGE.contains("--overlays"));
+        let a = run_args(
+            &["--scene-filter", "cam", "--scene-expand", "--ui", "full"],
+            None,
+        );
+        assert_eq!(
+            a.scene,
+            Some(gz_ui::panels::SceneTreeStart {
+                filter: "cam".into(),
+                expand_all: true,
+            })
+        );
+        assert!(run_args(&[], None).scene.is_none());
+        assert_eq!(
+            parse(&["--scene-expand", "--ui", "minimal"], None).unwrap_err(),
+            "--scene-filter and --scene-expand need --ui full"
+        );
     }
 
     #[test]
