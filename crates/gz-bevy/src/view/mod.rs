@@ -52,8 +52,8 @@ pub const ORTHO_MARGIN: f32 = 1.0;
 /// How much of the world an orthographic camera backs off for, at most:
 /// `f32` still places points to about a millimetre this far out.
 pub const MAX_ORTHO_EXTENT: f32 = 10_000.0;
-/// A model lying wholly this far from the world origin has fallen or
-/// flown away: the view's bounds leave it out.
+/// A mesh lying wholly this far from the world origin has fallen or flown
+/// away: the world's bounds leave it out.
 pub const RUNAWAY_DISTANCE: f32 = MAX_ORTHO_EXTENT;
 /// How far the world reaches from the pivot when there is no world to
 /// measure (nothing under `GzWorldRoot`).
@@ -783,6 +783,28 @@ type NodeData = (
     Option<&'static Visibility>,
 );
 
+/// What [`ViewScene::bounds_of`] leaves out besides hidden subtrees.
+#[derive(Debug, Clone, Copy)]
+struct Skip {
+    planes: bool,
+    runaway: bool,
+}
+
+impl Skip {
+    const NOTHING: Skip = Skip {
+        planes: false,
+        runaway: false,
+    };
+    const RUNAWAY: Skip = Skip {
+        planes: false,
+        runaway: true,
+    };
+    const RUNAWAY_AND_PLANES: Skip = Skip {
+        planes: true,
+        runaway: true,
+    };
+}
+
 /// What views look at: ray casts against the scene, the selection and
 /// entity bounds.
 #[derive(SystemParam)]
@@ -832,17 +854,21 @@ impl ViewScene<'_, '_> {
     }
 
     /// Bounds of every mesh in `entity`'s subtree. Hidden subtrees are left
-    /// out, and with `skip_planes` plane visuals too (a ground plane would
-    /// swamp the world).
-    fn bounds_of(&self, entity: Entity, skip_planes: bool) -> Option<Bounds> {
+    /// out, with `skip.planes` plane visuals too (a ground plane would
+    /// swamp the world), and with `skip.runaway` meshes lying wholly
+    /// [`RUNAWAY_DISTANCE`] from the world origin: a box falling with no
+    /// floor under it, or a link that fell off its model, would otherwise
+    /// have focus frame it, the zoom-out limit follow it and the shadow
+    /// cascades span it.
+    fn bounds_of(&self, entity: Entity, skip: Skip) -> Option<Bounds> {
         let (aabb, global, children, visual, visibility) = self.nodes.get(entity).ok()?;
         if visibility == Some(&Visibility::Hidden)
-            || skip_planes
+            || skip.planes
                 && visual.is_some_and(|v| matches!(v.0.geometry, GeometryDesc::Plane { .. }))
         {
             return None;
         }
-        let mut out = aabb.map(|aabb| {
+        let mut out = aabb.and_then(|aabb| {
             let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
             (0..8)
                 .map(|i| {
@@ -854,10 +880,10 @@ impl ViewScene<'_, '_> {
                     Bounds::point(global.transform_point(c + h * sign))
                 })
                 .reduce(Bounds::union)
-                .unwrap_or(Bounds::point(global.translation()))
+                .filter(|b| !skip.runaway || b.distance_to(Vec3::ZERO) <= RUNAWAY_DISTANCE)
         });
         for child in children.into_iter().flatten() {
-            if let Some(b) = self.bounds_of(*child, skip_planes) {
+            if let Some(b) = self.bounds_of(*child, skip) {
                 out = Some(out.map_or(b, |o| o.union(b)));
             }
         }
@@ -868,37 +894,20 @@ impl ViewScene<'_, '_> {
         self.selection
             .entities
             .iter()
-            .filter_map(|e| self.bounds_of(*e, false))
+            .filter_map(|e| self.bounds_of(*e, Skip::NOTHING))
             .reduce(Bounds::union)
     }
 
-    /// The world root's models, those that have run away
-    /// ([`RUNAWAY_DISTANCE`]) left out: a box falling with no floor under
-    /// it would otherwise have focus frame it, the zoom-out limit follow
-    /// it and the shadow cascades span it.
-    fn models_bounds(&self, root: Entity, skip_planes: bool) -> Option<Bounds> {
-        let (_, _, children, _, visibility) = self.nodes.get(root).ok()?;
-        if visibility == Some(&Visibility::Hidden) {
-            return None;
-        }
-        children
-            .into_iter()
-            .flatten()
-            .filter_map(|model| self.bounds_of(*model, skip_planes))
-            .filter(|b| b.distance_to(Vec3::ZERO) <= RUNAWAY_DISTANCE)
-            .reduce(Bounds::union)
-    }
-
-    /// Every mesh under the world root, ground planes left out unless
-    /// there is nothing else.
+    /// Every mesh under the world root but those that have run away,
+    /// ground planes left out unless there is nothing else.
     fn world_bounds(&self) -> Option<Bounds> {
         let root = self.roots.iter().next()?;
-        self.models_bounds(root, true)
-            .or_else(|| self.models_bounds(root, false))
+        self.bounds_of(root, Skip::RUNAWAY_AND_PLANES)
+            .or_else(|| self.bounds_of(root, Skip::RUNAWAY))
     }
 
     /// Everything a view must keep in range: the world with its ground
-    /// planes, and the grid.
+    /// planes but not what has run away, and the grid.
     fn extent(&self) -> Option<Bounds> {
         let root = self.roots.iter().next()?;
         let grid = Bounds {
@@ -906,7 +915,7 @@ impl ViewScene<'_, '_> {
             max: Vec3::new(GRID_HALF, 0.0, GRID_HALF),
         };
         Some(
-            self.models_bounds(root, false)
+            self.bounds_of(root, Skip::RUNAWAY)
                 .map_or(grid, |b| b.union(grid)),
         )
     }
@@ -1082,12 +1091,15 @@ fn apply(
         }
         ViewOp::Focus { at } => {
             // The selection, else the model under the cursor without its
-            // ground planes (a ground model has nothing else), else the world.
+            // ground planes (a ground model has nothing else) or any part
+            // of it that has run away, else the world.
             let bounds = scene
                 .selection_bounds()
                 .or_else(|| {
                     let hit = at.and_then(|at| ray(p, t, at)).and_then(|r| scene.hit(r));
-                    hit.and_then(|(e, _)| scene.bounds_of(scene.model_of(e), true))
+                    hit.and_then(|(e, _)| {
+                        scene.bounds_of(scene.model_of(e), Skip::RUNAWAY_AND_PLANES)
+                    })
                 })
                 .or_else(|| scene.world_bounds());
             match bounds {

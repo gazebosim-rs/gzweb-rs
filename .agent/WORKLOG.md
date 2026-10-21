@@ -1176,11 +1176,19 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Bug** (PR #37 review): with `diff_drive`'s fallen `spawned_box`, F
   with nothing selected framed a 6 × 10⁹ m world (blank again in
   orthographic), zooming out was all but unlimited, and the orthographic
-  shadow cascades spanned 2 km around the pivot.
-- **Fix:** `ViewScene::models_bounds` builds the world's bounds and extent
-  from the root's models, leaving out any lying wholly more than
-  `RUNAWAY_DISTANCE` (10 km) from the origin; `Bounds::distance_to`.
-- **Tests:** F and the zoom-out limit ignore a model fallen 6 × 10⁹ m
-  (both checked to fail without the filter), a model 5 km down is still
-  framed, `distance_to`; workspace 593 → 597 passing; coverage 98.6%
-  lines. check.sh passes.
+  shadow cascades spanned the 20 km slab the cap leaves.
+- **Fix:** `ViewScene::bounds_of` takes a `Skip` (planes, runaway): the
+  world's bounds and extent, and F over a model, leave out meshes lying
+  wholly more than `RUNAWAY_DISTANCE` (10 km) from the origin;
+  `Bounds::distance_to`. The selection's bounds keep them.
+- **Review** (PR #38): the first version judged whole top-level models, so
+  a model with one link fallen away still blew up F; the filter is per
+  mesh now. The cascade figures in the amendment were the first cap's
+  (2 km); corrected.
+- **Tests:** F (nothing selected, and over the model) and the zoom-out
+  limit ignore a model or link fallen 6 × 10⁹ m (checked to fail without
+  the filter), a world that has all run away goes home and zooms out to
+  the grid only, a model 5 km down is still framed, `distance_to`; the
+  cap test uses terrain reaching 29 km, since the fallen box no longer
+  reaches the cap. Workspace 593 → 599 passing; coverage 98.6% lines.
+  check.sh passes.

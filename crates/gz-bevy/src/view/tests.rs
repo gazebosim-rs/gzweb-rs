@@ -1387,14 +1387,15 @@ fn the_orthographic_standoff_follows_the_world_size() {
 }
 
 #[test]
-fn a_model_fallen_far_away_does_not_push_the_orthographic_camera_out() {
+fn the_orthographic_standoff_stops_at_the_cap() {
     let mut r = rig(default_view());
     let (_, model) = r.world_root();
     r.cube(Some(model), Vec3::new(1.0, 0.0, 0.5), 0.5);
-    // A model that has been falling for hours.
-    r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    // Terrain from 9 km to 29 km down: not run away (it starts within
+    // 10 km of the origin), but past the cap.
+    r.cube(Some(model), Vec3::new(1.0, 0.0, -19_000.0), 10_000.0);
     // The toggle and a cube face (a snap) both end in an orthographic view
-    // that backs off by the cap, not the 6e9 m world, and keeps the cap's
+    // that backs off by the cap, not the 29 km world, and keeps the cap's
     // depth in front of the camera.
     for op in [ViewOp::ToggleProjection, ViewOp::Snap(SnapView::Front)] {
         r.op(op);
@@ -1492,6 +1493,51 @@ fn a_model_a_few_kilometres_away_is_still_in_the_world() {
     r.op(ViewOp::Focus { at: None });
     r.settle();
     assert!(r.pivot().y < -2000.0, "{}", r.pivot());
+}
+
+#[test]
+fn f_leaves_out_a_link_that_fell_off_its_model() {
+    // One model: a link at gz (2, 0, 1) and one that fell to z = -6e9.
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(2.0, 0.0, 1.0), 1.0);
+    r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    r.make_visible();
+    // Nothing selected, nothing under the pointer: the world.
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
+    assert!(reach(&r.view(), &r.transform(), &r.projection()) < 10.0);
+    // Over the model: the model, without the link that fell.
+    r.op(ViewOp::Home);
+    r.settle();
+    let at = r.screen(Vec3::new(2.0, 1.0, 0.0));
+    r.op(ViewOp::Focus { at: Some(at) });
+    r.settle();
+    assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
+}
+
+#[test]
+fn a_world_that_has_all_run_away_has_only_the_grid() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(1.0, 0.0, -6.0e9), 0.5);
+    r.make_visible();
+    // F has nothing to frame and goes home.
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    assert_near(r.pivot(), Vec3::ZERO, 1e-3);
+    assert_near(
+        r.transform().translation,
+        home_transform().translation,
+        1e-3,
+    );
+    // Zooming out stops at a few framings of the 20 m grid.
+    for _ in 0..200 {
+        r.op(ViewOp::Zoom(-5.0));
+    }
+    let d = (r.transform().translation - r.pivot()).length();
+    assert!(d < 200.0, "{d}");
 }
 
 #[test]
