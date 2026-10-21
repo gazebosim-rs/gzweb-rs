@@ -625,7 +625,9 @@ Bevy metres; "depth" is distance along the view axis.
   without its plane visuals (over a ground model that leaves nothing, so it
   falls through), else the world's meshes without plane visuals (or with
   them if there is nothing else), else goes home. Hidden subtrees don't
-  count. Radius × 1.1 fitted to the narrower FOV; orthographic views fit
+  count, nor do models lying wholly more than `RUNAWAY_DISTANCE` (10 km)
+  from the world origin, which have fallen or flown away; the world's
+  extent below leaves them out too. Radius × 1.1 fitted to the narrower FOV; orthographic views fit
   the height. Animated, rotation kept; the far plane grows with it.
 - `Home`: animates to gzweb's (−6, 0, 6) looking at the origin, in
   perspective.

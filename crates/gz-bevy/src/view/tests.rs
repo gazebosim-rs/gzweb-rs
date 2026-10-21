@@ -1439,6 +1439,69 @@ fn f_over_the_ground_frames_the_world_not_the_ground() {
     assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
 }
 
+/// A world with a model at gz (2, 0, 1) and, in a second model, a box
+/// that has fallen to gz z = `fallen`.
+fn world_with_a_fallen_model(fallen: f32) -> Rig {
+    let mut r = rig(default_view());
+    let (root, model) = r.world_root();
+    r.cube(Some(model), Vec3::new(2.0, 0.0, 1.0), 1.0);
+    let other = r
+        .app
+        .world_mut()
+        .spawn((Transform::default(), Visibility::default(), ChildOf(root)))
+        .id();
+    r.cube(Some(other), Vec3::new(1.0, 0.0, fallen), 0.5);
+    r.make_visible();
+    r
+}
+
+#[test]
+fn f_frames_the_world_without_a_model_that_has_fallen_away() {
+    let mut r = world_with_a_fallen_model(-6.0e9);
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    // gz (2, 0, 1) is Bevy (2, 1, 0).
+    assert_near(r.pivot(), Vec3::new(2.0, 1.0, 0.0), 1e-3);
+    assert!(reach(&r.view(), &r.transform(), &r.projection()) < 10.0);
+    // Orthographic from there stands back for the world and the grid.
+    r.op(ViewOp::ToggleProjection);
+    assert!(depth(&r) < 100.0, "{}", depth(&r));
+}
+
+#[test]
+fn zooming_out_stops_at_the_world_without_a_model_that_has_fallen_away() {
+    let mut r = world_with_a_fallen_model(-6.0e9);
+    for _ in 0..200 {
+        r.op(ViewOp::Zoom(-5.0));
+    }
+    let d = (r.transform().translation - r.pivot()).length();
+    assert!(d < 1000.0, "{d}");
+    // The orthographic clip range doesn't reach for it either.
+    r.op(ViewOp::ToggleProjection);
+    let (_, far) = ortho_near_far(&r);
+    assert!(far < depth(&r) + 1000.0, "{far}");
+}
+
+#[test]
+fn a_model_a_few_kilometres_away_is_still_in_the_world() {
+    // 5 km down is far, but not runaway: F frames it with the rest.
+    let mut r = world_with_a_fallen_model(-5000.0);
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    assert!(r.pivot().y < -2000.0, "{}", r.pivot());
+}
+
+#[test]
+fn bounds_measure_the_distance_to_their_nearest_point() {
+    let b = Bounds {
+        min: Vec3::new(-1.0, -1.0, -1.0),
+        max: Vec3::new(1.0, 1.0, 1.0),
+    };
+    assert_eq!(b.distance_to(Vec3::ZERO), 0.0);
+    assert_eq!(b.distance_to(Vec3::new(4.0, 0.0, 0.0)), 3.0);
+    assert!((b.distance_to(Vec3::new(2.0, 2.0, 0.0)) - 2f32.sqrt()).abs() < 1e-6);
+}
+
 #[test]
 fn hidden_nodes_are_left_out_of_the_bounds() {
     let mut r = rig(default_view());

@@ -52,6 +52,9 @@ pub const ORTHO_MARGIN: f32 = 1.0;
 /// How much of the world an orthographic camera backs off for, at most:
 /// `f32` still places points to about a millimetre this far out.
 pub const MAX_ORTHO_EXTENT: f32 = 10_000.0;
+/// A model lying wholly this far from the world origin has fallen or
+/// flown away: the view's bounds leave it out.
+pub const RUNAWAY_DISTANCE: f32 = MAX_ORTHO_EXTENT;
 /// How far the world reaches from the pivot when there is no world to
 /// measure (nothing under `GzWorldRoot`).
 pub const DEFAULT_EXTENT: f32 = 50.0;
@@ -712,6 +715,11 @@ impl Bounds {
     pub fn reach_from(&self, p: Vec3) -> f32 {
         (self.center() - p).length() + self.radius()
     }
+
+    /// The distance from `p` to the nearest point of the bounds.
+    pub fn distance_to(&self, p: Vec3) -> f32 {
+        (p.clamp(self.min, self.max) - p).length()
+    }
 }
 
 /// What an op needs besides the view: the viewport size and the world's
@@ -864,12 +872,29 @@ impl ViewScene<'_, '_> {
             .reduce(Bounds::union)
     }
 
+    /// The world root's models, those that have run away
+    /// ([`RUNAWAY_DISTANCE`]) left out: a box falling with no floor under
+    /// it would otherwise have focus frame it, the zoom-out limit follow
+    /// it and the shadow cascades span it.
+    fn models_bounds(&self, root: Entity, skip_planes: bool) -> Option<Bounds> {
+        let (_, _, children, _, visibility) = self.nodes.get(root).ok()?;
+        if visibility == Some(&Visibility::Hidden) {
+            return None;
+        }
+        children
+            .into_iter()
+            .flatten()
+            .filter_map(|model| self.bounds_of(*model, skip_planes))
+            .filter(|b| b.distance_to(Vec3::ZERO) <= RUNAWAY_DISTANCE)
+            .reduce(Bounds::union)
+    }
+
     /// Every mesh under the world root, ground planes left out unless
     /// there is nothing else.
     fn world_bounds(&self) -> Option<Bounds> {
         let root = self.roots.iter().next()?;
-        self.bounds_of(root, true)
-            .or_else(|| self.bounds_of(root, false))
+        self.models_bounds(root, true)
+            .or_else(|| self.models_bounds(root, false))
     }
 
     /// Everything a view must keep in range: the world with its ground
@@ -880,7 +905,10 @@ impl ViewScene<'_, '_> {
             min: Vec3::new(-GRID_HALF, 0.0, -GRID_HALF),
             max: Vec3::new(GRID_HALF, 0.0, GRID_HALF),
         };
-        Some(self.bounds_of(root, false).map_or(grid, |b| b.union(grid)))
+        Some(
+            self.models_bounds(root, false)
+                .map_or(grid, |b| b.union(grid)),
+        )
     }
 
     /// The top-level model (child of the world root) that `entity` is part

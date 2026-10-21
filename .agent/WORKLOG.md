@@ -1166,3 +1166,17 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   this way on a tree that passed as #35.
 - **Fix:** `test_util::wait_until` polls until the condition holds or 30 s
   pass, so a fast machine is no slower. The six loops use it.
+
+## 2026-10-21: Runaway models left out of the view's bounds (D-20 amended)
+
+- **Bug** (PR #37 review): with `diff_drive`'s fallen `spawned_box`, F
+  with nothing selected framed a 6 × 10⁹ m world (blank again in
+  orthographic), zooming out was all but unlimited, and the orthographic
+  shadow cascades spanned 2 km around the pivot.
+- **Fix:** `ViewScene::models_bounds` builds the world's bounds and extent
+  from the root's models, leaving out any lying wholly more than
+  `RUNAWAY_DISTANCE` (10 km) from the origin; `Bounds::distance_to`.
+- **Tests:** F and the zoom-out limit ignore a model fallen 6 × 10⁹ m
+  (both checked to fail without the filter), a model 5 km down is still
+  framed, `distance_to`; workspace 593 → 597 passing; coverage 98.6%
+  lines. check.sh passes.
