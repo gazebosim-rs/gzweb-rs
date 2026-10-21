@@ -39,7 +39,7 @@ pub(crate) enum StatusItem {
     Message,
     /// 7: the active tool's hint.
     Hint,
-    /// 8: "sel: —".
+    /// 8: "sel: amr_01", "3 selected" or "sel: —".
     Selection,
     /// 9: "cursor 2.41, −0.73".
     Cursor,

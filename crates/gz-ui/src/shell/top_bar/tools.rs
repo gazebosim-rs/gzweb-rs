@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{Button as Headless, ValueChange};
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::BoxSelectTool;
 
 use crate::assets::icons::IconId;
 use crate::shell::commands::UiCommand;
@@ -127,5 +128,13 @@ pub(crate) fn tool_states(
                 commands.entity(e).remove::<Checked>();
             }
         }
+    }
+}
+
+/// The views draw a marquee with a plain left drag while Box select is on
+/// (spec §6.1).
+pub(crate) fn box_select_tool(tool: Res<Tool>, box_tool: Option<ResMut<BoxSelectTool>>) {
+    if let (true, Some(mut b)) = (tool.is_changed(), box_tool) {
+        b.set_if_neq(BoxSelectTool(*tool == Tool::BoxSelect));
     }
 }

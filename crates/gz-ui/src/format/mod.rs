@@ -111,6 +111,16 @@ pub fn signed(v: f32, decimals: usize) -> String {
     }
 }
 
+/// "sel: amr_01" for one entity, "3 selected" for more (§3.6 item 8),
+/// "sel: —" for none.
+pub fn selection(count: usize, first: Option<&str>) -> String {
+    match (count, first) {
+        (0, _) => "sel: —".into(),
+        (1, Some(name)) => format!("sel: {name}"),
+        (n, _) => format!("{n} selected"),
+    }
+}
+
 /// "cursor 2.41, −0.73" (§3.6 item 9), "cursor —" off the ground.
 pub fn cursor(at: Option<[f32; 2]>) -> String {
     at.map_or_else(

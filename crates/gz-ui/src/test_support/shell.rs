@@ -78,10 +78,18 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .init_resource::<Overlays>()
         .init_resource::<GzGrid>()
         .init_resource::<gz_bevy::view::Selection>()
+        .init_resource::<gz_bevy::view::BoxSelectTool>()
+        .init_resource::<gz_bevy::view::Marquee>()
         .init_resource::<gz_bevy::camera::GzCameraTarget>()
         .add_systems(
             Update,
-            (apply_view_commands, apply_overlay_commands).before(crate::GzUiSystems::Behaviour),
+            (
+                gz_bevy::view::select::prune_selection,
+                apply_view_commands,
+                apply_overlay_commands,
+            )
+                .chain()
+                .before(crate::GzUiSystems::Behaviour),
         )
         .add_systems(Last, collect)
         // gz-bevy's half of the view placement (ViewerControls adds it in

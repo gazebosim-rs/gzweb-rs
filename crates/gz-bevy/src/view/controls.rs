@@ -429,15 +429,6 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
     out
 }
 
-/// ⌘ on a Mac, Ctrl elsewhere: the key that toggles in the selection.
-fn command_held(held: KeyMods, platform: Platform) -> bool {
-    if platform == Platform::Mac {
-        held.super_key
-    } else {
-        held.ctrl
-    }
-}
-
 /// What releasing a left drag does: a click (within [`CLICK_SLOP`])
 /// selects what was under the press; a marquee selects what it covers.
 /// Shift adds; ⌘/Ctrl toggles, except for the ⌘/Ctrl+drag marquee it
@@ -489,7 +480,7 @@ pub fn mouse_input(
     };
 
     let held = KeyMods::held(&keys);
-    let command = command_held(held, map.platform);
+    let command = held.mod_key(map.platform);
     if let Some(drag) = state.drag.filter(|d| !buttons.pressed(d.button)) {
         state.drag = None;
         if marquee.0.is_some() {

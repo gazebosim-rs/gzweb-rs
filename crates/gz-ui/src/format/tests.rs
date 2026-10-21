@@ -58,6 +58,13 @@ fn sim_and_connection_state_reads() {
     );
     assert_eq!(format::cursor(Some([-0.001, 0.0])), "cursor 0.00, 0.00");
     assert_eq!(format::cursor(None), "cursor —");
+}
+
+#[test]
+fn selection_names_one_and_counts_more() {
+    assert_eq!(format::selection(0, None), "sel: —");
+    assert_eq!(format::selection(1, Some("amr_01")), "sel: amr_01");
+    assert_eq!(format::selection(3, Some("amr_01")), "3 selected");
     assert!(format::rtf_detail(Some(&stats(false))).contains("134,380 iterations · step 1 ms"));
     assert!(format::rtf_detail(Some(&SimStats {
         step_size: 0.0,

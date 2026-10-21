@@ -133,6 +133,16 @@ impl KeyMods {
     pub fn command(self) -> bool {
         self.ctrl || self.alt || self.super_key
     }
+
+    /// The platform's `mod` key (⌘ on a Mac, Ctrl elsewhere) is held: it
+    /// toggles in the selection (spec §6.2).
+    pub fn mod_key(self, platform: Platform) -> bool {
+        if platform == Platform::Mac {
+            self.super_key
+        } else {
+            self.ctrl
+        }
+    }
 }
 
 /// Where the app runs, which decides what `mod` means and whether the

@@ -60,6 +60,7 @@ pub(crate) fn build(app: &mut App) {
             Update,
             (
                 tools::tool_states,
+                tools::box_select_tool,
                 transport::transport_enabled,
                 transport::play_pause_look,
                 transport::clock_text,

@@ -17,6 +17,8 @@ use bevy::ui_widgets::{Activate, ValueChange};
 use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
+use gz_bevy::view::input::{InputMap, KeyMods, Platform};
+use gz_bevy::view::{SelectMode, Selection};
 use gz_core::scene::NodeKind;
 
 use super::model::{ModelBuilder, NodeKey, Row, TreeModel, TreeScroll, TreeState};
@@ -36,6 +38,16 @@ use crate::widgets::{EntityKind, TreeRowExpand, TreeRowSpec, TreeRowVisibility};
 type StructureChanged = Or<(Added<GzEntity>, Changed<GzSensors>)>;
 /// The list's content node.
 type ContentOnly = (With<TreeContent>, Without<TreeSlot>);
+/// A pooled row: what it shows, its node and parent, and whether it shows
+/// a selected entity.
+type PooledRow = (
+    Entity,
+    &'static mut TreeSlot,
+    &'static mut TreeRowSpec,
+    &'static mut Node,
+    &'static ChildOf,
+    Has<Active>,
+);
 /// The "No entities match" line.
 type NoMatchesOnly = (With<NoMatches>, Without<TreeSlot>, Without<TreeContent>);
 
@@ -300,17 +312,7 @@ pub(super) struct Pool<'w, 's> {
         With<TreeList>,
     >,
     contents: Query<'w, 's, (Entity, &'static mut Node), ContentOnly>,
-    slots: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static mut TreeSlot,
-            &'static mut TreeRowSpec,
-            &'static mut Node,
-            &'static ChildOf,
-        ),
-    >,
+    slots: Query<'w, 's, PooledRow>,
     no_matches: Query<'w, 's, &'static mut Node, NoMatchesOnly>,
     shown: Query<'w, 's, (), (With<GzEntity>, Changed<Visibility>)>,
     access: Query<'w, 's, &'static mut AccessibilityNode, With<TreeSlot>>,
@@ -332,7 +334,8 @@ pub(super) fn place_rows(
     };
     let visibility = !pool.shown.is_empty();
     // The model too: a row's name or kind can change with its place.
-    let repaint = src.rows.is_changed() || src.model.is_changed() || visibility;
+    let repaint =
+        src.rows.is_changed() || src.model.is_changed() || src.selection.is_changed() || visibility;
     if !repaint && !pos.is_changed() && !computed.is_changed() {
         return;
     }
@@ -370,7 +373,7 @@ pub(super) fn place_rows(
     ours.sort_unstable();
     let mut k = 0;
     for e in ours {
-        let Ok((_, mut slot, mut spec, mut node, _)) = pool.slots.get_mut(e) else {
+        let Ok((_, mut slot, mut spec, mut node, _, active)) = pool.slots.get_mut(e) else {
             continue;
         };
         let i = first + k;
@@ -391,13 +394,21 @@ pub(super) fn place_rows(
             }
             spec.set_if_neq(src.spec(rows[i]));
         }
+        let selected = at.is_some_and(|i| src.selected(rows[i]));
+        if selected != active {
+            if selected {
+                commands.entity(e).insert(Active);
+            } else {
+                commands.entity(e).remove::<Active>();
+            }
+        }
     }
     // Grow the pool to cover the view.
     if k < want {
         let t = src.theme.clone();
         commands.entity(content).with_children(|c| {
             for i in (first + k..rows.len()).take(want - k) {
-                spawn_slot(c, &t, Some(i), src.spec(rows[i]));
+                spawn_slot(c, &t, Some(i), src.spec(rows[i]), src.selected(rows[i]));
             }
         });
     }
@@ -527,19 +538,55 @@ pub(super) fn on_visibility(
     }
 }
 
-/// A row click moves the tree's cursor there (selection is M5's).
+/// A row click moves the tree's cursor there and selects (spec §5.7,
+/// §6.4): the row's model, link or light, or nothing for the world (its
+/// inspector). Shift selects the shown rows from the anchor (the last row
+/// clicked without Shift) to this one; ⌘/Ctrl toggles the row. Joints and
+/// sensors have no scene entity: they only move the cursor.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn on_row_activate(
     ev: On<Activate>,
     slots: Query<&TreeSlot>,
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
+    keys: Res<ButtonInput<KeyCode>>,
+    map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
+    mut selection: ResMut<Selection>,
 ) {
-    if let Some((_, row)) = row_of(&slots, &rows, ev.entity) {
-        let key = model.node(row).key.clone();
-        if state.cursor.as_ref() != Some(&key) {
-            state.cursor = Some(key);
+    let Some((i, row)) = row_of(&slots, &rows, ev.entity) else {
+        return;
+    };
+    let node = model.node(row);
+    let key = node.key.clone();
+    if state.cursor.as_ref() != Some(&key) {
+        state.cursor = Some(key.clone());
+    }
+    let held = KeyMods::held(&keys);
+    let platform = map.map_or(Platform::current(), |m| m.platform);
+    let anchor = state
+        .anchor
+        .as_ref()
+        .and_then(|a| rows.0.iter().position(|r| &model.node(*r).key == a));
+    match (node.key == NodeKey::World, node.entity) {
+        _ if held.shift && anchor.is_some() => {
+            let a = anchor.unwrap_or(i);
+            let range: Vec<Entity> = rows.0[a.min(i)..=a.max(i)]
+                .iter()
+                .filter_map(|r| model.node(*r).entity)
+                .collect();
+            selection.apply(SelectMode::Replace, &range);
+            return;
         }
+        (true, _) if !held.mod_key(platform) => selection.apply(SelectMode::Replace, &[]),
+        (false, Some(e)) => {
+            let mode = SelectMode::from_keys(false, held.mod_key(platform));
+            selection.apply(mode, &[e]);
+        }
+        _ => {}
+    }
+    if state.anchor.as_ref() != Some(&key) {
+        state.anchor = Some(key);
     }
 }
 

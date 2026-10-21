@@ -11,13 +11,15 @@ use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Button as Headless, RadioGroup, ScrollArea};
 use bevy::window::PrimaryWindow;
+use gz_bevy::view::Selection;
 
+use super::footer::FooterButton;
 use super::model::{Chip, Row, TreeModel, TreeScroll, TreeState};
 use super::systems::TreeRows;
 use super::SceneTree;
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
-use crate::theme::visuals::Visuals;
+use crate::theme::visuals::{Active, Visuals};
 use crate::theme::{border, radius, ColorRole, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, display, row};
 use crate::widgets::{
@@ -65,6 +67,7 @@ pub(super) struct TreeSources<'w, 's> {
     pub(crate) state: Res<'w, TreeState>,
     pub(crate) rows: Res<'w, TreeRows>,
     pub(crate) visibility: Query<'w, 's, &'static Visibility>,
+    pub(crate) selection: Res<'w, Selection>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
 }
 
@@ -83,6 +86,14 @@ impl TreeSources<'_, '_> {
                 .is_some_and(|v| *v == Visibility::Hidden),
             hideable: n.entity.is_some(),
         }
+    }
+
+    /// Row `row`'s entity is selected (§5.7: the row's `Active` look).
+    pub(crate) fn selected(&self, row: Row) -> bool {
+        self.model
+            .node(row)
+            .entity
+            .is_some_and(|e| self.selection.entities.contains(&e))
     }
 
     /// The row height.
@@ -123,9 +134,9 @@ pub(crate) fn build_tree(
     let row_h = src.row_h();
     let rows = &src.rows.0;
     let first = first_row(scroll.0, row_h);
-    let slots: Vec<(usize, TreeRowSpec)> = (first..rows.len())
+    let slots: Vec<(usize, TreeRowSpec, bool)> = (first..rows.len())
         .take(src.first_pool())
-        .map(|i| (i, src.spec(rows[i])))
+        .map(|i| (i, src.spec(rows[i]), src.selected(rows[i])))
         .collect();
     let content_h = rows.len() as f32 * row_h;
     let chips_shown = src.state.chips_shown;
@@ -210,8 +221,8 @@ pub(crate) fn build_tree(
                     },
                 ))
                 .with_children(|content| {
-                    for (i, spec) in slots {
-                        spawn_slot(content, &t, Some(i), spec);
+                    for (i, spec, selected) in slots {
+                        spawn_slot(content, &t, Some(i), spec, selected);
                     }
                 });
                 list.spawn((
@@ -225,8 +236,8 @@ pub(crate) fn build_tree(
                     },
                 ));
             });
-            // Footer (§3.3): New group, Hide others, Isolate; they need
-            // groups and the selection (M5).
+            // Footer (§3.3): New group, Hide others, Isolate; their
+            // state follows the selection (`footer::footer_states`).
             c.spawn((
                 Node {
                     padding: UiRect::axes(px(SPACE[7]), px(SPACE[5])),
@@ -237,22 +248,24 @@ pub(crate) fn build_tree(
                 Stroke(ColorRole::Line),
             ))
             .with_children(|f| {
-                for label in ["New group", "Hide others", "Isolate"] {
-                    f.spawn(button(&t, label, ButtonVariant::Normal)).insert((
-                        Node {
-                            flex_grow: 1.0,
-                            flex_basis: px(0),
-                            height: px(t.s.button_h),
-                            padding: UiRect::horizontal(px(SPACE[4])),
-                            border: UiRect::all(px(border::HAIRLINE)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            border_radius: rounded(radius::SM),
-                            ..default()
-                        },
-                        InteractionDisabled,
-                        Tooltip::new(label).detail("Not available yet"),
-                    ));
+                for which in FooterButton::ALL {
+                    f.spawn(button(&t, which.label(), ButtonVariant::Normal))
+                        .insert((
+                            which,
+                            Node {
+                                flex_grow: 1.0,
+                                flex_basis: px(0),
+                                height: px(t.s.button_h),
+                                padding: UiRect::horizontal(px(SPACE[4])),
+                                border: UiRect::all(px(border::HAIRLINE)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border_radius: rounded(radius::SM),
+                                ..default()
+                            },
+                            InteractionDisabled,
+                            Tooltip::new(which.label()),
+                        ));
                 }
             });
         });
@@ -265,11 +278,16 @@ pub(super) fn spawn_slot(
     theme: &Theme,
     i: Option<usize>,
     spec: TreeRowSpec,
+    selected: bool,
 ) {
     let row_h = theme.s.tree_row_h;
     let mut access = a11y(Role::TreeItem, spec.name.clone());
     expose(&mut access, i.is_some());
-    parent.spawn(tree_row(theme, spec)).insert((
+    let mut row = parent.spawn(tree_row(theme, spec));
+    if selected {
+        row.insert(Active);
+    }
+    row.insert((
         access,
         TreeSlot(i),
         Node {
