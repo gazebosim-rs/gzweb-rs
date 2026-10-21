@@ -175,7 +175,9 @@ pub struct HeaderAction {
     pub tooltip: &'static str,
     /// The `shortcuts.json` binding its tooltip shows, if any.
     pub binding: Option<&'static str>,
-    /// A disabled action shows dimmed, with "Not available yet".
+    /// Whether it starts enabled. A disabled action shows dimmed, with "Not
+    /// available yet". The panel's systems change it at run time with
+    /// [`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus).
     pub enabled: bool,
 }
 
