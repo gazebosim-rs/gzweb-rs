@@ -48,6 +48,7 @@ fn app() -> App {
     .init_resource::<GzMaterials>()
     .init_resource::<Sent>()
     .insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
         world: Some("w".into()),
         ..GzStatus::new("ws://test")
     })
@@ -239,6 +240,41 @@ fn the_sdf_is_asked_for_once_per_world_and_model_set() {
     assert_eq!(app.world().resource::<SdfExtras>().generation, 1);
     app.update();
     assert!(requests(&mut app).is_empty());
+}
+
+/// The scene tree wants the SDFormat without an overlay; one request is
+/// in flight at a time; a connection that drops asks again once ready.
+#[test]
+fn the_sdf_is_asked_for_when_wanted_one_at_a_time() {
+    use super::extras::SdfWanted;
+    let mut app = app();
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    app.insert_resource(SdfWanted(true));
+    app.update();
+    assert_eq!(requests(&mut app), ["/world/w/generate_world_sdf"]);
+    // Spawns while the reply is due: one more request after it.
+    for name in ["a", "b"] {
+        app.world_mut()
+            .resource_mut::<GzIndex>()
+            .model_names
+            .insert(name.into());
+        app.update();
+    }
+    assert!(requests(&mut app).is_empty());
+    reply(&mut app, "/world/w/generate_world_sdf", SDF);
+    app.update();
+    assert_eq!(requests(&mut app), ["/world/w/generate_world_sdf"]);
+    reply(&mut app, "/world/w/generate_world_sdf", SDF);
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    // Lost and back: asked again.
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Connecting;
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Ready;
+    app.update();
+    assert_eq!(requests(&mut app), ["/world/w/generate_world_sdf"]);
 }
 
 #[test]

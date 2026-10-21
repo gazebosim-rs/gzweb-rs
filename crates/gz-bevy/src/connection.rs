@@ -1,8 +1,10 @@
-//! Drives the websocket: driver bytes → [`Transport`] → Bevy resources.
-//!
-//! Also owns reconnecting (with backoff, unless the key or URL was rejected)
-//! and the message API: [`GzCommand`] and [`GzReconnect`] in, [`GzPublish`]
-//! and [`GzServiceReply`] out.
+//! The message API to the simulation and its websocket backend: [`pump`]
+//! runs the app's [`Backend`] with
+//! [`GzCommand`] and [`GzReconnect`] in, [`GzStatus`], [`GzInbox`],
+//! [`GzPublish`] and [`GzServiceReply`] out (spec §9.4, DECISIONS.md
+//! D-65). [`WebsocketBackend`] is the Gazebo websocket server's: driver
+//! bytes → [`Transport`] → those resources, with reconnecting (with
+//! backoff, unless the key or URL was rejected).
 
 use bevy::prelude::*;
 use gz_core::control;
@@ -12,14 +14,17 @@ use gz_core::transport::{Event, SendError, Status, Transport};
 use prost::Message as _;
 
 use crate::assets::WsAssetStore;
+use crate::backend::{Backend, BackendIo, SimBackend, WorldControl};
 use crate::driver::{self, Driver, DriverEvent};
 use crate::GzConfig;
 
 /// Opens a new driver to a server URL.
 type Connector = Box<dyn Fn(&str) -> Driver>;
 
-/// The live connection. Non-`Send` because the wasm socket is a JS object.
-pub struct GzConnection {
+/// The Gazebo websocket server as the app's [`SimBackend`]: the socket
+/// ([`Driver`]), the protocol ([`Transport`]), reconnecting, and the
+/// `asset` requests of the `ws://` asset source.
+pub struct WebsocketBackend {
     transport: Transport,
     /// `None` after a handshake timeout dropped it.
     driver: Option<Driver>,
@@ -33,6 +38,8 @@ pub struct GzConnection {
     /// The last non-zero step size this server reported (Gazebo reports 0
     /// while paused).
     last_step: Option<f64>,
+    /// The `ws://` asset source's requests and replies.
+    store: WsAssetStore,
 }
 
 /// Simulation state from `/world/<world>/stats` (interactive mode only).
@@ -102,6 +109,13 @@ pub enum GzCommand {
     Unsubscribe(String),
     /// Limit a subscribed topic to this many messages per second.
     Throttle(String, u32),
+    /// Publish a serialized message (refused by the websocket server,
+    /// which takes none).
+    Publish {
+        topic: String,
+        msg_type: String,
+        payload: Vec<u8>,
+    },
     /// Call a service with a serialized request.
     Request {
         service: String,
@@ -156,6 +170,8 @@ pub struct GzInbox {
     pub scene: Option<Box<msgs::Scene>>,
     /// `scene/info` updates, in arrival order.
     pub scene_updates: Vec<msgs::Scene>,
+    /// Entity ids from `scene/deletion`, in arrival order.
+    pub deletions: Vec<u32>,
     /// `dynamic_pose/info` poses, in arrival order.
     pub poses: Vec<msgs::Pose>,
     /// Real time of the last message that changes the scene; used to decide
@@ -176,6 +192,7 @@ const STATS_RATE: u32 = 5;
 /// way out there (Jetty's answers `authorized`).
 pub const HANDSHAKE_TIMEOUT: f64 = 10.0;
 
+/// Starts the app's [`Backend`]: the websocket server at `GzConfig::url`.
 pub fn connect(world: &mut World) {
     let config = world.resource::<GzConfig>().clone();
     info!("Connecting to {}", config.url);
@@ -183,15 +200,12 @@ pub fn connect(world: &mut World) {
     match connector(&config) {
         Ok(connector) => {
             status.attempting = true;
-            world.insert_non_send(GzConnection {
-                transport: Transport::new(config.key.clone()),
-                driver: Some(connector(&config.url)),
-                connector,
-                url: config.url.clone(),
-                fatal: None,
-                opened_at: None,
-                last_step: None,
-            });
+            let store = world
+                .get_resource::<WsAssetStore>()
+                .cloned()
+                .unwrap_or_default();
+            let backend = WebsocketBackend::new(&config, connector, store);
+            world.insert_non_send(Backend(Box::new(backend)));
         }
         Err(e) => {
             error!("{e}");
@@ -213,11 +227,12 @@ fn connector(_config: &GzConfig) -> Result<Connector, String> {
     Ok(Box::new(driver::connect))
 }
 
+/// Runs the app's [`Backend`] for a frame: the reconnects asked for, what
+/// arrived, the commands, then what to deliver and send.
 #[allow(clippy::too_many_arguments)]
 pub fn pump(
-    conn: Option<NonSendMut<GzConnection>>,
+    backend: Option<NonSendMut<Backend>>,
     config: Res<GzConfig>,
-    store: Res<WsAssetStore>,
     time: Res<Time<Real>>,
     mut commands: MessageReader<GzCommand>,
     mut reconnects: MessageReader<GzReconnect>,
@@ -226,122 +241,107 @@ pub fn pump(
     mut status: ResMut<GzStatus>,
     mut inbox: ResMut<GzInbox>,
 ) {
-    let Some(mut conn) = conn else { return };
-    let conn = &mut *conn;
-    let now = time.elapsed_secs_f64();
-
-    let mut asked = false;
+    let Some(mut backend) = backend else { return };
+    let backend = &mut *backend.bypass_change_detection().0;
+    let mut io = BackendIo {
+        now: time.elapsed_secs_f64(),
+        config: &config,
+        status: status.reborrow(),
+        inbox: inbox.reborrow(),
+        publishes: Vec::new(),
+        replies: Vec::new(),
+    };
     for r in reconnects.read() {
-        asked = true;
-        match &r.url {
-            Some(url) if *url != conn.url => {
-                conn.url.clone_from(url);
-                status.url.clone_from(url);
-                status.attempts = 0;
-                // Another server: its world and step are not this one's.
-                status.world = None;
-                conn.last_step = None;
-            }
-            _ => status.attempts += 1,
-        }
+        backend.connect(r.url.as_deref(), &mut io);
     }
-    if asked {
-        // Dropping the old driver closes its socket; its close isn't
-        // reported, so the transport is closed here.
-        conn.driver = None;
-        conn.fatal = None;
-        conn.opened_at = None;
-        conn.transport.on_close(None);
-        store.fail_all("reconnecting");
-        status.sim = None;
-        status.reconnect_at = None;
-        info!("Connecting to {}", conn.url);
-        conn.driver = Some((conn.connector)(&conn.url));
-        status.attempting = true;
-    } else if status.reconnect_at.is_some_and(|at| now >= at) {
-        status.reconnect_at = None;
-        status.attempts += 1;
-        info!(
-            "Reconnecting to {} (attempt {})",
-            status.url, status.attempts
-        );
-        conn.driver = Some((conn.connector)(&conn.url));
-        status.attempting = true;
-    }
-
-    let mut closed = None;
-    let handshake_expired = conn.transport.status() == &Status::Connecting
-        && conn.opened_at.is_some_and(|t| now - t > HANDSHAKE_TIMEOUT);
-    if handshake_expired {
-        // Dropping the driver closes the socket.
-        conn.driver = None;
-        closed = Some(Some(format!(
-            "no reply to the handshake in {HANDSHAKE_TIMEOUT} s"
-        )));
-    }
-    while let Some(ev) = conn.driver.as_ref().and_then(|d| d.events.try_recv().ok()) {
-        match ev {
-            DriverEvent::Open => {
-                conn.opened_at = Some(now);
-                conn.transport.on_open();
-            }
-            DriverEvent::Message(data) => conn.transport.on_message(&data),
-            DriverEvent::Closed(err) => closed = Some(err),
-            DriverEvent::Rejected(why) => {
-                conn.fatal = Some(why.clone());
-                closed = Some(Some(why));
-            }
-        }
-    }
-    if let Some(err) = closed {
-        conn.opened_at = None;
-        // Keep the reason that makes retrying pointless.
-        let err = conn.fatal.clone().or(err);
-        if let Some(e) = &err {
-            error!("websocket closed: {e}");
-        }
-        conn.transport.on_close(err);
-        store.fail_all("connection closed");
-        status.sim = None;
-        status.attempting = false;
-        if config.reconnect && conn.fatal.is_none() {
-            let wait = backoff(status.attempts);
-            info!("Reconnecting in {wait:.1} s");
-            status.reconnect_at = Some(now + wait);
-        }
-    }
-
-    for uri in store.take_requests(now) {
-        if let Err(e) = conn.transport.request_asset(&uri) {
-            store.deliver(&uri, Err(e.to_string()));
-        }
-    }
-    store.expire(now, crate::assets::WS_ASSET_TIMEOUT);
-
+    backend.poll(&mut io);
     for cmd in commands.read() {
-        if let Err(e) = send_command(&mut conn.transport, cmd) {
+        if let Err(e) = send_command(backend, cmd) {
             warn!("{cmd:?} not sent: {e}");
         }
     }
+    backend.flush(&mut io);
+    publishes.write_batch(io.publishes);
+    replies.write_batch(io.replies);
+}
 
-    let world = conn.transport.world().unwrap_or_default().to_string();
-    while let Some(event) = conn.transport.poll_event() {
+/// Sends `cmd` through `backend`.
+fn send_command(backend: &mut dyn SimBackend, cmd: &GzCommand) -> Result<(), SendError> {
+    match cmd {
+        GzCommand::Play => backend.world_control(WorldControl::Play),
+        GzCommand::Pause => backend.world_control(WorldControl::Pause),
+        GzCommand::Step(n) => backend.world_control(WorldControl::Step(*n)),
+        GzCommand::Reset => backend.world_control(WorldControl::Reset),
+        GzCommand::Stop => backend.world_control(WorldControl::Stop),
+        GzCommand::Subscribe(topic) => backend.subscribe(topic),
+        GzCommand::Unsubscribe(topic) => backend.unsubscribe(topic),
+        GzCommand::Throttle(topic, rate) => backend.throttle(topic, *rate),
+        GzCommand::Publish {
+            topic,
+            msg_type,
+            payload,
+        } => backend.publish(topic, msg_type, payload),
+        GzCommand::Request {
+            service,
+            msg_type,
+            payload,
+        } => backend.request(service, msg_type, payload),
+    }
+}
+
+impl WebsocketBackend {
+    fn new(config: &GzConfig, connector: Connector, store: WsAssetStore) -> Self {
+        Self {
+            transport: Transport::new(config.key.clone()),
+            driver: Some(connector(&config.url)),
+            connector,
+            url: config.url.clone(),
+            fatal: None,
+            opened_at: None,
+            last_step: None,
+            store,
+        }
+    }
+
+    /// The connection closed (or never opened): fail the waiting asset
+    /// readers and schedule a retry unless retrying can't help.
+    fn closed(&mut self, err: Option<String>, io: &mut BackendIo) {
+        self.opened_at = None;
+        // Keep the reason that makes retrying pointless.
+        let err = self.fatal.clone().or(err);
+        if let Some(e) = &err {
+            error!("websocket closed: {e}");
+        }
+        self.transport.on_close(err);
+        self.store.fail_all("connection closed");
+        io.status.sim = None;
+        io.status.attempting = false;
+        if io.config.reconnect && self.fatal.is_none() {
+            let wait = backoff(io.status.attempts);
+            info!("Reconnecting in {wait:.1} s");
+            io.status.reconnect_at = Some(io.now + wait);
+        }
+    }
+
+    /// Hands one transport event to the app.
+    fn deliver(&mut self, event: Event, world: &str, io: &mut BackendIo) {
+        let now = io.now;
         match event {
             Event::Status(s) => {
                 info!("gz status: {s:?}");
                 if s == Status::Ready {
-                    status.attempts = 0;
-                    subscribe(&mut conn.transport, &world, config.interactive());
+                    io.status.attempts = 0;
+                    subscribe(&mut self.transport, world, io.config.interactive());
                 }
-                status.status = s;
+                io.status.status = s;
             }
             Event::AuthFailed => {
                 error!("websocket auth key rejected");
-                conn.fatal = Some("invalid auth key".into());
+                self.fatal = Some("invalid auth key".into());
             }
             Event::Worlds(worlds) => {
                 info!("worlds: {worlds:?}");
-                status.world = worlds.first().cloned();
+                io.status.world = worlds.first().cloned();
             }
             Event::TopicsTypes(_) => {}
             Event::Topics(topics) => info!("topics: {topics:?}"),
@@ -352,8 +352,10 @@ pub fn pump(
                     scene.model.len(),
                     scene.light.len()
                 );
+                let inbox = &mut *io.inbox;
                 inbox.scene = Some(scene);
                 inbox.scene_updates.clear();
+                inbox.deletions.clear();
                 inbox.poses.clear();
                 inbox.last_activity_secs = now;
             }
@@ -361,69 +363,212 @@ pub fn pump(
                 topic,
                 msg_type,
                 payload,
-            } => match WorldTopic::of(&topic, &world) {
-                Some(WorldTopic::Poses) => match msgs::PoseV::decode(payload.as_slice()) {
-                    Ok(v) => inbox.poses.extend(v.pose),
-                    Err(e) => warn!("bad Pose_V on {topic}: {e}"),
-                },
-                Some(WorldTopic::SceneInfo) => {
-                    match msgs::Scene::decode(payload.as_slice()) {
-                        Ok(s) => inbox.scene_updates.push(s),
-                        Err(e) => warn!("bad Scene on {topic}: {e}"),
-                    }
-                    // Pose streams never stop on a live simulation, so only
-                    // structural changes count as activity for settling.
-                    inbox.last_activity_secs = now;
-                }
-                Some(WorldTopic::Stats) => {
-                    match msgs::WorldStatistics::decode(payload.as_slice()) {
-                        Ok(s) => {
-                            let mut stats = sim_stats(&s);
-                            if stats.step_size > 0.0 {
-                                conn.last_step = Some(stats.step_size);
-                            } else {
-                                stats.step_size =
-                                    conn.last_step.unwrap_or_else(|| mean_step(&stats));
-                            }
-                            status.sim = Some(stats);
-                        }
-                        Err(e) => warn!("bad WorldStatistics on {topic}: {e}"),
-                    }
-                }
-                None => {
-                    publishes.write(GzPublish {
-                        topic,
-                        msg_type,
-                        payload,
-                    });
-                }
-            },
+            } => self.deliver_topic(topic, msg_type, payload, world, io),
             Event::ServiceReply {
                 service,
                 msg_type,
                 payload,
             } => {
                 log_reply(&service, &msg_type, &payload);
-                replies.write(GzServiceReply {
+                io.replies.push(GzServiceReply {
                     service,
                     msg_type,
                     payload,
                 });
             }
             Event::Asset { uri, result } => {
-                store.deliver(&uri, result.map_err(|e| e.to_string()));
-                inbox.last_activity_secs = now;
+                self.store.deliver(&uri, result.map_err(|e| e.to_string()));
+                io.inbox.last_activity_secs = now;
             }
             Event::Malformed(why) => {
                 warn!("malformed frame: {why}");
-                status.malformed += 1;
+                io.status.malformed += 1;
             }
         }
     }
 
-    if let Some(driver) = &conn.driver {
-        while let Some(frame) = conn.transport.poll_outgoing() {
-            driver.send(frame);
+    /// A topic message: the world topics the client consumes itself go to
+    /// the inbox and the status, the rest out as [`GzPublish`].
+    fn deliver_topic(
+        &mut self,
+        topic: String,
+        msg_type: String,
+        payload: Vec<u8>,
+        world: &str,
+        io: &mut BackendIo,
+    ) {
+        let now = io.now;
+        match WorldTopic::of(&topic, world) {
+            Some(WorldTopic::Poses) => match msgs::PoseV::decode(payload.as_slice()) {
+                Ok(v) => io.inbox.poses.extend(v.pose),
+                Err(e) => warn!("bad Pose_V on {topic}: {e}"),
+            },
+            Some(WorldTopic::SceneInfo) => {
+                match msgs::Scene::decode(payload.as_slice()) {
+                    Ok(s) => io.inbox.scene_updates.push(s),
+                    Err(e) => warn!("bad Scene on {topic}: {e}"),
+                }
+                // Pose streams never stop on a live simulation, so only
+                // structural changes count as activity for settling.
+                io.inbox.last_activity_secs = now;
+            }
+            Some(WorldTopic::Deletion) => {
+                match msgs::UInt32V::decode(payload.as_slice()) {
+                    Ok(v) => io.inbox.deletions.extend(v.data),
+                    Err(e) => warn!("bad UInt32_V on {topic}: {e}"),
+                }
+                io.inbox.last_activity_secs = now;
+            }
+            Some(WorldTopic::Stats) => match msgs::WorldStatistics::decode(payload.as_slice()) {
+                Ok(s) => {
+                    let mut stats = sim_stats(&s);
+                    if stats.step_size > 0.0 {
+                        self.last_step = Some(stats.step_size);
+                    } else {
+                        stats.step_size = self.last_step.unwrap_or_else(|| mean_step(&stats));
+                    }
+                    io.status.sim = Some(stats);
+                }
+                Err(e) => warn!("bad WorldStatistics on {topic}: {e}"),
+            },
+            None => {
+                io.publishes.push(GzPublish {
+                    topic,
+                    msg_type,
+                    payload,
+                });
+            }
+        }
+    }
+}
+
+impl SimBackend for WebsocketBackend {
+    fn connect(&mut self, url: Option<&str>, io: &mut BackendIo) {
+        match url {
+            Some(url) if url != self.url => {
+                self.url = url.to_string();
+                io.status.url = url.to_string();
+                io.status.attempts = 0;
+                // Another server: its world and step are not this one's.
+                io.status.world = None;
+                self.last_step = None;
+            }
+            _ => io.status.attempts += 1,
+        }
+        // Dropping the old driver closes its socket; its close isn't
+        // reported, so the transport is closed here.
+        self.driver = None;
+        self.fatal = None;
+        self.opened_at = None;
+        self.transport.on_close(None);
+        self.store.fail_all("reconnecting");
+        io.status.sim = None;
+        io.status.reconnect_at = None;
+        info!("Connecting to {}", self.url);
+        self.driver = Some((self.connector)(&self.url));
+        io.status.attempting = true;
+    }
+
+    fn poll(&mut self, io: &mut BackendIo) {
+        let now = io.now;
+        if io.status.reconnect_at.is_some_and(|at| now >= at) {
+            io.status.reconnect_at = None;
+            io.status.attempts += 1;
+            info!(
+                "Reconnecting to {} (attempt {})",
+                io.status.url, io.status.attempts
+            );
+            self.driver = Some((self.connector)(&self.url));
+            io.status.attempting = true;
+        }
+
+        let mut closed = None;
+        let handshake_expired = self.transport.status() == &Status::Connecting
+            && self.opened_at.is_some_and(|t| now - t > HANDSHAKE_TIMEOUT);
+        if handshake_expired {
+            // Dropping the driver closes the socket.
+            self.driver = None;
+            closed = Some(Some(format!(
+                "no reply to the handshake in {HANDSHAKE_TIMEOUT} s"
+            )));
+        }
+        while let Some(ev) = self.driver.as_ref().and_then(|d| d.events.try_recv().ok()) {
+            match ev {
+                DriverEvent::Open => {
+                    self.opened_at = Some(now);
+                    self.transport.on_open();
+                }
+                DriverEvent::Message(data) => self.transport.on_message(&data),
+                DriverEvent::Closed(err) => closed = Some(err),
+                DriverEvent::Rejected(why) => {
+                    self.fatal = Some(why.clone());
+                    closed = Some(Some(why));
+                }
+            }
+        }
+        if let Some(err) = closed {
+            self.closed(err, io);
+        }
+
+        for uri in self.store.take_requests(now) {
+            if let Err(e) = self.transport.request_asset(&uri) {
+                self.store.deliver(&uri, Err(e.to_string()));
+            }
+        }
+        self.store.expire(now, crate::assets::WS_ASSET_TIMEOUT);
+    }
+
+    fn subscribe(&mut self, topic: &str) -> Result<(), SendError> {
+        self.transport.subscribe(topic)
+    }
+
+    fn unsubscribe(&mut self, topic: &str) -> Result<(), SendError> {
+        self.transport.unsubscribe(topic)
+    }
+
+    fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError> {
+        self.transport.throttle(topic, rate)
+    }
+
+    /// No released Gazebo websocket server (gz-launch or Jetty) takes
+    /// publications (gzweb's `pub_in` op is ignored), so this is refused
+    /// rather than sent into the void.
+    fn publish(&mut self, _topic: &str, _msg_type: &str, _payload: &[u8]) -> Result<(), SendError> {
+        Err(SendError::Unsendable(
+            "the Gazebo websocket server doesn't take publications",
+        ))
+    }
+
+    fn request(&mut self, service: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
+        self.transport.request(service, msg_type, payload)
+    }
+
+    fn world_control(&mut self, cmd: WorldControl) -> Result<(), SendError> {
+        let world = self
+            .transport
+            .world()
+            .map(str::to_string)
+            .ok_or(SendError::NotConnected);
+        let reqs = match cmd {
+            WorldControl::Play => vec![control::play(&world?)],
+            WorldControl::Pause => vec![control::pause(&world?)],
+            WorldControl::Step(n) => control::step(&world?, n),
+            WorldControl::Reset => vec![control::reset(&world?)],
+            WorldControl::Stop => vec![control::stop()],
+        };
+        reqs.iter()
+            .try_for_each(|r| self.transport.request(&r.service, r.msg_type, &r.payload))
+    }
+
+    fn flush(&mut self, io: &mut BackendIo) {
+        let world = self.transport.world().unwrap_or_default().to_string();
+        while let Some(event) = self.transport.poll_event() {
+            self.deliver(event, &world, io);
+        }
+        if let Some(driver) = &self.driver {
+            while let Some(frame) = self.transport.poll_outgoing() {
+                driver.send(frame);
+            }
         }
     }
 }
@@ -434,12 +579,13 @@ enum WorldTopic {
     Poses,
     SceneInfo,
     Stats,
+    Deletion,
 }
 
 impl WorldTopic {
     /// Matches the topics [`subscribe`] builds from the sanitized name.
     fn of(topic: &str, world: &str) -> Option<Self> {
-        [Self::Poses, Self::SceneInfo, Self::Stats]
+        [Self::Poses, Self::SceneInfo, Self::Stats, Self::Deletion]
             .into_iter()
             .find(|t| topic == world_topic(world, t.leaf()))
     }
@@ -449,6 +595,7 @@ impl WorldTopic {
             Self::Poses => "dynamic_pose/info",
             Self::SceneInfo => "scene/info",
             Self::Stats => "stats",
+            Self::Deletion => "scene/deletion",
         }
     }
 }
@@ -470,9 +617,10 @@ fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
 }
 
 /// Same subscriptions, in the same order, as gzweb
-/// `SceneManager.subscribeToTopics()`; interactive mode adds the stats.
-/// Unlike gzweb, the world name is sanitized as gz-sim does
-/// ([`world_topic`]).
+/// `SceneManager.subscribeToTopics()`; interactive mode adds the stats and
+/// `scene/deletion` (gzweb has neither, so the capture modes keep its
+/// protocol for the parity check). Unlike gzweb, the world name is
+/// sanitized as gz-sim does ([`world_topic`]).
 fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     let mut topics = vec![
         world_topic(world, WorldTopic::Poses.leaf()),
@@ -481,6 +629,7 @@ fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     let stats = world_topic(world, WorldTopic::Stats.leaf());
     if interactive {
         topics.push(stats.clone());
+        topics.push(world_topic(world, WorldTopic::Deletion.leaf()));
     }
     for topic in &topics {
         if let Err(e) = t.subscribe(topic) {
@@ -490,27 +639,6 @@ fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     if interactive {
         let _ = t.throttle(&stats, STATS_RATE);
     }
-}
-
-fn send_command(t: &mut Transport, cmd: &GzCommand) -> Result<(), SendError> {
-    let world = || t.world().map(str::to_string).ok_or(SendError::NotConnected);
-    let reqs = match cmd {
-        GzCommand::Play => vec![control::play(&world()?)],
-        GzCommand::Pause => vec![control::pause(&world()?)],
-        GzCommand::Step(n) => control::step(&world()?, *n),
-        GzCommand::Reset => vec![control::reset(&world()?)],
-        GzCommand::Stop => vec![control::stop()],
-        GzCommand::Subscribe(topic) => return t.subscribe(topic),
-        GzCommand::Unsubscribe(topic) => return t.unsubscribe(topic),
-        GzCommand::Throttle(topic, rate) => return t.throttle(topic, *rate),
-        GzCommand::Request {
-            service,
-            msg_type,
-            payload,
-        } => return t.request(service, msg_type, payload),
-    };
-    reqs.iter()
-        .try_for_each(|r| t.request(&r.service, r.msg_type, &r.payload))
 }
 
 /// A paused world's step when it hasn't reported one on this connection:
@@ -581,17 +709,18 @@ mod tests {
                 driver
             });
             let mut world = World::new();
-            world.insert_non_send(GzConnection {
-                transport: Transport::new(config.key.clone()),
-                driver: Some(connector("ws://test")),
-                connector,
+            let store = WsAssetStore::default();
+            let config = GzConfig {
                 url: "ws://test".into(),
-                fatal: None,
-                opened_at: None,
-                last_step: None,
-            });
+                ..config
+            };
+            world.insert_non_send(Backend(Box::new(WebsocketBackend::new(
+                &config,
+                connector,
+                store.clone(),
+            ))));
             world.insert_resource(config);
-            world.insert_resource(WsAssetStore::default());
+            world.insert_resource(store);
             world.insert_resource(Time::<Real>::default());
             world.insert_resource(GzInbox::default());
             world.init_resource::<Messages<GzCommand>>();
@@ -815,9 +944,31 @@ mod tests {
                 "sub,/world/w/dynamic_pose/info,,",
                 "sub,/world/w/scene/info,,",
                 "sub,/world/w/stats,,",
+                "sub,/world/w/scene/deletion,,",
                 "throttle,/world/w/stats,na,5",
             ]
         );
+        // Deletions queue for the scene, in order; a bad one is dropped.
+        let ids = |data: Vec<u32>| msgs::UInt32V {
+            data,
+            ..Default::default()
+        };
+        h.msg(publish(
+            "/world/w/scene/deletion",
+            "gz.msgs.UInt32_V",
+            &ids(vec![7, 9]).encode_to_vec(),
+        ));
+        h.msg(publish(
+            "/world/w/scene/deletion",
+            "gz.msgs.UInt32_V",
+            &[0xff],
+        ));
+        h.msg(publish(
+            "/world/w/scene/deletion",
+            "gz.msgs.UInt32_V",
+            &ids(vec![3]).encode_to_vec(),
+        ));
+        assert_eq!(h.world.resource::<GzInbox>().deletions, [7, 9, 3]);
         let stats = msgs::WorldStatistics {
             paused: true,
             iterations: 42,
@@ -933,6 +1084,14 @@ mod tests {
         assert!(h.command(GzCommand::Play).is_empty());
         assert!(h.command(GzCommand::Stop).is_empty());
         h.ready();
+        // The websocket server takes no publications: refused, not sent.
+        assert!(h
+            .command(GzCommand::Publish {
+                topic: "/cmd_vel".into(),
+                msg_type: "gz.msgs.Twist".into(),
+                payload: vec![1],
+            })
+            .is_empty());
         let sent: Vec<String> = [
             GzCommand::Play,
             GzCommand::Pause,
@@ -1234,7 +1393,7 @@ mod tests {
             ..Default::default()
         });
         world.run_system_once(connect).unwrap();
-        assert!(world.get_non_send::<GzConnection>().is_none());
+        assert!(world.get_non_send::<Backend>().is_none());
         assert!(matches!(
             &world.resource::<GzStatus>().status,
             Status::Error(e) if e.contains("ca.pem")

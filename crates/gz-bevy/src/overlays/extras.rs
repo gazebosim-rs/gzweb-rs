@@ -5,7 +5,10 @@
 //! draws one is turned on, the client calls the world's
 //! `generate_world_sdf` service (included models expanded) and parses the
 //! reply. It asks again when the set of models changes (a spawn, a
-//! reconnect) while one of those overlays is on. A server without the
+//! reconnect) while one of those overlays is on, or while something else
+//! wants it ([`SdfWanted`]: the UI's scene tree lists the joints). One
+//! request is in flight at a time, so a burst of spawns asks once more
+//! after the reply rather than once per model. A server without the
 //! service, or a reply that isn't SDFormat, is logged once and left at
 //! that.
 
@@ -31,16 +34,34 @@ pub struct SdfExtras {
     pending: Option<String>,
 }
 
-/// Asks for the world's SDFormat when an overlay needs it and the world
-/// (or its set of models) is new since the last request.
+/// The world's SDFormat is wanted beyond the overlays (the UI's scene tree
+/// sets it while it shows, for the joints).
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SdfWanted(pub bool);
+
+/// Asks for the world's SDFormat when an overlay (or [`SdfWanted`]) needs
+/// it and the world (or its set of models) is new since the last request,
+/// unless a request is still waiting for its reply. A connection that
+/// isn't ready drops the waiting request and asks again once it is.
 pub fn request_extras(
     overlays: Res<Overlays>,
+    wanted: Option<Res<SdfWanted>>,
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     mut state: ResMut<SdfExtras>,
     mut out: MessageWriter<GzCommand>,
 ) {
-    if !overlays.need_sdf() {
+    let ready = status
+        .as_ref()
+        .is_some_and(|s| s.status == gz_core::transport::Status::Ready);
+    if !ready {
+        if state.pending.is_some() || state.asked.is_some() {
+            state.pending = None;
+            state.asked = None;
+        }
+        return;
+    }
+    if !overlays.need_sdf() && !wanted.is_some_and(|w| w.0) || state.pending.is_some() {
         return;
     }
     let (Some(world), Some(index)) = (status.and_then(|s| s.world.clone()), index) else {

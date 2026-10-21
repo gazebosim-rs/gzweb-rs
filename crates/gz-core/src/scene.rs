@@ -82,7 +82,21 @@ pub struct Node {
     pub visible: bool,
     pub visual: Option<VisualDesc>,
     pub light: Option<LightDesc>,
+    /// A link's sensors (none elsewhere). Not nodes: nothing renders them
+    /// and the snapshot walk (PARITY.md §3) doesn't include them; the UI's
+    /// scene tree lists them.
+    pub sensors: Vec<SensorDesc>,
     pub children: Vec<Node>,
+}
+
+/// A sensor on a link (`gz.msgs.Sensor`): what the scene tree shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SensorDesc {
+    pub name: String,
+    pub id: u32,
+    /// Its type as Gazebo names it (`camera`, `gpu_lidar`, `imu`, …).
+    pub ty: String,
+    pub pose: Pose,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -508,6 +522,7 @@ fn model_node(
         visible: true,
         visual: None,
         light: None,
+        sensors: Vec::new(),
         children,
     })
 }
@@ -538,6 +553,16 @@ fn link_node(
         visible: true,
         visual: None,
         light: None,
+        sensors: link
+            .sensor
+            .iter()
+            .map(|s| SensorDesc {
+                name: s.name.clone(),
+                id: s.id,
+                ty: s.r#type.clone(),
+                pose: Pose::from_msg(s.pose.as_ref()),
+            })
+            .collect(),
         children,
     }
 }
@@ -581,6 +606,7 @@ fn visual_node(visual: &msgs::Visual, parent: &str, paths: &mut PathAllocator) -
             transparency: visual.transparency,
         }),
         light: None,
+        sensors: Vec::new(),
         children: Vec::new(),
     })
 }
@@ -725,6 +751,7 @@ fn light_node(light: &msgs::Light, parent: &str, paths: &mut PathAllocator, visi
         visible: visible && !light.is_light_off,
         visual: None,
         light: Some(light_desc(light)),
+        sensors: Vec::new(),
         children: Vec::new(),
     }
 }
@@ -848,6 +875,16 @@ mod tests {
                 link: vec![msgs::Link {
                     name: "link".into(),
                     visual: vec![box_visual("v"), box_visual("v")],
+                    sensor: vec![msgs::Sensor {
+                        name: "cam".into(),
+                        id: 9,
+                        r#type: "camera".into(),
+                        pose: Some(msgs::Pose {
+                            position: v3(0.0, 0.0, 0.5),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 }],
                 model: vec![msgs::Model {
@@ -876,6 +913,21 @@ mod tests {
             ]
         );
         assert_eq!(desc.roots[0].pose.pos, [1.0, 2.0, 3.0]);
+        // Sensors stay on their link, not in the node walk.
+        let link = &desc.roots[0].children[0];
+        assert_eq!(
+            link.sensors,
+            [SensorDesc {
+                name: "cam".into(),
+                id: 9,
+                ty: "camera".into(),
+                pose: Pose {
+                    pos: [0.0, 0.0, 0.5],
+                    ..Pose::IDENTITY
+                },
+            }]
+        );
+        assert!(desc.roots[0].sensors.is_empty());
         assert_eq!(
             desc.roots[0].children[0].children[0]
                 .visual

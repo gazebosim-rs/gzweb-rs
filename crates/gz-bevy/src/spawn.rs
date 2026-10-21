@@ -13,7 +13,7 @@ use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use gz_core::scene::{
     BuildOptions, GeometryDesc, LightDesc, LightType, Node, NodeKind, PathAllocator, Pose,
-    SceneDesc, VisualDesc,
+    SceneDesc, SensorDesc, VisualDesc,
 };
 use gz_core::uri;
 
@@ -47,6 +47,11 @@ pub struct GzVisual(pub VisualDesc);
 
 #[derive(Component, Debug, Clone)]
 pub struct GzLight(pub LightDesc);
+
+/// A link's sensors, as the scene message lists them (the UI's scene tree
+/// shows them; nothing renders them).
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct GzSensors(pub Vec<SensorDesc>);
 
 /// The child entity that carries a light's Bevy light component.
 #[derive(Component)]
@@ -116,7 +121,9 @@ pub fn spawn_root(mut commands: Commands, mut index: ResMut<GzIndex>) {
     index.root = Some(root);
 }
 
-/// Spawns the initial scene and `scene/info` additions.
+/// Spawns the initial scene and `scene/info` additions. [`GzIndex`] is
+/// marked changed only when entities come or go, so the UI's scene tree
+/// rebuilds on structure changes, not every frame.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_scene(
     mut commands: Commands,
@@ -132,6 +139,9 @@ pub fn apply_scene(
     mut grid: ResMut<GzGrid>,
 ) {
     let Some(root) = index.root else { return };
+    if inbox.scene.is_none() && inbox.scene_updates.is_empty() {
+        return;
+    }
 
     let opts = BuildOptions {
         enable_lights: config.enable_lights,
@@ -292,6 +302,11 @@ fn spawn_node(ctx: &mut SpawnCtx, node: &Node, parent: Entity) {
     if let Some(light) = &node.light {
         ctx.commands.entity(entity).insert(GzLight(light.clone()));
         spawn_light(ctx, light, entity);
+    }
+    if !node.sensors.is_empty() {
+        ctx.commands
+            .entity(entity)
+            .insert(GzSensors(node.sensors.clone()));
     }
     for child in &node.children {
         spawn_node(ctx, child, entity);
@@ -597,6 +612,72 @@ fn spawn_light(ctx: &mut SpawnCtx, light: &LightDesc, parent: Entity) {
 /// Applies `dynamic_pose/info` poses as local transforms. Entities are found
 /// by id first (gzweb uses the first name match, which is ambiguous for
 /// repeated names such as `link`), then by name.
+/// Despawns the entities `scene/deletion` names (gz-sim's
+/// `SceneBroadcaster` publishes the ids of removed models, links, visuals,
+/// lights and sensors) with everything under them, and forgets them in
+/// [`GzIndex`]: a model spawned later under a deleted one's name is new.
+/// It runs before [`apply_scene`], so a model deleted and spawned again
+/// under the same name in one frame is spawned anew; an id it doesn't know
+/// yet (a model spawned in the same frame, which `apply_scene` indexes
+/// next) is tried again once on the next frame, then dropped (sensors,
+/// children of a parent already removed). gzweb doesn't handle deletions.
+pub fn apply_deletions(
+    mut commands: Commands,
+    mut inbox: ResMut<GzInbox>,
+    mut index: ResMut<GzIndex>,
+    entities: Query<&GzEntity>,
+    children: Query<&Children>,
+    mut retry: Local<Vec<u32>>,
+) {
+    if inbox.deletions.is_empty() && retry.is_empty() {
+        return;
+    }
+    let ids: Vec<(u32, bool)> = std::mem::take(&mut *retry)
+        .into_iter()
+        .map(|id| (id, false))
+        .chain(
+            std::mem::take(&mut inbox.deletions)
+                .into_iter()
+                .map(|id| (id, true)),
+        )
+        .collect();
+    let mut gone = HashSet::new();
+    for (id, first) in ids {
+        let Some(&top) = index.by_id.get(&id).filter(|_| id != 0) else {
+            if first && id != 0 {
+                retry.push(id);
+            }
+            continue;
+        };
+        if gone.contains(&top) {
+            continue;
+        }
+        let parent_is_root = index
+            .root
+            .is_some_and(|root| children.get(root).is_ok_and(|c| c.iter().any(|e| e == top)));
+        for e in std::iter::once(top).chain(children.iter_descendants(top)) {
+            let Ok(gz) = entities.get(e) else { continue };
+            gone.insert(e);
+            if index.by_id.get(&gz.id) == Some(&e) {
+                index.by_id.remove(&gz.id);
+            }
+            if let Some(v) = index.by_name.get_mut(&gz.name) {
+                v.retain(|&x| x != e);
+                if v.is_empty() {
+                    index.by_name.remove(&gz.name);
+                }
+            }
+            if e == top && parent_is_root && gz.kind == NodeKind::Model {
+                index.model_names.remove(&gz.name);
+            }
+        }
+        commands.entity(top).despawn();
+    }
+    if !gone.is_empty() {
+        index.order.retain(|e| !gone.contains(e));
+    }
+}
+
 pub fn apply_poses(
     mut inbox: ResMut<GzInbox>,
     index: Res<GzIndex>,
@@ -963,6 +1044,92 @@ mod tests {
         let new_m = entity(&mut app, "m");
         let path = &app.world().get::<GzEntity>(new_m).unwrap().path;
         assert_eq!(path, "m");
+    }
+
+    /// A model with one link (id `id + 1`) carrying a camera.
+    fn robot(name: &str, id: u32) -> msgs::Model {
+        msgs::Model {
+            name: name.into(),
+            id,
+            link: vec![msgs::Link {
+                name: "base".into(),
+                id: id + 1,
+                sensor: vec![msgs::Sensor {
+                    name: "cam".into(),
+                    id: id + 2,
+                    r#type: "camera".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn update_with(app: &mut App, models: Vec<msgs::Model>, deletions: Vec<u32>) {
+        let mut inbox = app.world_mut().resource_mut::<GzInbox>();
+        if !models.is_empty() {
+            inbox.scene_updates.push(msgs::Scene {
+                model: models,
+                ..Default::default()
+            });
+        }
+        inbox.deletions = deletions;
+        app.update();
+    }
+
+    #[test]
+    fn deletions_despawn_and_forget_entities_and_sensors_ride_on_links() {
+        let mut app = scene_app(GzConfig::default());
+        app.world_mut().resource_mut::<GzInbox>().scene = Some(Box::new(scene()));
+        app.update();
+        let before = app.world().resource::<GzIndex>().order.len();
+        update_with(&mut app, vec![robot("r", 20)], vec![]);
+        let r = entity(&mut app, "r");
+        let base = app.world().resource::<GzIndex>().by_id[&21];
+        assert_eq!(
+            app.world().get::<GzSensors>(base).unwrap().0[0].ty,
+            "camera"
+        );
+        assert!(app.world().get::<GzSensors>(r).is_none());
+        // Nothing new: the index isn't marked changed.
+        app.update();
+        let tick = app.world().resource_ref::<GzIndex>().last_changed();
+        app.update();
+        assert_eq!(app.world().resource_ref::<GzIndex>().last_changed(), tick);
+
+        // The model goes with its link; unknown and zero ids are skipped.
+        update_with(&mut app, vec![], vec![20, 21, 0, 999]);
+        app.update();
+        let index = app.world().resource::<GzIndex>();
+        assert_eq!(index.order.len(), before);
+        assert!(!index.by_id.contains_key(&20) && !index.by_id.contains_key(&21));
+        assert!(!index.by_name.contains_key("r") && !index.by_name.contains_key("base"));
+        assert!(!index.model_names.contains("r"));
+        assert!(app.world().get_entity(r).is_err() && app.world().get_entity(base).is_err());
+
+        // Deleted and spawned again in one frame: the new one stays.
+        update_with(&mut app, vec![robot("r", 30)], vec![]);
+        update_with(&mut app, vec![robot("r", 40)], vec![30]);
+        let index = app.world().resource::<GzIndex>();
+        assert_eq!(index.by_name["r"].len(), 1);
+        assert!(index.by_id.contains_key(&40) && !index.by_id.contains_key(&30));
+        // Spawned and deleted in one frame: gone on the next.
+        update_with(&mut app, vec![robot("brief", 50)], vec![50]);
+        app.update();
+        let index = app.world().resource::<GzIndex>();
+        assert!(!index.by_name.contains_key("brief"));
+        assert!(!index.model_names.contains("brief"));
+        // A nested model's deletion leaves the top-level names alone.
+        let inner = msgs::Model {
+            model: vec![robot("r", 70)],
+            ..robot("outer", 60)
+        };
+        update_with(&mut app, vec![inner], vec![]);
+        update_with(&mut app, vec![], vec![70]);
+        let index = app.world().resource::<GzIndex>();
+        assert!(index.model_names.contains("outer") && index.model_names.contains("r"));
+        assert_eq!(index.by_name["r"].len(), 1);
     }
 
     #[test]

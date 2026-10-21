@@ -5,6 +5,7 @@
 //! [`GzWebPlugin`] after.
 
 pub mod assets;
+pub mod backend;
 pub mod camera;
 pub mod collada;
 pub mod connection;
@@ -156,6 +157,7 @@ impl Plugin for GzWebPlugin {
                 Update,
                 (
                     connection::pump,
+                    spawn::apply_deletions,
                     spawn::apply_scene,
                     spawn::instance_gltf,
                     heightmap::build,
@@ -261,6 +263,7 @@ pub(crate) mod test_util {
         .add_systems(
             Update,
             (
+                spawn::apply_deletions,
                 spawn::apply_scene,
                 spawn::instance_gltf,
                 heightmap::build,
