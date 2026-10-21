@@ -14,6 +14,7 @@ pub mod heightmap;
 pub mod hud;
 pub mod material;
 pub mod mesh_file;
+pub mod messages;
 pub mod obj;
 pub mod overlays;
 pub mod render;
@@ -199,6 +200,10 @@ impl Plugin for GzWebPlugin {
         if !hud {
             hud::remove_dom_status();
         }
+        // Client-side warnings and errors (the full UI's message chip),
+        // fed by `messages::log_layer` when the app installs it.
+        app.init_resource::<messages::SystemMessages>()
+            .add_systems(Update, messages::drain_log);
         // The frame rate: the HUD's and the full UI's status bar.
         if self.config.interactive() {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default());

@@ -361,6 +361,8 @@ fn default_plugins(
             })
             .set(bevy::log::LogPlugin {
                 filter: LOG_FILTER.into(),
+                // Our warnings and errors for the status bar's message chip.
+                custom_layer: gz_bevy::messages::log_layer,
                 ..default()
             })
     };
