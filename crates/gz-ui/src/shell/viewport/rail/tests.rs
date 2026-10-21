@@ -1,10 +1,13 @@
 //! The rail through the full UI: where it sits, its controls ↔ the view's
 //! state both ways, its menus, the compact rail, Tab, and the keys.
 
+use std::time::Duration;
+
 use bevy::input::ButtonState;
 use bevy::picking::backend::HitData;
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerId;
+use bevy::time::TimeUpdateStrategy;
 use bevy::ui::{Checked, InteractionDisabled};
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
@@ -159,6 +162,10 @@ fn projection_shows_and_toggles_the_projection() {
 #[test]
 fn focus_frames_and_a_double_click_goes_home() {
     let mut app = live(900);
+    // 16 ms frames: the clicks are 32 ms apart however slow the machine.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     let focus = with(&mut app, RailButton::Focus);
     assert_eq!(tip(&app, focus).shortcut.as_deref(), Some("F"));
     activate(&mut app, focus);
