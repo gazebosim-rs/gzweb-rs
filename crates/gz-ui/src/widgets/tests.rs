@@ -56,6 +56,7 @@ fn widget_heights_match_the_spec() {
                 name: "amr_01".into(),
                 expanded: None,
                 hidden: false,
+                hideable: true,
             },
         ))
         .id();

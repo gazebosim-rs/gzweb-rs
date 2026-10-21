@@ -66,7 +66,7 @@ pub use splitter::{splitter, SplitAxis, Splitter};
 pub use text_field::{text_field, TextSubmit};
 pub use toggle::toggle_row;
 pub use tooltip::{tooltip_card, Tooltip, TooltipSide};
-pub use tree_row::{tree_row, EntityKind, TreeRowSpec};
+pub use tree_row::{tree_row, EntityKind, TreeRowExpand, TreeRowSpec, TreeRowVisibility};
 
 /// An AccessKit node with a name.
 pub fn a11y(role: Role, label: impl Into<String>) -> AccessibilityNode {
