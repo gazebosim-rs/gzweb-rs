@@ -201,6 +201,12 @@ pub(crate) fn spawn_shell(
         Region::Root,
         Node {
             flex_direction: FlexDirection::Column,
+            // Bevy places UI roots in an implicit grid, whose items are at
+            // least as tall as their content: without this a long panel
+            // (or a short window, DECISIONS.md D-69) grows the shell past
+            // the window.
+            min_width: px(0),
+            min_height: px(0),
             ..fill_parent()
         },
         pass_through(),

@@ -28,7 +28,7 @@ use super::{a11y, focus, rounded};
 use crate::assets::fonts::{text, Type};
 use crate::assets::icons::{icon, Icon, IconId};
 use crate::theme::visuals::{Active, Visuals};
-use crate::theme::{radius, ColorRole, Fill, FocusRing, Ink, Opacity, Theme, TypeStyle, SPACE};
+use crate::theme::{border, radius, ColorRole, Fill, Ink, Opacity, Ring, Theme, TypeStyle, SPACE};
 use crate::GzUiSystems;
 
 /// The caret column's width (§5.7: "caret 14 wide").
@@ -151,7 +151,10 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
         Headless,
         Hovered::default(),
         focus::PressFocusless,
-        FocusRing,
+        // The tree's keyboard cursor (the tree holds the focus): drawn
+        // inside the row, which its neighbours touch.
+        Ring(ColorRole::Clear),
+        Outline::new(px(border::FOCUS_RING), px(-border::FOCUS_RING), Color::NONE),
         visuals,
         Fill(visuals.fill),
         a11y(Role::TreeItem, spec.name.clone()),

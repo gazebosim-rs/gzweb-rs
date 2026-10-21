@@ -10,7 +10,7 @@ use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::text::LineBreak;
-use bevy::ui_widgets::{checkbox_self_update, observe, Button as Headless, Checkbox};
+use bevy::ui_widgets::{checkbox_self_update, observe, Button as Headless, Checkbox, RadioButton};
 
 use super::button::Checkedness;
 use super::{clickable, rounded};
@@ -30,26 +30,52 @@ const STATUS_CHIP_RADIUS: f32 = 5.0;
 /// A toggleable filter chip (a checkbox: `Checked` = selected).
 pub fn filter_chip(label: impl Into<String>, selected: bool) -> impl Bundle {
     let label = label.into();
-    let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text2).stroked(ColorRole::Line);
-    visuals.active_fill = ColorRole::Text;
-    visuals.active_ink = ColorRole::Surface;
-    visuals.active_stroke = Some(ColorRole::Clear);
     (
-        Node {
-            height: px(FILTER_CHIP_H),
-            padding: UiRect::horizontal(px(SPACE[5])),
-            border: UiRect::all(px(border::HAIRLINE)),
-            align_items: AlignItems::Center,
-            flex_shrink: 0.0,
-            border_radius: rounded(FILTER_CHIP_H / 2.0),
-            ..default()
-        },
+        chip_node(),
         Checkbox,
-        clickable(visuals, Role::CheckBox, label.clone()),
+        clickable(chip_visuals(), Role::CheckBox, label.clone()),
         Checkedness(selected),
         observe(checkbox_self_update),
         children![(text(CHIP_TYPE, ColorRole::Text2, label), Content)],
     )
+}
+
+/// A filter chip in a one-of set (the Scene panel's type chips): a radio
+/// button for a `RadioGroup`, `Checked` when selected. Controlled: the
+/// group's `ValueChange<Entity>` names the chip, and its owner moves
+/// `Checked`.
+pub fn choice_chip(label: impl Into<String>, selected: bool) -> impl Bundle {
+    let label = label.into();
+    (
+        chip_node(),
+        RadioButton,
+        clickable(chip_visuals(), Role::RadioButton, label.clone()),
+        Checkedness(selected),
+        children![(text(CHIP_TYPE, ColorRole::Text2, label), Content)],
+    )
+}
+
+/// 8 px each side (§5.12 sets none; the board's chips are about 10): the
+/// Scene panel's five type chips fit one row of the default sidebar
+/// (DECISIONS.md D-66).
+fn chip_node() -> Node {
+    Node {
+        height: px(FILTER_CHIP_H),
+        padding: UiRect::horizontal(px(SPACE[4])),
+        border: UiRect::all(px(border::HAIRLINE)),
+        align_items: AlignItems::Center,
+        flex_shrink: 0.0,
+        border_radius: rounded(FILTER_CHIP_H / 2.0),
+        ..default()
+    }
+}
+
+fn chip_visuals() -> Visuals {
+    let mut visuals = Visuals::new(ColorRole::Clear, ColorRole::Text2).stroked(ColorRole::Line);
+    visuals.active_fill = ColorRole::Text;
+    visuals.active_ink = ColorRole::Surface;
+    visuals.active_stroke = Some(ColorRole::Clear);
+    visuals
 }
 
 /// What a status chip reports.

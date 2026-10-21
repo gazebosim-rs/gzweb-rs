@@ -1,0 +1,297 @@
+//! The Scene panel's ready body (spec §3.3; board 04): the filter bar,
+//! the type chips, the virtualized tree and the footer, built from the
+//! panel's resources whenever the shell spawns the body (DECISIONS.md
+//! D-58, D-66).
+
+use accesskit::Role;
+use bevy::ecs::system::SystemParam;
+use bevy::input_focus::tab_navigation::TabIndex;
+use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
+use bevy::ui_widgets::{Button as Headless, RadioGroup, ScrollArea};
+use bevy::window::PrimaryWindow;
+
+use super::model::{Chip, Row, TreeModel, TreeScroll, TreeState};
+use super::systems::TreeRows;
+use super::SceneTree;
+use crate::assets::fonts::text;
+use crate::assets::icons::{content_icon, IconId};
+use crate::theme::visuals::Visuals;
+use crate::theme::{border, radius, ColorRole, Stroke, Theme, TypeStyle, SPACE};
+use crate::widgets::layout::{column, display, row};
+use crate::widgets::{
+    a11y, button, choice_chip, clickable, filter_field, rounded, tree_row, ButtonVariant, Tooltip,
+    TreeRowSpec,
+};
+
+/// The filter field's root.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct FilterField;
+
+/// The button that shows or hides the type chips.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct FilterButton;
+
+/// The type chips' row (a radio group).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct ChipRow;
+
+/// A type chip.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ChipChoice(pub(crate) Chip);
+
+/// The tree's scrolling list: the tab stop that takes the arrow keys.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct TreeList;
+
+/// The list's content, as tall as every row.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct TreeContent;
+
+/// A pooled row: which of [`TreeRows`] it shows (none: hidden).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct TreeSlot(pub(crate) Option<usize>);
+
+/// "No entities match", while a filter hides every row.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct NoMatches;
+
+/// What a body and its rows are built from.
+#[derive(SystemParam)]
+pub(super) struct TreeSources<'w, 's> {
+    pub(crate) theme: Res<'w, Theme>,
+    pub(crate) model: Res<'w, TreeModel>,
+    pub(crate) state: Res<'w, TreeState>,
+    pub(crate) rows: Res<'w, TreeRows>,
+    pub(crate) visibility: Query<'w, 's, &'static Visibility>,
+    windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+}
+
+impl TreeSources<'_, '_> {
+    /// What row `i` of [`TreeRows`] shows.
+    pub(crate) fn spec(&self, row: Row) -> TreeRowSpec {
+        let n = self.model.node(row);
+        TreeRowSpec {
+            depth: n.depth,
+            kind: n.kind,
+            name: n.name.clone(),
+            expanded: row.expanded,
+            hidden: n
+                .entity
+                .and_then(|e| self.visibility.get(e).ok())
+                .is_some_and(|v| *v == Visibility::Hidden),
+            hideable: n.entity.is_some(),
+        }
+    }
+
+    /// The row height.
+    pub(crate) fn row_h(&self) -> f32 {
+        self.theme.s.tree_row_h
+    }
+
+    /// Rows a list as tall as the window shows: the pool a new body starts
+    /// with, so it shows its rows in its first frame.
+    fn first_pool(&self) -> usize {
+        let h = self.windows.single().map_or(900.0, Window::height);
+        (h / self.row_h()).ceil() as usize + 1
+    }
+}
+
+/// Builds the ready body's content from the panel's resources.
+pub(crate) fn build_tree(
+    ev: On<Add<SceneTree>>,
+    src: TreeSources,
+    scroll: Res<TreeScroll>,
+    mut commands: Commands,
+) {
+    let t = src.theme.clone();
+    let row_h = src.row_h();
+    let rows = &src.rows.0;
+    let first = (scroll.0 / row_h).floor().max(0.0) as usize;
+    let slots: Vec<(usize, TreeRowSpec)> = (first..rows.len())
+        .take(src.first_pool())
+        .map(|i| (i, src.spec(rows[i])))
+        .collect();
+    let content_h = rows.len() as f32 * row_h;
+    let chips_shown = src.state.chips_shown;
+    let chip = src.state.chip;
+    let filter = src.state.filter.clone();
+    let empty = rows.is_empty() && src.state.filtering();
+    commands.entity(ev.entity).with_children(|b| {
+        b.spawn(Node {
+            flex_grow: 1.0,
+            min_height: px(0),
+            ..column(0.0)
+        })
+        .with_children(|c| {
+            // Filter bar: the field and the chip toggle (§3.3).
+            c.spawn(Node {
+                padding: UiRect {
+                    left: px(SPACE[4]),
+                    right: px(SPACE[4]),
+                    top: px(SPACE[4]),
+                    bottom: px(0),
+                },
+                flex_shrink: 0.0,
+                ..row(SPACE[3])
+            })
+            .with_children(|bar| {
+                bar.spawn((
+                    filter_field(&t, "Filter entities", "Filter", filter),
+                    FilterField,
+                ));
+                bar.spawn((filter_button(&t), FilterButton));
+            });
+            // Type chips.
+            c.spawn((
+                ChipRow,
+                RadioGroup,
+                a11y(Role::RadioGroup, "Entity type"),
+                Node {
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: px(SPACE[3]),
+                    row_gap: px(SPACE[3]),
+                    padding: UiRect {
+                        left: px(SPACE[4]),
+                        right: px(SPACE[4]),
+                        top: px(SPACE[4]),
+                        bottom: px(0),
+                    },
+                    flex_shrink: 0.0,
+                    display: display(chips_shown),
+                    ..default()
+                },
+            ))
+            .with_children(|chips| {
+                for c in Chip::ALL {
+                    chips.spawn((choice_chip(c.label(), c == chip), ChipChoice(c)));
+                }
+            });
+            // The tree.
+            c.spawn((
+                TreeList,
+                ScrollArea,
+                ScrollPosition(Vec2::new(0.0, scroll.0)),
+                TabIndex(0),
+                a11y(Role::Tree, "Entities"),
+                Node {
+                    flex_grow: 1.0,
+                    min_height: px(0),
+                    overflow: Overflow::scroll_y(),
+                    padding: UiRect::all(px(SPACE[4])),
+                    ..column(0.0)
+                },
+            ))
+            .with_children(|list| {
+                list.spawn((
+                    TreeContent,
+                    Node {
+                        height: px(content_h),
+                        flex_shrink: 0.0,
+                        ..default()
+                    },
+                ))
+                .with_children(|content| {
+                    for (i, spec) in slots {
+                        spawn_slot(content, &t, Some(i), spec);
+                    }
+                });
+                list.spawn((
+                    NoMatches,
+                    text(TypeStyle::BODY, ColorRole::Text2, "No entities match"),
+                    Node {
+                        align_self: AlignSelf::Center,
+                        margin: UiRect::top(px(SPACE[8])),
+                        display: display(empty),
+                        ..default()
+                    },
+                ));
+            });
+            // Footer (§3.3): New group, Hide others, Isolate; they need
+            // groups and the selection (M5).
+            c.spawn((
+                Node {
+                    padding: UiRect::axes(px(SPACE[7]), px(SPACE[5])),
+                    border: UiRect::top(px(border::HAIRLINE)),
+                    flex_shrink: 0.0,
+                    ..row(SPACE[3])
+                },
+                Stroke(ColorRole::Line),
+            ))
+            .with_children(|f| {
+                for label in ["New group", "Hide others", "Isolate"] {
+                    f.spawn(button(&t, label, ButtonVariant::Normal)).insert((
+                        Node {
+                            flex_grow: 1.0,
+                            flex_basis: px(0),
+                            height: px(t.s.button_h),
+                            padding: UiRect::horizontal(px(SPACE[4])),
+                            border: UiRect::all(px(border::HAIRLINE)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: rounded(radius::SM),
+                            ..default()
+                        },
+                        InteractionDisabled,
+                        Tooltip::new(label).detail("Not available yet"),
+                    ));
+                }
+            });
+        });
+    });
+}
+
+/// Spawns a pooled row showing row `i` (absolutely placed at its offset).
+pub(super) fn spawn_slot(
+    parent: &mut ChildSpawnerCommands,
+    theme: &Theme,
+    i: Option<usize>,
+    spec: TreeRowSpec,
+) {
+    let row_h = theme.s.tree_row_h;
+    parent.spawn(tree_row(theme, spec)).insert((
+        TreeSlot(i),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            right: px(0),
+            top: px(i.unwrap_or(0) as f32 * row_h),
+            height: px(row_h),
+            padding: UiRect::horizontal(px(SPACE[4])),
+            column_gap: px(SPACE[3]),
+            align_items: AlignItems::Center,
+            border_radius: rounded(radius::SM),
+            display: display(i.is_some()),
+            ..default()
+        },
+    ));
+}
+
+/// The filter bar's button (board 04): a bordered 30 px square with the
+/// funnel, in the active look while a type chip filters
+/// ([`chip_states`](super::systems::chip_states)).
+fn filter_button(theme: &Theme) -> impl Bundle {
+    let side = theme.s.input_h_compact;
+    let tip = Tooltip::new("Filter by type").detail("Show or hide the type chips");
+    let visuals = Visuals::new(ColorRole::Surface2, ColorRole::Icon).stroked(ColorRole::Line);
+    (
+        Node {
+            width: px(side),
+            height: px(side),
+            flex_shrink: 0.0,
+            border: UiRect::all(px(border::HAIRLINE)),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: rounded(radius::SM),
+            ..default()
+        },
+        Headless,
+        clickable(visuals, Role::Button, tip.accessible_name()),
+        tip,
+        children![content_icon(
+            IconId::Filter,
+            theme.s.icon_sm,
+            ColorRole::Icon
+        )],
+    )
+}

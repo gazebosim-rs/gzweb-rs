@@ -51,7 +51,7 @@ pub use button::{
     bar_button, bar_tool_button, button, icon_button, primary_button, text_button, tool_button,
     ButtonVariant, IconButtonSize, TextButtonProps,
 };
-pub use chip::{filter_chip, status_chip, StatusKind};
+pub use chip::{choice_chip, filter_chip, status_chip, StatusKind};
 pub use menu::{
     menu, menu_checkbox, menu_group_label, menu_item, menu_panel, menu_separator, Menu,
     MenuItemProps, MenuSide,
@@ -63,7 +63,7 @@ pub use segmented::{button_group, segmented_group};
 pub use select::{select, Select, SelectChanged};
 pub use slider::{slider_row, SliderProps};
 pub use splitter::{splitter, SplitAxis, Splitter};
-pub use text_field::{text_field, TextSubmit};
+pub use text_field::{filter_field, text_field, TextSubmit};
 pub use toggle::toggle_row;
 pub use tooltip::{tooltip_card, Tooltip, TooltipSide};
 pub use tree_row::{tree_row, EntityKind, TreeRowExpand, TreeRowSpec, TreeRowVisibility};
