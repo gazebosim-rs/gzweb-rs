@@ -194,7 +194,7 @@ pub fn edge_lines(mesh: &Mesh) -> Mesh {
     };
     let mut seen = HashSet::new();
     let mut indices = Vec::new();
-    for t in triangles.chunks_exact(3) {
+    for t in triangles.as_chunks::<3>().0 {
         for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
             let key = (a.min(b), a.max(b));
             if (key.1 as usize) < positions.len() && seen.insert(key) {

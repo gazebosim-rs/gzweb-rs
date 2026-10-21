@@ -5,7 +5,6 @@ use bevy::input::ButtonState;
 use bevy::picking::backend::HitData;
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerId;
-use bevy::prelude::*;
 use bevy::ui::{Checked, InteractionDisabled};
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;

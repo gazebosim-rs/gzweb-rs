@@ -2,7 +2,6 @@
 //! an orthographic view (the target chip's tests are the rail's, beside
 //! the Camera mode button it belongs to).
 
-use bevy::prelude::*;
 use gz_bevy::view::{ortho_height, SnapView, ViewOp};
 
 use super::*;

@@ -7,7 +7,6 @@ use bevy::picking::events::{
     Pointer, PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut,
 };
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
-use bevy::prelude::*;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::view::{home_transform, SnapView, ViewCommand, ViewOp};
 use std::time::Duration;
