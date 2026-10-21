@@ -5,17 +5,19 @@
 //! draws one is turned on, the client calls the world's
 //! `generate_world_sdf` service (included models expanded) and parses the
 //! reply. It asks again when the set of models changes (a spawn, a
-//! reconnect) while one of those overlays is on, or while something else
-//! wants it ([`SdfWanted`]: the UI's scene tree lists the joints). One
-//! request is in flight at a time, so a burst of spawns asks once more
-//! after the reply rather than once per model. A server without the
-//! service, or a reply that isn't SDFormat, is logged once and left at
-//! that.
+//! deletion) or the connection comes back, while one of those overlays is
+//! on or something else wants it ([`SdfWanted`]: the UI's scene tree lists
+//! the joints). One request is in flight at a time: a change while it is out is
+//! asked for when its reply lands, so the last reply is always for the
+//! latest set. A server without the service, or a reply that isn't
+//! SDFormat, is logged once per world and model set.
 
 use bevy::prelude::*;
 use gz_core::msgs;
 use gz_core::sdf::{self, WorldExtras};
+use gz_core::transport::Status;
 use prost::Message as _;
+use std::collections::HashSet;
 
 use super::Overlays;
 use crate::connection::{GzCommand, GzServiceReply, GzStatus};
@@ -28,8 +30,8 @@ pub struct SdfExtras {
     pub extras: Option<WorldExtras>,
     /// Bumped on every new reply, so the collision meshes respawn.
     pub generation: u32,
-    /// The world and model count the last request was for.
-    asked: Option<(String, usize)>,
+    /// The world and model set the last request was for.
+    asked: Option<(String, HashSet<String>)>,
     /// The service the last request went to, while its reply is due.
     pending: Option<String>,
 }
@@ -40,9 +42,11 @@ pub struct SdfExtras {
 pub struct SdfWanted(pub bool);
 
 /// Asks for the world's SDFormat when an overlay (or [`SdfWanted`]) needs
-/// it and the world (or its set of models) is new since the last request,
-/// unless a request is still waiting for its reply. A connection that
-/// isn't ready drops the waiting request and asks again once it is.
+/// it and the world
+/// (or its set of models) is new since the last request, once no request
+/// is in flight. While the connection isn't ready, it forgets what it
+/// asked: a reply lost to a disconnect is asked for again, and so is the
+/// world after a reconnect.
 pub fn request_extras(
     overlays: Res<Overlays>,
     wanted: Option<Res<SdfWanted>>,
@@ -51,37 +55,39 @@ pub fn request_extras(
     mut state: ResMut<SdfExtras>,
     mut out: MessageWriter<GzCommand>,
 ) {
-    let ready = status
-        .as_ref()
-        .is_some_and(|s| s.status == gz_core::transport::Status::Ready);
-    if !ready {
-        if state.pending.is_some() || state.asked.is_some() {
-            state.pending = None;
+    let Some(status) = status else { return };
+    if status.status != Status::Ready {
+        if state.asked.is_some() || state.pending.is_some() {
             state.asked = None;
+            state.pending = None;
         }
         return;
     }
-    if !overlays.need_sdf() && !wanted.is_some_and(|w| w.0) || state.pending.is_some() {
+    let needed = overlays.need_sdf() || wanted.is_some_and(|w| w.0);
+    if !needed || state.pending.is_some() {
         return;
     }
-    let (Some(world), Some(index)) = (status.and_then(|s| s.world.clone()), index) else {
+    let (Some(world), Some(index)) = (status.world.as_deref(), index) else {
         return;
     };
     if index.scene.is_none() {
         return;
     }
-    let key = (world, index.model_names.len());
-    if state.asked.as_ref() == Some(&key) {
+    if state
+        .asked
+        .as_ref()
+        .is_some_and(|(w, names)| w == world && *names == index.model_names)
+    {
         return;
     }
-    let service = sdf::generate_service(&key.0);
+    let service = sdf::generate_service(world);
     out.write(GzCommand::Request {
         service: service.clone(),
         msg_type: "gz.msgs.SdfGeneratorConfig".into(),
         payload: sdf::generate_request(),
     });
     state.pending = Some(service);
-    state.asked = Some(key);
+    state.asked = Some((world.to_owned(), index.model_names.clone()));
 }
 
 /// Parses the `generate_world_sdf` reply into [`SdfExtras`].

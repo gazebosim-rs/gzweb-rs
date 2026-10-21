@@ -229,8 +229,8 @@ impl Plugin for OverlayRenderPlugin {
             .add_systems(
                 Update,
                 (
-                    extras::request_extras,
                     extras::receive_extras,
+                    extras::request_extras,
                     collisions::spawn_collisions,
                     collisions::show_collisions,
                 )

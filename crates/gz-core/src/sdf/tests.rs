@@ -279,3 +279,42 @@ fn link_frames_stop_at_loops_and_unknown_frames() {
     let k = &w.link("m/c").unwrap().joints[0];
     assert!(near(k.pose.pos, [0.0, 0.0, -1.0]));
 }
+
+/// Collisions and inertials resolve `relative_to` into their link's frame,
+/// as joints do.
+#[test]
+fn collision_and_inertial_poses_follow_relative_to() {
+    let xml = r#"<sdf version="1.10"><model name="m">
+        <link name="a"><pose>0 2 0 0 0 0</pose></link>
+        <link name="l"><pose>1 0 0 0 0 0</pose>
+          <collision name="c"><pose relative_to="__model__">0 0 0 0 0 0</pose>
+            <geometry><box><size>1 1 1</size></box></geometry></collision>
+          <collision name="own"><pose relative_to="l">0 0 3 0 0 0</pose>
+            <geometry><box><size>1 1 1</size></box></geometry></collision>
+          <inertial><pose relative_to="a">0 0 0 0 0 0</pose><mass>1</mass></inertial>
+        </link></model></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let l = w.link("m/l").unwrap();
+    assert!(near(l.collisions[0].pose.pos, [-1.0, 0.0, 0.0]));
+    assert!(near(l.collisions[1].pose.pos, [0.0, 0.0, 3.0]));
+    assert!(near(l.inertial.unwrap().pose.pos, [-1.0, 2.0, 0.0]));
+}
+
+/// A joint on a nested model's link (`inner::link`) finds that link's
+/// pose through the nested model.
+#[test]
+fn nested_links_resolve_through_their_model() {
+    let xml = r#"<sdf version="1.10"><model name="m">
+        <link name="base"/>
+        <model name="inner"><pose>0 0 1 0 0 1.5707963267948966</pose>
+          <link name="tip"><pose>1 0 0 0 0 0</pose></link>
+        </model>
+        <joint name="j" type="fixed"><pose relative_to="__model__">0 0 0 0 0 0</pose>
+          <parent>base</parent><child>inner::tip</child></joint>
+        </model></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    // The tip is at (0, 1, 1) in the model, turned 90° about z; the model
+    // origin is (0, 0, -1) below it and, in its turned axes, 1 m along -x.
+    let j = &w.link("m/inner/tip").unwrap().joints[0];
+    assert!(near(j.pose.pos, [-1.0, 0.0, -1.0]), "{:?}", j.pose.pos);
+}

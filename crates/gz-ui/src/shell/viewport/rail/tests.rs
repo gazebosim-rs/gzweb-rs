@@ -202,6 +202,38 @@ fn amr(app: &mut App, selected: bool) -> Entity {
     e
 }
 
+/// While following one model with another selected, the checked Follow
+/// names the model it follows (choosing it changes nothing); Track names
+/// the selection it would track.
+#[test]
+fn the_current_mode_names_its_target_not_the_selection() {
+    let mut app = live(900);
+    let follow = with(&mut app, CameraItem::Follow);
+    let track = with(&mut app, CameraItem::Track);
+    let a = amr(&mut app, false);
+    send(&mut app, ViewOp::SetMode(CameraMode::Follow(a)));
+    let b = app
+        .world_mut()
+        .spawn((
+            GzEntity {
+                name: "cart_02".into(),
+                id: 2,
+                kind: NodeKind::Model,
+                path: "cart_02".into(),
+            },
+            Transform::default(),
+        ))
+        .id();
+    app.world_mut().resource_mut::<Selection>().entities = vec![b];
+    frames(&mut app, 2);
+    assert!(has::<Active>(&app, follow));
+    assert_eq!(label(&app, follow), "Follow amr_01");
+    assert_eq!(label(&app, track), "Track cart_02");
+    ops(&mut app);
+    activate(&mut app, track);
+    assert_eq!(ops(&mut app), [ViewOp::SetMode(CameraMode::Track(b))]);
+}
+
 #[test]
 fn the_camera_menu_needs_a_selection_and_shows_the_mode() {
     let mut app = live(900);

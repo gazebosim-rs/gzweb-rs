@@ -3,9 +3,11 @@
 //! diffuse (1.0, 0.5088, 0.0468) at 0.7 alpha), children of the link so
 //! pose updates move them.
 //!
-//! They are spawned (once per [`SdfExtras`] reply) the first time the
-//! overlay is on, as visuals with the collision's geometry, so mesh files
-//! load like any visual's, then shown and hidden with the overlay.
+//! They are spawned the first time the overlay is on, as visuals with the
+//! collision's geometry, so mesh files load like any visual's, then shown
+//! and hidden with the overlay. A new [`SdfExtras`] reply replaces them
+//! all; a link spawned since (a model respawned, the scene again after a
+//! reconnect) gets its own when it has none.
 //! Heightmap collisions aren't drawn (the terrain's visual is the same
 //! surface).
 
@@ -44,13 +46,49 @@ pub fn collision_visual(geometry: &GeometryDesc) -> VisualDesc {
 #[derive(Default)]
 pub struct Spawned(Option<u32>);
 
-/// Spawns every link's collision shapes when the overlay is on and the
-/// world's extras are new (replacing the previous ones).
+/// The links collision meshes go under, and the meshes already there.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CollisionLinks<'w, 's> {
+    links: Query<'w, 's, (Entity, &'static GzEntity, Option<&'static Children>)>,
+    added: Query<'w, 's, (), Added<GzEntity>>,
+    existing: Query<'w, 's, Entity, With<CollisionOverlay>>,
+}
+
+impl CollisionLinks<'_, '_> {
+    /// Whether entities were spawned since the system last ran.
+    fn spawned(&self) -> bool {
+        !self.added.is_empty()
+    }
+
+    /// Despawns every collision mesh.
+    fn clear(&self, commands: &mut Commands) {
+        for e in &self.existing {
+            commands.entity(e).despawn();
+        }
+    }
+
+    /// The links by path: all of them, or only those without collision
+    /// meshes.
+    fn by_path(&self, all: bool) -> HashMap<&str, Entity> {
+        let bare = |kids: Option<&Children>| {
+            !kids.is_some_and(|k| k.iter().any(|c| self.existing.contains(c)))
+        };
+        self.links
+            .iter()
+            .filter(|(_, g, kids)| g.kind == NodeKind::Link && (all || bare(*kids)))
+            .map(|(e, g, _)| (g.path.as_str(), e))
+            .collect()
+    }
+}
+
+/// Spawns the links' collision shapes while the overlay is on: every
+/// link's when the world's extras are new (replacing the previous ones),
+/// else those of links without any, when links were spawned or the
+/// overlay turned on since.
 pub fn spawn_collisions(
     overlays: Res<Overlays>,
     extras: Res<SdfExtras>,
-    links: Query<(Entity, &GzEntity)>,
-    existing: Query<Entity, With<CollisionOverlay>>,
+    links: CollisionLinks,
     mut spawned: Local<Spawned>,
     mut assets: GeometryAssets,
     mut commands: Commands,
@@ -58,18 +96,18 @@ pub fn spawn_collisions(
     let Some(world) = extras.extras.as_ref() else {
         return;
     };
-    if !overlays.collisions || spawned.0 == Some(extras.generation) {
+    if !overlays.collisions {
+        return;
+    }
+    let fresh = spawned.0 != Some(extras.generation);
+    if !fresh && !links.spawned() && !overlays.is_changed() {
         return;
     }
     spawned.0 = Some(extras.generation);
-    for e in &existing {
-        commands.entity(e).despawn();
+    if fresh {
+        links.clear(&mut commands);
     }
-    let by_path: HashMap<&str, Entity> = links
-        .iter()
-        .filter(|(_, g)| g.kind == NodeKind::Link)
-        .map(|(e, g)| (g.path.as_str(), e))
-        .collect();
+    let by_path = links.by_path(fresh);
     for (path, link) in &world.links {
         let Some(&parent) = by_path.get(path.as_str()) else {
             continue;

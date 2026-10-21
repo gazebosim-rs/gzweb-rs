@@ -43,6 +43,12 @@ fn lengths_read_in_the_unit_that_suits_them() {
     ] {
         assert_eq!(scale_text(m), s);
     }
+    // The bar's own lengths under a millimetre, as the closest orthographic
+    // zoom in a tall view gives them, without f32's noise.
+    for (m_per_px, s) in [(1e-6, "0.05 mm"), (2.2e-6, "0.1 mm"), (4.6e-6, "0.2 mm")] {
+        let (m, _) = scale_bar(m_per_px).unwrap();
+        assert_eq!(scale_text(m), s, "{m}");
+    }
 }
 
 #[test]
