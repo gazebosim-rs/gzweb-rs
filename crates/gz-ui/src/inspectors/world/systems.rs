@@ -13,14 +13,16 @@ use crate::theme::{ColorRole, Ink};
 use crate::widgets::text::set_text;
 
 /// The world's name, its source (the server) and the step size, when the
-/// connection or the scene changes.
+/// connection or the scene changes, or the World inspector is built again.
 pub(super) fn world_fields(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
+    added: Query<(), Added<WorldField>>,
     mut texts: Query<(&WorldField, &mut Text, &mut Ink)>,
 ) {
-    let changed =
-        status.as_ref().is_some_and(Res::is_changed) || index.as_ref().is_some_and(Res::is_changed);
+    let changed = status.as_ref().is_some_and(Res::is_changed)
+        || index.as_ref().is_some_and(Res::is_changed)
+        || !added.is_empty();
     if !changed {
         return;
     }
@@ -50,13 +52,15 @@ pub(super) fn world_fields(
     }
 }
 
-/// Reset needs a live world, as the top bar's (DECISIONS.md D-56).
+/// Reset needs a live world, as the top bar's (DECISIONS.md D-56), also
+/// when the World inspector is built again.
 pub(super) fn reset_availability(
     phase: Res<CurrentPhase>,
     buttons: Query<(Entity, &WorldAction, Has<InteractionDisabled>)>,
+    added: Query<(), Added<WorldAction>>,
     mut commands: Commands,
 ) {
-    if !phase.is_changed() {
+    if !phase.is_changed() && added.is_empty() {
         return;
     }
     let live = phase.0 == Phase::Live;

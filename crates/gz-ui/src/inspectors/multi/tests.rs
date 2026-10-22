@@ -67,3 +67,30 @@ fn the_multi_body_follows_the_selection() {
     assert!(text.contains("2 models · 1 light"), "{text}");
     assert!(!text.contains("2 selected"), "{text}");
 }
+
+#[test]
+fn joints_and_sensors_alone_can_be_focused() {
+    use crate::inspectors::common::{Disabled, EntityAction};
+    use crate::inspectors::model::tests::action;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    app.world_mut().resource_mut::<Selection>().parts = vec![
+        Part {
+            kind: PartKind::Joint,
+            owner: s.cart,
+            name: "hinge".into(),
+        },
+        Part {
+            kind: PartKind::Sensor,
+            owner: s.base,
+            name: "lidar".into(),
+        },
+    ];
+    frames(&mut app, 3);
+    assert_eq!(app.world().resource::<Inspected>().kind, InspectKind::Multi);
+    let focus = action(&mut app, EntityAction::FocusSelection);
+    assert_eq!(app.world().get::<Disabled>(focus).map(|d| d.0), Some(false));
+    // No entity has a pose to share.
+    assert!(shared(&mut app).is_empty());
+}

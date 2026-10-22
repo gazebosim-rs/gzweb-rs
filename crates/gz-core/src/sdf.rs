@@ -132,6 +132,9 @@ pub struct Joint {
     pub kind: JointKind,
     pub pose: Pose,
     pub axes: Vec<[f64; 3]>,
+    /// Per axis, its `<xyz>` as the SDFormat writes it and the frame it is
+    /// expressed in (`None` for the joint's).
+    pub written_axes: Vec<([f64; 3], Option<String>)>,
     /// The parent and child links as the SDFormat names them (`world`, or
     /// `inner::link` for a nested model's).
     pub parent: String,
@@ -217,6 +220,9 @@ pub struct ModelExtras {
     pub self_collide: bool,
     /// Its `<plugin>`s' names (else file names).
     pub plugins: Vec<String>,
+    /// The `<topic>` its JointStatePublisher sets, if any (else it
+    /// publishes on the default topic).
+    pub joint_state_topic: Option<String>,
 }
 
 /// A world's links' and models' extras by path.
@@ -372,6 +378,16 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                 .filter_map(|p| p.attribute("name").or(p.attribute("filename")))
                 .map(str::to_string)
                 .collect(),
+            joint_state_topic: children(model, "plugin")
+                .filter(|p| {
+                    p.attribute("name")
+                        .is_some_and(|n| n.ends_with("JointStatePublisher"))
+                        || p.attribute("filename")
+                            .is_some_and(|f| f.contains("joint-state-publisher"))
+                })
+                .find_map(|p| text(p, "topic"))
+                .filter(|t| !t.is_empty())
+                .map(str::to_string),
         },
     );
     // A pose that belongs to `owner` (a link), in that link's frame.
@@ -428,7 +444,7 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
         // A nested model's link: `inner::link` is `path/inner/link`.
         let child_path = format!("{path}/{}", child_name.replace("::", "/"));
         let pose = in_link(child_name, pose_of(j));
-        let axes = ["axis", "axis2"]
+        let written_axes: Vec<([f64; 3], Option<String>)> = ["axis", "axis2"]
             .into_iter()
             .filter_map(|tag| child(j, tag))
             .map(|a| {
@@ -438,15 +454,23 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                     .map(numbers)
                     .and_then(|v| <[f64; 3]>::try_from(v).ok())
                     .unwrap_or([0.0, 0.0, 1.0]);
+                let frame = xyz
+                    .and_then(|x| x.attribute("expressed_in"))
+                    .filter(|f| !f.is_empty())
+                    .map(str::to_string);
+                (v, frame)
+            })
+            .collect();
+        let axes = written_axes
+            .iter()
+            .map(|(v, frame)| {
                 // An axis expressed in the model frame turns into the
                 // joint frame: undo the joint's rotation in the model.
-                let in_model_frame =
-                    xyz.and_then(|x| x.attribute("expressed_in")) == Some("__model__");
-                let v = if in_model_frame {
+                let v = if frame.as_deref() == Some("__model__") {
                     let joint_in_model = mul(in_model(child_name), pose);
-                    rotate(inverse(joint_in_model).quat, v)
+                    rotate(inverse(joint_in_model).quat, *v)
                 } else {
-                    v
+                    *v
                 };
                 unit(v)
             })
@@ -476,6 +500,7 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
             kind: JointKind::parse(j.attribute("type").unwrap_or("")),
             pose,
             axes,
+            written_axes,
             parent: text(j, "parent").unwrap_or("").to_string(),
             child: child_name.to_string(),
             model: path.clone(),

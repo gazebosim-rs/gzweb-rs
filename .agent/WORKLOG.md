@@ -1302,3 +1302,24 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Pose rows:** X Y Z R P Yw (§3.5). Joint-state topics and body rebuilds
   run on changes only. Workspace 654 → 659 passing; coverage 98.4%
   lines. check.sh passes.
+
+## 2026-10-22: M5b third review fixes (D-77, D-80 amended)
+
+- **World:** a World body built again (after a deselect) reads the
+  server's fields and the phase's Reset at once, not at the next status
+  change; World, Light and Multi bodies don't rebuild for a new SDFormat
+  (they don't read it).
+- **Subject:** a respawn is taken up only while pinned or with nothing
+  else selected, so a selection in the same frame wins; a subject shown
+  removed looks for its respawn only as entities arrive, and the live
+  selection is built only when the subject changes.
+- **Pin:** off for the World too.
+- **Multi:** Focus is on for joints and sensors alone (they frame their
+  owners, D-79).
+- **Sensor:** Topic reads "—" until the SDFormat arrives.
+- **Joint:** the JointStatePublisher's `<topic>` is subscribed when set;
+  the Axis row shows the SDFormat's `xyz` and its frame; the wanted
+  states update on changes only.
+- **Tests:** one for each (the five UI ones checked to fail without the
+  fix), plus reconnect and world change for joint states; workspace
+  659 → 667 passing; coverage 98.4% lines. check.sh passes.

@@ -50,13 +50,27 @@ impl Plugin for JointInspectorPlugin {
     }
 }
 
-/// The inspected joint's model's states are wanted while a joint shows.
-fn want_joint_states(inspected: Res<Inspected>, mut wanted: ResMut<JointStateWanted>) {
-    let want = match inspected.kind {
+/// The inspected joint's model's states are wanted while a joint shows,
+/// on the topic its JointStatePublisher sets, if the SDFormat says.
+fn want_joint_states(
+    inspected: Res<Inspected>,
+    sdf: Option<Res<SdfExtras>>,
+    mut wanted: ResMut<JointStateWanted>,
+) {
+    if !inspected.is_changed() && !sdf.as_ref().is_some_and(|s| s.is_changed()) {
+        return;
+    }
+    let model = match inspected.kind {
         InspectKind::Joint if !inspected.removed => inspected.path.clone(),
         _ => None,
     };
-    wanted.set_if_neq(JointStateWanted(want));
+    let topic = model.as_ref().and_then(|m| {
+        sdf.as_deref()
+            .and_then(|s| s.extras.as_ref())
+            .and_then(|w| w.model(m))
+            .and_then(|m| m.joint_state_topic.clone())
+    });
+    wanted.set_if_neq(JointStateWanted { model, topic });
 }
 
 /// A link's scene path from its SDFormat name (`world` has none).
@@ -151,8 +165,17 @@ fn build_joint(
                 ("Parent".into(), j.parent.clone()),
                 ("Child".into(), j.child.clone()),
             ];
-            if let Some([x, y, z]) = j.axes.first() {
-                rows.push(("Axis".into(), format!("{}  {}  {}", n(*x), n(*y), n(*z))));
+            // As the SDFormat writes it, with the frame it is in.
+            if let Some(([x, y, z], frame)) = j.written_axes.first() {
+                let xyz = format!("{}  {}  {}", n(*x), n(*y), n(*z));
+                rows.push((
+                    "Axis".into(),
+                    match frame.as_deref() {
+                        None => xyz,
+                        Some("__model__") => format!("{xyz} (model)"),
+                        Some(f) => format!("{xyz} ({f})"),
+                    },
+                ));
             }
             rows.extend([
                 ("Lower".into(), limit(l.lower, rotates, l.lower <= -1e16)),

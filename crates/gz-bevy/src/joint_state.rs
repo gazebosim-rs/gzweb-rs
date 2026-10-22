@@ -1,8 +1,9 @@
 //! Joint states for the full UI's Joint inspector (spec §3.5: position,
 //! velocity and effort, live): while [`JointStateWanted`] names a model,
-//! its `joint_state` topic is subscribed (Gazebo's JointStatePublisher
-//! system publishes it, when the world has one) and decoded into
-//! [`JointStates`]. Nothing is subscribed otherwise.
+//! its `joint_state` topic (or the `<topic>` its JointStatePublisher sets)
+//! is subscribed (Gazebo's JointStatePublisher system publishes it, when
+//! the world has one) and decoded into [`JointStates`]. Nothing is
+//! subscribed otherwise.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -16,9 +17,15 @@ use crate::connection::{GzCommand, GzPublish, GzStatus};
 /// How many joint states a second the inspector needs.
 pub const JOINT_STATE_RATE: u32 = 10;
 
-/// The model (scene path) whose joint states are wanted, if any.
+/// The model whose joint states are wanted, if any.
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
-pub struct JointStateWanted(pub Option<String>);
+pub struct JointStateWanted {
+    /// Its scene path.
+    pub model: Option<String>,
+    /// The `<topic>` its JointStatePublisher sets, used as is; else the
+    /// default ([`joint_state_topic`]).
+    pub topic: Option<String>,
+}
 
 /// One joint's state, from its first axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -75,8 +82,13 @@ fn subscribe_joint_states(
         .as_deref()
         .filter(|s| s.status == Status::Ready)
         .and_then(|s| s.world.as_deref());
-    let want = match (ready, &wanted.0) {
-        (Some(world), Some(model)) => Some(joint_state_topic(world, model)),
+    let want = match (ready, &wanted.model) {
+        (Some(world), Some(model)) => Some(
+            wanted
+                .topic
+                .clone()
+                .unwrap_or_else(|| joint_state_topic(world, model)),
+        ),
         _ => None,
     };
     if want == states.topic {
@@ -150,7 +162,7 @@ mod tests {
         let mut app = app();
         app.update();
         assert!(sent(&mut app).is_empty(), "nothing wanted");
-        app.world_mut().resource_mut::<JointStateWanted>().0 = Some("arm".into());
+        app.world_mut().resource_mut::<JointStateWanted>().model = Some("arm".into());
         app.update();
         let topic = "/world/w/model/arm/joint_state".to_string();
         assert_eq!(
@@ -192,9 +204,46 @@ mod tests {
             })
         );
         // Unwanted: unsubscribed, forgotten.
-        app.world_mut().resource_mut::<JointStateWanted>().0 = None;
+        app.world_mut().resource_mut::<JointStateWanted>().model = None;
         app.update();
         assert_eq!(sent(&mut app), [GzCommand::Unsubscribe(topic)]);
         assert!(app.world().resource::<JointStates>().joints.is_empty());
+    }
+
+    #[test]
+    fn a_publishers_own_topic_is_used_as_is() {
+        let mut app = app();
+        *app.world_mut().resource_mut::<JointStateWanted>() = JointStateWanted {
+            model: Some("arm".into()),
+            topic: Some("/arm/joints".into()),
+        };
+        app.update();
+        assert_eq!(
+            sent(&mut app)[0],
+            GzCommand::Subscribe("/arm/joints".into())
+        );
+    }
+
+    #[test]
+    fn a_reconnect_or_a_new_world_subscribes_again() {
+        let mut app = app();
+        app.world_mut().resource_mut::<JointStateWanted>().model = Some("arm".into());
+        app.update();
+        sent(&mut app);
+        // Down: the transport has dropped its subscriptions; nothing to
+        // unsubscribe.
+        app.world_mut().resource_mut::<GzStatus>().status = Status::Connecting;
+        app.update();
+        assert!(sent(&mut app).is_empty());
+        assert_eq!(app.world().resource::<JointStates>().topic, None);
+        // Back, in another world.
+        let mut status = app.world_mut().resource_mut::<GzStatus>();
+        status.status = Status::Ready;
+        status.world = Some("v".into());
+        app.update();
+        assert_eq!(
+            sent(&mut app)[0],
+            GzCommand::Subscribe("/world/v/model/arm/joint_state".into())
+        );
     }
 }

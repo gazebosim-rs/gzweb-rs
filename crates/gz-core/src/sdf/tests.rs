@@ -150,6 +150,11 @@ fn joint_poses_and_axes_resolve_into_the_child_frame() {
     // Model z, in the joint frame (rolled with the arm): +y... normalised.
     let axis = rotate(inverse(mul(arm_in_model, arm.pose)).quat, [0.0, 0.0, 1.0]);
     assert!(near(arm.axes[0], axis), "{:?}", arm.axes);
+    // As written, for the inspector.
+    assert_eq!(
+        arm.written_axes,
+        [([0.0, 0.0, 2.0], Some("__model__".to_string()))]
+    );
     assert!((arm.axes[0].iter().map(|c| c * c).sum::<f64>() - 1.0).abs() < 1e-9);
 }
 
@@ -327,6 +332,10 @@ fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
         <self_collide>1</self_collide>
         <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
         <plugin filename="libcustom.so"/>
+        <plugin filename="gz-sim-joint-state-publisher-system"
+                name="gz::sim::systems::JointStatePublisher">
+          <topic>/cart/joints</topic>
+        </plugin>
         <link name="base">
           <gravity>false</gravity>
           <kinematic>true</kinematic>
@@ -356,10 +365,16 @@ fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
     assert!(cart.is_static && cart.self_collide);
     assert_eq!(
         cart.plugins,
-        ["gz::sim::systems::DiffDrive", "libcustom.so"]
+        [
+            "gz::sim::systems::DiffDrive",
+            "libcustom.so",
+            "gz::sim::systems::JointStatePublisher"
+        ]
     );
+    assert_eq!(cart.joint_state_topic.as_deref(), Some("/cart/joints"));
     let plain = w.model("plain").unwrap();
     assert!(!plain.is_static && !plain.self_collide && plain.plugins.is_empty());
+    assert_eq!(plain.joint_state_topic, None);
     let base = w.link("cart/base").unwrap();
     assert_eq!(
         base.flags,
@@ -397,6 +412,7 @@ fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
             ..AxisLimits::default()
         }]
     );
+    assert_eq!(hinge.written_axes, [([0.0, 1.0, 0.0], None)]);
     assert!(w.joint("plain", "hinge").is_none());
 }
 

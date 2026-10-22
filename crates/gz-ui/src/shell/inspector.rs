@@ -110,7 +110,7 @@ pub(crate) fn on_header_button(
         InspectorHeader::Collapse => {
             out.write(UiCommand::ToggleInspector);
         }
-        InspectorHeader::Pin if inspected.kind != InspectKind::Multi => {
+        InspectorHeader::Pin if pinnable(inspected.kind) => {
             // `pin_state` shows it.
             inspected.pinned = !inspected.pinned;
         }
@@ -131,61 +131,56 @@ fn kind_of(kind: NodeKind) -> Option<InspectKind> {
 /// The subject follows the selection: nothing is the world, one entity
 /// or part its kind, more the common fields. Pinned, it stays. Despawned,
 /// it moves to the entity now at its path (selected again if it was the
-/// selection), else shows as removed: while pinned until Dismiss, else
-/// until something else is selected.
+/// selection) while pinned or with nothing else selected, else shows as
+/// removed: while pinned until Dismiss, else until something else is
+/// selected.
 pub(crate) fn choose_subject(
     mut selection: ResMut<Selection>,
     entities: Query<(Entity, &GzEntity)>,
+    added: Query<(), Added<GzEntity>>,
     mut inspected: ResMut<Inspected>,
     mut was_selected: Local<bool>,
     mut was_pinned: Local<bool>,
 ) {
     // Whatever runs first, a despawned entity in the selection (one
     // `prune_selection` hasn't dropped yet) is not selected.
-    let live = Selection {
-        entities: selection
-            .entities
-            .iter()
-            .copied()
-            .filter(|e| entities.contains(*e))
-            .collect(),
-        parts: selection
-            .parts
-            .iter()
-            .filter(|p| entities.contains(p.owner))
-            .cloned()
-            .collect(),
-    };
+    let alive = |e: Entity| entities.contains(e);
+    let live_empty = !selection.entities.iter().any(|e| alive(*e))
+        && !selection.parts.iter().any(|p| alive(p.owner));
     let unpinned = std::mem::replace(&mut *was_pinned, inspected.pinned) && !inspected.pinned;
     match inspected.entity {
-        Some(e) if entities.get(e).is_err() => {
-            let respawned = inspected.path.as_ref().and_then(|path| {
+        Some(e) if !alive(e) => {
+            // Looked for as it goes, then only as entities arrive.
+            let look = !inspected.removed || !added.is_empty();
+            let respawned = inspected.path.as_ref().filter(|_| look).and_then(|path| {
                 entities
                     .iter()
                     .find(|(_, g)| &g.path == path)
                     .map(|(e, _)| e)
             });
-            if let Some(e) = respawned {
-                inspected.entity = Some(e);
-                inspected.removed = false;
-                if let Some(part) = inspected.part.as_mut() {
-                    part.owner = e;
-                }
-                // It was the selection (pruning dropped it, or will): it is
-                // again.
-                if *was_selected && live.is_empty() {
-                    let part = inspected.part.clone();
-                    selection.entities.retain(|e| entities.contains(*e));
-                    selection.parts.retain(|p| entities.contains(p.owner));
-                    match part {
-                        Some(part) => selection.parts.push(part),
-                        None => selection.entities.push(e),
+            match respawned {
+                // A new selection in the same frame wins.
+                Some(e) if inspected.pinned || live_empty => {
+                    inspected.entity = Some(e);
+                    inspected.removed = false;
+                    if let Some(part) = inspected.part.as_mut() {
+                        part.owner = e;
                     }
+                    // It was the selection (pruning dropped it, or will):
+                    // it is again.
+                    if *was_selected {
+                        let part = inspected.part.clone();
+                        selection.entities.retain(|e| entities.contains(*e));
+                        selection.parts.retain(|p| entities.contains(p.owner));
+                        match part {
+                            Some(part) => selection.parts.push(part),
+                            None => selection.entities.push(e),
+                        }
+                    }
+                    return;
                 }
-                return;
-            }
-            if !inspected.removed {
-                inspected.removed = true;
+                _ if !inspected.removed => inspected.removed = true,
+                _ => {}
             }
         }
         Some(e) => {
@@ -196,7 +191,7 @@ pub(crate) fn choose_subject(
         }
         None => *was_selected = false,
     }
-    if inspected.removed && (inspected.pinned || live.is_empty()) {
+    if inspected.removed && (inspected.pinned || live_empty) {
         return;
     }
     if inspected.pinned {
@@ -205,6 +200,14 @@ pub(crate) fn choose_subject(
     if !selection.is_changed() && !inspected.removed && !unpinned {
         return;
     }
+    let live_entities: Vec<Entity> = selection
+        .entities
+        .iter()
+        .copied()
+        .filter(|e| alive(*e))
+        .collect();
+    let live_parts: Vec<&gz_bevy::view::Part> =
+        selection.parts.iter().filter(|p| alive(p.owner)).collect();
     let part_subject = |p: &gz_bevy::view::Part| {
         entities.get(p.owner).ok().map(|(_, g)| Inspected {
             kind: match p.kind {
@@ -217,7 +220,7 @@ pub(crate) fn choose_subject(
             ..default()
         })
     };
-    let want = match (live.entities.as_slice(), live.parts.as_slice()) {
+    let want = match (live_entities.as_slice(), live_parts.as_slice()) {
         ([], []) => Inspected::default(),
         ([], [p]) => part_subject(p).unwrap_or_default(),
         ([e], []) => match entities
@@ -241,8 +244,14 @@ pub(crate) fn choose_subject(
     inspected.set_if_neq(want);
 }
 
-/// The header's Pin shows whether the subject is pinned; a multi-selection
-/// has no one subject to keep, so Pin is off for it.
+/// Whether Pin can keep `kind` showing: the world and a multi-selection
+/// are no one entity to keep.
+fn pinnable(kind: InspectKind) -> bool {
+    !matches!(kind, InspectKind::World | InspectKind::Multi)
+}
+
+/// The header's Pin shows whether the subject is pinned; it is off for
+/// what [`pinnable`] can't keep.
 pub(crate) fn pin_state(
     inspected: Res<Inspected>,
     buttons: Query<(
@@ -257,7 +266,7 @@ pub(crate) fn pin_state(
     if !inspected.is_changed() && added.is_empty() {
         return;
     }
-    let multi = inspected.kind == InspectKind::Multi;
+    let off = !pinnable(inspected.kind);
     for (e, which, active, disabled) in &buttons {
         if *which != InspectorHeader::Pin {
             continue;
@@ -270,8 +279,8 @@ pub(crate) fn pin_state(
                 pin.remove::<Active>();
             }
         }
-        if disabled != multi {
-            if multi {
+        if disabled != off {
+            if off {
                 pin.insert((
                     InteractionDisabled,
                     Tooltip::new("Pin").detail("Select one entity to pin it"),
@@ -302,7 +311,13 @@ pub(crate) fn rebuild_body(
     if !inspected.is_changed() && !selection.is_changed() && !sdf_changed && added.is_empty() {
         return;
     }
-    let generation = sdf.map_or(0, |s| s.generation);
+    // Only inspectors that read the SDFormat are built again for a new
+    // generation of it.
+    let reads_sdf = !matches!(
+        inspected.kind,
+        InspectKind::World | InspectKind::Light | InspectKind::Multi
+    );
+    let generation = sdf.filter(|_| reads_sdf).map_or(0, |s| s.generation);
     let want = InspectorContent(
         inspected.kind,
         inspected.entity,

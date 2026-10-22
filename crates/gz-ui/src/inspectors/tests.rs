@@ -170,4 +170,64 @@ mod frame {
         let i = inspected(&app);
         assert_eq!((i.entity, i.removed), (Some(other), false));
     }
+
+    #[test]
+    fn a_new_selection_wins_over_a_respawn_in_the_same_frame() {
+        let mut app = shell_app((1440, 900), 1.0);
+        frames(&mut app, 2);
+        let model = spawn(&mut app, "amr_01", NodeKind::Model);
+        let other = spawn(&mut app, "crate_01", NodeKind::Model);
+        select(&mut app, vec![model]);
+        app.world_mut().entity_mut(model).despawn();
+        spawn(&mut app, "amr_01", NodeKind::Model);
+        select(&mut app, vec![other]);
+        frames(&mut app, 2);
+        let i = inspected(&app);
+        assert_eq!((i.entity, i.removed), (Some(other), false));
+        assert_eq!(app.world().resource::<Selection>().entities, [other]);
+    }
+
+    #[test]
+    fn a_subject_shown_removed_is_followed_to_a_later_respawn() {
+        let mut app = shell_app((1440, 900), 1.0);
+        frames(&mut app, 2);
+        let model = spawn(&mut app, "amr_01", NodeKind::Model);
+        select(&mut app, vec![model]);
+        app.world_mut().entity_mut(model).despawn();
+        frames(&mut app, 3);
+        assert!(inspected(&app).removed);
+        // Some other entity arriving isn't it.
+        spawn(&mut app, "crate_01", NodeKind::Model);
+        frames(&mut app, 2);
+        assert!(inspected(&app).removed);
+        let again = spawn(&mut app, "amr_01", NodeKind::Model);
+        frames(&mut app, 2);
+        let i = inspected(&app);
+        assert_eq!((i.entity, i.removed), (Some(again), false));
+        assert_eq!(app.world().resource::<Selection>().entities, [again]);
+    }
+
+    #[test]
+    fn the_world_cant_be_pinned() {
+        use bevy::ui::InteractionDisabled;
+        let mut app = shell_app((1440, 900), 1.0);
+        frames(&mut app, 2);
+        let model = spawn(&mut app, "amr_01", NodeKind::Model);
+        let pin = {
+            let world = app.world_mut();
+            world
+                .query::<(Entity, &InspectorHeader)>()
+                .iter(world)
+                .find(|(_, h)| **h == InspectorHeader::Pin)
+                .unwrap()
+                .0
+        };
+        assert!(app.world().get::<InteractionDisabled>(pin).is_some());
+        app.world_mut().trigger(Activate { entity: pin });
+        frames(&mut app, 2);
+        assert!(!inspected(&app).pinned);
+        select(&mut app, vec![model]);
+        assert_eq!(inspected(&app).entity, Some(model));
+        assert!(app.world().get::<InteractionDisabled>(pin).is_none());
+    }
 }
