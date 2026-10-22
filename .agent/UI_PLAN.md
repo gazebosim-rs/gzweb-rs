@@ -276,6 +276,11 @@ websocket server, DECISIONS.md D-76), **M5d** undo.
   shader, 2 px for the selection, 1 px at 50% for the tree's hover (D-75); `gzweb --select`
   (D-64b). Follow/Track, focus and snaps use the selection as they were built to. Left for
   M5b: joint and sensor rows selecting, with their inspectors.
+- **M5b notes:** the inspector frame shows a subject (D-77); Model, Link, Light, Joint, Sensor
+  and multi-selection inspectors with live poses and joint states and definitions from the
+  SDFormat, read-only until M5c (D-78, D-80, D-81); joints and sensors select as parts (D-79).
+  Left: editable fields and the joint command slider (M5c), sub-views and All components
+  (D-82). Workspace 631 → 646 passing; coverage 98.4% lines. check.sh passes.
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
   selection outline (second render layer).
 - Inspectors: World, Model, Link, Joint, Light, Sensor, multi-select. Live-value streaming and

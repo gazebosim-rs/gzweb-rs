@@ -22,6 +22,7 @@ mod joint;
 mod light;
 mod link;
 mod model;
+mod multi;
 mod sensor;
 mod world;
 
@@ -29,6 +30,7 @@ pub use joint::{JointInspectorPlugin, JOINT};
 pub use light::{LightInspectorPlugin, LIGHT};
 pub use link::{LinkInspectorPlugin, LINK};
 pub use model::{ModelInspectorPlugin, MODEL};
+pub use multi::{MultiInspectorPlugin, MULTI};
 pub use sensor::{SensorInspectorPlugin, SENSOR};
 pub use world::{WorldInspectorPlugin, WORLD};
 
@@ -154,6 +156,7 @@ impl PluginGroup for InspectorPlugins {
             .add(LightInspectorPlugin)
             .add(JointInspectorPlugin)
             .add(SensorInspectorPlugin)
+            .add(MultiInspectorPlugin)
     }
 }
 

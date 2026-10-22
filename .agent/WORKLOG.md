@@ -1244,3 +1244,29 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   overlay sized to `OutlineMask::rect`; `place_mask` writes only changes.
 - **Tests:** a regression test for each (checked to fail without the fix
   for the wireframe and the near-plane clipping).
+
+## 2026-10-21: M5b inspectors (D-77 to D-82)
+
+- **Frame:** `InspectKind`, `Inspected` and content markers; the body
+  rebuilds for a new subject or SDFormat reply; pin; a removed subject
+  follows its respawn or shows "(removed)" with Dismiss.
+- **Inspectors:** Model (live world pose, Physics, Plugins, parts), Link
+  (live pose in the model, inertial, flags, geometry; Select model, Show
+  inertia, Show collision), Light (live pose, parameters; Focus, Hide),
+  Joint (live position, velocity, effort; definition; Select parent and
+  child, Show axis), Sensor (pose on the link, output; View in Sensors),
+  multi-selection (count, kinds, shared pose).
+- **Data:** gz-core's SDFormat reader keeps model and link flags, model
+  plugins, sensor outputs and joint parents, children, limits and
+  dynamics; lights keep specular and attenuation; `GeometryDesc::kind_name`,
+  `JointKind::as_str`; `gz_bevy::joint_state` subscribes to a model's
+  joint states while a joint is inspected.
+- **Selection:** `Selection::parts` for joints and sensors, selected from
+  the tree; focus frames a selection without meshes at its position.
+- **Live check** (`--release`, Jetty `diff_drive`, `--select
+  vehicle_blue`): the Model inspector shows the live world pose, Physics
+  from the SDFormat, the DiffDrive plugin, 4 links and 3 joints.
+- **Tests:** frame (subject, pin, respawn, removed and Dismiss), each
+  inspector's values and actions on a fixture scene, joint states,
+  sensor rows selecting, the SDFormat extras; workspace 631 → 646
+  passing; coverage 98.4% lines. check.sh passes.

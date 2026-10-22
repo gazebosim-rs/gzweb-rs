@@ -466,6 +466,8 @@ pub(crate) fn crumb(world: Option<&str>, path: &str) -> String {
 pub(crate) enum EntityAction {
     /// Frame the subject in the views (F).
     Focus,
+    /// Frame the whole selection in the views.
+    FocusSelection,
     /// Select the link's model.
     SelectModel,
     /// Turn the inertia overlay on or off.
@@ -493,7 +495,19 @@ pub(crate) fn on_entity_action(
     mut views: MessageWriter<ViewCommand>,
     mut overlays: MessageWriter<OverlayCommand>,
 ) {
-    let (Ok(action), Some(subject)) = (actions.get(ev.entity), inspected.entity) else {
+    let Ok(action) = actions.get(ev.entity) else {
+        return;
+    };
+    if *action == EntityAction::FocusSelection {
+        for view in &cameras {
+            views.write(ViewCommand {
+                view,
+                op: ViewOp::Focus { at: None },
+            });
+        }
+        return;
+    }
+    let Some(subject) = inspected.entity else {
         return;
     };
     match action {
@@ -508,6 +522,7 @@ pub(crate) fn on_entity_action(
                 });
             }
         }
+        EntityAction::FocusSelection => {}
         EntityAction::SelectModel => {
             let mut e = subject;
             while let Ok(parent) = parents.get(e) {
