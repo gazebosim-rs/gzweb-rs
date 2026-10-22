@@ -409,7 +409,13 @@ fn scrubbing_the_tag() {
         hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
     });
     w.flush();
-    assert_eq!(w.get::<Scrub>(f.root), Some(&Scrub { value: 2.4 }));
+    assert_eq!(
+        w.get::<Scrub>(f.root),
+        Some(&Scrub {
+            value: 2.4,
+            moved: false
+        })
+    );
     let mut distance = 0.0;
     let mut drag = |w: &mut World, dx: f32| {
         distance += dx;
@@ -446,7 +452,7 @@ fn scrubbing_the_tag() {
     w.get_mut::<NumberField>(f.root).unwrap().value = 3.0;
     w.trigger(PointerDragEnd {
         entity: tag,
-        pointer,
+        pointer: pointer.clone(),
         button: PointerButton::Primary,
         distance: Vec2::ZERO,
     });
@@ -459,4 +465,29 @@ fn scrubbing_the_tag() {
     assert!(close(commits[4].0, 3.49) && commits[4].1);
     // The unfocused field shows the scrubbed value.
     assert_eq!(f.text(), "3.490");
+    // A scrub that never changed the value commits nothing.
+    let w = f.app.world_mut();
+    w.trigger(PointerDragStart {
+        entity: tag,
+        pointer: pointer.clone(),
+        button: PointerButton::Primary,
+        hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+    });
+    w.flush();
+    w.trigger(PointerDrag {
+        entity: tag,
+        pointer: pointer.clone(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(0.0, 4.0),
+        delta: Vec2::new(0.0, 4.0),
+    });
+    w.trigger(PointerDragEnd {
+        entity: tag,
+        pointer,
+        button: PointerButton::Primary,
+        distance: Vec2::ZERO,
+    });
+    w.flush();
+    frames(&mut f.app, 2);
+    assert_eq!(f.commits().len(), 5);
 }

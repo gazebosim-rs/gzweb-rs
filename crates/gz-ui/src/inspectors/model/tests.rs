@@ -387,7 +387,7 @@ fn with_edits_the_pose_is_fields_that_move_the_model() {
         app.world().get::<Transform>(s.cart).unwrap().translation,
         sent[0].pose.translation
     );
-    assert!(app.world().resource::<Held>().0.contains_key(&s.cart));
+    assert!(app.world().resource::<Held>().until.contains_key(&s.cart));
     // Yaw, in degrees.
     app.world_mut().trigger(NumberCommit {
         entity: fields[5].0,
@@ -484,4 +484,78 @@ fn ctrl_z_puts_a_pose_edit_back_and_the_dot_shows_the_world_is_dirty() {
     frames(&mut app, 2);
     assert_eq!(x(&app), 2.5);
     assert!(dot(&mut app));
+}
+
+#[test]
+fn a_scrub_past_straight_up_carries_on_and_a_held_back_step_still_goes_out() {
+    use crate::widgets::NumberCommit;
+    use gz_bevy::connection::GzStatus;
+    use gz_bevy::edit::{HasPlane, SetPose};
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    {
+        let mut status = app.world_mut().resource_mut::<GzStatus>();
+        status.edits = Some(true);
+        status.world = Some("w".into());
+    }
+    select(&mut app, vec![s.cart]);
+    let fields = pose_fields(&mut app, PoseFrame::World);
+    let scrub = |app: &mut App, i: usize, value: f64, is_final: bool| {
+        app.world_mut().trigger(NumberCommit {
+            entity: fields[i].0,
+            value,
+            is_final,
+        });
+        app.update();
+    };
+    // Pitch from 80° through 90° to 100°: it carries on, with roll and yaw
+    // as they were, rather than coming back as 80° with both turned round.
+    for pitch in [80.0, 89.0, 95.0, 100.0] {
+        scrub(&mut app, 4, pitch, false);
+    }
+    scrub(&mut app, 4, 100.0, true);
+    frames(&mut app, 2);
+    let values: Vec<f64> = pose_fields(&mut app, PoseFrame::World)
+        .iter()
+        .map(|f| (f.1 * 1000.0).round() / 1000.0)
+        .collect();
+    assert_eq!(values[3..], [0.0, 100.0, 90.0]);
+    let want = Quat::from_euler(EulerRot::ZYX, 90f32.to_radians(), 100f32.to_radians(), 0.0);
+    let rotation = app.world().get::<Transform>(s.cart).unwrap().rotation;
+    assert!(rotation.angle_between(want) < 1e-4);
+    app.world_mut()
+        .resource_mut::<Messages<SetPose>>()
+        .drain()
+        .for_each(drop);
+    // A step held back (too soon after the last) goes out once the time is
+    // up, so a scrub that stops on it doesn't spring back.
+    // Back to back: the second is too soon.
+    for value in [2.0, 2.5] {
+        app.world_mut().trigger(NumberCommit {
+            entity: fields[0].0,
+            value,
+            is_final: false,
+        });
+    }
+    let sent = |app: &mut App| -> Vec<f32> {
+        app.world_mut()
+            .resource_mut::<Messages<SetPose>>()
+            .drain()
+            .map(|e| e.pose.translation.x)
+            .collect()
+    };
+    assert_eq!(sent(&mut app), [2.0]);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs_f64(gz_bevy::view::gizmo::SEND_SECS * 1.5),
+    ));
+    frames(&mut app, 2);
+    assert_eq!(sent(&mut app), [2.5]);
+    // A plane found after the body was built: no more edits, and the pose
+    // turns to text.
+    app.world_mut().entity_mut(s.cart).insert(HasPlane);
+    scrub(&mut app, 0, 3.0, true);
+    assert!(sent(&mut app).is_empty());
+    frames(&mut app, 2);
+    assert!(pose_fields(&mut app, PoseFrame::World).is_empty());
 }

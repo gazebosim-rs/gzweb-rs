@@ -138,7 +138,58 @@ fn a_turn_is_about_the_world_axis_whatever_the_start() {
     use std::f32::consts::FRAC_PI_2;
     // On its side (about X); a quarter turn about Z then takes its X to Y.
     let start = Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2));
-    let turned = apply_move(Move::Rotate(Quat::from_rotation_z(FRAC_PI_2)), &start);
+    let quarter = Move::Rotate(Quat::from_rotation_z(FRAC_PI_2));
+    let turned = apply_move(quarter, &start, start.translation);
     assert!((turned.rotation * Vec3::X - Vec3::Y).length() < 1e-5);
     assert_eq!(turned.translation, start.translation);
+    // Another in the selection swings round the gizmo's centre.
+    let other = apply_move(quarter, &start, Vec3::new(0.0, 2.0, 3.0));
+    assert!((other.translation - Vec3::new(0.0, 3.0, 3.0)).length() < 1e-5);
+}
+
+#[test]
+fn an_arrow_or_ring_seen_end_on_is_not_offered_and_does_not_throw() {
+    // Looking down Bevy -Z: the Z arrow points at the camera, the X and Y
+    // rings are edge-on.
+    let (t, p, size) = view();
+    let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+    let centre = screen(&t, &p, size, Vec3::ZERO).unwrap();
+    let near = centre + Vec2::new(1.0, 1.0);
+    let pick_at = |tool, at| pick(tool, at, (&t, &p, size), Vec3::ZERO, &axes);
+    assert_ne!(
+        pick_at(TransformTool::Translate, near),
+        Some(Handle::Axis(2))
+    );
+    let len = GIZMO_PX * metres_per_px(&t, &p, size, Vec3::ZERO);
+    let on_edge = screen(&t, &p, size, Vec3::Y * len * RING).unwrap();
+    assert_eq!(
+        pick_at(TransformTool::Rotate, on_edge),
+        Some(Handle::Ring(2))
+    );
+    let on_x_edge = screen(&t, &p, size, Vec3::Y * len * RING * 0.5).unwrap();
+    assert_eq!(pick_at(TransformTool::Rotate, on_x_edge), None);
+    // A drag switched (Z) to the arrow at the camera: two pixels don't move
+    // it at all, let alone metres.
+    let (a, b) = (
+        ray(&t, &p, size, centre),
+        ray(&t, &p, size, centre + Vec2::new(2.0, 0.0)),
+    );
+    assert_eq!(
+        drag_move(&drag(Handle::Axis(2)), a, b, Quat::IDENTITY, None),
+        None
+    );
+    assert_eq!(
+        drag_move(&drag(Handle::Ring(0)), a, b, Quat::IDENTITY, None),
+        None
+    );
+    // Nearly end-on but not quite: bounded.
+    let tilted = Transform::from_xyz(0.0, 3.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y);
+    let from = screen(&tilted, &p, size, Vec3::ZERO).unwrap();
+    let (a, b) = (
+        ray(&tilted, &p, size, from),
+        ray(&tilted, &p, size, from + Vec2::new(0.0, -2.0)),
+    );
+    let (m, _) = drag_move(&drag(Handle::Axis(2)), a, b, Quat::IDENTITY, None).unwrap();
+    let Move::Translate(v) = m else { panic!() };
+    assert!(v.length() < 0.2, "{v}");
 }

@@ -452,6 +452,7 @@ pub(crate) fn pose_values(
     subjects: Query<(Ref<Transform>, Ref<GlobalTransform>)>,
     roots: Query<&GlobalTransform, With<GzWorldRoot>>,
     added: Query<(), Added<PoseValue>>,
+    edit: Res<PoseEdit>,
     mut values: Query<(&PoseValue, &mut Text)>,
     mut fields: Query<(&PoseValue, &mut NumberField)>,
 ) {
@@ -474,7 +475,7 @@ pub(crate) fn pose_values(
     // Fields are only on top-level subjects, whose pose in the world is
     // their own transform: this frame's, where the propagated one lags a
     // frame behind an edit and would pull the field back.
-    let numbers = pose_numbers(&local);
+    let numbers = edit.numbers(inspected.entity, &local);
     for (value, mut field) in &mut fields {
         let v = numbers[value.1];
         if field.value != v {
@@ -483,11 +484,36 @@ pub(crate) fn pose_values(
     }
 }
 
+/// The pose fields' edit under way.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub(crate) struct PoseEdit {
+    /// The six numbers the fields last set, with the subject and the pose
+    /// they made. They stand while the subject is still at that pose, so a
+    /// scrub of pitch past ±90° carries on rather than turning into the
+    /// same rotation's other angles (and back) at every step.
+    set: Option<(Entity, Transform, [f64; 6])>,
+    /// When the last scrub step went out, and a later one not yet sent.
+    sent_at: Option<f64>,
+    pending: Option<SetPose>,
+}
+
+impl PoseEdit {
+    /// The subject's pose as six numbers: the fields' own while it is
+    /// where they put it.
+    fn numbers(&self, subject: Option<Entity>, pose: &Transform) -> [f64; 6] {
+        match self.set {
+            Some((e, set, v)) if Some(e) == subject && set == *pose => v,
+            _ => pose_numbers(pose),
+        }
+    }
+}
+
 /// A pose field's commit moves the subject (a top-level model, so its pose
 /// in the world is its pose in its parent's frame): at once
 /// here, and in the sim through `set_pose`, at most every
-/// [`SEND_SECS`] while the tag is scrubbed. Its poses from the sim are
-/// held meanwhile, as for the gizmo.
+/// [`SEND_SECS`] while the tag is scrubbed (a step held back goes out
+/// when that time is up, [`send_pending_pose`]). Its poses from the sim
+/// are held meanwhile, as for the gizmo.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn on_pose_commit(
     ev: On<NumberCommit>,
@@ -495,25 +521,28 @@ pub(crate) fn on_pose_commit(
     inspected: Res<Inspected>,
     status: Option<Res<GzStatus>>,
     time: Option<Res<Time<Real>>>,
+    nodes: Query<(&GzEntity, &ChildOf, Has<HasPlane>)>,
+    roots: Query<Entity, With<GzWorldRoot>>,
     mut subjects: Query<&mut Transform, With<GzEntity>>,
     mut held: Option<ResMut<Held>>,
+    mut edit: ResMut<PoseEdit>,
     mut out: (MessageWriter<SetPose>, MessageWriter<Record>),
-    mut last_sent: Local<Option<f64>>,
 ) {
     let (Ok(value), Some(entity)) = (values.get(ev.entity), inspected.entity) else {
         return;
     };
-    if !edits_allowed(status.as_deref()) {
+    if !pose_editable(status.as_deref(), entity, &nodes, &roots) {
         return;
     }
     let Ok(mut local) = subjects.get_mut(entity) else {
         return;
     };
     let before = *local;
-    let mut v = pose_numbers(&local);
+    let mut v = edit.numbers(Some(entity), &local);
     v[value.1] = ev.value;
     let pose = pose_from_numbers(v, local.scale);
     *local = pose;
+    edit.set = Some((entity, pose, v));
     // A scrub is one edit, from where it began (its steps join it).
     out.1.write(Record {
         verb: "move",
@@ -531,9 +560,33 @@ pub(crate) fn on_pose_commit(
     if let Some(held) = held.as_deref_mut() {
         held.release(entity, now);
     }
-    if ev.is_final || last_sent.is_none_or(|t| now - t >= SEND_SECS) {
-        out.0.write(SetPose { entity, pose });
-        *last_sent = (!ev.is_final).then_some(now);
+    let set_pose = SetPose { entity, pose };
+    if ev.is_final || edit.sent_at.is_none_or(|t| now - t >= SEND_SECS) {
+        out.0.write(set_pose);
+        edit.sent_at = (!ev.is_final).then_some(now);
+        edit.pending = None;
+    } else {
+        edit.pending = Some(set_pose);
+    }
+}
+
+/// Sends the scrub step held back once [`SEND_SECS`] is up, so a scrub
+/// that stops there doesn't spring back to the step sent before it when
+/// the hold runs out.
+pub(crate) fn send_pending_pose(
+    time: Res<Time<Real>>,
+    mut edit: ResMut<PoseEdit>,
+    mut held: ResMut<Held>,
+    mut edits: MessageWriter<SetPose>,
+) {
+    let now = time.elapsed_secs_f64();
+    if edit.pending.is_none() || edit.sent_at.is_some_and(|t| now - t < SEND_SECS) {
+        return;
+    }
+    if let Some(set_pose) = edit.pending.take() {
+        edits.write(set_pose);
+        held.release(set_pose.entity, now);
+        edit.sent_at = Some(now);
     }
 }
 
