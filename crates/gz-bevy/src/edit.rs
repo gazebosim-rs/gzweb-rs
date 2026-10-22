@@ -8,12 +8,12 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use gz_core::msgs;
-use gz_core::scene::NodeKind;
+use gz_core::scene::{GeometryDesc, NodeKind};
 use gz_core::topic::world_topic;
 use prost::Message as _;
 
 use crate::connection::{GzCommand, GzStatus};
-use crate::spawn::GzEntity;
+use crate::spawn::{GzEntity, GzVisual, GzWorldRoot};
 
 /// How long after an edit the sim's poses for its entity stay held.
 pub const HOLD_AFTER_EDIT_SECS: f64 = 0.5;
@@ -52,10 +52,18 @@ impl Held {
     }
 }
 
-/// Whether the tools and the inspector move `entity`: a model or a light
-/// under the world root (a link moves with its model).
-pub fn movable(entity: &GzEntity, parent: &ChildOf, root: Entity) -> bool {
-    parent.parent() == root && matches!(entity.kind, NodeKind::Model | NodeKind::Light)
+/// A model with a plane in it (the ground plane): gz-sim's physics refuses
+/// to set its pose (`ModelContainsPlaneCollision`), so the tools leave it.
+/// The scene has no collisions; a plane visual stands for one.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HasPlane;
+
+/// Whether the tools and the inspector move `entity`: a model under the
+/// world root without a plane (DECISIONS.md D-84). `set_pose` reaches only
+/// models (gz-sim's physics applies it; a light's would reply true and
+/// stay put), and a link moves with its model.
+pub fn movable(entity: &GzEntity, parent: &ChildOf, root: Entity, plane: bool) -> bool {
+    !plane && parent.parent() == root && entity.kind == NodeKind::Model
 }
 
 /// Whether the connected server takes edits.
@@ -98,7 +106,7 @@ impl Plugin for EditPlugin {
         app.add_message::<SetPose>()
             .add_message::<GzCommand>()
             .init_resource::<Held>()
-            .add_systems(Update, (send_set_poses, expire_holds));
+            .add_systems(Update, (mark_planes, send_set_poses, expire_holds));
     }
 }
 
@@ -118,6 +126,28 @@ fn send_set_poses(
         };
         if let Ok(g) = entities.get(edit.entity) {
             out.write(set_pose_request(world, g, &edit.pose));
+        }
+    }
+}
+
+/// Marks the top-level model of each new plane visual [`HasPlane`].
+fn mark_planes(
+    visuals: Query<(Entity, &GzVisual), Added<GzVisual>>,
+    parents: Query<&ChildOf>,
+    roots: Query<(), With<GzWorldRoot>>,
+    mut commands: Commands,
+) {
+    for (mut e, v) in &visuals {
+        if !matches!(v.0.geometry, GeometryDesc::Plane { .. }) {
+            continue;
+        }
+        // Up to the world root's child.
+        while let Ok(parent) = parents.get(e) {
+            if roots.contains(parent.parent()) {
+                commands.entity(e).insert(HasPlane);
+                break;
+            }
+            e = parent.parent();
         }
     }
 }
@@ -209,6 +239,59 @@ mod tests {
             app.update();
             assert!(sent(&mut app).is_empty());
         }
+    }
+
+    #[test]
+    fn the_tools_move_top_level_models_without_a_plane() {
+        use crate::spawn::{GzVisual, GzWorldRoot};
+        use gz_core::scene::{MaterialDesc, VisualDesc};
+        let mut app = app(Some(true));
+        let w = app.world_mut();
+        let root = w.spawn(GzWorldRoot).id();
+        let node = |w: &mut World, name: &str, kind, parent| {
+            w.spawn((
+                GzEntity {
+                    name: name.into(),
+                    id: 0,
+                    kind,
+                    path: name.into(),
+                },
+                ChildOf(parent),
+            ))
+            .id()
+        };
+        let cart = node(w, "cart", NodeKind::Model, root);
+        let ground = node(w, "ground", NodeKind::Model, root);
+        let sun = node(w, "sun", NodeKind::Light, root);
+        let link = node(w, "link", NodeKind::Link, ground);
+        let visual = |geometry| {
+            GzVisual(VisualDesc {
+                proto_type: String::new(),
+                geometry,
+                material: MaterialDesc::absent(),
+                cast_shadows: true,
+                transparency: 0.0,
+            })
+        };
+        w.spawn((
+            visual(GeometryDesc::Plane {
+                normal: [0.0, 0.0, 1.0],
+                size: [100.0, 100.0],
+            }),
+            ChildOf(link),
+        ));
+        w.spawn((visual(GeometryDesc::Box { size: [1.0; 3] }), ChildOf(cart)));
+        app.update();
+        let w = app.world_mut();
+        let mut q = w.query::<(&GzEntity, &ChildOf, Has<HasPlane>)>();
+        let mut can = |w: &World, e: Entity| {
+            let (g, p, plane) = q.get(w, e).unwrap();
+            movable(g, p, root, plane)
+        };
+        assert!(can(w, cart));
+        // The ground plane: physics refuses it. A light: set_pose ignores it.
+        // A link moves with its model.
+        assert!(!can(w, ground) && !can(w, sun) && !can(w, link));
     }
 
     #[test]

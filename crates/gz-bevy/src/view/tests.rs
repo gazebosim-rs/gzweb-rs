@@ -2789,7 +2789,38 @@ fn shift_snaps_and_esc_puts_it_back() {
     r.key(KeyCode::Escape, ButtonState::Pressed);
     r.app.update();
     assert_eq!(*r.app.world().get::<Transform>(a).unwrap(), start);
-    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    let state = r.app.world().resource::<gizmo::GizmoState>();
+    // The Esc was the gizmo's (the shell's Esc → Navigate waits).
+    assert!(!state.captures() && state.takes_escape());
+    r.key(KeyCode::Escape, ButtonState::Released);
+    r.app.update();
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().takes_escape());
+}
+
+#[test]
+fn a_press_released_in_place_sends_nothing_and_ctrl_z_is_not_z() {
+    let (mut r, _) = gizmo_rig(gizmo::TransformTool::Translate);
+    r.cursor(Some(arrow_point(&r, 0, 0.8)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.key(KeyCode::KeyZ, ButtonState::Pressed);
+    r.app.update();
+    let handle = r
+        .app
+        .world()
+        .resource::<gizmo::GizmoState>()
+        .drag
+        .as_ref()
+        .unwrap()
+        .handle;
+    assert_eq!(handle, gizmo::Handle::Axis(0));
+    r.key(KeyCode::ControlLeft, ButtonState::Released);
+    r.key(KeyCode::KeyZ, ButtonState::Released);
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    // A moving model isn't snapped back to where the press found it.
+    assert!(set_poses(&mut r).is_empty());
 }
 
 #[test]

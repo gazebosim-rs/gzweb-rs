@@ -400,7 +400,7 @@ fn with_edits_the_pose_is_fields_that_move_the_model() {
 }
 
 #[test]
-fn a_links_pose_stays_text_and_a_scrub_sends_at_most_ten_a_second() {
+fn a_links_and_a_lights_pose_stay_text_and_a_scrub_sends_at_most_ten_a_second() {
     use crate::widgets::NumberCommit;
     use gz_bevy::connection::GzStatus;
     use gz_bevy::edit::SetPose;
@@ -415,9 +415,12 @@ fn a_links_pose_stays_text_and_a_scrub_sends_at_most_ten_a_second() {
     select(&mut app, vec![s.base]);
     assert!(pose_fields(&mut app, PoseFrame::Parent).is_empty());
     assert_eq!(pose(&mut app, PoseFrame::Parent).len(), 6);
-    // The sun (a top-level light) edits in its parent's frame.
+    // Nor a light's: gz-sim's set_pose doesn't move lights.
     select(&mut app, vec![s.sun]);
-    let fields = pose_fields(&mut app, PoseFrame::Parent);
+    assert!(pose_fields(&mut app, PoseFrame::Parent).is_empty());
+    // Another top-level model does.
+    select(&mut app, vec![s.krate]);
+    let fields = pose_fields(&mut app, PoseFrame::World);
     assert_eq!(fields.len(), 6);
     for (value, is_final) in [(0.5, false), (1.0, false), (1.5, true)] {
         app.world_mut().trigger(NumberCommit {

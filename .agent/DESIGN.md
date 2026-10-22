@@ -572,7 +572,8 @@ flags, inertials, sensor outputs, joint definitions); joint states from
 `set_pose` requests when `GzStatus::edits` (the connection's probe of the
 server, D-83) says the server takes them; `Held` keeps the sim's poses off
 an entity while it is dragged and for `HOLD_AFTER_EDIT_SECS` after;
-`movable` is what the tools move (top-level models and lights).
+`movable` is what the tools move (top-level models without a plane,
+`HasPlane`).
 `gz_bevy::view::gizmo` draws and drives the Translate and Rotate gizmos
 (`TransformTool`, `Snap`, `GizmoState` with the readout), ahead of the
 view's controls. In `gz-ui`, the top bar's `edit_tools` gates the tools,

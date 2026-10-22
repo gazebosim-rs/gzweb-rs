@@ -172,9 +172,12 @@ pub const BINARY_PROBE_SERVICE: &str = "/gazebo/worlds";
 const BINARY_PROBE: &[u8] = &[0x7a, 0x02, 0x00, b','];
 
 /// Whether a probe's reply says the server keeps binary requests whole:
-/// the world list, which a mangled request doesn't get.
-pub fn probe_reply_supports_binary(payload: &[u8]) -> bool {
-    msgs::StringMsgV::decode(payload).is_ok_and(|v| !v.data.is_empty())
+/// the world list, which a mangled request doesn't get. Any other type
+/// (`gz.msgs.StringMsg` "service_not_found", which also decodes as a
+/// one-entry list) is a no.
+pub fn probe_reply_supports_binary(msg_type: &str, payload: &[u8]) -> bool {
+    msg_type == "gz.msgs.StringMsg_V"
+        && msgs::StringMsgV::decode(payload).is_ok_and(|v| !v.data.is_empty())
 }
 
 impl Transport {
@@ -781,9 +784,20 @@ mod tests {
             data: vec!["w".into()],
             ..Default::default()
         };
-        assert!(probe_reply_supports_binary(&worlds.encode_to_vec()));
-        assert!(!probe_reply_supports_binary(b""));
-        assert!(!probe_reply_supports_binary(&[0xff, 0xff]));
+        let v = "gz.msgs.StringMsg_V";
+        assert!(probe_reply_supports_binary(v, &worlds.encode_to_vec()));
+        assert!(!probe_reply_supports_binary(v, b""));
+        assert!(!probe_reply_supports_binary(v, &[0xff, 0xff]));
+        // A server that can't find the service yet says so in a StringMsg,
+        // which also parses as a list of one.
+        let not_found = msgs::StringMsg {
+            data: "service_not_found".into(),
+            ..Default::default()
+        };
+        assert!(!probe_reply_supports_binary(
+            "gz.msgs.StringMsg",
+            &not_found.encode_to_vec()
+        ));
     }
 
     #[test]

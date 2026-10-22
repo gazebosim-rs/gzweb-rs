@@ -9,7 +9,7 @@ use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
-use gz_bevy::edit::{edits_allowed, movable, Held, SetPose};
+use gz_bevy::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::view::gizmo::SEND_SECS;
@@ -362,17 +362,17 @@ pub(crate) fn pose_group(
 }
 
 /// Whether the subject's pose is editable: the server takes edits and the
-/// subject is one the tools move (a top-level model or light).
+/// subject is one the tools move (a top-level model without a plane).
 pub(crate) fn pose_editable(
     status: Option<&GzStatus>,
     subject: Entity,
-    nodes: &Query<(&GzEntity, &ChildOf)>,
+    nodes: &Query<(&GzEntity, &ChildOf, Has<HasPlane>)>,
     roots: &Query<Entity, With<GzWorldRoot>>,
 ) -> bool {
-    let (Ok((g, parent)), Some(root)) = (nodes.get(subject), roots.iter().next()) else {
+    let (Ok((g, parent, plane)), Some(root)) = (nodes.get(subject), roots.iter().next()) else {
         return false;
     };
-    edits_allowed(status) && movable(g, parent, root)
+    edits_allowed(status) && movable(g, parent, root, plane)
 }
 
 /// The number field for a pose's value `i`: millimetres and tenths of a
@@ -470,20 +470,20 @@ pub(crate) fn pose_values(
             slot.get_or_insert_with(|| pose_texts(&gazebo_pose(value.0, &local, &global, root)));
         set_text(&mut text, &texts[value.1]);
     }
-    let mut cache: [Option<[f64; 6]>; 2] = [None, None];
+    // Fields are only on top-level subjects, whose pose in the world is
+    // their own transform: this frame's, where the propagated one lags a
+    // frame behind an edit and would pull the field back.
+    let numbers = pose_numbers(&local);
     for (value, mut field) in &mut fields {
-        let slot = &mut cache[value.0 as usize];
-        let v = slot
-            .get_or_insert_with(|| pose_numbers(&gazebo_pose(value.0, &local, &global, root)))
-            [value.1];
+        let v = numbers[value.1];
         if field.value != v {
             field.value = v;
         }
     }
 }
 
-/// A pose field's commit moves the subject (a top-level model or light,
-/// so its pose in the world is its pose in its parent's frame): at once
+/// A pose field's commit moves the subject (a top-level model, so its pose
+/// in the world is its pose in its parent's frame): at once
 /// here, and in the sim through `set_pose`, at most every
 /// [`SEND_SECS`] while the tag is scrubbed. Its poses from the sim are
 /// held meanwhile, as for the gizmo.
@@ -513,12 +513,10 @@ pub(crate) fn on_pose_commit(
     let pose = pose_from_numbers(v, local.scale);
     *local = pose;
     let now = time.map_or(0.0, |t| t.elapsed_secs_f64());
+    // Each scrub step holds again for a moment, so a scrub cut short (the
+    // body rebuilt under it) can't hold the subject for good.
     if let Some(held) = held.as_deref_mut() {
-        if ev.is_final {
-            held.release(entity, now);
-        } else {
-            held.hold(entity);
-        }
+        held.release(entity, now);
     }
     if ev.is_final || last_sent.is_none_or(|t| now - t >= SEND_SECS) {
         edits.write(SetPose { entity, pose });

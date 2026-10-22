@@ -383,7 +383,7 @@ impl WebsocketBackend {
                 payload,
             } => {
                 if service == BINARY_PROBE_SERVICE && io.status.edits.is_none() {
-                    let edits = probe_reply_supports_binary(&payload);
+                    let edits = probe_reply_supports_binary(&msg_type, &payload);
                     self.transport.set_binary_requests(edits);
                     io.status.edits = Some(edits);
                     if edits {
@@ -952,6 +952,56 @@ mod tests {
         // Malformed frames are counted.
         h.msg(b"nonsense".to_vec());
         assert_eq!(h.world.resource::<GzStatus>().malformed, 1);
+    }
+
+    #[test]
+    fn the_probes_answer_turns_editing_on_or_off_for_the_connection() {
+        let config = || GzConfig {
+            ui: crate::UiMode::Minimal,
+            reconnect: false,
+            ..Default::default()
+        };
+        let worlds = msgs::StringMsgV {
+            data: vec!["w".into()],
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let not_found = msgs::StringMsg {
+            data: "service_not_found".into(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        for (msg_type, payload, edits) in [
+            ("gz.msgs.StringMsg_V", worlds.as_slice(), true),
+            ("gz.msgs.StringMsg_V", &[][..], false),
+            // Not found yet (discovery): not a yes.
+            ("gz.msgs.StringMsg", not_found.as_slice(), false),
+        ] {
+            let mut h = Harness::with(config());
+            h.ready();
+            assert_eq!(h.world.resource::<GzStatus>().edits, None);
+            h.msg(build("req", BINARY_PROBE_SERVICE, msg_type, payload));
+            assert_eq!(
+                h.world.resource::<GzStatus>().edits,
+                Some(edits),
+                "{msg_type}"
+            );
+            // Only the first answer counts.
+            h.msg(build(
+                "req",
+                BINARY_PROBE_SERVICE,
+                "gz.msgs.StringMsg_V",
+                &worlds,
+            ));
+            assert_eq!(h.world.resource::<GzStatus>().edits, Some(edits));
+            // A yes lets a request's zero bytes through whole.
+            let sent = h.command(GzCommand::Request {
+                service: "/world/w/set_pose".into(),
+                msg_type: "gz.msgs.Pose".into(),
+                payload: vec![0x08, 0x00, b','],
+            });
+            assert_eq!(sent.len(), usize::from(edits), "{msg_type}: {sent:?}");
+        }
     }
 
     #[test]

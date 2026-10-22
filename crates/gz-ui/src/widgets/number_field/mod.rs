@@ -442,20 +442,24 @@ pub(crate) fn on_scrub(
     }
 }
 
-/// Scrub end: a final commit.
+/// Scrub end: a final commit of the scrub's value (the field's may have
+/// been set from outside since the last move, by a value streaming in).
 pub(crate) fn on_scrub_end(
     ev: On<PointerDragEnd>,
     tags: Query<&ChildOf, With<NumberTag>>,
-    fields: Query<&NumberField, With<Scrub>>,
+    mut fields: Query<(&mut NumberField, &Scrub)>,
     mut commands: Commands,
 ) {
     if let Ok(parent) = tags.get(ev.entity) {
         let root = parent.parent();
-        if let Ok(field) = fields.get(root) {
+        if let Ok((mut field, scrub)) = fields.get_mut(root) {
+            if field.value != scrub.value {
+                field.value = scrub.value;
+            }
             commands.entity(root).remove::<Scrub>();
             commands.trigger(NumberCommit {
                 entity: root,
-                value: field.value,
+                value: scrub.value,
                 is_final: true,
             });
         }

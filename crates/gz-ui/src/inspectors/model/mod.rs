@@ -6,6 +6,7 @@
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use gz_bevy::connection::GzStatus;
+use gz_bevy::edit::HasPlane;
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors, GzWorldRoot};
 use gz_core::scene::NodeKind;
@@ -88,7 +89,7 @@ fn build_model(
     sdf: Option<Res<SdfExtras>>,
     children: Query<&Children>,
     entities: Query<(&GzEntity, Option<&GzSensors>)>,
-    nodes: Query<(&GzEntity, &ChildOf)>,
+    nodes: Query<(&GzEntity, &ChildOf, Has<HasPlane>)>,
     roots: Query<Entity, With<GzWorldRoot>>,
     mut commands: Commands,
 ) {

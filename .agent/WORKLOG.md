@@ -1315,7 +1315,7 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   (rings), screen-space picking, X/Y/Z, Shift snap, Esc, readout; sends at
   10 Hz and on release. The UI gates the tools on `edits` and styles the
   gizmo and readout.
-- **Inspector:** a top-level model's or light's pose is number fields when
+- **Inspector:** a movable model's pose is number fields when
   the server takes edits; commits send `SetPose`; the body rebuilds when
   the probe's answer changes.
 - **Left:** the joint command slider (no client publish, D-88).
@@ -1327,5 +1327,12 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   9010 the pose is text and the tools are disabled.
 - **Tests:** probe and binary requests, `set_pose` encoding, holds, gizmo
   picking and drag math, arrow and ring drags through the plugin, snap and
-  Esc, tool gating, readout, pose fields and commits; workspace 646 → 675
+  Esc, tool gating, readout, pose fields and commits; workspace 646 → 679
   passing; coverage 97.8% lines. check.sh passes.
+- **Review fixes:** lights and models with a plane aren't movable (gz-sim
+  moves neither); the probe needs a `StringMsg_V`; a drag's Esc doesn't
+  also switch to Navigate and the tool keys wait for it; ⌘/Ctrl+Z isn't Z;
+  an unmoved release sends nothing; a scrub's release commits its own value
+  and each step holds only a moment; pose fields and the gizmo read this
+  frame's transform; a reconnect still asking keeps the tool; the gizmo's
+  state changes only when it does. Tests for each.

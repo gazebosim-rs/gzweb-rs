@@ -168,7 +168,10 @@ pub(crate) fn edit_tools(
         return;
     }
     let allowed = edits_allowed(status.as_deref());
-    if tool.edits() && !allowed {
+    // Only a server that can't take edits ends the tool: while a reconnect
+    // asks again the tool waits (its button is off).
+    let refused = status.as_ref().is_none_or(|s| s.edits == Some(false));
+    if tool.edits() && refused {
         *tool = Tool::Navigate;
     }
     let map = map.map_or_else(InputMap::builtin, |m| m.clone());

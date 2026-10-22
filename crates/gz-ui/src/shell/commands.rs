@@ -61,9 +61,16 @@ pub(crate) struct Shortcuts<'w> {
     /// A marquee being drawn takes Esc too (spec §6.3: cancel the drag
     /// before returning to Navigate); the views cancel it.
     marquee: Option<Res<'w, gz_bevy::view::Marquee>>,
+    /// So does a gizmo drag (its Esc puts the selection back, D-84).
+    gizmo: Option<Res<'w, gz_bevy::view::gizmo::GizmoState>>,
 }
 
 impl Shortcuts<'_> {
+    /// A gizmo drag is under way: the tool stays as it is until it ends.
+    pub(crate) fn dragging(&self) -> bool {
+        self.gizmo.as_ref().is_some_and(|g| g.captures())
+    }
+
     /// The ids of the bindings pressed this frame.
     pub(crate) fn pressed(&self) -> Vec<String> {
         let (Some(map), Some(scopes)) = (self.map.as_deref(), self.scopes.as_deref()) else {
@@ -73,7 +80,9 @@ impl Shortcuts<'_> {
             return Vec::new();
         }
         let scopes = self.routing.key_scopes(&scopes.0);
-        let esc_taken = self.menu_esc.0 || self.marquee.as_ref().is_some_and(|m| m.0.is_some());
+        let esc_taken = self.menu_esc.0
+            || self.marquee.as_ref().is_some_and(|m| m.0.is_some())
+            || self.gizmo.as_ref().is_some_and(|g| g.takes_escape());
         map.just_pressed(&self.keys, &scopes)
             .filter(|b| {
                 !(esc_taken
@@ -97,6 +106,7 @@ pub(crate) fn shortcut_keys(
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
             id => match Tool::ALL.into_iter().find(|t| t.binding() == id) {
+                Some(_) if shortcuts.dragging() => continue,
                 Some(tool) => UiCommand::SetTool(tool),
                 None => match panels.for_binding(id) {
                     Some(panel) => UiCommand::OpenPanel {

@@ -441,6 +441,9 @@ fn scrubbing_the_tag() {
     assert!(close(value(w), 3.51));
     drag(w, -20.0);
     assert!(close(value(w), 3.49));
+    // A value streaming in after the last move doesn't become the commit:
+    // the scrub's does.
+    w.get_mut::<NumberField>(f.root).unwrap().value = 3.0;
     w.trigger(PointerDragEnd {
         entity: tag,
         pointer,

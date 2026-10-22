@@ -618,7 +618,7 @@ fn the_editing_tools_need_a_server_that_takes_edits() {
     use crate::shell::top_bar::tools::ToolChoice;
     use crate::shell::Tool;
     use bevy::ui::InteractionDisabled;
-    use gz_bevy::view::gizmo::TransformTool;
+    use gz_bevy::view::gizmo::{GizmoState, TransformTool};
     let mut app = shell_app((1440, 900), 1.0);
     go_live(&mut app, false);
     frames(&mut app, 2);
@@ -653,7 +653,24 @@ fn the_editing_tools_need_a_server_that_takes_edits() {
         *app.world().resource::<TransformTool>(),
         TransformTool::Rotate
     );
-    // Gone (a reconnect to a stock server): back to Navigate.
+    // Asking again (a reconnect): the tool waits, its button off.
+    app.world_mut().resource_mut::<GzStatus>().edits = None;
+    frames(&mut app, 2);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Rotate);
+    assert!(disabled(&mut app, Tool::Rotate));
+    // A drag's Esc is the gizmo's alone: the tool stays (§13, one step).
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
+    app.world_mut().resource_mut::<GizmoState>().escaped = true;
+    chord(&mut app, &[KeyCode::Escape]);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Rotate);
+    // The next Esc is Navigate's.
+    app.world_mut().resource_mut::<GizmoState>().escaped = false;
+    chord(&mut app, &[KeyCode::Escape]);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Rotate));
+    frames(&mut app, 2);
+    // A stock server: back to Navigate.
     app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
     frames(&mut app, 2);
     assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);

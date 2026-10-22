@@ -284,7 +284,7 @@ websocket server, DECISIONS.md D-76), **M5d** undo.
 - **M5c notes:** the image ships the patched websocket server and clients probe for it (D-83);
   Translate and Rotate gizmos with axis constraints, snapping and Esc (D-84), sending `set_pose`
   and holding the sim's poses meanwhile (D-85); the tools are off against a stock server (D-86);
-  the inspector's pose edits top-level models and lights (D-87). Left: the joint command slider
+  the inspector's pose edits movable models (D-87). Left: the joint command slider
   (D-88), Duplicate and Delete (M8), undo (M5d).
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
   selection outline (second render layer).

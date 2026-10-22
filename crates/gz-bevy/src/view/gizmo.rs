@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use super::controls::{target, Views};
 use super::{viewport_ray, Selection};
 use crate::connection::GzStatus;
-use crate::edit::{edits_allowed, movable, Held, SetPose};
+use crate::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use crate::spawn::{GzEntity, GzWorldRoot};
 
 /// The arrows' length on screen (logical pixels).
@@ -91,12 +91,21 @@ pub struct GizmoState {
     pub hovered: Option<Handle>,
     pub drag: Option<GizmoDrag>,
     pub readout: Option<(Vec2, String)>,
+    /// This frame's Esc cancelled a drag.
+    pub escaped: bool,
 }
 
 impl GizmoState {
     /// A gizmo drag owns the pointer: the views' controls leave it alone.
     pub fn captures(&self) -> bool {
         self.drag.is_some()
+    }
+
+    /// Whether Esc is the gizmo's this frame (a drag to cancel, or one it
+    /// just cancelled), whichever side of [`gizmo_input`] the reader runs:
+    /// one step per Esc (spec §13).
+    pub fn takes_escape(&self) -> bool {
+        self.captures() || self.escaped
     }
 }
 
@@ -145,10 +154,11 @@ fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
     config.line.width = 3.0;
 }
 
-/// The selection's entities the tools move: top-level models and lights.
+/// The selection's entities the tools move ([`movable`]).
 fn selected_movable(
     selection: &Selection,
     nodes: &Query<(&GzEntity, &ChildOf, &Transform, &GlobalTransform)>,
+    planes: &Query<(), With<HasPlane>>,
     roots: &Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
 ) -> Vec<Entity> {
     let Some((root, _)) = roots.iter().next() else {
@@ -161,9 +171,22 @@ fn selected_movable(
         .filter(|e| {
             nodes
                 .get(*e)
-                .is_ok_and(|(g, parent, ..)| movable(g, parent, root))
+                .is_ok_and(|(g, parent, ..)| movable(g, parent, root, planes.contains(*e)))
         })
         .collect()
+}
+
+/// Where the gizmo sits on a movable (top-level) entity: its transform
+/// under the world root, this frame's, not the propagated one a frame
+/// behind a drag.
+fn center_of(
+    e: Entity,
+    nodes: &Query<(&GzEntity, &ChildOf, &Transform, &GlobalTransform)>,
+    roots: &Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
+) -> Option<Vec3> {
+    let (_, root) = roots.iter().next()?;
+    let (_, _, t, _) = nodes.get(e).ok()?;
+    Some(root.transform_point(t.translation))
 }
 
 /// The screen point of `p` (view logical pixels), if in front.
@@ -428,23 +451,28 @@ pub fn gizmo_input(
     views: Views,
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
     routing: Res<super::controls::ViewRouting>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    (buttons, keys): (Res<ButtonInput<MouseButton>>, Res<ButtonInput<KeyCode>>),
     time: Res<Time<Real>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
+    planes: Query<(), With<HasPlane>>,
     mut nodes: GizmoNodes,
     mut state: ResMut<GizmoState>,
     mut held: ResMut<Held>,
     mut edits: MessageWriter<SetPose>,
 ) {
     let now = time.elapsed_secs_f64();
+    if state.escaped {
+        state.escaped = false;
+    }
     let active = *tool != TransformTool::None && edits_allowed(status.as_deref());
     let Some(target) = target(&windows, &views).filter(|_| active) else {
-        if let Some(drag) = state.drag.take() {
+        if let Some(drag) = take_drag(&mut state) {
             finish(&drag, &mut nodes.p1(), &mut held, &mut edits, now, true);
         }
-        state.hovered = None;
-        state.readout = None;
+        if state.hovered.is_some() || state.readout.is_some() {
+            state.hovered = None;
+            state.readout = None;
+        }
         return;
     };
     let Ok((ct, cp)) = cameras.get(target.view) else {
@@ -457,15 +485,25 @@ pub fn gizmo_input(
         .map_or(Quat::IDENTITY, |(_, g)| g.rotation());
     let axes = [root * Vec3::X, root * Vec3::Y, root * Vec3::Z];
 
-    if let Some(mut drag) = state.drag.take() {
+    if let Some(mut drag) = take_drag(&mut state) {
         // Esc: back where it was.
         if keys.just_pressed(KeyCode::Escape) {
             finish(&drag, &mut nodes.p1(), &mut held, &mut edits, now, true);
             state.readout = None;
+            state.escaped = true;
             return;
         }
+        // Plain X, Y, Z (not ⌘/Ctrl+Z, undo).
+        let chord = keys.any_pressed([
+            KeyCode::ControlLeft,
+            KeyCode::ControlRight,
+            KeyCode::SuperLeft,
+            KeyCode::SuperRight,
+            KeyCode::AltLeft,
+            KeyCode::AltRight,
+        ]);
         for (k, i) in [(KeyCode::KeyX, 0), (KeyCode::KeyY, 1), (KeyCode::KeyZ, 2)] {
-            if keys.just_pressed(k) {
+            if !chord && keys.just_pressed(k) {
                 drag.handle = match drag.handle {
                     Handle::Ring(_) => Handle::Ring(i),
                     _ => Handle::Axis(i),
@@ -519,10 +557,10 @@ pub fn gizmo_input(
         return;
     }
 
-    let targets = selected_movable(&selection, &nodes.p0(), &roots);
+    let targets = selected_movable(&selection, &nodes.p0(), &planes, &roots);
     let center = targets
         .first()
-        .and_then(|e| nodes.p0().get(*e).ok().map(|(.., g)| g.translation()));
+        .and_then(|e| center_of(*e, &nodes.p0(), &roots));
     let hovered = match (center, cursor) {
         (Some(c), Some(at)) if routing.pointer => pick(*tool, at, (ct, cp, size), c, &axes),
         _ => None,
@@ -553,8 +591,20 @@ pub fn gizmo_input(
     }
 }
 
+/// The drag, if any, taken out; without one the state isn't touched (so
+/// it isn't marked changed every frame).
+fn take_drag(state: &mut ResMut<GizmoState>) -> Option<GizmoDrag> {
+    if state.drag.is_some() {
+        state.drag.take()
+    } else {
+        None
+    }
+}
+
 /// Ends a drag: sends the entities' last poses (or, cancelled, puts them
-/// back and sends that), and lets the sim's poses through a moment later.
+/// back), unless the sim already has them (a press released without a
+/// move sends nothing, so a moving model isn't snapped back), and lets the
+/// sim's poses through a moment later.
 fn finish(
     drag: &GizmoDrag,
     transforms: &mut Query<&mut Transform, With<GzEntity>>,
@@ -570,9 +620,9 @@ fn finish(
         if cancel {
             t.set_if_neq(*start);
         }
+        // `sent` starts as the press's poses.
         let pose = *t;
-        let changed = pose != drag.sent[i] || (cancel && *start != drag.sent[i]);
-        if changed || !cancel {
+        if pose != drag.sent[i] {
             edits.write(SetPose { entity: *e, pose });
         }
         held.release(*e, now);
@@ -592,6 +642,7 @@ fn draw_gizmo(
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     nodes: Query<(&GzEntity, &ChildOf, &Transform, &GlobalTransform)>,
+    planes: Query<(), With<HasPlane>>,
     mut gizmos: Gizmos<TransformGizmos>,
 ) {
     if *tool == TransformTool::None || !edits_allowed(status.as_deref()) {
@@ -608,11 +659,8 @@ fn draw_gizmo(
         .next()
         .map_or(Quat::IDENTITY, |(_, g)| g.rotation());
     let axes = [root * Vec3::X, root * Vec3::Y, root * Vec3::Z];
-    let targets = selected_movable(&selection, &nodes, &roots);
-    let Some(center) = targets
-        .first()
-        .and_then(|e| nodes.get(*e).ok().map(|(.., g)| g.translation()))
-    else {
+    let targets = selected_movable(&selection, &nodes, &planes, &roots);
+    let Some(center) = targets.first().and_then(|e| center_of(*e, &nodes, &roots)) else {
         return;
     };
     let len = GIZMO_PX * metres_per_px(ct, cp, target.size, center);

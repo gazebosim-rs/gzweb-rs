@@ -132,3 +132,13 @@ fn geometry_helpers() {
     assert_eq!(snap_to(0.37, 0.25), 0.25);
     assert_eq!(snap_to(0.37, 0.0), 0.37);
 }
+
+#[test]
+fn a_turn_is_about_the_world_axis_whatever_the_start() {
+    use std::f32::consts::FRAC_PI_2;
+    // On its side (about X); a quarter turn about Z then takes its X to Y.
+    let start = Transform::from_xyz(1.0, 2.0, 3.0).with_rotation(Quat::from_rotation_x(FRAC_PI_2));
+    let turned = apply_move(Move::Rotate(Quat::from_rotation_z(FRAC_PI_2)), &start);
+    assert!((turned.rotation * Vec3::X - Vec3::Y).length() < 1e-5);
+    assert_eq!(turned.translation, start.translation);
+}
