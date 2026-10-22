@@ -985,7 +985,7 @@ fn enter_selects_the_cursor_row_and_a_right_click_doesnt() {
 #[test]
 fn the_footer_needs_a_model_and_isolate_forgets_a_gone_world() {
     use super::footer::FooterButton::{HideOthers, Isolate};
-    use super::footer::Isolated;
+    use gz_bevy::undo::Isolated;
     let (mut app, _) = live_tree();
     let (sun, krate) = (entity(&mut app, "sun"), entity(&mut app, "crate_01"));
     let disabled = |app: &mut App, b| {
@@ -1049,4 +1049,50 @@ fn a_sensor_row_selects_the_sensor() {
     click_row(&mut app, "base_link", &[]);
     let sel = app.world().resource::<gz_bevy::view::Selection>().clone();
     assert_eq!((sel.entities, sel.parts.len()), (vec![base], 0));
+}
+
+#[test]
+fn hides_hide_others_and_isolate_are_each_undone() {
+    use super::footer::FooterButton::{HideOthers, Isolate};
+    use crate::widgets::TreeRowVisibility;
+    use gz_bevy::undo::{Isolated, UndoCommand, UndoStack};
+    let (mut app, _) = live_tree();
+    let (amr, krate) = (entity(&mut app, "amr_01"), entity(&mut app, "crate_01"));
+    let vis = |app: &App, e| *app.world().get::<Visibility>(e).unwrap();
+    let undo = |app: &mut App| {
+        app.world_mut().write_message(UndoCommand::Undo);
+        frames(app, 2);
+    };
+    let label = |app: &App| {
+        app.world()
+            .resource::<UndoStack>()
+            .undo_label()
+            .map(str::to_string)
+    };
+    // An eye.
+    let r = row(&mut app, "crate_01");
+    app.world_mut().trigger(TreeRowVisibility {
+        entity: r,
+        hidden: true,
+    });
+    frames(&mut app, 2);
+    assert_eq!(vis(&app, krate), Visibility::Hidden);
+    assert_eq!(label(&app).as_deref(), Some("hide crate_01"));
+    undo(&mut app);
+    assert_eq!(vis(&app, krate), Visibility::Inherited);
+    // Hide others.
+    click_row(&mut app, "crate_01", &[]);
+    press_footer(&mut app, HideOthers);
+    assert_eq!(vis(&app, amr), Visibility::Hidden);
+    assert_eq!(label(&app).as_deref(), Some("hide others"));
+    undo(&mut app);
+    assert_eq!(vis(&app, amr), Visibility::Inherited);
+    // Isolate: undone, it is off again.
+    press_footer(&mut app, Isolate);
+    assert_eq!(vis(&app, amr), Visibility::Hidden);
+    assert!(app.world().resource::<Isolated>().0.is_some());
+    undo(&mut app);
+    assert_eq!(vis(&app, amr), Visibility::Inherited);
+    assert!(app.world().resource::<Isolated>().0.is_none());
+    assert!(!app.world().resource::<UndoStack>().is_dirty());
 }

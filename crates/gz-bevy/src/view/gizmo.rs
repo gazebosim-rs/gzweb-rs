@@ -15,6 +15,7 @@ use super::{viewport_ray, Selection};
 use crate::connection::GzStatus;
 use crate::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use crate::spawn::{GzEntity, GzWorldRoot};
+use crate::undo::{Change, Record};
 
 /// The arrows' length on screen (logical pixels).
 pub const GIZMO_PX: f32 = 90.0;
@@ -132,7 +133,8 @@ pub struct GizmoPlugin;
 
 impl Plugin for GizmoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TransformTool>()
+        app.add_message::<Record>()
+            .init_resource::<TransformTool>()
             .init_resource::<Snap>()
             .init_resource::<GizmoStyle>()
             .init_resource::<GizmoState>()
@@ -458,7 +460,7 @@ pub fn gizmo_input(
     mut nodes: GizmoNodes,
     mut state: ResMut<GizmoState>,
     mut held: ResMut<Held>,
-    mut edits: MessageWriter<SetPose>,
+    mut out: (MessageWriter<SetPose>, MessageWriter<Record>),
 ) {
     let now = time.elapsed_secs_f64();
     if state.escaped {
@@ -467,7 +469,7 @@ pub fn gizmo_input(
     let active = *tool != TransformTool::None && edits_allowed(status.as_deref());
     let Some(target) = target(&windows, &views).filter(|_| active) else {
         if let Some(drag) = take_drag(&mut state) {
-            finish(&drag, &mut nodes.p1(), &mut held, &mut edits, now, true);
+            finish(&drag, &mut nodes.p1(), &mut held, &mut out, now, true);
         }
         if state.hovered.is_some() || state.readout.is_some() {
             state.hovered = None;
@@ -488,7 +490,7 @@ pub fn gizmo_input(
     if let Some(mut drag) = take_drag(&mut state) {
         // Esc: back where it was.
         if keys.just_pressed(KeyCode::Escape) {
-            finish(&drag, &mut nodes.p1(), &mut held, &mut edits, now, true);
+            finish(&drag, &mut nodes.p1(), &mut held, &mut out, now, true);
             state.readout = None;
             state.escaped = true;
             return;
@@ -534,7 +536,7 @@ pub fn gizmo_input(
             }
             if poses != drag.sent && now - drag.sent_at >= SEND_SECS {
                 for ((e, _), pose) in drag.targets.iter().zip(&poses) {
-                    edits.write(SetPose {
+                    out.0.write(SetPose {
                         entity: *e,
                         pose: *pose,
                     });
@@ -551,7 +553,7 @@ pub fn gizmo_input(
             state.drag = Some(drag);
         } else {
             // Released: the last pose goes out.
-            finish(&drag, &mut nodes.p1(), &mut held, &mut edits, now, false);
+            finish(&drag, &mut nodes.p1(), &mut held, &mut out, now, false);
             state.readout = None;
         }
         return;
@@ -604,15 +606,17 @@ fn take_drag(state: &mut ResMut<GizmoState>) -> Option<GizmoDrag> {
 /// Ends a drag: sends the entities' last poses (or, cancelled, puts them
 /// back), unless the sim already has them (a press released without a
 /// move sends nothing, so a moving model isn't snapped back), and lets the
-/// sim's poses through a moment later.
+/// sim's poses through a moment later. A drag that moved something is one
+/// edit to undo.
 fn finish(
     drag: &GizmoDrag,
     transforms: &mut Query<&mut Transform, With<GzEntity>>,
     held: &mut Held,
-    edits: &mut MessageWriter<SetPose>,
+    (edits, records): &mut (MessageWriter<SetPose>, MessageWriter<Record>),
     now: f64,
     cancel: bool,
 ) {
+    let mut changes = Vec::new();
     for (i, (e, start)) in drag.targets.iter().enumerate() {
         let Ok(mut t) = transforms.get_mut(*e) else {
             continue;
@@ -625,7 +629,25 @@ fn finish(
         if pose != drag.sent[i] {
             edits.write(SetPose { entity: *e, pose });
         }
+        if pose != *start {
+            changes.push(Change::Pose {
+                entity: *e,
+                before: *start,
+                after: pose,
+            });
+        }
         held.release(*e, now);
+    }
+    if !changes.is_empty() {
+        records.write(Record {
+            verb: match drag.handle {
+                Handle::Ring(_) => "rotate",
+                Handle::Axis(_) | Handle::Plane(_) => "move",
+            },
+            named: true,
+            changes,
+            open: false,
+        });
     }
 }
 

@@ -6,6 +6,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gz_bevy::edit::edits_allowed;
+use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
@@ -95,16 +96,28 @@ impl Shortcuts<'_> {
     }
 }
 
-/// ⌘B, ⌘⌥I, the tool keys and the panels' own shortcuts.
+/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag) and the panels'
+/// own shortcuts.
 pub(crate) fn shortcut_keys(
     shortcuts: Shortcuts,
     panels: Res<PanelRegistry>,
     mut out: MessageWriter<UiCommand>,
+    mut undo: MessageWriter<UndoCommand>,
 ) {
     for id in shortcuts.pressed() {
         let cmd = match id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
+            "edit.undo" | "edit.redo" => {
+                if !shortcuts.dragging() {
+                    undo.write(if id == "edit.undo" {
+                        UndoCommand::Undo
+                    } else {
+                        UndoCommand::Redo
+                    });
+                }
+                continue;
+            }
             id => match Tool::ALL.into_iter().find(|t| t.binding() == id) {
                 Some(_) if shortcuts.dragging() => continue,
                 Some(tool) => UiCommand::SetTool(tool),

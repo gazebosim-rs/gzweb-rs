@@ -529,21 +529,37 @@ pub(super) fn on_visibility(
     rows: Res<TreeRows>,
     model: Res<TreeModel>,
     mut visibility: Query<&mut Visibility>,
+    mut records: MessageWriter<gz_bevy::undo::Record>,
 ) {
     let Some((_, row)) = row_of(&slots, &rows, ev.entity) else {
         return;
     };
-    if let Some(mut v) = model
-        .node(row)
-        .entity
-        .and_then(|e| visibility.get_mut(e).ok())
-    {
-        v.set_if_neq(if ev.hidden {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        });
+    let Some(entity) = model.node(row).entity else {
+        return;
+    };
+    let Ok(mut v) = visibility.get_mut(entity) else {
+        return;
+    };
+    let after = if ev.hidden {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    let before = *v;
+    if before == after {
+        return;
     }
+    *v = after;
+    records.write(gz_bevy::undo::Record {
+        verb: if ev.hidden { "hide" } else { "show" },
+        named: true,
+        changes: vec![gz_bevy::undo::Change::Visibility {
+            entity,
+            before,
+            after,
+        }],
+        open: false,
+    });
 }
 
 /// A row click moves the tree's cursor there and selects it

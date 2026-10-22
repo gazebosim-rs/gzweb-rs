@@ -1357,3 +1357,29 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   and each step holds only a moment; pose fields and the gizmo read this
   frame's transform; a reconnect still asking keeps the tool; the gizmo's
   state changes only when it does. Tests for each.
+
+## 2026-10-22: M5d undo (D-89; D-37, D-74 amended)
+
+- **Stack:** `gz_bevy::undo`: `Record` messages (by entity) become edits
+  kept by scene path on the `UndoStack`; `UndoCommand` undoes or redoes
+  the top one. A move goes back as a `set_pose` with the stream held a
+  moment, and waits while the server doesn't take edits; a hide needs no
+  server. An open edit (a scrub) takes the steps after it; one that ends
+  where it began is dropped.
+- **Recorded:** gizmo drags (Esc and unmoved releases record nothing),
+  inspector pose commits, the tree's eyes, the inspector's Hide or Show,
+  Hide others, and Isolate on and off (its saved state, now
+  `gz_bevy::undo::Isolated` by path, comes back with it).
+- **Keys:** ⌘Z and ⇧⌘Z in the shell's `shortcut_keys`, not mid-drag.
+- **Dirty:** the world button's unsaved dot shows while the stack isn't
+  where it was at load.
+- **Worlds:** a new server or world clears the stack; a Reset forgets the
+  moves (gz-sim put them back) and keeps the hides. Reset itself isn't
+  undoable (the server can't put a world back).
+- **Left:** the World menu's Undo and Redo items and Save (M8), Delete's
+  chip (M8).
+- **Tests:** the stack (undo, redo, scrub merging, without edits, by path
+  across a respawn, Isolate, worlds and Reset), a gizmo drag and Esc,
+  ⌘Z and ⇧⌘Z on an inspector scrub with the dot, and each visibility
+  edit; workspace 687 → 695 passing; coverage 98.3% lines. check.sh
+  passes. Not checked live (⌘Z needs keys in the native window).

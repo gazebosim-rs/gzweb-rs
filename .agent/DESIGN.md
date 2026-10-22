@@ -580,6 +580,11 @@ view's controls. In `gz-ui`, the top bar's `edit_tools` gates the tools,
 `shell::viewport::gizmo` styles the gizmo and places the readout, and the
 inspectors' `pose_group` builds number fields whose commits
 (`on_pose_commit`) send `SetPose`.
+`gz_bevy::undo` (D-89) keeps the `UndoStack`: the gizmo, the inspector's
+pose fields and Hide, the tree's eyes and the Scene footer write `Record`
+messages (by entity; kept by scene path), `UndoCommand` (⌘Z, ⇧⌘Z from the
+shell's `shortcut_keys`) puts an edit back or does it again, and
+`UndoStack::is_dirty` drives the world button's unsaved dot.
 
 ## Views, input and UI modes
 
