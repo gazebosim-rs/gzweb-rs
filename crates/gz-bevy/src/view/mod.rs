@@ -28,6 +28,7 @@ pub mod select;
 pub mod web;
 
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{RenderTarget, ScalingMode};
 use bevy::ecs::system::SystemParam;
 use bevy::picking::mesh_picking::ray_cast::{MeshRayCast, MeshRayCastSettings};
@@ -180,7 +181,7 @@ pub struct StartView {
 pub fn apply_start_view(
     start: Option<Res<StartView>>,
     index: Option<Res<crate::spawn::GzIndex>>,
-    views: Query<Entity, With<ViewCamera>>,
+    views: Query<(Entity, Option<&ViewId>), With<ViewCamera>>,
     parents: Query<&ChildOf>,
     mut selection: ResMut<Selection>,
     mut view_out: MessageWriter<ViewCommand>,
@@ -191,7 +192,7 @@ pub fn apply_start_view(
     if index.as_ref().is_none_or(|i| i.scene.is_none()) {
         return;
     }
-    let Some(view) = views.iter().next() else {
+    let Some((view, _)) = views.iter().min_by_key(|(_, id)| id.copied()) else {
         return;
     };
     if let Some(face) = start.view {
@@ -574,22 +575,60 @@ pub fn cursor_on_ground(
     Some(Vec2::new(gz.x, gz.y))
 }
 
-/// Where the full UI shows the 3D view (spec §9.3). The shell writes
-/// `rect` after UI layout; [`apply_view_placement`] then renders the main
+/// Which view a camera is (spec §3.4: up to four, DECISIONS.md D-90):
+/// the full UI's view nodes name their camera by it, since a new
+/// environment respawns the cameras. The first is 0.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewId(pub u8);
+
+impl ViewId {
+    /// The most views a layout has (Quad).
+    pub const MAX: u8 = 4;
+
+    /// The render layer only this view's camera sees, besides the scene's
+    /// (the transform gizmo of the view it applies to).
+    pub fn layer(self) -> usize {
+        VIEW_LAYER + usize::from(self.0)
+    }
+
+    /// The camera's layers: the scene's and its own.
+    pub fn layers(self) -> RenderLayers {
+        RenderLayers::from_layers(&[0, self.layer()])
+    }
+}
+
+/// The first view's own render layer ([`ViewId::layer`]).
+pub const VIEW_LAYER: usize = 20;
+
+/// How many views the layout shows: the full UI sets it, and
+/// `render::spawn_views` gives each a camera.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewSlots(pub u8);
+
+impl Default for ViewSlots {
+    fn default() -> Self {
+        Self(1)
+    }
+}
+
+/// Where the full UI shows a view (spec §9.3), on its camera. The shell
+/// writes `rect` after UI layout; [`apply_view_placement`] then renders the
 /// camera into [`ViewPlacement::image`], sized to the rect in physical
-/// pixels, which the shell shows in the view's node. Without a rect (the
-/// minimal mode) the camera renders to the window as before.
+/// pixels, which the shell shows in the view's node. A view without a
+/// rect isn't shown (its camera is off: the layout has fewer views); a
+/// camera without a placement (the minimal mode) renders to the window as
+/// before.
 ///
 /// Rendering to a texture rather than to a `Camera::viewport` of the
 /// window: Bevy 0.20's TAA samples the whole window-sized main texture and
 /// draws it into the viewport, squeezing the scene (DECISIONS.md D-31).
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
+#[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct ViewPlacement {
     /// The view in the window, in logical pixels.
     pub rect: Option<Rect>,
     /// The window's physical pixels per logical pixel.
     pub scale: f32,
-    /// The texture the main camera renders into while placed.
+    /// The texture the camera renders into while placed.
     pub image: Option<Handle<Image>>,
 }
 
@@ -637,18 +676,18 @@ pub fn view_texture(size: UVec2) -> Image {
     image
 }
 
-/// Renders the main camera into the placed rect's texture: creates or
-/// resizes it, points the camera at it, and updates the camera's target
-/// size and projection in the same frame, so nothing renders at the old
-/// size after a resize or a splitter drag (spec §9.3). Runs after UI
-/// layout and before frustum culling.
+/// Renders each placed camera into its rect's texture: creates or resizes
+/// it, points the camera at it, and updates the camera's target size and
+/// projection in the same frame, so nothing renders at the old size after
+/// a resize or a splitter drag (spec §9.3); a camera placed nowhere is
+/// off. Runs after UI layout and before frustum culling.
 #[allow(clippy::type_complexity)]
 pub fn apply_view_placement(
-    mut placement: ResMut<ViewPlacement>,
     images: Option<ResMut<Assets<Image>>>,
     mut cameras: Query<
         (
             Entity,
+            &mut ViewPlacement,
             &mut Camera,
             &mut Projection,
             &mut RenderTarget,
@@ -658,16 +697,23 @@ pub fn apply_view_placement(
     >,
     mut commands: Commands,
 ) {
-    let (Some(rect), Some(size), Some(mut images)) =
-        (placement.rect, placement.physical_size(), images)
-    else {
+    let Some(mut images) = images else {
         return;
     };
-    let scale = placement.scale.max(f32::EPSILON);
-    let handle = match &placement.image {
-        Some(h) => {
-            if let Some(image) = images.get(h) {
-                if image.size() != size {
+    for (e, mut placement, mut camera, mut projection, mut target, origin) in &mut cameras {
+        let (Some(rect), Some(size)) = (placement.rect, placement.physical_size()) else {
+            if camera.is_active {
+                camera.is_active = false;
+            }
+            continue;
+        };
+        if !camera.is_active {
+            camera.is_active = true;
+        }
+        let scale = placement.scale.max(f32::EPSILON);
+        let handle = match &placement.image {
+            Some(h) => {
+                if images.get(h).is_some_and(|i| i.size() != size) {
                     if let Some(mut image) = images.get_mut(h) {
                         image.resize(bevy::render::render_resource::Extent3d {
                             width: size.x,
@@ -676,16 +722,14 @@ pub fn apply_view_placement(
                         });
                     }
                 }
+                h.clone()
             }
-            h.clone()
-        }
-        None => {
-            let h = images.add(view_texture(size));
-            placement.image = Some(h.clone());
-            h
-        }
-    };
-    for (e, mut camera, mut projection, mut target, origin) in &mut cameras {
+            None => {
+                let h = images.add(view_texture(size));
+                placement.image = Some(h.clone());
+                h
+            }
+        };
         let placed = matches!(&*target, RenderTarget::Image(t) if t.handle == handle && t.scale_factor == scale);
         if !placed {
             *target = RenderTarget::Image(bevy::camera::ImageRenderTarget {
@@ -1088,7 +1132,13 @@ fn pivot_depth(view: &ViewCamera, t: &Transform, p: &Projection) -> f32 {
 /// first view's pivot as [`GzCameraTarget`]. Idle frames change nothing.
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
-    mut views: Query<(&mut ViewCamera, &mut Transform, &mut Projection, &Camera)>,
+    mut views: Query<(
+        &mut ViewCamera,
+        &mut Transform,
+        &mut Projection,
+        &Camera,
+        Option<&ViewId>,
+    )>,
     mut scene: ViewScene,
     time: Res<Time<Real>>,
     mut target: ResMut<GzCameraTarget>,
@@ -1101,7 +1151,7 @@ pub fn apply_view_commands(
             world,
         };
         for cmd in commands.read() {
-            let Ok((mut view, mut t, mut p, camera)) = views.get_mut(cmd.view) else {
+            let Ok((mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
                 continue;
             };
             let f = frame(camera);
@@ -1109,14 +1159,14 @@ pub fn apply_view_commands(
             fit_clip(&mut view, &mut t, &mut p, &f);
         }
         let dt = time.delta_secs();
-        for (mut view, mut t, mut p, camera) in &mut views {
+        for (mut view, mut t, mut p, camera, _) in &mut views {
             if view.animating() {
                 animate(&mut view, &mut t, &mut p, dt);
                 fit_clip(&mut view, &mut t, &mut p, &frame(camera));
             }
         }
     }
-    if let Some((view, ..)) = views.iter().next() {
+    if let Some((view, ..)) = views.iter().min_by_key(|v| v.4.copied()) {
         let gz = (gz_to_bevy().inverse() * view.pivot).to_array();
         if target.0 != gz {
             target.0 = gz;

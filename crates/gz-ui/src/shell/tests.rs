@@ -441,6 +441,7 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     *app.world_mut().resource_mut::<ViewRouting>() = ViewRouting {
         pointer: false,
         keys: false,
+        ..default()
     };
     // Routing is rewritten each frame from the pointer: hold it off.
     app.world_mut()

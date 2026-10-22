@@ -14,6 +14,7 @@ use super::layout::{ShellLayout, Side, Slot};
 use super::sidebar::body::ActionButton;
 use super::sidebar::HeaderButton;
 use super::top_bar::tools::Tool;
+use super::viewport::views::LayoutCommand;
 use super::PanelStatus;
 use crate::panels::{PanelActionActivated, PanelId, PanelRegistry};
 use crate::theme::{Theme, ThemeMode};
@@ -103,15 +104,28 @@ impl Shortcuts<'_, '_> {
     }
 }
 
-/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub) and the panels'
+/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub), the
+/// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓) and the panels'
 /// own shortcuts.
 pub(crate) fn shortcut_keys(
     shortcuts: Shortcuts,
     panels: Res<PanelRegistry>,
     mut out: MessageWriter<UiCommand>,
     mut undo: MessageWriter<UndoCommand>,
+    mut layout: MessageWriter<LayoutCommand>,
 ) {
     for id in shortcuts.pressed() {
+        let views = match id.as_str() {
+            "view.maximize" => Some(LayoutCommand::Maximize),
+            "view.close" => Some(LayoutCommand::Close),
+            "view.split_right" => Some(LayoutCommand::Split { down: false }),
+            "view.split_down" => Some(LayoutCommand::Split { down: true }),
+            _ => None,
+        };
+        if let Some(cmd) = views {
+            layout.write(cmd);
+            continue;
+        }
         let cmd = match id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,

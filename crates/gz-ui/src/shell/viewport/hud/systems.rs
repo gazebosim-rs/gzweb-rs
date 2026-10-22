@@ -10,8 +10,7 @@ use gz_bevy::view::{ortho_height, CameraMode, ViewCommand, ViewOp};
 
 use super::{scale_bar, scale_text, ReleaseTarget, ScaleBar, ScaleLabel, TargetChip, TargetIcon};
 use crate::assets::icons::{Icon, IconId};
-use crate::shell::viewport::view::ViewNode;
-use crate::shell::viewport::MainView;
+use crate::shell::viewport::ViewCameras;
 use crate::widgets::layout::set_shown;
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::text::set_text;
@@ -20,19 +19,20 @@ use crate::widgets::Tooltip;
 /// The scale label: shown in an orthographic view, with a 1-2-5 bar and
 /// its length.
 pub(crate) fn scale_label_state(
-    view: MainView,
-    nodes: Query<&ComputedNode, With<ViewNode>>,
-    mut labels: Query<(&mut Node, &Children), With<ScaleLabel>>,
+    views: ViewCameras,
+    nodes: Query<&ComputedNode>,
+    mut labels: Query<(Entity, &mut Node, &Children), With<ScaleLabel>>,
     mut bars: Query<&mut Node, (With<ScaleBar>, Without<ScaleLabel>)>,
     mut texts: Query<&mut Text>,
 ) {
-    let height = view.get().and_then(|(_, _, _, p)| ortho_height(p));
-    // The view's height in UI pixels, which the bar is drawn in.
-    let ui_h = nodes
-        .single()
-        .map_or(0.0, |n| n.size().y * n.inverse_scale_factor());
-    let bar = height.and_then(|h| scale_bar(h / ui_h.max(1.0)));
-    for (mut node, children) in &mut labels {
+    for (label, mut node, children) in &mut labels {
+        let height = views.of(label).and_then(|(_, _, _, p)| ortho_height(p));
+        // The view's height in UI pixels, which the bar is drawn in.
+        let ui_h = views
+            .node_of(label)
+            .and_then(|n| nodes.get(n).ok())
+            .map_or(0.0, |n| n.size().y * n.inverse_scale_factor());
+        let bar = height.and_then(|h| scale_bar(h / ui_h.max(1.0)));
         set_shown(&mut node, bar.is_some());
         let Some((metres, length)) = bar else {
             continue;
@@ -72,16 +72,16 @@ pub(crate) fn entity_name(names: &Query<(Option<&GzEntity>, Option<&Name>)>, e: 
 /// icon and the target's name.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn target_chip_state(
-    view: MainView,
+    views: ViewCameras,
     map: Option<Res<InputMap>>,
     names: Query<(Option<&GzEntity>, Option<&Name>)>,
-    mut chips: Query<(&mut Node, &Children), With<TargetChip>>,
+    mut chips: Query<(Entity, &mut Node, &Children), With<TargetChip>>,
     mut icons: Query<&mut Icon, With<TargetIcon>>,
     mut texts: Query<&mut Text>,
     mut tips: Query<&mut Tooltip, With<ReleaseTarget>>,
 ) {
-    let mode = view.get().map_or(CameraMode::Free, |(_, v, ..)| v.mode);
-    for (mut node, children) in &mut chips {
+    for (chip, mut node, children) in &mut chips {
+        let mode = views.of(chip).map_or(CameraMode::Free, |(_, v, ..)| v.mode);
         let Some(target) = mode.target() else {
             set_shown(&mut node, false);
             continue;
@@ -113,13 +113,13 @@ pub(crate) fn target_chip_state(
 pub(crate) fn on_release(
     ev: On<Activate>,
     buttons: Query<(), With<ReleaseTarget>>,
-    view: MainView,
+    views: ViewCameras,
     mut out: MessageWriter<ViewCommand>,
 ) {
     if !buttons.contains(ev.entity) {
         return;
     }
-    if let Some((view, ..)) = view.get() {
+    if let Some((view, ..)) = views.of(ev.entity) {
         out.write(ViewCommand {
             view,
             op: ViewOp::SetMode(CameraMode::Free),

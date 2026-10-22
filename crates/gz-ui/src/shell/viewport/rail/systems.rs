@@ -1,6 +1,7 @@
-//! The rail's behaviour: its controls send view and overlay commands, and
-//! show what `gz-bevy` says the view is doing (drag action, projection,
-//! camera mode, overlays), however that changed (keys, the cube, a menu).
+//! The rail's behaviour: its controls send view and overlay commands to
+//! their view, and show what `gz-bevy` says that view is doing (drag
+//! action, projection, camera mode, overlays), however that changed (keys,
+//! the cube, a menu). Each view has its own rail.
 
 use bevy::a11y::AccessibilityNode;
 use bevy::prelude::*;
@@ -18,8 +19,7 @@ use super::{
 };
 use crate::assets::icons::{Icon, IconId};
 use crate::shell::viewport::hud::systems::entity_name;
-use crate::shell::viewport::view::ViewNode;
-use crate::shell::viewport::MainView;
+use crate::shell::viewport::ViewCameras;
 use crate::theme::visuals::Active;
 use crate::theme::Theme;
 use crate::widgets::layout::set_shown;
@@ -46,10 +46,10 @@ fn mark<C: Component + Default>(commands: &mut Commands, e: Entity, has: bool, w
 pub(crate) fn on_drag_change(
     ev: On<ValueChange<Entity>>,
     choices: Query<&DragChoice>,
-    view: MainView,
+    views: ViewCameras,
     mut out: MessageWriter<ViewCommand>,
 ) {
-    if let (Ok(choice), Some((e, ..))) = (choices.get(ev.value), view.get()) {
+    if let (Ok(choice), Some((e, ..))) = (choices.get(ev.value), views.of(ev.value)) {
         out.write(ViewCommand {
             view: e,
             op: ViewOp::SetDragAction(choice.0),
@@ -61,10 +61,10 @@ pub(crate) fn on_drag_change(
 pub(crate) fn on_drag_item(
     ev: On<Activate>,
     choices: Query<&DragChoice, With<MenuItem>>,
-    view: MainView,
+    views: ViewCameras,
     mut out: MessageWriter<ViewCommand>,
 ) {
-    if let (Ok(choice), Some((e, ..))) = (choices.get(ev.entity), view.get()) {
+    if let (Ok(choice), Some((e, ..))) = (choices.get(ev.entity), views.of(ev.entity)) {
         out.write(ViewCommand {
             view: e,
             op: ViewOp::SetDragAction(choice.0),
@@ -77,12 +77,12 @@ pub(crate) fn on_drag_item(
 pub(crate) fn on_rail_button(
     ev: On<Activate>,
     buttons: Query<&RailButton>,
-    view: MainView,
+    views: ViewCameras,
     time: Res<Time<Real>>,
     mut last_focus: Local<Option<f64>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
-    let (Ok(button), Some((e, ..))) = (buttons.get(ev.entity), view.get()) else {
+    let (Ok(button), Some((e, ..))) = (buttons.get(ev.entity), views.of(ev.entity)) else {
         return;
     };
     let op = match button {
@@ -105,7 +105,7 @@ pub(crate) fn on_rail_button(
 /// button's icon and the flyout's current item.
 #[allow(clippy::type_complexity)]
 pub(crate) fn drag_states(
-    view: MainView,
+    views: ViewCameras,
     choices: Query<(
         Entity,
         &DragChoice,
@@ -113,23 +113,28 @@ pub(crate) fn drag_states(
         Has<Active>,
         Has<MenuItem>,
     )>,
-    mut compact: Query<(&Children, &mut Tooltip, &mut AccessibilityNode), With<CompactDragButton>>,
+    mut compact: Query<
+        (Entity, &Children, &mut Tooltip, &mut AccessibilityNode),
+        With<CompactDragButton>,
+    >,
     mut icons: Query<&mut Icon>,
     mut commands: Commands,
 ) {
-    let action = view
-        .get()
-        .map_or(DragAction::Orbit, |(_, v, ..)| v.drag_action);
+    let action = |e| {
+        views
+            .of(e)
+            .map_or(DragAction::Orbit, |(_, v, ..)| v.drag_action)
+    };
     for (e, choice, checked, active, item) in &choices {
-        let want = choice.0 == action;
+        let want = choice.0 == action(e);
         if item {
             mark::<Active>(&mut commands, e, active, want);
         } else {
             mark::<Checked>(&mut commands, e, checked, want);
         }
     }
-    let (name, id, detail) = drag_look(action);
-    for (children, mut tip, mut access) in &mut compact {
+    for (button, children, mut tip, mut access) in &mut compact {
+        let (name, id, detail) = drag_look(action(button));
         for &c in children {
             if let Ok(mut icon) = icons.get_mut(c) {
                 if icon.id != id {
@@ -147,28 +152,34 @@ pub(crate) fn drag_states(
 
 /// The compact rail (§3.4) in a view shorter than
 /// `rail_compact_below_view_h` UI pixels.
+#[allow(clippy::type_complexity)]
 pub(crate) fn compact_rail(
     theme: Res<Theme>,
-    views: Query<&ComputedNode, With<ViewNode>>,
-    mut full: Query<&mut Node, (With<DragGroup>, Without<CompactDrag>)>,
-    mut compact: Query<&mut Node, (With<CompactDrag>, Without<DragGroup>)>,
+    views: ViewCameras,
+    sizes: Query<&ComputedNode>,
+    mut full: Query<(Entity, &mut Node), (With<DragGroup>, Without<CompactDrag>)>,
+    mut compact: Query<(Entity, &mut Node), (With<CompactDrag>, Without<DragGroup>)>,
 ) {
-    let Ok(view) = views.single() else { return };
-    let h = view.size().y * view.inverse_scale_factor();
-    // Not laid out yet: keep the full rail.
-    let small = h > 0.0 && h < theme.s.rail_compact_below_view_h;
-    for mut n in &mut full {
-        set_shown(&mut n, !small);
+    let small = |e| {
+        let h = views
+            .node_of(e)
+            .and_then(|n| sizes.get(n).ok())
+            .map_or(0.0, |n| n.size().y * n.inverse_scale_factor());
+        // Not laid out yet: keep the full rail.
+        h > 0.0 && h < theme.s.rail_compact_below_view_h
+    };
+    for (e, mut n) in &mut full {
+        set_shown(&mut n, !small(e));
     }
-    for mut n in &mut compact {
-        set_shown(&mut n, small);
+    for (e, mut n) in &mut compact {
+        set_shown(&mut n, small(e));
     }
 }
 
 /// The projection button's icon, look and name follow the projection.
 #[allow(clippy::type_complexity)]
 pub(crate) fn projection_state(
-    view: MainView,
+    views: ViewCameras,
     mut buttons: Query<(
         Entity,
         &RailButton,
@@ -180,18 +191,18 @@ pub(crate) fn projection_state(
     mut icons: Query<&mut Icon>,
     mut commands: Commands,
 ) {
-    let ortho = view
-        .get()
-        .is_some_and(|(_, _, _, p)| ortho_height(p).is_some());
-    let (id, title) = if ortho {
-        (IconId::ProjOrtho, "Orthographic")
-    } else {
-        (IconId::ProjPerspective, "Perspective")
-    };
     for (e, which, children, mut tip, mut access, active) in &mut buttons {
         if *which != RailButton::Projection {
             continue;
         }
+        let ortho = views
+            .of(e)
+            .is_some_and(|(_, _, _, p)| ortho_height(p).is_some());
+        let (id, title) = if ortho {
+            (IconId::ProjOrtho, "Orthographic")
+        } else {
+            (IconId::ProjPerspective, "Perspective")
+        };
         mark::<Active>(&mut commands, e, active, ortho);
         for &c in children {
             if let Ok(mut icon) = icons.get_mut(c) {
@@ -210,16 +221,17 @@ pub(crate) fn projection_state(
 /// Reads the camera mode for the Camera mode button and menu.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct CameraReadout<'w, 's> {
-    view: MainView<'w, 's>,
+    views: ViewCameras<'w, 's>,
     selection: Option<Res<'w, Selection>>,
     names: Query<'w, 's, (Option<&'static GzEntity>, Option<&'static Name>)>,
     map: Option<Res<'w, InputMap>>,
 }
 
 impl CameraReadout<'_, '_> {
-    fn mode(&self) -> CameraMode {
-        self.view
-            .get()
+    /// The camera mode of the view `ui` is in.
+    fn mode(&self, ui: Entity) -> CameraMode {
+        self.views
+            .of(ui)
             .map_or(CameraMode::Free, |(_, v, ..)| v.mode)
     }
 
@@ -238,8 +250,8 @@ impl CameraReadout<'_, '_> {
     /// What Follow or Track names: the camera's target while it is the
     /// current mode (choosing it then changes nothing), else the
     /// selection, else the target.
-    fn subject(&self, current: bool) -> Option<String> {
-        let target = self.mode().target();
+    fn subject(&self, mode: CameraMode, current: bool) -> Option<String> {
+        let target = mode.target();
         let e = if current {
             target
         } else {
@@ -256,7 +268,7 @@ impl CameraReadout<'_, '_> {
 pub(crate) fn camera_state(
     readout: CameraReadout,
     mut buttons: Query<(Entity, &mut Tooltip, Has<Active>), With<CameraModeButton>>,
-    mut dots: Query<&mut Node, With<CameraModeDot>>,
+    mut dots: Query<(Entity, &mut Node), With<CameraModeDot>>,
     mut items: Query<
         (
             Entity,
@@ -271,23 +283,24 @@ pub(crate) fn camera_state(
     mut texts: Query<&mut Text>,
     mut commands: Commands,
 ) {
-    let mode = readout.mode();
-    let (name, on) = match mode {
+    let look = |mode| match mode {
         CameraMode::Free => ("Free", false),
         CameraMode::Follow(_) => ("Following", true),
         CameraMode::Track(_) => ("Tracking", true),
     };
     for (e, mut tip, active) in &mut buttons {
+        let (name, on) = look(readout.mode(e));
         mark::<Active>(&mut commands, e, active, on);
         if tip.detail.as_deref() != Some(name) {
             tip.detail = Some(name.into());
         }
     }
-    for mut dot in &mut dots {
-        set_shown(&mut dot, on);
+    for (e, mut dot) in &mut dots {
+        set_shown(&mut dot, look(readout.mode(e)).1);
     }
     let selected = readout.selected().is_some();
     for (e, item, children, active, disabled, tip) in &mut items {
+        let mode = readout.mode(e);
         let (current, verb, key) = match item {
             CameraItem::Free => {
                 mark::<Active>(&mut commands, e, active, mode == CameraMode::Free);
@@ -308,7 +321,7 @@ pub(crate) fn camera_state(
         mark::<Active>(&mut commands, e, active, current);
         let enabled = selected || current;
         mark::<InteractionDisabled>(&mut commands, e, disabled, !enabled);
-        let subject = readout.subject(current);
+        let subject = readout.subject(mode, current);
         let label = format!("{verb} {}", subject.as_deref().unwrap_or("selection"));
         if let Some(t) = children.iter().find(|c| texts.contains(*c)) {
             if let Ok(mut t) = texts.get_mut(t) {

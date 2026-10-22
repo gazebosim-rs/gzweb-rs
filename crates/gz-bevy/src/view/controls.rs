@@ -26,8 +26,8 @@ use bevy::prelude::*;
 use super::input::{Action, InputMap, KeyMods, Platform, Scope};
 use super::{
     apply_view_commands, apply_view_placement, view_rect, BoxSelectTool, DragAction, Marquee,
-    MarqueeRect, SelectInViews, SelectMode, Selection, ViewCamera, ViewCommand, ViewOp, ViewOrigin,
-    ViewPlacement, ZOOM_STEP,
+    MarqueeRect, SelectInViews, SelectMode, Selection, ViewCamera, ViewCommand, ViewId, ViewOp,
+    ViewOrigin, ViewPlacement, ZOOM_STEP,
 };
 use crate::connection::{GzCommand, GzStatus, StepsPerClick};
 use crate::overlays::{apply_overlay_commands, OverlayCommand, Overlays};
@@ -96,17 +96,23 @@ pub struct ViewPlacementSystems;
 pub struct ActiveScopes(pub Vec<Scope>);
 
 /// Where the camera's input may come from (spec §3.4, `.agent/UI_PLAN.md`
-/// §2.2 pointer routing). Minimal mode has no UI, so both stay true; the
-/// full UI's shell sets them every frame.
+/// §2.2 pointer routing). Minimal mode has no UI and one view, so the
+/// flags stay true and the views unnamed; the full UI's shell sets them
+/// every frame.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ViewRouting {
-    /// The pointer is over the view and not over any UI node: presses,
-    /// the wheel and gestures reach the camera. A drag that started in the
-    /// view keeps going over the UI.
+    /// The pointer is over a view and not over any UI node: presses, the
+    /// wheel and gestures reach its camera. A drag that started in a view
+    /// keeps going over the UI.
     pub pointer: bool,
     /// Viewport-scope keys (and the minimal fly keys) apply: the pointer is
-    /// over the view, or the view has focus.
+    /// over a view, or the views have focus.
     pub keys: bool,
+    /// The view the pointer is over (its controls included).
+    pub hovered: Option<ViewId>,
+    /// The view that had the last press (spec §3.4 "Active view"): the
+    /// tools and the gizmo apply to it.
+    pub active: Option<ViewId>,
 }
 
 impl Default for ViewRouting {
@@ -114,7 +120,17 @@ impl Default for ViewRouting {
         Self {
             pointer: true,
             keys: true,
+            hovered: None,
+            active: None,
         }
+    }
+}
+
+impl ViewRouting {
+    /// The view single-key shortcuts apply to: the hovered one, else the
+    /// active one (spec §3.4).
+    pub fn key_view(&self) -> Option<ViewId> {
+        self.hovered.or(self.active)
     }
 }
 
@@ -181,6 +197,8 @@ pub struct ControlState {
 
 #[derive(Debug, Clone, Copy)]
 struct Drag {
+    /// The view it started in, which it keeps.
+    view: Option<ViewId>,
     button: MouseButton,
     gesture: Gesture,
     /// Where the press went down.
@@ -228,7 +246,7 @@ impl Plugin for ViewerControls {
             .init_resource::<ControlState>()
             .init_resource::<BrowserWheel>()
             .init_resource::<ViewRouting>()
-            .init_resource::<ViewPlacement>()
+            .init_resource::<super::ViewSlots>()
             .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
@@ -265,9 +283,9 @@ impl Plugin for ViewerControls {
         )
         .add_systems(
             PostUpdate,
-            // Only a placed view (the full UI) touches `Assets<Image>`.
+            // Only placed views (the full UI) touch `Assets<Image>`.
             apply_view_placement
-                .run_if(|p: Res<ViewPlacement>| p.rect.is_some())
+                .run_if(|p: Query<(), With<ViewPlacement>>| !p.is_empty())
                 .in_set(ViewPlacementSystems),
         );
         #[cfg(target_arch = "wasm32")]
@@ -295,12 +313,25 @@ pub type Views<'w, 's> = Query<
         &'static ViewCamera,
         &'static Camera,
         Option<&'static ViewOrigin>,
+        Option<&'static ViewId>,
     ),
 >;
 
-pub(super) fn target<'a>(windows: &Query<&Window>, views: &'a Views) -> Option<Target<'a>> {
+/// The view `want` names, or without a name the first view showing (the
+/// minimal mode's only one).
+pub(super) fn target<'a>(
+    windows: &Query<&Window>,
+    views: &'a Views,
+    want: Option<ViewId>,
+) -> Option<Target<'a>> {
     let window = windows.single().ok()?;
-    let (view, camera, cam, placed) = views.single().ok()?;
+    let (view, camera, cam, placed, _) = match want {
+        Some(id) => views.iter().find(|v| v.4 == Some(&id) && v.2.is_active)?,
+        None => views
+            .iter()
+            .filter(|v| v.2.is_active)
+            .min_by_key(|v| v.4.copied())?,
+    };
     let rect = view_rect(cam, placed);
     let origin = rect.map_or(Vec2::ZERO, |r| r.min);
     let size = rect.map_or(Vec2::new(window.width(), window.height()), |r| r.size());
@@ -471,7 +502,10 @@ pub fn mouse_input(
     gizmo: Option<Res<super::gizmo::GizmoState>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
-    let Some(target) = target(&windows, &views) else {
+    // A drag stays with its view; anything else goes to the one under the
+    // pointer.
+    let want = state.drag.map_or(routing.hovered, |d| d.view);
+    let Some(target) = target(&windows, &views, want) else {
         wheel.clear();
         state.drag = None;
         if marquee.0.is_some() {
@@ -533,6 +567,7 @@ pub fn mouse_input(
                 send(&mut out, ViewOp::PivotAt { at, orbit });
             }
             state.drag = Some(Drag {
+                view: want,
                 button,
                 gesture,
                 start: at,
@@ -646,7 +681,7 @@ pub fn key_input(
         tap(&keys, &buttons, &map, &scopes, now, &mut state, &mut fired);
     }
 
-    let target = target(&windows, &views);
+    let target = target(&windows, &views, routing.key_view());
     let sim = status.and_then(|s| s.sim);
     for action in fired {
         let op = match action {
@@ -758,7 +793,10 @@ pub fn fly_input(
             _ => None,
         })
         .sum();
-    let (Some(dir), Some(t)) = (dir.try_normalize(), target(&windows, &views)) else {
+    let (Some(dir), Some(t)) = (
+        dir.try_normalize(),
+        target(&windows, &views, routing.key_view()),
+    ) else {
         return;
     };
     out.write(ViewCommand {

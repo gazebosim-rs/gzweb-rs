@@ -8,6 +8,7 @@ use gz_bevy::view::gizmo::{GizmoState, GizmoStyle};
 
 use crate::assets::text;
 use crate::shell::regions::pass_through;
+use crate::shell::viewport::ViewCameras;
 use crate::theme::{radius, ColorRole, Fill, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::display;
 use crate::widgets::rounded;
@@ -66,17 +67,21 @@ fn gizmo_style(theme: Res<Theme>, style: Option<ResMut<GizmoStyle>>) {
     });
 }
 
-/// The readout follows the gizmo's while snapping.
+/// The readout follows the gizmo's while snapping, in the view the drag
+/// is in.
 fn readout(
     state: Option<Res<GizmoState>>,
-    mut boxes: Query<(&mut Node, &Children), With<GizmoReadout>>,
+    views: ViewCameras,
+    mut boxes: Query<(Entity, &mut Node, &Children), With<GizmoReadout>>,
     mut texts: Query<&mut Text>,
 ) {
     let Some(state) = state.filter(|s| s.is_changed()) else {
         return;
     };
-    for (mut node, children) in &mut boxes {
-        let want = display(state.readout.is_some());
+    let view = state.view();
+    for (e, mut node, children) in &mut boxes {
+        let here = view.is_none_or(|v| views.id_of(e) == Some(v));
+        let want = display(state.readout.is_some() && here);
         if node.display != want {
             node.display = want;
         }

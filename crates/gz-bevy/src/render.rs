@@ -35,7 +35,7 @@ use gz_core::scene::{FogDesc, SceneDesc};
 use crate::assets;
 use crate::camera::{self, MainCamera, CLEAR_COLOR};
 use crate::spawn::GzLoads;
-use crate::view::ViewCamera;
+use crate::view::{ViewCamera, ViewId, ViewPlacement, ViewSlots};
 use crate::GzConfig;
 
 /// How much rendering work to spend.
@@ -208,9 +208,9 @@ pub struct GzGrid {
     pub visible: bool,
 }
 
-/// A cubemap sky that is loading, and the camera to install it on.
+/// A cubemap sky that is loading, and the cameras to install it on.
 #[derive(Resource, Debug, Default)]
-pub struct PendingSky(pub Option<(Handle<Image>, Entity)>);
+pub struct PendingSky(pub Option<(Handle<Image>, Vec<Entity>)>);
 
 /// What lights and backs the scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,6 +460,16 @@ pub fn clear_color(env: &GzEnvironment) -> Color {
 #[derive(Component)]
 pub struct GzAtmosphere;
 
+/// A view camera's state, as [`apply_environment`] respawns it.
+type ViewState = (
+    Entity,
+    &'static Transform,
+    &'static Projection,
+    Option<&'static ViewCamera>,
+    Option<&'static ViewId>,
+    Option<&'static ViewPlacement>,
+);
+
 /// Applies a changed [`GzEnvironment`]. The camera is respawned, keeping its
 /// view: Bevy keeps private per-camera state for environment maps and the
 /// atmosphere that only goes away with the entity, and a camera that
@@ -476,7 +486,7 @@ pub fn apply_environment(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
-    cameras: Query<(Entity, &Transform, &Projection, Option<&ViewCamera>), With<MainCamera>>,
+    cameras: Query<ViewState, With<MainCamera>>,
     planets: Query<Entity, With<GzAtmosphere>>,
 ) {
     if !env.is_changed() || !env.loaded {
@@ -503,40 +513,151 @@ pub fn apply_environment(
     });
     pending.0 = None;
 
-    for (old, transform, projection, view) in &cameras {
+    let mut dress = Dress {
+        config: &config,
+        env: &env,
+        plan: &plan,
+        images: &mut images,
+        asset_server: &asset_server,
+        loads: &mut loads,
+        pending: &mut pending,
+    };
+    for (old, transform, projection, view, id, placement) in &cameras {
         commands.entity(old).despawn();
-        // Keep the view: pose, projection and controller state.
-        let id = camera::spawn_main_camera(
+        // Keep the view: pose, projection, controller state, which view it
+        // is and where it shows.
+        dress.spawn(
             &mut commands,
-            &config,
-            *transform,
-            view.cloned(),
-            clear_color(&env),
+            Placed {
+                transform: *transform,
+                projection: projection.clone(),
+                view: view.cloned(),
+                id: id.copied(),
+                placement: placement.cloned(),
+            },
+        );
+    }
+}
+
+/// A view camera's state, kept when it is respawned or copied to a new
+/// view.
+pub struct Placed {
+    pub transform: Transform,
+    pub projection: Projection,
+    pub view: Option<ViewCamera>,
+    pub id: Option<ViewId>,
+    pub placement: Option<ViewPlacement>,
+}
+
+/// What dresses a view camera for the environment.
+struct Dress<'a> {
+    config: &'a GzConfig,
+    env: &'a GzEnvironment,
+    plan: &'a Environment,
+    images: &'a mut Assets<Image>,
+    asset_server: &'a AssetServer,
+    loads: &'a mut GzLoads,
+    pending: &'a mut PendingSky,
+}
+
+impl Dress<'_> {
+    /// Spawns a view camera from `state`, dressed for the environment.
+    fn spawn(&mut self, commands: &mut Commands, state: Placed) -> Entity {
+        let id = camera::spawn_main_camera(
+            commands,
+            self.config,
+            state.transform,
+            state.view,
+            clear_color(self.env),
         );
         let mut cam = commands.entity(id);
-        cam.insert(projection.clone());
-        if let Some(fog) = &env.fog {
+        cam.insert(state.projection);
+        if let Some(view) = state.id {
+            cam.insert((view, view.layers()));
+        }
+        if let Some(placement) = state.placement {
+            cam.insert(placement);
+        }
+        if let Some(fog) = &self.env.fog {
             cam.insert(distance_fog(fog));
         }
-        match &plan {
+        match self.plan {
             Environment::Ambient => {}
             Environment::Studio => {
-                cam.insert(studio_light(&mut images, env.ambient_or_default()));
+                cam.insert(studio_light(self.images, self.env.ambient_or_default()));
             }
             Environment::Atmosphere => {
                 cam.insert(AtmosphereSettings::default());
-                if config.quality.image_based_light() {
+                if self.config.quality.image_based_light() {
                     cam.insert(AtmosphereEnvironmentMapLight::default());
                 }
             }
             // Installed by `install_sky` once loaded and checked.
             Environment::Cubemap(uri) => {
                 let path = assets::asset_path(&gz_core::uri::mesh_load_uri(uri));
-                let image: Handle<Image> = asset_server.load(path);
-                loads.0.push(image.clone().untyped());
-                pending.0 = Some((image, id));
+                let image: Handle<Image> = self.asset_server.load(path);
+                match &mut self.pending.0 {
+                    Some((pending, cameras)) if *pending == image => cameras.push(id),
+                    _ => {
+                        self.loads.0.push(image.clone().untyped());
+                        self.pending.0 = Some((image, vec![id]));
+                    }
+                }
             }
         }
+        id
+    }
+}
+
+/// Gives each view the layout shows ([`ViewSlots`]) a camera: a new one
+/// starts as a copy of the first view, dressed for the environment, and
+/// placed nowhere until the shell places it. Views the layout drops keep
+/// their cameras (off), so they come back as they were.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_views(
+    slots: Option<Res<ViewSlots>>,
+    env: Res<GzEnvironment>,
+    config: Res<GzConfig>,
+    mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
+    mut loads: ResMut<GzLoads>,
+    mut pending: ResMut<PendingSky>,
+    cameras: Query<(&Transform, &Projection, Option<&ViewCamera>, &ViewId), With<MainCamera>>,
+    mut commands: Commands,
+) {
+    let Some(slots) = slots else { return };
+    let have: Vec<ViewId> = cameras.iter().map(|c| *c.3).collect();
+    let Some((t, p, view, _)) = cameras.iter().min_by_key(|c| *c.3) else {
+        return;
+    };
+    let missing: Vec<ViewId> = (0..slots.0.min(ViewId::MAX))
+        .map(ViewId)
+        .filter(|id| !have.contains(id))
+        .collect();
+    if missing.is_empty() {
+        return;
+    }
+    let plan = plan(&env, &config);
+    let mut dress = Dress {
+        config: &config,
+        env: &env,
+        plan: &plan,
+        images: &mut images,
+        asset_server: &asset_server,
+        loads: &mut loads,
+        pending: &mut pending,
+    };
+    for id in missing {
+        dress.spawn(
+            &mut commands,
+            Placed {
+                transform: *t,
+                projection: p.clone(),
+                view: view.cloned(),
+                id: Some(id),
+                placement: Some(ViewPlacement::default()),
+            },
+        );
     }
 }
 
@@ -561,7 +682,7 @@ pub fn install_sky(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut commands: Commands,
 ) {
-    let Some((handle, camera)) = pending.0.clone() else {
+    let Some((handle, cameras)) = pending.0.clone() else {
         return;
     };
     let usable = match images.get_mut(&handle) {
@@ -571,23 +692,27 @@ pub fn install_sky(
     };
     pending.0 = None;
     let ibl = config.quality.image_based_light();
-    let mut cam = commands.entity(camera);
-    if usable {
-        cam.insert(Skybox {
-            image: Some(handle.clone()),
-            brightness: units::UNIT_LUMINANCE,
-            ..default()
-        });
-        if ibl {
-            cam.insert(GeneratedEnvironmentMapLight {
-                environment_map: handle,
-                intensity: units::UNIT_LUMINANCE,
+    if !usable {
+        warn!("sky cubemap unusable (failed to load, or not 6 square power-of-two faces); using the studio environment");
+    }
+    for camera in cameras {
+        let Ok(mut cam) = commands.get_entity(camera) else {
+            continue;
+        };
+        if usable {
+            cam.insert(Skybox {
+                image: Some(handle.clone()),
+                brightness: units::UNIT_LUMINANCE,
                 ..default()
             });
-        }
-    } else {
-        warn!("sky cubemap unusable (failed to load, or not 6 square power-of-two faces); using the studio environment");
-        if ibl {
+            if ibl {
+                cam.insert(GeneratedEnvironmentMapLight {
+                    environment_map: handle.clone(),
+                    intensity: units::UNIT_LUMINANCE,
+                    ..default()
+                });
+            }
+        } else if ibl {
             cam.insert(studio_light(&mut images, env.ambient_or_default()));
         }
     }
@@ -1260,6 +1385,82 @@ mod tests {
     }
 
     #[test]
+    fn each_view_gets_a_dressed_camera_that_keeps_its_place() {
+        use crate::view::{ViewId, ViewPlacement, ViewSlots};
+        let mut app = scene_app(GzConfig::default());
+        app.add_systems(
+            Update,
+            spawn_views.after(apply_environment).before(install_sky),
+        );
+        app.update();
+        show(&mut app, msgs::Scene::default());
+        let first = cameras(&mut app)[0];
+        let rect = Some(Rect::new(0.0, 0.0, 100.0, 100.0));
+        app.world_mut()
+            .entity_mut(first)
+            .insert(ViewPlacement { rect, ..default() });
+        app.world_mut()
+            .get_mut::<Transform>(first)
+            .unwrap()
+            .translation = Vec3::new(1.0, 2.0, 3.0);
+        // Three views: two new cameras, copies of the first, placed nowhere
+        // yet, each dressed (the studio light) and on its own layer.
+        app.insert_resource(ViewSlots(3));
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let mut views: Vec<_> = world
+            .query_filtered::<(
+                &ViewId,
+                &Transform,
+                Option<&ViewPlacement>,
+                Has<GeneratedEnvironmentMapLight>,
+                &bevy::camera::visibility::RenderLayers,
+            ), With<MainCamera>>()
+            .iter(world)
+            .map(|(id, t, p, lit, layers)| {
+                (
+                    *id,
+                    t.translation,
+                    p.and_then(|p| p.rect),
+                    lit,
+                    layers.clone(),
+                )
+            })
+            .collect();
+        views.sort_by_key(|v| v.0);
+        assert_eq!(views.len(), 3);
+        for (i, (id, at, placed, lit, layers)) in views.iter().enumerate() {
+            assert_eq!(*id, ViewId(i as u8));
+            assert_eq!(*at, Vec3::new(1.0, 2.0, 3.0));
+            assert_eq!(*placed, if i == 0 { rect } else { None });
+            assert!(*lit);
+            assert_eq!(*layers, id.layers());
+        }
+        // A new environment respawns them all, each keeping which view it
+        // is and where it shows; fewer views keep the cameras.
+        app.insert_resource(ViewSlots(1));
+        show(
+            &mut app,
+            msgs::Scene {
+                ambient: Some(msgs::Color {
+                    r: 0.5,
+                    ..default()
+                }),
+                ..default()
+            },
+        );
+        let world = app.world_mut();
+        let ids: Vec<(ViewId, Option<Rect>)> = world
+            .query_filtered::<(&ViewId, Option<&ViewPlacement>), With<MainCamera>>()
+            .iter(world)
+            .map(|(id, p)| (*id, p.and_then(|p| p.rect)))
+            .collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.contains(&(ViewId(0), rect)));
+    }
+
+    #[test]
     fn a_good_cubemap_becomes_the_skybox_and_the_light() {
         let mut app = scene_app(GzConfig::default());
         app.update();
@@ -1278,7 +1479,7 @@ mod tests {
                 TextureFormat::Rgba8UnormSrgb,
                 RenderAssetUsages::RENDER_WORLD,
             ));
-        app.world_mut().resource_mut::<PendingSky>().0 = Some((sky.clone(), cam));
+        app.world_mut().resource_mut::<PendingSky>().0 = Some((sky.clone(), vec![cam]));
         app.update();
         assert!(app.world().resource::<PendingSky>().0.is_none());
         assert!(has::<Skybox>(&mut app));
@@ -1310,7 +1511,7 @@ mod tests {
             .world_mut()
             .resource_mut::<Assets<Image>>()
             .add(Image::default());
-        app.world_mut().resource_mut::<PendingSky>().0 = Some((flat, cam));
+        app.world_mut().resource_mut::<PendingSky>().0 = Some((flat, vec![cam]));
         app.update();
         assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
         assert!(!has::<Skybox>(&mut app));

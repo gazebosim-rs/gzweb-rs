@@ -12,6 +12,7 @@ fn view() -> (Transform, Projection, Vec2) {
 fn drag(handle: Handle) -> GizmoDrag {
     GizmoDrag {
         handle,
+        view: None,
         press: Vec2::ZERO,
         center: Vec3::ZERO,
         axes: [Vec3::X, Vec3::Y, Vec3::Z],

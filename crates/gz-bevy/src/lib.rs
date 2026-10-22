@@ -166,6 +166,7 @@ impl Plugin for GzWebPlugin {
                     spawn::instance_gltf,
                     heightmap::build,
                     render::apply_environment,
+                    render::spawn_views,
                     render::install_sky,
                     spawn::apply_poses,
                 )

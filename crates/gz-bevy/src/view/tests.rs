@@ -1894,8 +1894,11 @@ fn a_native_two_finger_scroll_pans() {
 }
 
 fn routing(r: &mut Rig, pointer: bool, keys: bool) {
-    *r.app.world_mut().resource_mut::<controls::ViewRouting>() =
-        controls::ViewRouting { pointer, keys };
+    *r.app.world_mut().resource_mut::<controls::ViewRouting>() = controls::ViewRouting {
+        pointer,
+        keys,
+        ..default()
+    };
 }
 
 #[test]
@@ -1947,6 +1950,7 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
     let off = controls::ViewRouting {
         pointer: true,
         keys: false,
+        ..default()
     };
     assert_eq!(*off.key_scopes(&all), [Scope::Global]);
     // With the keys: every active scope, once each.
@@ -1971,18 +1975,30 @@ fn a_placed_view_renders_to_its_texture_and_offsets_the_cursor() {
         r.app.world().get::<RenderTarget>(r.camera),
         Some(RenderTarget::Window(_))
     ));
+    let place = |r: &mut Rig, rect: Option<Rect>, scale: f32| {
+        let image = r
+            .app
+            .world()
+            .get::<ViewPlacement>(r.camera)
+            .and_then(|p| p.image.clone());
+        r.app
+            .world_mut()
+            .entity_mut(r.camera)
+            .insert(ViewPlacement { rect, scale, image });
+        r.app.update();
+    };
     for (scale, rect) in [
         (1.0, Rect::new(100.0, 50.0, 500.0, 350.0)),
         (1.5, Rect::new(100.0, 50.0, 500.0, 350.0)),
         (2.0, Rect::new(56.0, 44.0, 840.0, 872.0)),
     ] {
-        r.app.insert_resource(ViewPlacement {
-            rect: Some(rect),
-            scale,
-            image: r.app.world().resource::<ViewPlacement>().image.clone(),
-        });
-        r.app.update();
-        let placement = r.app.world().resource::<ViewPlacement>().clone();
+        place(&mut r, Some(rect), scale);
+        let placement = r
+            .app
+            .world()
+            .get::<ViewPlacement>(r.camera)
+            .unwrap()
+            .clone();
         let size = (rect.size() * scale).round().as_uvec2();
         assert_eq!(placement.physical_size(), Some(size));
         let handle = placement.image.clone().expect("a texture");
@@ -2012,12 +2028,7 @@ fn a_placed_view_renders_to_its_texture_and_offsets_the_cursor() {
     // The cursor over the view's centre is the view centre: the home view
     // looks at the gz origin.
     let rect = Rect::new(100.0, 50.0, 500.0, 350.0);
-    r.app.insert_resource(ViewPlacement {
-        rect: Some(rect),
-        scale: 1.0,
-        image: r.app.world().resource::<ViewPlacement>().image.clone(),
-    });
-    r.app.update();
+    place(&mut r, Some(rect), 1.0);
     let world = r.app.world();
     let cam = world.get::<Camera>(r.camera).unwrap().clone();
     let origin = world.get::<ViewOrigin>(r.camera).copied();
@@ -2053,6 +2064,11 @@ fn a_placed_view_renders_to_its_texture_and_offsets_the_cursor() {
         r.app.world().get::<RenderTarget>(r.camera),
         Some(RenderTarget::Image(_))
     ));
+    // Placed nowhere (the layout has fewer views): off.
+    place(&mut r, None, 1.0);
+    assert!(!r.app.world().get::<Camera>(r.camera).unwrap().is_active);
+    place(&mut r, Some(rect), 1.0);
+    assert!(r.app.world().get::<Camera>(r.camera).unwrap().is_active);
 }
 
 // Camera modes (follow, track), the cube's look-from views and the
@@ -2942,4 +2958,80 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
         let now = r.app.world().get::<Transform>(a).unwrap().rotation;
         assert!(now.angle_between(want) < 1e-4, "{cmd:?}");
     }
+}
+
+/// A second view beside the rig's: each half the window, the rig's on the
+/// left as view 0 (DECISIONS.md D-90).
+fn two_views(r: &mut Rig) -> Entity {
+    let half = |w: &mut World, e: Entity, x: f32| {
+        let mut camera = w.get_mut::<Camera>(e).unwrap();
+        camera.computed.target_info = Some(RenderTargetInfo {
+            physical_size: UVec2::new((W / 2.0) as u32, H as u32),
+            scale_factor: 1.0,
+        });
+        w.entity_mut(e).insert(ViewOrigin(Vec2::new(x, 0.0)));
+    };
+    let w = r.app.world_mut();
+    w.entity_mut(r.camera).insert(ViewId(0));
+    half(w, r.camera, 0.0);
+    let camera = w.get::<Camera>(r.camera).unwrap().clone();
+    let other = w
+        .spawn((
+            camera,
+            Projection::Perspective(gz_perspective()),
+            default_view(),
+            ViewCamera::new(Vec3::ZERO, gz_perspective()),
+            ViewId(1),
+        ))
+        .id();
+    half(w, other, W / 2.0);
+    other
+}
+
+#[test]
+fn the_pointer_drives_the_view_under_it_and_keys_the_hovered_or_active_one() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    let pose = |r: &Rig, e: Entity| *r.app.world().get::<Transform>(e).unwrap();
+    let (left, right) = (pose(&r, r.camera), pose(&r, other));
+    let set = |r: &mut Rig, hovered: Option<u8>, active: Option<u8>| {
+        let mut routing = r.app.world_mut().resource_mut::<controls::ViewRouting>();
+        routing.hovered = hovered.map(ViewId);
+        routing.active = active.map(ViewId);
+    };
+    // A drag over the right view orbits it, and keeps it while the pointer
+    // crosses into the left one.
+    set(&mut r, Some(1), Some(1));
+    let at = Vec2::new(W * 0.75, H / 2.0);
+    r.drag(MouseButton::Left, at, &[at + Vec2::new(-40.0, 0.0)]);
+    assert_eq!(pose(&r, r.camera), left);
+    assert_ne!(pose(&r, other), right);
+    // Keys: the hovered view, else the active one.
+    let moved = pose(&r, other);
+    set(&mut r, Some(0), Some(1));
+    r.chord(&[KeyCode::Digit7]);
+    for _ in 0..30 {
+        r.app.update();
+    }
+    assert_ne!(pose(&r, r.camera), left, "the hovered view snapped");
+    assert_eq!(pose(&r, other), moved);
+    set(&mut r, None, Some(1));
+    r.chord(&[KeyCode::Digit1]);
+    for _ in 0..30 {
+        r.app.update();
+    }
+    assert_ne!(pose(&r, other), moved, "then the active one");
+    // A view the layout drops (its camera off) gets nothing.
+    r.app
+        .world_mut()
+        .get_mut::<Camera>(other)
+        .unwrap()
+        .is_active = false;
+    let off = pose(&r, other);
+    set(&mut r, None, Some(1));
+    r.chord(&[KeyCode::Digit3]);
+    for _ in 0..30 {
+        r.app.update();
+    }
+    assert_eq!(pose(&r, other), off);
 }

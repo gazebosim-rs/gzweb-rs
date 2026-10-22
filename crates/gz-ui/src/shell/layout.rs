@@ -60,6 +60,10 @@ pub struct ShellLayout {
     /// Panels the floor rule closed, reopened when space returns (a user
     /// toggle forgets them).
     pub floor_closed: [bool; 2],
+    /// The width the viewport area must keep (§2.1 floor): `viewport_min`
+    /// for one view, more for a split layout (each view at
+    /// `viewport_min`).
+    pub floor_w: f32,
     /// The start-up collapse rules still apply to width changes: the
     /// window's first real size can arrive after start (a browser canvas
     /// fitting its page, a tiling window manager). Ends with the user's
@@ -91,10 +95,21 @@ impl ShellLayout {
             split: DEFAULT_SPLIT,
             window_w: width,
             floor_closed: [false; 2],
+            floor_w: s.viewport_min,
             startup: true,
         };
         l.enforce_floor(None);
         l
+    }
+
+    /// Sets the floor (a split layout's), then the floor rule, and brings
+    /// back panels it closed once they fit again.
+    pub fn set_floor(&mut self, floor_w: f32) {
+        self.floor_w = floor_w;
+        let w = self.window_w;
+        let startup = std::mem::replace(&mut self.startup, false);
+        self.fit(w);
+        self.startup = startup;
     }
 
     pub fn is_open(&self, side: Side) -> bool {
@@ -153,7 +168,7 @@ impl ShellLayout {
     /// `viewport_min`, collapse the inspector, then the sidebar, never the
     /// side in `keep` (the one the user just opened or widened).
     pub fn enforce_floor(&mut self, keep: Option<Side>) {
-        let min = Sizes::default().viewport_min;
+        let min = self.floor_w;
         for side in [Side::Inspector, Side::Sidebar] {
             if self.viewport_w() >= min {
                 return;
@@ -179,7 +194,7 @@ impl ShellLayout {
         }
         self.window_w = window_w;
         self.enforce_floor(None);
-        let min = Sizes::default().viewport_min;
+        let min = self.floor_w;
         for side in [Side::Sidebar, Side::Inspector] {
             let i = index(side);
             if self.floor_closed[i] && self.viewport_w() + COLLAPSED_BAR_W - self.width(side) >= min
@@ -220,7 +235,7 @@ impl ShellLayout {
             Side::Sidebar => 1.0,
             Side::Inspector => -1.0,
         };
-        let room = self.viewport_w() + self.width(side) - Sizes::default().viewport_min;
+        let room = self.viewport_w() + self.width(side) - self.floor_w;
         // (`side` is open while it's dragged: no bar of its own to count.)
         (start + sign * dx).min(room).clamp(min, max)
     }

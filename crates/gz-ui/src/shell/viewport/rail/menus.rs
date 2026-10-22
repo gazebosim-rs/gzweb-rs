@@ -10,13 +10,14 @@
 //! - **Overlays** (§7.3): checkbox items in the spec's order with their
 //!   keys; "Lidar scans / sensor data" waits for the Sensors panel (M7)
 //!   and "Apply to all views" for split views (M6): both disabled.
-//! - **Layout** (§7.4): the five layout presets with Single current; the
-//!   others, Maximize, Close view and the two checkboxes wait for split
-//!   views (M6) and are disabled.
+//! - **Layout** (§7.4): the five layout presets, the current one marked;
+//!   Maximize (Restore while maximized) and Close view, with several
+//!   views; Link cameras and Shared selection wait for M6b, disabled.
 //! - The compact rail's drag flyout: Orbit, Pan, Zoom, the current one
 //!   marked.
 
 use bevy::ecs::spawn::SpawnWith;
+use bevy::picking::events::PointerClick;
 use bevy::picking::hover::Hovered;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -31,7 +32,8 @@ use super::{
     OverlaysButton, DRAG_ACTIONS,
 };
 use crate::assets::icons::IconId;
-use crate::shell::viewport::MainView;
+use crate::shell::viewport::views::{LayoutCommand, LayoutPreset, ViewLayout};
+use crate::shell::viewport::ViewCameras;
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, SPACE};
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::{
@@ -55,56 +57,6 @@ pub(crate) enum CameraItem {
 /// An Overlays menu checkbox.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OverlayItem(pub Overlay);
-
-/// A layout preset (§3.4, §7.4).
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LayoutPreset {
-    Single,
-    TwoColumns,
-    TwoRows,
-    OnePlusTwo,
-    Quad,
-}
-
-impl LayoutPreset {
-    pub(crate) const ALL: [LayoutPreset; 5] = [
-        LayoutPreset::Single,
-        LayoutPreset::TwoColumns,
-        LayoutPreset::TwoRows,
-        LayoutPreset::OnePlusTwo,
-        LayoutPreset::Quad,
-    ];
-
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            LayoutPreset::Single => "Single",
-            LayoutPreset::TwoColumns => "Two columns",
-            LayoutPreset::TwoRows => "Two rows",
-            LayoutPreset::OnePlusTwo => "One plus two",
-            LayoutPreset::Quad => "Quad",
-        }
-    }
-
-    /// Its views as (left, top, width, height) in percent.
-    pub(crate) fn panes(self) -> &'static [[f32; 4]] {
-        match self {
-            LayoutPreset::Single => &[[0.0, 0.0, 100.0, 100.0]],
-            LayoutPreset::TwoColumns => &[[0.0, 0.0, 60.0, 100.0], [60.0, 0.0, 40.0, 100.0]],
-            LayoutPreset::TwoRows => &[[0.0, 0.0, 100.0, 50.0], [0.0, 50.0, 100.0, 50.0]],
-            LayoutPreset::OnePlusTwo => &[
-                [0.0, 0.0, 50.0, 100.0],
-                [50.0, 0.0, 50.0, 50.0],
-                [50.0, 50.0, 50.0, 50.0],
-            ],
-            LayoutPreset::Quad => &[
-                [0.0, 0.0, 50.0, 50.0],
-                [50.0, 0.0, 50.0, 50.0],
-                [0.0, 50.0, 50.0, 50.0],
-                [50.0, 50.0, 50.0, 50.0],
-            ],
-        }
-    }
-}
 
 /// The compact rail's flyout: Orbit, Pan, Zoom.
 pub(crate) fn compact_drag_menu(t: &Theme) -> impl Bundle {
@@ -219,25 +171,20 @@ pub(crate) fn overlays_menu(t: &Theme, map: &InputMap) -> impl Bundle {
     )
 }
 
-/// A layout thumbnail (52 × 36, radius 6): the current one `accent_soft`
-/// with `accent_ring`, its views in `accent_ring`; the others on `surface`
-/// with `line` views.
+/// A Layout popover item that acts on the layout.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayoutItem {
+    Maximize,
+    Close,
+}
+
+/// A view in a layout thumbnail.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct ThumbPane;
+
+/// A layout thumbnail (52 × 36, radius 6); [`layout_states`] marks the
+/// current one.
 fn thumbnail(t: &Theme, preset: LayoutPreset) -> impl Bundle {
-    let current = preset == LayoutPreset::Single;
-    let (fill, stroke, pane) = if current {
-        (
-            ColorRole::AccentSoft,
-            ColorRole::AccentRing,
-            ColorRole::AccentRing,
-        )
-    } else {
-        (ColorRole::Surface, ColorRole::Line, ColorRole::Line)
-    };
-    let tip = if current {
-        Tooltip::new(preset.name()).detail("Current layout")
-    } else {
-        Tooltip::new(preset.name()).detail(NOT_YET)
-    };
     (
         preset,
         Node {
@@ -249,36 +196,42 @@ fn thumbnail(t: &Theme, preset: LayoutPreset) -> impl Bundle {
             flex_shrink: 0.0,
             ..default()
         },
-        Fill(fill),
-        Stroke(stroke),
+        Fill(ColorRole::Surface),
+        Stroke(ColorRole::Line),
         Hovered::default(),
-        tip.side(TooltipSide::Below),
+        bevy::picking::cursor::EntityCursor::System(bevy::window::SystemCursorIcon::Pointer),
+        crate::widgets::a11y(accesskit::Role::Button, preset.name()),
+        Tooltip::new(preset.name()).side(TooltipSide::Below),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
-            p.spawn(Node {
-                flex_grow: 1.0,
-                ..default()
-            })
+            p.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
             .with_children(|area| {
                 for [l, top, w, h] in preset.panes() {
                     area.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: Val::Percent(*l),
-                            top: Val::Percent(*top),
-                            width: Val::Percent(*w),
-                            height: Val::Percent(*h),
+                            left: Val::Percent(l),
+                            top: Val::Percent(top),
+                            width: Val::Percent(w),
+                            height: Val::Percent(h),
                             padding: UiRect::all(px(1.0)),
                             ..default()
                         },
                         Pickable::IGNORE,
                     ))
                     .with_child((
+                        ThumbPane,
                         Node {
                             flex_grow: 1.0,
                             border_radius: rounded(2.0),
                             ..default()
                         },
-                        Fill(pane),
+                        Fill(ColorRole::Line),
                         Pickable::IGNORE,
                     ));
                 }
@@ -318,14 +271,17 @@ pub(crate) fn layout_popover(t: &Theme, map: &InputMap) -> impl Bundle {
                 }
             });
             p.spawn(menu_separator());
-            for (label, binding) in [("Maximize", "view.maximize"), ("Close view", "view.close")] {
+            for (item, label, binding) in [
+                (LayoutItem::Maximize, "Maximize", "view.maximize"),
+                (LayoutItem::Close, "Close view", "view.close"),
+            ] {
                 p.spawn((
                     menu_item(
                         &theme,
                         MenuItemProps::new(label).shortcut_opt(keys(binding)),
                     ),
-                    InteractionDisabled,
-                    Tooltip::new(label).detail(NOT_YET).side(TooltipSide::Left),
+                    item,
+                    Tooltip::new(label).side(TooltipSide::Left),
                 ));
             }
             p.spawn(menu_separator());
@@ -340,18 +296,120 @@ pub(crate) fn layout_popover(t: &Theme, map: &InputMap) -> impl Bundle {
     )
 }
 
+/// The current preset's thumbnail is `accent_soft` with `accent_ring`,
+/// its views in `accent_ring`; the others `surface` with `line` views.
+/// Maximize reads Restore while a view is maximized, and needs several
+/// views; Close view needs several.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn layout_states(
+    layout: Res<ViewLayout>,
+    added: Query<(), Or<(Added<LayoutPreset>, Added<LayoutItem>)>>,
+    mut thumbs: Query<(&LayoutPreset, &mut Fill, &mut Stroke, &mut Tooltip), Without<ThumbPane>>,
+    mut panes: Query<(&ChildOf, &mut Fill), With<ThumbPane>>,
+    parents: Query<&ChildOf, Without<ThumbPane>>,
+    mut items: Query<(Entity, &LayoutItem, &Children, Has<InteractionDisabled>)>,
+    mut texts: Query<&mut Text>,
+    mut commands: Commands,
+) {
+    if !layout.is_changed() && added.is_empty() {
+        return;
+    }
+    let current = |p: &LayoutPreset| *p == layout.preset;
+    for (preset, mut fill, mut stroke, mut tip) in &mut thumbs {
+        let on = current(preset);
+        fill.set_if_neq(Fill(if on {
+            ColorRole::AccentSoft
+        } else {
+            ColorRole::Surface
+        }));
+        stroke.set_if_neq(Stroke(if on {
+            ColorRole::AccentRing
+        } else {
+            ColorRole::Line
+        }));
+        let detail = on.then(|| "Current layout".to_string());
+        if tip.detail != detail {
+            tip.detail = detail;
+        }
+    }
+    for (parent, mut fill) in &mut panes {
+        // Pane → its box → the area → the thumbnail.
+        let thumb = parents
+            .iter_ancestors(parent.parent())
+            .find_map(|e| thumbs.get(e).ok().map(|t| *t.0));
+        let on = thumb.is_some_and(|p| current(&p));
+        fill.set_if_neq(Fill(if on {
+            ColorRole::AccentRing
+        } else {
+            ColorRole::Line
+        }));
+    }
+    let several = layout.preset.count() > 1 && !layout.fallback;
+    for (e, item, children, disabled) in &mut items {
+        let (enabled, label) = match item {
+            LayoutItem::Maximize if layout.maximized.is_some() => (true, "Restore"),
+            LayoutItem::Maximize => (several, "Maximize"),
+            LayoutItem::Close => (several && layout.maximized.is_none(), "Close view"),
+        };
+        if enabled == disabled {
+            if enabled {
+                commands.entity(e).remove::<InteractionDisabled>();
+            } else {
+                commands.entity(e).insert(InteractionDisabled);
+            }
+        }
+        for &c in children {
+            if let Ok(mut t) = texts.get_mut(c) {
+                crate::widgets::text::set_text(&mut t, label);
+            }
+        }
+    }
+}
+
+/// A thumbnail picks its preset.
+pub(crate) fn on_thumbnail(
+    ev: On<PointerClick>,
+    thumbs: Query<&LayoutPreset>,
+    mut out: MessageWriter<LayoutCommand>,
+) {
+    if let Ok(p) = thumbs.get(ev.entity) {
+        out.write(LayoutCommand::Preset(*p));
+    }
+}
+
+/// Maximize (or Restore) and Close view.
+pub(crate) fn on_layout_item(
+    ev: On<Activate>,
+    items: Query<&LayoutItem, Without<InteractionDisabled>>,
+    views: ViewCameras,
+    mut routing: ResMut<gz_bevy::view::controls::ViewRouting>,
+    mut out: MessageWriter<LayoutCommand>,
+) {
+    let Ok(item) = items.get(ev.entity) else {
+        return;
+    };
+    // The view whose rail it is.
+    if let Some(id) = views.id_of(ev.entity) {
+        routing.active = Some(id);
+    }
+    out.write(match item {
+        LayoutItem::Maximize => LayoutCommand::Maximize,
+        LayoutItem::Close => LayoutCommand::Close,
+    });
+}
+
 /// Camera menu choices → the view's camera mode.
 pub(crate) fn on_camera_item(
     ev: On<Activate>,
     items: Query<(&CameraItem, Has<InteractionDisabled>)>,
-    view: MainView,
+    views: ViewCameras,
     selection: Option<Res<Selection>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
     let Ok((item, disabled)) = items.get(ev.entity) else {
         return;
     };
-    let Some((e, v, ..)) = view.get() else {
+    let Some((e, v, ..)) = views.of(ev.entity) else {
         return;
     };
     if disabled {

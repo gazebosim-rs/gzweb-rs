@@ -41,13 +41,17 @@ pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<G
     let transform =
         Transform::from_translation(view::home_transform().translation).looking_at(focus, Vec3::Y);
     let controls = ViewCamera::new(focus, perspective());
-    spawn_main_camera(
+    let camera = spawn_main_camera(
         &mut commands,
         &config,
         transform,
         Some(controls),
         CLEAR_COLOR,
     );
+    if config.interactive() {
+        let first = view::ViewId(0);
+        commands.entity(camera).insert((first, first.layers()));
+    }
 }
 
 /// Spawns the main camera at `transform` with the configured quality, and

@@ -11,7 +11,7 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::messages::{MessageLevel, SystemMessages};
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::controls::ViewRouting;
-use gz_bevy::view::{cursor_on_ground, Selection, ViewOrigin};
+use gz_bevy::view::{cursor_on_ground, Selection, ViewId, ViewOrigin};
 
 use super::StatusItem;
 use crate::format;
@@ -131,11 +131,21 @@ pub(crate) fn connection_dot(
     }
 }
 
-/// The ground point under the cursor while it is over the view.
+/// The ground point under the cursor while it is over a view.
+#[allow(clippy::type_complexity)]
 pub(crate) fn cursor_readout(
     windows: Query<&Window, With<PrimaryWindow>>,
     routing: Res<ViewRouting>,
-    cameras: Query<(&Camera, Option<&ViewOrigin>, &Projection, &Transform), With<MainCamera>>,
+    cameras: Query<
+        (
+            &Camera,
+            Option<&ViewOrigin>,
+            &Projection,
+            &Transform,
+            Option<&ViewId>,
+        ),
+        With<MainCamera>,
+    >,
     mut readout: ResMut<CursorReadout>,
 ) {
     let at = windows
@@ -144,7 +154,10 @@ pub(crate) fn cursor_readout(
         .and_then(Window::cursor_position)
         .filter(|_| routing.pointer)
         .and_then(|c| {
-            let (camera, origin, projection, t) = cameras.single().ok()?;
+            let (camera, origin, projection, t, _) = cameras
+                .iter()
+                .find(|v| v.4.copied() == routing.hovered)
+                .or_else(|| cameras.iter().next())?;
             cursor_on_ground(camera, origin, projection, t, c)
         })
         .map(|v| [v.x, v.y]);
