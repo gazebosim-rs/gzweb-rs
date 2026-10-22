@@ -1095,4 +1095,12 @@ fn hides_hide_others_and_isolate_are_each_undone() {
     assert_eq!(vis(&app, amr), Visibility::Inherited);
     assert!(app.world().resource::<Isolated>().0.is_none());
     assert!(!app.world().resource::<UndoStack>().is_dirty());
+    // Ending Isolate, undone, is on again.
+    press_footer(&mut app, Isolate);
+    press_footer(&mut app, Isolate);
+    assert_eq!(label(&app).as_deref(), Some("end isolate"));
+    assert_eq!(vis(&app, amr), Visibility::Inherited);
+    undo(&mut app);
+    assert_eq!(vis(&app, amr), Visibility::Hidden);
+    assert!(app.world().resource::<Isolated>().0.is_some());
 }

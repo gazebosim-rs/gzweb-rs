@@ -677,6 +677,7 @@ fn finish(
             },
             named: true,
             changes,
+            scrub: None,
             open: false,
         });
     }

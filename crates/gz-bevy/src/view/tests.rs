@@ -2881,6 +2881,7 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
             AssetPlugin::default(),
             bevy::gizmos::GizmoPlugin,
             crate::edit::EditPlugin,
+            crate::undo::UndoPlugin,
             gizmo::GizmoPlugin,
         ))
         .insert_resource(gizmo::TransformTool::Rotate)
@@ -2921,4 +2922,24 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
     r.button(MouseButton::Left, ButtonState::Released);
     r.app.update();
     assert!(!set_poses(&mut r).is_empty());
+    // A turn to undo and redo.
+    r.app.update();
+    let label = |r: &Rig| {
+        r.app
+            .world()
+            .resource::<crate::undo::UndoStack>()
+            .undo_label()
+            .map(str::to_string)
+    };
+    assert_eq!(label(&r).as_deref(), Some("rotate a"));
+    let turned = r.app.world().get::<Transform>(a).unwrap().rotation;
+    for (cmd, want) in [
+        (crate::undo::UndoCommand::Undo, Quat::IDENTITY),
+        (crate::undo::UndoCommand::Redo, turned),
+    ] {
+        r.app.world_mut().write_message(cmd);
+        r.app.update();
+        let now = r.app.world().get::<Transform>(a).unwrap().rotation;
+        assert!(now.angle_between(want) < 1e-4, "{cmd:?}");
+    }
 }

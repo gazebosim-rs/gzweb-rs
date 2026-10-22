@@ -552,6 +552,7 @@ pub(crate) fn on_pose_commit(
             before,
             after: pose,
         }],
+        scrub: Some(ev.entity),
         open: !ev.is_final,
     });
     let now = time.map_or(0.0, |t| t.elapsed_secs_f64());
@@ -757,6 +758,7 @@ pub(crate) fn on_entity_action(
                         before,
                         after,
                     }],
+                    scrub: None,
                     open: false,
                 });
             }

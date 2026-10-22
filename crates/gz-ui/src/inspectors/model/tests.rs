@@ -484,6 +484,17 @@ fn ctrl_z_puts_a_pose_edit_back_and_the_dot_shows_the_world_is_dirty() {
     frames(&mut app, 2);
     assert_eq!(x(&app), 2.5);
     assert!(dot(&mut app));
+    // Not while a field is being scrubbed: it would undo the scrub's start
+    // under it.
+    app.world_mut()
+        .entity_mut(field)
+        .insert(crate::widgets::number_field::Scrub {
+            value: 2.5,
+            moved: false,
+        });
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyZ]);
+    frames(&mut app, 2);
+    assert_eq!(x(&app), 2.5);
 }
 
 #[test]

@@ -3,16 +3,17 @@
 //! [`UndoStack`] as one edit, by scene path so a respawn doesn't lose it;
 //! an [`UndoCommand`] puts it back or does it again (a move as a
 //! `set_pose`, so physics carries on from the pose put back). The stack is
-//! the world's: a new server or world clears it, and a Reset forgets the
-//! moves it undid (DECISIONS.md D-89). The world is dirty while the stack
-//! isn't where it was at load.
+//! the world's: a new server or world clears it, a Reset (sim time going
+//! back) forgets the moves it undid, and a new scene from a reconnect
+//! forgets the hides and Isolate it undid (DECISIONS.md D-89). The world is
+//! dirty while the stack isn't where it was at load.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::connection::{GzCommand, GzStatus};
 use crate::edit::{edits_allowed, Held, SetPose};
-use crate::spawn::GzEntity;
+use crate::spawn::{GzEntity, GzIndex};
 
 /// One change an edit makes, as recorded (by entity).
 #[derive(Debug, Clone, PartialEq)]
@@ -45,13 +46,15 @@ pub struct Isolated(pub Option<Saved>);
 
 /// Something the user did, to put on the stack: `verb` and what it acted
 /// on name it ("move cart", "hide 3 models"; `named: false` for one that
-/// names itself, "hide others"). An `open` edit (an inspector scrub
-/// under way) takes the next one with the same name and entities into it.
+/// names itself, "hide others"). An inspector scrub under way is `open`
+/// on its field (`scrub`): the field's next step (its release, no longer
+/// `open`) joins it, and anything else closes it.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub struct Record {
     pub verb: &'static str,
     pub named: bool,
     pub changes: Vec<Change>,
+    pub scrub: Option<Entity>,
     pub open: bool,
 }
 
@@ -105,12 +108,26 @@ pub struct Edit {
     /// What the World menu calls it: "move cart" ("Undo move cart").
     pub label: String,
     steps: Vec<Step>,
+    scrub: Option<Entity>,
     open: bool,
 }
 
 impl Edit {
     fn paths(&self) -> Vec<Option<&str>> {
         self.steps.iter().map(Step::path).collect()
+    }
+
+    /// The next step of the same scrub.
+    fn takes(&self, next: &Edit) -> bool {
+        self.open
+            && self.scrub.is_some()
+            && self.scrub == next.scrub
+            && self.label == next.label
+            && self.paths() == next.paths()
+    }
+
+    fn changes(&self) -> bool {
+        self.steps.iter().any(Step::changes)
     }
 }
 
@@ -156,14 +173,14 @@ impl UndoStack {
     }
 
     /// Puts `edit` on top (and forgets what was undone), or into the top
-    /// edit while that is open with the same name and paths.
+    /// edit while that is the same scrub's. Anything else closes the top.
     fn push(&mut self, edit: Edit) {
         self.undone.clear();
         if self.saved.is_some_and(|s| s > self.done.len()) {
             self.saved = None;
         }
         if let Some(top) = self.done.last_mut() {
-            if top.open && top.label == edit.label && top.paths() == edit.paths() {
+            if top.takes(&edit) {
                 for (kept, new) in top.steps.iter_mut().zip(edit.steps) {
                     match (kept, new) {
                         (Step::Pose { after, .. }, Step::Pose { after: a, .. }) => *after = a,
@@ -177,31 +194,60 @@ impl UndoStack {
                     }
                 }
                 top.open = edit.open;
-                // Scrubbed back to where it began: nothing to undo.
-                if !top.open && !top.steps.iter().any(Step::changes) {
-                    self.done.pop();
-                }
+                self.close_top();
                 return;
             }
+            // A scrub cut short (its field gone before its release).
             top.open = false;
+            self.close_top();
         }
-        if edit.steps.iter().any(Step::changes) || edit.open {
+        if edit.changes() || edit.open {
             self.done.push(edit);
         }
     }
 
-    /// Forgets the moves a Reset undid (gz-sim puts every pose back); an
-    /// edit left with nothing is dropped.
-    fn forget_poses(&mut self) {
+    /// Drops the top edit if it is closed and changes nothing (scrubbed
+    /// back to where it began).
+    fn close_top(&mut self) {
+        if self.done.last().is_some_and(|e| !e.open && !e.changes()) {
+            self.done.pop();
+            // What it left is what it found.
+            if let Some(s) = self.saved.as_mut() {
+                *s = (*s).min(self.done.len());
+            }
+        }
+    }
+
+    /// Forgets the steps `gone` picks (the world put back what they did,
+    /// so undoing them would do it again); an edit left with nothing is
+    /// dropped. The world as loaded stays where it was, at the bottom.
+    fn forget(&mut self, gone: impl Fn(&Step) -> bool) {
         for list in [&mut self.done, &mut self.undone] {
             for e in list.iter_mut() {
-                e.steps.retain(|s| !matches!(s, Step::Pose { .. }));
+                e.steps.retain(|s| !gone(s));
             }
             list.retain(|e| !e.steps.is_empty());
         }
-        self.saved = self.done.is_empty().then_some(0);
+        // A save part way up may not be there any more.
+        self.saved = self.saved.filter(|s| *s == 0);
+    }
+
+    /// Forgets the moves a Reset undid (gz-sim puts every pose back).
+    fn forget_poses(&mut self) {
+        self.forget(|s| matches!(s, Step::Pose { .. }));
+    }
+
+    /// Forgets the hides and Isolate a new scene undid (it comes with
+    /// everything shown).
+    fn forget_visibility(&mut self) {
+        self.forget(|s| matches!(s, Step::Visibility { .. } | Step::Isolated { .. }));
     }
 }
+
+/// Where undo runs: after the gizmo and the keys, so an edit and an undo
+/// in the same frame go in that order.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UndoSystems;
 
 pub struct UndoPlugin;
 
@@ -214,7 +260,13 @@ impl Plugin for UndoPlugin {
             .init_resource::<UndoStack>()
             .init_resource::<Isolated>()
             .init_resource::<Held>()
-            .add_systems(Update, (forget_other_worlds, record, undo_redo).chain());
+            .add_systems(
+                Update,
+                (forget_other_worlds, record, undo_redo)
+                    .chain()
+                    .in_set(UndoSystems)
+                    .after(crate::view::gizmo::gizmo_input),
+            );
     }
 }
 
@@ -273,6 +325,7 @@ fn record(
         stack.push(Edit {
             label: label(r.verb, r.named, &names),
             steps,
+            scrub: r.scrub,
             open: r.open,
         });
     }
@@ -361,17 +414,39 @@ fn undo_redo(
     }
 }
 
-/// A new server or world clears the stack (it is the world's, §7.1); a
-/// Reset forgets the moves it put back.
+/// What the world was last seen to be: its server and name, its
+/// iterations, and how many scenes had come.
+#[derive(Default)]
+struct Seen {
+    world: Option<(String, Option<String>)>,
+    iterations: Option<u64>,
+    scenes: u32,
+}
+
+/// A new server or world clears the stack (it is the world's, §7.1). A
+/// Reset (ours, another client's, or a restarted server's: the sim's
+/// iterations going back) forgets the moves it put back. A new scene for
+/// the same world (a reconnect) comes with everything shown: it forgets
+/// the hides and Isolate.
 fn forget_other_worlds(
     status: Option<Res<GzStatus>>,
+    index: Option<Res<GzIndex>>,
     mut sim: MessageReader<GzCommand>,
     mut stack: ResMut<UndoStack>,
     mut isolated: ResMut<Isolated>,
-    mut world: Local<Option<(String, Option<String>)>>,
+    mut seen: Local<Seen>,
 ) {
     if sim.read().any(|c| *c == GzCommand::Reset) {
         stack.forget_poses();
+    }
+    if let Some(index) = index.filter(|i| i.is_changed()) {
+        if index.scenes > seen.scenes.max(1) {
+            stack.forget_visibility();
+            if isolated.0.is_some() {
+                isolated.0 = None;
+            }
+        }
+        seen.scenes = index.scenes;
     }
     let Some(status) = status.filter(|s| s.is_changed()) else {
         return;
@@ -381,11 +456,18 @@ fn forget_other_worlds(
     if now.1.is_none() {
         return;
     }
-    if world.as_ref().is_some_and(|w| *w != now) {
+    if seen.world.as_ref().is_some_and(|w| *w != now) {
         stack.clear();
         isolated.0 = None;
+        seen.iterations = None;
     }
-    *world = Some(now);
+    seen.world = Some(now);
+    if let Some(iterations) = status.sim.map(|s| s.iterations) {
+        if seen.iterations.is_some_and(|i| iterations < i) {
+            stack.forget_poses();
+        }
+        seen.iterations = Some(iterations);
+    }
 }
 
 #[cfg(test)]

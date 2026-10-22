@@ -1391,3 +1391,11 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   ⌘Z and ⇧⌘Z on an inspector scrub with the dot, and each visibility
   edit; workspace 690 → 698 passing; coverage 98.3% lines. check.sh
   passes. Not checked live (⌘Z needs keys in the native window).
+- **PR review fixes:** only a scrub's own field's steps join its edit
+  (a scrub cut short swallowed the next drag), and an edit closed with no
+  change goes; ⌘Z waits for a scrub as for a drag; `UndoSystems` runs
+  after the gizmo and the keys; a reconnect's new scene forgets the hides
+  and Isolate (`GzIndex::scenes`), and the sim's iterations going back
+  (another client's Reset, a restarted server) forget the moves; after a
+  Reset, undoing the hides left is clean again; the spec's undoable Reset
+  lines, D-16, D-74 and D-89 updated. 698 → 701 tests.

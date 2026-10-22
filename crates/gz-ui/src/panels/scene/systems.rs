@@ -558,6 +558,7 @@ pub(super) fn on_visibility(
             before,
             after,
         }],
+        scrub: None,
         open: false,
     });
 }

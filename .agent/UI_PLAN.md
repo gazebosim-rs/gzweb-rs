@@ -297,7 +297,7 @@ websocket server, DECISIONS.md D-76), **M5d** undo.
   the freeze-on-focus rule. All components view.
 - Translate/Rotate gizmos with snap and X/Y/Z constraints. Edits go through `set_pose` and the
   other services.
-- `UndoStack` and dirty-state rules (§7.1). Undo chips for Delete and Reset.
+- `UndoStack` and dirty-state rules (§7.1). Delete's undo chip (M8); Reset isn't undoable (D-89).
 - Inspector registry for real (PR #30 second review, item 8): `InspectorDef` says which
   selection kind it handles (`for_selection()` returns World today, and `BodyFn` sees no
   entity); the frame rebuilds its body when `Selection` changes; bodies are built like panel

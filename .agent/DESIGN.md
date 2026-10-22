@@ -582,9 +582,12 @@ inspectors' `pose_group` builds number fields whose commits
 (`on_pose_commit`) send `SetPose`.
 `gz_bevy::undo` (D-89) keeps the `UndoStack`: the gizmo, the inspector's
 pose fields and Hide, the tree's eyes and the Scene footer write `Record`
-messages (by entity; kept by scene path), `UndoCommand` (⌘Z, ⇧⌘Z from the
-shell's `shortcut_keys`) puts an edit back or does it again, and
-`UndoStack::is_dirty` drives the world button's unsaved dot.
+messages (by entity; kept by scene path; a scrub's steps carry its field,
+so only they join its edit), `UndoCommand` (⌘Z, ⇧⌘Z from the shell's
+`shortcut_keys`, before `UndoSystems`) puts an edit back or does it again,
+and `UndoStack::is_dirty` drives the world button's unsaved dot. A Reset or
+the sim's iterations going back forget the moves; a new scene
+(`GzIndex::scenes`) forgets the hides and Isolate.
 
 ## Views, input and UI modes
 
@@ -754,7 +757,7 @@ the mode enables: `global`, `viewport`, `minimal`; G toggles
 losing keyboard focus cancels a tap rather than ending it; ⌘→ → `Step(1)`
 when paused), `fly_input` (at most 0.1 s a frame), then
 `apply_view_commands`. Bindings without an action (tools, panels, files,
-`sim.reset`, which needs the full UI's undo) parse but do nothing here; the
+`sim.reset`, which minimal mode leaves unbound, D-16) parse but do nothing here; the
 full UI's shell reads `ui.sidebar`, `ui.inspector`, `tool.*` and `panel.*`
 from the same map.
 

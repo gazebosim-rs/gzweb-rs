@@ -231,6 +231,7 @@ pub(crate) fn on_footer(
             verb,
             named: false,
             changes,
+            scrub: None,
             open: false,
         });
     }

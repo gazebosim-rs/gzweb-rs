@@ -34,6 +34,10 @@ fn spawn(app: &mut App, name: &str) -> Entity {
         .id()
 }
 
+/// The inspector field a scrub runs on.
+const FIELD: Entity = Entity::PLACEHOLDER;
+
+/// A pose field's commit (an `open` scrub step, or its release).
 fn moved(entity: Entity, before: f32, after: f32, open: bool) -> Record {
     Record {
         verb: "move",
@@ -43,7 +47,16 @@ fn moved(entity: Entity, before: f32, after: f32, open: bool) -> Record {
             before: Transform::from_xyz(before, 0.0, 0.0),
             after: Transform::from_xyz(after, 0.0, 0.0),
         }],
+        scrub: Some(FIELD),
         open,
+    }
+}
+
+/// A gizmo drag's.
+fn dragged(entity: Entity, before: f32, after: f32) -> Record {
+    Record {
+        scrub: None,
+        ..moved(entity, before, after, false)
     }
 }
 
@@ -137,6 +150,7 @@ fn without_edits_a_move_waits_and_a_hide_still_undoes() {
                 before: Visibility::Inherited,
                 after: Visibility::Hidden,
             }],
+            scrub: None,
             open: false,
         },
     );
@@ -182,6 +196,7 @@ fn isolate_comes_back_with_its_saved_state() {
                 before: None,
                 after: Some(saved.clone()),
             }],
+            scrub: None,
             open: false,
         },
     );
@@ -214,6 +229,7 @@ fn another_world_clears_and_a_reset_forgets_the_moves() {
                 before: Visibility::Inherited,
                 after: Visibility::Hidden,
             }],
+            scrub: None,
             open: false,
         },
     );
@@ -229,4 +245,93 @@ fn another_world_clears_and_a_reset_forgets_the_moves() {
     app.update();
     assert_eq!(*stack(&app), UndoStack::default());
     assert_eq!(app.world().resource::<Isolated>().0, None);
+}
+
+#[test]
+fn a_scrub_cut_short_doesnt_swallow_the_next_move() {
+    let mut app = app(Some(true));
+    let cart = spawn(&mut app, "cart");
+    // A scrub whose release never came, then a drag.
+    run(&mut app, moved(cart, 1.0, 1.5, true));
+    run(&mut app, dragged(cart, 1.5, 3.0));
+    run(&mut app, UndoCommand::Undo);
+    assert_eq!(x(&app, cart), 1.5);
+    run(&mut app, UndoCommand::Undo);
+    assert_eq!(x(&app, cart), 1.0);
+    assert!(!stack(&app).is_dirty());
+    // One that came back to where it began leaves nothing.
+    run(&mut app, moved(cart, 1.0, 1.5, true));
+    run(&mut app, moved(cart, 1.5, 1.0, true));
+    run(&mut app, dragged(cart, 1.0, 2.0));
+    run(&mut app, UndoCommand::Undo);
+    assert_eq!((x(&app, cart), stack(&app).undo_label()), (1.0, None));
+    assert!(!stack(&app).is_dirty());
+}
+
+fn hide(entity: Entity) -> Record {
+    Record {
+        verb: "hide",
+        named: true,
+        changes: vec![Change::Visibility {
+            entity,
+            before: Visibility::Inherited,
+            after: Visibility::Hidden,
+        }],
+        scrub: None,
+        open: false,
+    }
+}
+
+#[test]
+fn after_a_reset_undoing_the_hides_left_is_the_world_as_loaded() {
+    let mut app = app(Some(true));
+    let cart = spawn(&mut app, "cart");
+    run(&mut app, moved(cart, 1.0, 2.0, false));
+    run(&mut app, hide(cart));
+    run(&mut app, GzCommand::Reset);
+    assert!(stack(&app).is_dirty());
+    run(&mut app, UndoCommand::Undo);
+    assert!(!stack(&app).is_dirty());
+}
+
+#[test]
+fn a_reconnect_forgets_the_hides_and_a_restart_the_moves() {
+    use crate::connection::SimStats;
+    let mut app = app(Some(true));
+    app.insert_resource(GzIndex {
+        scenes: 1,
+        ..Default::default()
+    });
+    let cart = spawn(&mut app, "cart");
+    app.update();
+    run(&mut app, moved(cart, 1.0, 2.0, false));
+    run(&mut app, hide(cart));
+    app.world_mut().resource_mut::<Isolated>().0 = Some(Vec::new());
+    // The same world's scene again: it comes with everything shown.
+    app.world_mut().resource_mut::<GzIndex>().scenes = 2;
+    app.update();
+    assert_eq!(stack(&app).undo_label(), Some("move cart"));
+    assert_eq!(app.world().resource::<Isolated>().0, None);
+    // The sim's iterations going back: it was reset, or restarted.
+    let stats = |iterations| SimStats {
+        paused: false,
+        sim_time: 0.0,
+        real_time: 0.0,
+        real_time_factor: 1.0,
+        iterations,
+        step_size: 0.001,
+    };
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(500));
+    app.update();
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(600));
+    app.update();
+    assert!(stack(&app).is_dirty());
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(3));
+    app.update();
+    assert_eq!(*stack(&app), UndoStack::default());
+    // Another server is another world: cleared.
+    run(&mut app, moved(cart, 1.0, 2.0, false));
+    app.world_mut().resource_mut::<GzStatus>().url = "ws://other".into();
+    app.update();
+    assert_eq!(*stack(&app), UndoStack::default());
 }

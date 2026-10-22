@@ -68,6 +68,8 @@ pub struct GzIndex {
     pub order: Vec<Entity>,
     pub paths: PathAllocator,
     pub scene: Option<SceneDesc>,
+    /// Scenes received: one after the first replaced it (a reconnect).
+    pub scenes: u32,
 }
 
 /// Asset handles whose loading the snapshot waits for.
@@ -153,6 +155,7 @@ pub fn apply_scene(
             commands.entity(root).despawn_related::<Children>();
             *index = GzIndex {
                 root: Some(root),
+                scenes: index.scenes,
                 ..Default::default()
             };
             loads.0.clear();
@@ -165,6 +168,7 @@ pub fn apply_scene(
         }
         new_nodes.extend(desc.roots.iter().cloned());
         index.scene = Some(desc);
+        index.scenes += 1;
     }
 
     for update in std::mem::take(&mut inbox.scene_updates) {
