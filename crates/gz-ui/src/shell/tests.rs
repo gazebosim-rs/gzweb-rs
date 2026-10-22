@@ -538,6 +538,8 @@ fn readouts_follow_the_sim() {
     ] {
         assert!(t.contains(want), "{want} in {t}");
     }
+    // Translate needs a server that takes edits.
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
     app.world_mut()
         .write_message(UiCommand::SetTool(Tool::Translate));
     frames(&mut app, 2);
@@ -728,6 +730,8 @@ fn esc_closes_a_menu_before_it_changes_the_tool() {
     use crate::shell::top_bar::transport::StepsTrigger;
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 2);
+    // Translate needs a server that takes edits.
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
     app.world_mut()
         .write_message(UiCommand::SetTool(Tool::Translate));
     let trigger = find::<StepsTrigger>(&mut app);

@@ -683,8 +683,11 @@ pub fn apply_deletions(
 pub fn apply_poses(
     mut inbox: ResMut<GzInbox>,
     index: Res<GzIndex>,
+    held: Option<Res<crate::edit::Held>>,
+    time: Option<Res<Time<Real>>>,
     mut transforms: Query<&mut Transform>,
 ) {
+    let now = time.map_or(0.0, |t| t.elapsed_secs_f64());
     if inbox.poses.is_empty() {
         return;
     }
@@ -695,6 +698,10 @@ pub fn apply_poses(
             .filter(|_| pose.id != 0)
             .or_else(|| index.by_name.get(&pose.name).and_then(|v| v.first()));
         let Some(&entity) = entity else { continue };
+        // Being edited: the edit's pose stands until the sim has it.
+        if held.as_ref().is_some_and(|h| h.holds(entity, now)) {
+            continue;
+        }
         if let Ok(mut t) = transforms.get_mut(entity) {
             let p = Pose::from_msg(Some(&pose));
             let next = pose_transform(&p, [1.0; 3]);

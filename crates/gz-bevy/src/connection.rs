@@ -969,6 +969,7 @@ mod tests {
                 "sub,/world/w/stats,,",
                 "sub,/world/w/scene/deletion,,",
                 "throttle,/world/w/stats,na,5",
+                "req,/gazebo/worlds,gz.msgs.Empty,z\u{2}\0,",
             ]
         );
         // Deletions queue for the scene, in order; a bad one is dropped.

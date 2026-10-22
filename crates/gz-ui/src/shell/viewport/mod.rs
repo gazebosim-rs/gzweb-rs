@@ -9,6 +9,7 @@
 
 pub(crate) mod banner;
 pub(crate) mod connect_card;
+pub(crate) mod gizmo;
 pub(crate) mod hud;
 pub(crate) mod marquee;
 pub(crate) mod outline;
@@ -81,6 +82,7 @@ pub(crate) fn viewport_area(theme: &Theme, map: &InputMap) -> impl Bundle {
                     v.spawn(rail::rail(&t, &map));
                     v.spawn(hud::scale_label(&t));
                     v.spawn(marquee::marquee());
+                    v.spawn(gizmo::gizmo_readout());
                 });
             a.spawn((
                 DimOverlay,
@@ -103,6 +105,7 @@ pub(crate) fn build(app: &mut App) {
     view_cube::build(app);
     hud::build(app);
     outline::build(app);
+    gizmo::build(app);
     app.init_resource::<ViewPlacement>()
         .add_systems(
             Update,

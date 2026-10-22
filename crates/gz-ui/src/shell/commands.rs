@@ -5,6 +5,7 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use gz_bevy::edit::edits_allowed;
 use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
@@ -158,6 +159,7 @@ pub(crate) fn apply_ui_commands(
     mut layout: ResMut<ShellLayout>,
     mut tool: ResMut<Tool>,
     mut theme: ResMut<Theme>,
+    status: Option<Res<gz_bevy::connection::GzStatus>>,
 ) {
     for cmd in commands.read() {
         match *cmd {
@@ -180,6 +182,8 @@ pub(crate) fn apply_ui_commands(
             }
             UiCommand::SwapSlots => layout.swap_slots(),
             UiCommand::CloseSecondary => layout.close_secondary(),
+            // The editing tools need a server that takes edits.
+            UiCommand::SetTool(t) if t.edits() && !edits_allowed(status.as_deref()) => {}
             UiCommand::SetTool(t) => {
                 tool.set_if_neq(t);
             }
