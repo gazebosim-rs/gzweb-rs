@@ -107,7 +107,7 @@ mod frame {
         assert_eq!(world_body.len(), 1);
         assert_eq!(
             world_body[0].1,
-            InspectorContent(InspectKind::World, None, 0, None, None)
+            InspectorContent(InspectKind::World, None, 0, None, None, false)
         );
         select(&mut app, vec![model]);
         let i = inspected(&app);
@@ -118,7 +118,7 @@ mod frame {
         assert_eq!(c.len(), 1);
         assert_eq!(
             c[0].1,
-            InspectorContent(InspectKind::Model, Some(model), 0, None, None)
+            InspectorContent(InspectKind::Model, Some(model), 0, None, None, false)
         );
         select(&mut app, vec![model, link]);
         assert_eq!(inspected(&app).kind, InspectKind::Multi);

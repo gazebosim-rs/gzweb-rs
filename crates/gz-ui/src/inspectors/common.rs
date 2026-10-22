@@ -8,8 +8,11 @@ use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
+use gz_bevy::connection::GzStatus;
+use gz_bevy::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
+use gz_bevy::view::gizmo::SEND_SECS;
 use gz_bevy::view::{SelectMode, Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
 
@@ -22,7 +25,10 @@ use crate::theme::{
 };
 use crate::widgets::layout::{self, column, display, flex_spacer, group_header, property_row, row};
 use crate::widgets::text::set_text;
-use crate::widgets::{button, icon_button, rounded, ButtonVariant, IconButtonSize, Tooltip};
+use crate::widgets::{
+    button, icon_button, number_field, rounded, AxisTag, ButtonVariant, IconButtonSize,
+    NumberCommit, NumberField, Tooltip, Unit,
+};
 
 /// The type tag's type: mono 11/500 (§3.5).
 pub(crate) const TAG_TYPE: TypeStyle = TypeStyle::new(FontFamily::Mono, 11.0, 500);
@@ -328,9 +334,66 @@ pub(crate) const POSE_LABELS: [&str; 6] = ["X", "Y", "Z", "R", "P", "Yw"];
 pub(crate) struct PoseValue(pub(crate) PoseFrame, pub(crate) usize);
 
 /// The Pose group (§3.5): live, X Y Z in m and Roll Pitch Yaw in degrees
-/// (Gazebo's fixed-axis roll, pitch, yaw), in `frame`.
-pub(crate) fn pose_group(body: &mut ChildSpawner, title: &str, frame: PoseFrame) {
-    group(body, title, true, &POSE_LABELS, |i| PoseValue(frame, i));
+/// (Gazebo's fixed-axis roll, pitch, yaw), in `frame`. `editable` makes
+/// the values number fields, Position and Rotation rows of three, that
+/// move the subject (M5c).
+pub(crate) fn pose_group(
+    body: &mut ChildSpawner,
+    t: &Theme,
+    title: &str,
+    frame: PoseFrame,
+    editable: bool,
+) {
+    if !editable {
+        group(body, title, true, &POSE_LABELS, |i| PoseValue(frame, i));
+        return;
+    }
+    body.spawn(layout::group()).with_children(|g| {
+        g.spawn(live_header(title));
+        for (label, first) in [("Position", 0), ("Rotation", 3)] {
+            g.spawn(text(TypeStyle::ROW, ColorRole::Text2, label));
+            g.spawn(row(SPACE[3])).with_children(|r| {
+                for i in first..first + 3 {
+                    r.spawn((pose_field(t, label, i), PoseValue(frame, i)));
+                }
+            });
+        }
+    });
+}
+
+/// Whether the subject's pose is editable: the server takes edits and the
+/// subject is one the tools move (a top-level model without a plane).
+pub(crate) fn pose_editable(
+    status: Option<&GzStatus>,
+    subject: Entity,
+    nodes: &Query<(&GzEntity, &ChildOf, Has<HasPlane>)>,
+    roots: &Query<Entity, With<GzWorldRoot>>,
+) -> bool {
+    let (Ok((g, parent, plane)), Some(root)) = (nodes.get(subject), roots.iter().next()) else {
+        return false;
+    };
+    edits_allowed(status) && movable(g, parent, root, plane)
+}
+
+/// The number field for a pose's value `i`: millimetres and tenths of a
+/// degree, as the text shows them.
+fn pose_field(t: &Theme, label: &str, i: usize) -> impl Bundle {
+    let tag = [
+        AxisTag::X,
+        AxisTag::Y,
+        AxisTag::Z,
+        AxisTag::Roll,
+        AxisTag::Pitch,
+        AxisTag::Yaw,
+    ][i]
+        .clone();
+    let field = if i < 3 {
+        NumberField::new(0.0).unit(Unit::Length).precision(3, 0.01)
+    } else {
+        NumberField::new(0.0).unit(Unit::Angle).precision(1, 0.5)
+    };
+    let name = format!("{label} {}", tag.name());
+    number_field(t, tag, field.named(name), false)
 }
 
 /// The subject's pose in Gazebo's frame: its own transform for the
@@ -349,6 +412,24 @@ pub(crate) fn gazebo_pose(
     }
 }
 
+/// The six values of a pose as numbers: metres and degrees.
+pub(crate) fn pose_numbers(pose: &Transform) -> [f64; 6] {
+    let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::ZYX);
+    let t = pose.translation.as_dvec3();
+    let deg = |a: f32| f64::from(a).to_degrees();
+    [t.x, t.y, t.z, deg(roll), deg(pitch), deg(yaw)]
+}
+
+/// The pose with the six values `v` (metres and degrees) and `scale`.
+pub(crate) fn pose_from_numbers(v: [f64; 6], scale: Vec3) -> Transform {
+    let rad = |d: f64| d.to_radians() as f32;
+    Transform {
+        translation: Vec3::new(v[0] as f32, v[1] as f32, v[2] as f32),
+        rotation: Quat::from_euler(EulerRot::ZYX, rad(v[5]), rad(v[4]), rad(v[3])),
+        scale,
+    }
+}
+
 /// The six values of a pose: metres and degrees.
 pub(crate) fn pose_texts(pose: &Transform) -> [String; 6] {
     let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::ZYX);
@@ -364,13 +445,15 @@ pub(crate) fn pose_texts(pose: &Transform) -> [String; 6] {
 }
 
 /// The pose groups follow the subject as the sim moves it (§3.5: live
-/// values stream while unfocused; these are read-only until M5c).
+/// values stream while unfocused; a focused field keeps its text, D-39).
 pub(crate) fn pose_values(
     inspected: Res<Inspected>,
     subjects: Query<(Ref<Transform>, Ref<GlobalTransform>)>,
     roots: Query<&GlobalTransform, With<GzWorldRoot>>,
     added: Query<(), Added<PoseValue>>,
+    edit: Res<PoseEdit>,
     mut values: Query<(&PoseValue, &mut Text)>,
+    mut fields: Query<(&PoseValue, &mut NumberField)>,
 ) {
     let Some((local, global)) = inspected.entity.and_then(|e| subjects.get(e).ok()) else {
         return;
@@ -387,6 +470,110 @@ pub(crate) fn pose_values(
         let texts =
             slot.get_or_insert_with(|| pose_texts(&gazebo_pose(value.0, &local, &global, root)));
         set_text(&mut text, &texts[value.1]);
+    }
+    // Fields are only on top-level subjects, whose pose in the world is
+    // their own transform: this frame's, where the propagated one lags a
+    // frame behind an edit and would pull the field back.
+    let numbers = edit.numbers(inspected.entity, &local);
+    for (value, mut field) in &mut fields {
+        let v = numbers[value.1];
+        if field.value != v {
+            field.value = v;
+        }
+    }
+}
+
+/// The pose fields' edit under way.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub(crate) struct PoseEdit {
+    /// The six numbers the fields last set, with the subject and the pose
+    /// they made. They stand while the subject is still at that pose, so a
+    /// scrub of pitch past ±90° carries on rather than turning into the
+    /// same rotation's other angles (and back) at every step.
+    set: Option<(Entity, Transform, [f64; 6])>,
+    /// When the last scrub step went out, and a later one not yet sent.
+    sent_at: Option<f64>,
+    pending: Option<SetPose>,
+}
+
+impl PoseEdit {
+    /// The subject's pose as six numbers: the fields' own while it is
+    /// where they put it.
+    fn numbers(&self, subject: Option<Entity>, pose: &Transform) -> [f64; 6] {
+        match self.set {
+            Some((e, set, v)) if Some(e) == subject && set == *pose => v,
+            _ => pose_numbers(pose),
+        }
+    }
+}
+
+/// A pose field's commit moves the subject (a top-level model, so its pose
+/// in the world is its pose in its parent's frame): at once
+/// here, and in the sim through `set_pose`, at most every
+/// [`SEND_SECS`] while the tag is scrubbed (a step held back goes out
+/// when that time is up, [`send_pending_pose`]). Its poses from the sim
+/// are held meanwhile, as for the gizmo.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn on_pose_commit(
+    ev: On<NumberCommit>,
+    values: Query<&PoseValue>,
+    inspected: Res<Inspected>,
+    status: Option<Res<GzStatus>>,
+    time: Option<Res<Time<Real>>>,
+    nodes: Query<(&GzEntity, &ChildOf, Has<HasPlane>)>,
+    roots: Query<Entity, With<GzWorldRoot>>,
+    mut subjects: Query<&mut Transform, With<GzEntity>>,
+    mut held: Option<ResMut<Held>>,
+    mut edit: ResMut<PoseEdit>,
+    mut edits: MessageWriter<SetPose>,
+) {
+    let (Ok(value), Some(entity)) = (values.get(ev.entity), inspected.entity) else {
+        return;
+    };
+    if !pose_editable(status.as_deref(), entity, &nodes, &roots) {
+        return;
+    }
+    let Ok(mut local) = subjects.get_mut(entity) else {
+        return;
+    };
+    let mut v = edit.numbers(Some(entity), &local);
+    v[value.1] = ev.value;
+    let pose = pose_from_numbers(v, local.scale);
+    *local = pose;
+    edit.set = Some((entity, pose, v));
+    let now = time.map_or(0.0, |t| t.elapsed_secs_f64());
+    // Each scrub step holds again for a moment, so a scrub cut short (the
+    // body rebuilt under it) can't hold the subject for good.
+    if let Some(held) = held.as_deref_mut() {
+        held.release(entity, now);
+    }
+    let set_pose = SetPose { entity, pose };
+    if ev.is_final || edit.sent_at.is_none_or(|t| now - t >= SEND_SECS) {
+        edits.write(set_pose);
+        edit.sent_at = (!ev.is_final).then_some(now);
+        edit.pending = None;
+    } else {
+        edit.pending = Some(set_pose);
+    }
+}
+
+/// Sends the scrub step held back once [`SEND_SECS`] is up, so a scrub
+/// that stops there doesn't spring back to the step sent before it when
+/// the hold runs out.
+pub(crate) fn send_pending_pose(
+    time: Res<Time<Real>>,
+    mut edit: ResMut<PoseEdit>,
+    mut held: ResMut<Held>,
+    mut edits: MessageWriter<SetPose>,
+) {
+    let now = time.elapsed_secs_f64();
+    if edit.pending.is_none() || edit.sent_at.is_some_and(|t| now - t < SEND_SECS) {
+        return;
+    }
+    if let Some(set_pose) = edit.pending.take() {
+        edits.write(set_pose);
+        held.release(set_pose.entity, now);
+        edit.sent_at = Some(now);
     }
 }
 

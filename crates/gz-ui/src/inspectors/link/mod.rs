@@ -100,7 +100,7 @@ fn build_link(
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::ShowCollision);
             });
-            pose_group(b, "Pose (in model)", PoseFrame::Parent);
+            pose_group(b, &t, "Pose (in model)", PoseFrame::Parent, false);
             let inertial = extras.as_ref().and_then(|e| e.inertial);
             let n = |v: Option<f64>| v.map_or("—".into(), |v| format::number(v, 4));
             definition_group(

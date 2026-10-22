@@ -68,7 +68,8 @@ fn build_light(
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::Hide);
             });
-            pose_group(b, "Pose", PoseFrame::Parent);
+            // Read-only: gz-sim's set_pose doesn't move lights (D-87).
+            pose_group(b, &t, "Pose", PoseFrame::Parent, false);
             let Some(d) = desc else {
                 return;
             };

@@ -33,7 +33,12 @@
 //!   read, which crashes it (on Jetty, the whole simulation);
 //! - `throttle` with rate 0 divides by zero.
 //!
-//! [`Transport`] refuses all of these with [`SendError::Unsendable`]. The
+//! [`Transport`] refuses all of these with [`SendError::Unsendable`], except
+//! for a server that takes binary requests (patched, gazebosim/gz-sim#4093:
+//! it keeps the frame's length and a `req`'s payload after its third comma
+//! whole). [`Transport::probe_binary_requests`] finds out, and
+//! [`Transport::set_binary_requests`] then lets `req` payloads hold any
+//! bytes (DECISIONS.md D-76). The
 //! server also has no `adv` or `pub_in` handler, so [`Transport::advertise`]
 //! and [`Transport::publish`] (gzweb's API) are ignored by every released
 //! server.
@@ -153,6 +158,26 @@ pub struct Transport {
     subscriptions: HashSet<String>,
     outgoing: VecDeque<Vec<u8>>,
     events: VecDeque<Event>,
+    /// The server keeps binary `req` payloads whole.
+    binary_requests: bool,
+}
+
+/// The service the binary-request probe calls: gz-sim's world list, which
+/// takes a `gz.msgs.Empty` and has no effect.
+pub const BINARY_PROBE_SERVICE: &str = "/gazebo/worlds";
+
+/// An Empty with an unknown field 15 of two bytes, a zero and a comma: a
+/// server that cuts the frame at the zero byte passes on a truncated field,
+/// which fails to parse, and replies with nothing.
+const BINARY_PROBE: &[u8] = &[0x7a, 0x02, 0x00, b','];
+
+/// Whether a probe's reply says the server keeps binary requests whole:
+/// the world list, which a mangled request doesn't get. Any other type
+/// (`gz.msgs.StringMsg` "service_not_found", which also decodes as a
+/// one-entry list) is a no.
+pub fn probe_reply_supports_binary(msg_type: &str, payload: &[u8]) -> bool {
+    msg_type == "gz.msgs.StringMsg_V"
+        && msgs::StringMsgV::decode(payload).is_ok_and(|v| !v.data.is_empty())
 }
 
 impl Transport {
@@ -166,7 +191,31 @@ impl Transport {
             subscriptions: HashSet::new(),
             outgoing: VecDeque::new(),
             events: VecDeque::new(),
+            binary_requests: false,
         }
+    }
+
+    /// Lets `req` payloads hold any bytes (the server keeps them whole), or
+    /// not. Off again with every new connection.
+    pub fn set_binary_requests(&mut self, on: bool) {
+        self.binary_requests = on;
+    }
+
+    pub fn binary_requests(&self) -> bool {
+        self.binary_requests
+    }
+
+    /// Asks whether the server keeps binary requests whole: a request to
+    /// [`BINARY_PROBE_SERVICE`] whose payload a stock server mangles; see
+    /// [`probe_reply_supports_binary`].
+    pub fn probe_binary_requests(&mut self) -> Result<(), SendError> {
+        self.queue(
+            "req",
+            BINARY_PROBE_SERVICE,
+            "gz.msgs.Empty",
+            BINARY_PROBE,
+            true,
+        )
     }
 
     pub fn status(&self) -> &Status {
@@ -343,6 +392,19 @@ impl Transport {
         msg_type: &str,
         payload: &[u8],
     ) -> Result<(), SendError> {
+        let binary = op == "req" && self.binary_requests;
+        self.queue(op, topic, msg_type, payload, binary)
+    }
+
+    /// Queues a frame; `binary`: a `req` whose payload may hold any bytes.
+    fn queue(
+        &mut self,
+        op: &str,
+        topic: &str,
+        msg_type: &str,
+        payload: &[u8],
+        binary: bool,
+    ) -> Result<(), SendError> {
         let handshake = matches!(op, "auth" | "protos" | "topics-types" | "worlds");
         match self.status {
             Status::Error(_) => return Err(SendError::Failed),
@@ -351,13 +413,16 @@ impl Transport {
             }
             _ => {}
         }
-        check_frame(op, topic, msg_type, payload)?;
+        check_frame(op, topic, msg_type, payload, binary)?;
         self.outgoing
             .push_back(frame::build(op, topic, msg_type, payload));
         Ok(())
     }
 
     fn set_status(&mut self, status: Status) {
+        if !matches!(status, Status::Ready) {
+            self.binary_requests = false;
+        }
         if self.status != status {
             self.status = status.clone();
             self.events.push_back(Event::Status(status));
@@ -453,17 +518,25 @@ impl Transport {
     }
 }
 
-/// Refuses frames the server would drop or crash on (see the module docs).
-fn check_frame(op: &str, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
+/// Refuses frames the server would drop or crash on (see the module docs);
+/// `binary`: a `req` to a server that keeps its payload whole, any bytes
+/// and empty included.
+fn check_frame(
+    op: &str,
+    topic: &str,
+    msg_type: &str,
+    payload: &[u8],
+    binary: bool,
+) -> Result<(), SendError> {
     let bad = |b: &[u8]| b.iter().any(|&c| c == 0 || c == b',');
-    if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || bad(payload) {
+    if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || (!binary && bad(payload)) {
         return Err(SendError::Unsendable("a field contains ',' or 0x00"));
     }
     let needs_topic = matches!(op, "sub" | "image" | "unsub" | "throttle" | "req" | "scene");
     if needs_topic && topic.is_empty() {
         return Err(SendError::Unsendable("empty topic or service"));
     }
-    if op == "req" && (msg_type.is_empty() || payload.is_empty()) {
+    if op == "req" && (msg_type.is_empty() || (!binary && payload.is_empty())) {
         return Err(SendError::Unsendable("empty request type or payload"));
     }
     Ok(())
@@ -667,6 +740,64 @@ mod tests {
         // An empty world name would make `scene,,,`: no scene request.
         t.on_message(&worlds_frame(&[""]));
         assert!(drain_out(&mut t).is_empty());
+    }
+
+    #[test]
+    fn binary_requests_go_whole_once_the_server_takes_them() {
+        let mut t = connected();
+        // The probe goes out whatever the switch says, its zero and comma
+        // intact.
+        t.probe_binary_requests().unwrap();
+        assert_eq!(
+            std::iter::from_fn(|| t.poll_outgoing()).collect::<Vec<_>>(),
+            [build(
+                "req",
+                BINARY_PROBE_SERVICE,
+                "gz.msgs.Empty",
+                BINARY_PROBE
+            )]
+        );
+        let svc = "/world/w/set_pose";
+        let pose = b"\x12\x00,\x01";
+        let field = Err(SendError::Unsendable("a field contains ',' or 0x00"));
+        assert_eq!(t.request(svc, "gz.msgs.Pose", pose), field);
+        t.set_binary_requests(true);
+        assert!(t.binary_requests());
+        t.request(svc, "gz.msgs.Pose", pose).unwrap();
+        t.request(svc, "gz.msgs.Empty", b"").unwrap();
+        assert_eq!(
+            std::iter::from_fn(|| t.poll_outgoing()).collect::<Vec<_>>(),
+            [
+                build("req", svc, "gz.msgs.Pose", pose),
+                build("req", svc, "gz.msgs.Empty", b""),
+            ]
+        );
+        // Still refused: a comma in the service, and other ops' fields.
+        assert_eq!(t.request("/a,b", "gz.msgs.Pose", pose), field);
+        assert_eq!(t.subscribe("/a\0"), field);
+        // A new connection starts without.
+        t.on_open();
+        assert!(!t.binary_requests());
+        // The reply: the world list from a server that kept the probe whole,
+        // nothing from one that cut it.
+        let worlds = msgs::StringMsgV {
+            data: vec!["w".into()],
+            ..Default::default()
+        };
+        let v = "gz.msgs.StringMsg_V";
+        assert!(probe_reply_supports_binary(v, &worlds.encode_to_vec()));
+        assert!(!probe_reply_supports_binary(v, b""));
+        assert!(!probe_reply_supports_binary(v, &[0xff, 0xff]));
+        // A server that can't find the service yet says so in a StringMsg,
+        // which also parses as a list of one.
+        let not_found = msgs::StringMsg {
+            data: "service_not_found".into(),
+            ..Default::default()
+        };
+        assert!(!probe_reply_supports_binary(
+            "gz.msgs.StringMsg",
+            &not_found.encode_to_vec()
+        ));
     }
 
     #[test]

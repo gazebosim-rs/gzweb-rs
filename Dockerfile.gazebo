@@ -8,6 +8,15 @@
 # gz-sim-websocket-server-system. docker/websocket.config adds it to every
 # world through GZ_SIM_SERVER_CONFIG_PATH, so worlds don't need editing.
 #
+# The websocket server is rebuilt with docker/websocket-server/
+# binary-requests.patch (gazebosim/gz-sim#4093): the stock server ends
+# every frame at its first zero byte and splits it on every comma, so a
+# binary request (a pose with a round value) arrives corrupted, and the
+# full UI's editing needs it (DECISIONS.md D-76). The builder stage builds
+# that one system from the gz-sim tag matching the installed packages and
+# the image replaces the stock library with it. Drop the stage once a Jetty
+# release has the fix.
+#
 # Reproducibility: the base image is pinned by digest (ubuntu:24.04 as of
 # 2026-08-17; bump it deliberately). The Gazebo packages are not pinned:
 # packages.osrfoundation.org drops old versions when it publishes new ones,
@@ -15,6 +24,25 @@
 # got instead:
 #   docker run --rm --entrypoint sh gz-websocket-jetty -c '"$GZ_SIM_SERVER" --version'
 # prints the gz-sim version, and parity/record.sh writes it to the manifest.
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 AS websocket
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates wget gnupg lsb-release \
+ && wget -q https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" > /etc/apt/sources.list.d/gazebo-stable.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends cmake g++ git make pkg-config \
+      libgz-sim10-dev libgz-fuel-tools11-dev libwebsockets-dev \
+ && rm -rf /var/lib/apt/lists/*
+COPY docker/websocket-server /build
+RUN version=$(dpkg-query -W -f='${Version}' libgz-sim10 | cut -d- -f1) \
+ && git clone -q --depth 1 --branch "gz-sim10_${version}" https://github.com/gazebosim/gz-sim /src \
+ && git -C /src apply /build/binary-requests.patch \
+ && cmake -S /build -B /out -DGZ_SIM_SOURCE=/src -DCMAKE_BUILD_TYPE=Release \
+ && cmake --build /out -j"$(nproc)" \
+ && echo "$version" > /out/gz-sim-version
+
 FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
 
 LABEL maintainer="Gazebo-Web/Rs"
@@ -38,6 +66,17 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends gz-sim10-server \
  && rm -rf /var/lib/apt/lists/*
+
+# The patched websocket server, over every copy of the stock one (the
+# plugins directory has its own; gz-sim loads that), built for the same
+# gz-sim version: the build fails if the packages moved on in between.
+COPY --from=websocket /out/libgz-sim-websocket-server-system.so /out/gz-sim-version /tmp/websocket/
+RUN version=$(dpkg-query -W -f='${Version}' libgz-sim10 | cut -d- -f1) \
+ && test "$version" = "$(cat /tmp/websocket/gz-sim-version)" \
+ && copies=$(find /usr/lib -type f -name "libgz-sim-websocket-server-system.so.${version}") \
+ && test -n "$copies" \
+ && for f in $copies; do install -m 644 /tmp/websocket/libgz-sim-websocket-server-system.so "$f"; done \
+ && rm -rf /tmp/websocket
 
 # Run unprivileged: the websocket server has no authentication by default.
 # Fuel models are cached in the user's home, /home/gazebo/.gz/fuel (made

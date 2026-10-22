@@ -1323,3 +1323,45 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** one for each (the five UI ones checked to fail without the
   fix), plus reconnect and world change for joint states; workspace
   659 → 667 passing; coverage 98.4% lines. check.sh passes.
+
+## 2026-10-21: M5c transform tools (D-83 to D-88)
+
+- **Server:** `Dockerfile.gazebo` builds the websocket server system with
+  `docker/websocket-server/binary-requests.patch` (gazebosim/gz-sim#4093)
+  and installs it over every copy; the connection probes `/gazebo/worlds`
+  with a `0x00`/`,` payload on Ready and sets `GzStatus::edits`.
+- **Edits:** `gz_bevy::edit` (`SetPose` to `set_pose`, `Held`, `movable`);
+  `apply_poses` skips held entities.
+- **Gizmo:** `gz_bevy::view::gizmo`, Translate (arrows, planes) and Rotate
+  (rings), screen-space picking, X/Y/Z, Shift snap, Esc, readout; sends at
+  10 Hz and on release. The UI gates the tools on `edits` and styles the
+  gizmo and readout.
+- **Inspector:** a movable model's pose is number fields when
+  the server takes edits; commits send `SetPose`; the body rebuilds when
+  the probe's answer changes.
+- **Left:** the joint command slider (no client publish, D-88).
+- **Live check** (`--release`, Jetty `diff_drive`): a scratch client sent
+  `set_pose` with round values (zero bytes) to the patched server on 9011,
+  got `true`, and `pose/info` read 2.000 0.500 0.325; the stock server on
+  9010 answered the probe empty. `--ui full --select vehicle_blue`: on 9011
+  the pose is fields showing that pose and Translate and Rotate are on; on
+  9010 the pose is text and the tools are disabled.
+- **Tests:** probe and binary requests, `set_pose` encoding, holds, gizmo
+  picking and drag math, arrow and ring drags through the plugin, snap and
+  Esc, tool gating, readout, pose fields and commits; workspace 667 → 687
+  passing (on M5b's fixes); coverage 98.3% lines. check.sh passes.
+- **Review fixes:** lights and models with a plane aren't movable (gz-sim
+  moves neither); the probe needs a `StringMsg_V`; a drag's Esc doesn't
+  also switch to Navigate and the tool keys wait for it; ⌘/Ctrl+Z isn't Z;
+  an unmoved release sends nothing; a scrub's release commits its own value
+  and each step holds only a moment; pose fields and the gizmo read this
+  frame's transform; a reconnect still asking keeps the tool; the gizmo's
+  state changes only when it does. Tests for each.
+- **PR review fixes:** an arrow pointing at the camera or a ring seen edge
+  on isn't offered, and a drag freezes while its axis is end on (it threw
+  the model metres); a ring turns the selection about the gizmo's centre;
+  holds last until the server answers each `set_pose` (3 s at most), then
+  0.5 s; a scrub's held-back step goes out when its time is up; the fields'
+  six numbers stand while the pose is theirs (pitch past ±90° flipped); a
+  scrub that changed nothing commits nothing; a plane found late turns the
+  pose back to text and blocks commits. 687 → 690 tests.

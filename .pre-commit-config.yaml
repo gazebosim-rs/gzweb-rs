@@ -21,10 +21,11 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Patches keep their context lines' whitespace byte for byte.
       - id: trailing-whitespace
-        exclude: ^crates/gz-ui/assets/fonts/
+        exclude: ^crates/gz-ui/assets/fonts/|\.patch$
       - id: end-of-file-fixer
-        exclude: ^crates/gz-ui/assets/fonts/
+        exclude: ^crates/gz-ui/assets/fonts/|\.patch$
       - id: mixed-line-ending
         args: [--fix=lf]
         exclude: ^crates/gz-ui/assets/fonts/

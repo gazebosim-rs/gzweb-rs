@@ -612,3 +612,94 @@ fn esc_during_a_marquee_leaves_the_tool_alone() {
     frames(&mut app, 1);
     assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
 }
+
+#[test]
+fn the_editing_tools_need_a_server_that_takes_edits() {
+    use crate::shell::top_bar::tools::ToolChoice;
+    use crate::shell::Tool;
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::view::gizmo::{GizmoState, TransformTool};
+    let mut app = shell_app((1440, 900), 1.0);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    let button = |app: &mut App, tool| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &ToolChoice)>()
+            .iter(world)
+            .find(|(_, c)| c.0 == tool)
+            .unwrap()
+            .0
+    };
+    let disabled = |app: &mut App, tool| {
+        let b = button(app, tool);
+        app.world().get::<InteractionDisabled>(b).is_some()
+    };
+    // Unknown or no: off, and T is refused.
+    assert!(disabled(&mut app, Tool::Translate) && disabled(&mut app, Tool::Rotate));
+    assert!(!disabled(&mut app, Tool::BoxSelect));
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Translate));
+    frames(&mut app, 2);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    // Yes: on, and the views' gizmo follows the tool.
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
+    frames(&mut app, 2);
+    assert!(!disabled(&mut app, Tool::Translate));
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Rotate));
+    frames(&mut app, 2);
+    assert_eq!(
+        *app.world().resource::<TransformTool>(),
+        TransformTool::Rotate
+    );
+    // Asking again (a reconnect): the tool waits, its button off.
+    app.world_mut().resource_mut::<GzStatus>().edits = None;
+    frames(&mut app, 2);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Rotate);
+    assert!(disabled(&mut app, Tool::Rotate));
+    // A drag's Esc is the gizmo's alone: the tool stays (§13, one step).
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
+    app.world_mut().resource_mut::<GizmoState>().escaped = true;
+    chord(&mut app, &[KeyCode::Escape]);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Rotate);
+    // The next Esc is Navigate's.
+    app.world_mut().resource_mut::<GizmoState>().escaped = false;
+    chord(&mut app, &[KeyCode::Escape]);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    app.world_mut()
+        .write_message(UiCommand::SetTool(Tool::Rotate));
+    frames(&mut app, 2);
+    // A stock server: back to Navigate.
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
+    frames(&mut app, 2);
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    assert_eq!(
+        *app.world().resource::<TransformTool>(),
+        TransformTool::None
+    );
+    assert!(disabled(&mut app, Tool::Rotate));
+}
+
+#[test]
+fn the_snapping_readout_follows_the_pointer() {
+    use super::gizmo::{GizmoReadout, READOUT_OFFSET};
+    use gz_bevy::view::gizmo::GizmoState;
+    let mut app = shell_app((1440, 900), 1.0);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    let r = find::<GizmoReadout>(&mut app);
+    assert!(!displayed(&app, r));
+    app.world_mut().resource_mut::<GizmoState>().readout =
+        Some((Vec2::new(200.0, 100.0), "0.50 m".into()));
+    frames(&mut app, 2);
+    assert!(displayed(&app, r));
+    assert!(all_text(&mut app).contains("0.50 m"));
+    let (pos, _) = rect(&app, r);
+    let view = find::<ViewNode>(&mut app);
+    let (origin, _) = rect(&app, view);
+    assert_eq!(pos - origin, Vec2::new(200.0, 100.0) + READOUT_OFFSET);
+    app.world_mut().resource_mut::<GizmoState>().readout = None;
+    frames(&mut app, 2);
+    assert!(!displayed(&app, r));
+}

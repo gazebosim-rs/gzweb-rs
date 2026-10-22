@@ -278,12 +278,12 @@ impl Plugin for ViewerControls {
 /// The view under the pointer: its camera entity and state, the cursor in
 /// its viewport, the viewport's size and the window's scale factor.
 #[derive(Clone, Copy)]
-struct Target<'a> {
-    view: Entity,
-    camera: &'a ViewCamera,
-    cursor: Option<Vec2>,
-    size: Vec2,
-    scale: f32,
+pub(super) struct Target<'a> {
+    pub(super) view: Entity,
+    pub(super) camera: &'a ViewCamera,
+    pub(super) cursor: Option<Vec2>,
+    pub(super) size: Vec2,
+    pub(super) scale: f32,
 }
 
 /// The views the controls drive.
@@ -298,7 +298,7 @@ pub type Views<'w, 's> = Query<
     ),
 >;
 
-fn target<'a>(windows: &Query<&Window>, views: &'a Views) -> Option<Target<'a>> {
+pub(super) fn target<'a>(windows: &Query<&Window>, views: &'a Views) -> Option<Target<'a>> {
     let window = windows.single().ok()?;
     let (view, camera, cam, placed) = views.single().ok()?;
     let rect = view_rect(cam, placed);
@@ -468,6 +468,7 @@ pub fn mouse_input(
     mut marquee: ResMut<Marquee>,
     box_tool: Res<BoxSelectTool>,
     selecting: Res<SelectInViews>,
+    gizmo: Option<Res<super::gizmo::GizmoState>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
     let Some(target) = target(&windows, &views) else {
@@ -509,7 +510,9 @@ pub fn mouse_input(
             }
         }
     }
-    if state.drag.is_none() && routing.pointer {
+    // A press on a gizmo handle is the gizmo's drag.
+    let gizmo_owns = gizmo.as_ref().is_some_and(|g| g.captures());
+    if state.drag.is_none() && routing.pointer && !gizmo_owns {
         let pressed = [MouseButton::Left, MouseButton::Right, MouseButton::Middle]
             .into_iter()
             .find(|b| buttons.just_pressed(*b));

@@ -4,7 +4,11 @@
 
 use bevy::prelude::*;
 use bevy::ui::Checked;
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Button as Headless, ValueChange};
+use gz_bevy::connection::GzStatus;
+use gz_bevy::edit::edits_allowed;
+use gz_bevy::view::gizmo::TransformTool;
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::BoxSelectTool;
 
@@ -14,7 +18,8 @@ use crate::theme::Theme;
 use crate::widgets::button::{text_button_parts, TextButtonProps};
 use crate::widgets::{bar_tool_button, button_group, Tooltip};
 
-/// The top-bar tools (spec §6.1). Only the selection shows until M5.
+/// The top-bar tools (spec §6.1). Translate and Rotate edit, so they need
+/// a server that takes edits (DECISIONS.md D-76).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Reflect)]
 pub enum Tool {
     #[default]
@@ -25,6 +30,11 @@ pub enum Tool {
 }
 
 impl Tool {
+    /// The tool changes the world (its gizmo sends poses).
+    pub fn edits(self) -> bool {
+        matches!(self, Tool::Translate | Tool::Rotate)
+    }
+
     pub const ALL: [Tool; 4] = [
         Tool::Navigate,
         Tool::BoxSelect,
@@ -136,5 +146,61 @@ pub(crate) fn tool_states(
 pub(crate) fn box_select_tool(tool: Res<Tool>, box_tool: Option<ResMut<BoxSelectTool>>) {
     if let (true, Some(mut b)) = (tool.is_changed(), box_tool) {
         b.set_if_neq(BoxSelectTool(*tool == Tool::BoxSelect));
+    }
+}
+
+/// Why the editing tools are off on a server that doesn't take edits.
+pub(crate) const NO_EDITS: &str =
+    "This server can't take edits: it needs the websocket server fix (gz-sim pull request 4093)";
+
+/// Translate and Rotate follow whether the server takes edits: off with
+/// why while it doesn't (and back to Navigate if one of them was on).
+pub(crate) fn edit_tools(
+    status: Option<Res<GzStatus>>,
+    map: Option<Res<InputMap>>,
+    mut tool: ResMut<Tool>,
+    buttons: Query<(Entity, &ToolChoice, Has<InteractionDisabled>)>,
+    added: Query<(), Added<ToolChoice>>,
+    mut commands: Commands,
+) {
+    let changed = status.as_ref().is_some_and(|s| s.is_changed());
+    if !changed && added.is_empty() {
+        return;
+    }
+    let allowed = edits_allowed(status.as_deref());
+    // Only a server that can't take edits ends the tool: while a reconnect
+    // asks again the tool waits (its button is off).
+    let refused = status.as_ref().is_none_or(|s| s.edits == Some(false));
+    if tool.edits() && refused {
+        *tool = Tool::Navigate;
+    }
+    let map = map.map_or_else(InputMap::builtin, |m| m.clone());
+    for (e, choice, disabled) in &buttons {
+        let off = choice.0.edits() && !allowed;
+        if off == disabled {
+            continue;
+        }
+        let tip = Tooltip::new(choice.0.name()).binding(&map, choice.0.binding());
+        if off {
+            commands
+                .entity(e)
+                .insert((InteractionDisabled, tip.detail(NO_EDITS)));
+        } else {
+            commands
+                .entity(e)
+                .remove::<InteractionDisabled>()
+                .insert(tip);
+        }
+    }
+}
+
+/// The views' gizmo follows the tool.
+pub(crate) fn transform_tool(tool: Res<Tool>, gizmo: Option<ResMut<TransformTool>>) {
+    if let (true, Some(mut g)) = (tool.is_changed(), gizmo) {
+        g.set_if_neq(match *tool {
+            Tool::Translate => TransformTool::Translate,
+            Tool::Rotate => TransformTool::Rotate,
+            _ => TransformTool::None,
+        });
     }
 }

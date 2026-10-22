@@ -2676,3 +2676,235 @@ fn follow_with_a_joint_or_sensor_selected_follows_its_owner() {
     r.op(ViewOp::Follow { at: None });
     assert_eq!(r.view().mode, CameraMode::Follow(a));
 }
+
+// ------------------------------------------------------- transform gizmo (M5c)
+
+/// `two_models` with the near model a Gazebo model the tools move, edits
+/// allowed, and the gizmo's input in front of the views' controls.
+fn gizmo_rig(tool: gizmo::TransformTool) -> (Rig, Entity) {
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    {
+        let mut status = r.app.world_mut().resource_mut::<GzStatus>();
+        status.status = gz_core::transport::Status::Ready;
+        status.world = Some("w".into());
+        status.edits = Some(true);
+    }
+    r.app
+        .insert_resource(tool)
+        .init_resource::<gizmo::Snap>()
+        .init_resource::<gizmo::GizmoState>()
+        .add_plugins(crate::edit::EditPlugin)
+        .add_systems(Update, gizmo::gizmo_input.before(controls::mouse_input));
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
+    r.app.update();
+    (r, a)
+}
+
+fn set_poses(r: &mut Rig) -> Vec<GzCommand> {
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .drain()
+        .filter(
+            |c| matches!(c, GzCommand::Request { service, .. } if service.ends_with("set_pose")),
+        )
+        .collect()
+}
+
+/// The screen point `share` of the way along Gazebo axis `i`'s arrow.
+fn arrow_point(r: &Rig, i: usize, share: f32) -> Vec2 {
+    let mut axis = Vec3::ZERO;
+    axis[i] = 1.0;
+    let world = gz_to_bevy() * axis;
+    let len = gizmo::GIZMO_PX
+        * gizmo::metres_per_px(
+            &r.transform(),
+            &r.projection(),
+            Vec2::new(800.0, 600.0),
+            Vec3::ZERO,
+        );
+    r.screen(world * len * share)
+}
+
+#[test]
+fn dragging_an_arrow_moves_the_model_along_it_and_sends_its_pose() {
+    let (mut r, a) = gizmo_rig(gizmo::TransformTool::Translate);
+    let before = r.transform();
+    let from = arrow_point(&r, 0, 0.8);
+    let to = arrow_point(&r, 0, 1.6);
+    r.cursor(Some(from));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    assert!(r.app.world().resource::<gizmo::GizmoState>().captures());
+    assert!(r.app.world().resource::<crate::edit::Held>().holds(a, 0.0));
+    r.cursor(Some(to));
+    r.app.update();
+    let moved = r.app.world().get::<Transform>(a).unwrap().translation;
+    // Gazebo +X, about 0.8 arrow lengths; nothing else.
+    assert!(
+        moved.x > 0.1 && moved.y.abs() < 1e-3 && moved.z.abs() < 1e-3,
+        "{moved}"
+    );
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    r.app.update();
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    let sent = set_poses(&mut r);
+    assert!(!sent.is_empty(), "the edit went out");
+    // The camera didn't orbit, and the release selected nothing new.
+    assert_eq!(r.transform(), before);
+    assert_eq!(selected(&r), [a]);
+}
+
+#[test]
+fn shift_snaps_and_esc_puts_it_back() {
+    let (mut r, a) = gizmo_rig(gizmo::TransformTool::Translate);
+    let start = *r.app.world().get::<Transform>(a).unwrap();
+    r.cursor(Some(arrow_point(&r, 0, 0.8)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    r.cursor(Some(arrow_point(&r, 0, 1.3)));
+    r.app.update();
+    let x = r.app.world().get::<Transform>(a).unwrap().translation.x;
+    assert!(
+        (x / 0.25 - (x / 0.25).round()).abs() < 1e-4 && x > 0.0,
+        "{x}"
+    );
+    assert!(r
+        .app
+        .world()
+        .resource::<gizmo::GizmoState>()
+        .readout
+        .is_some());
+    r.key(KeyCode::Escape, ButtonState::Pressed);
+    r.app.update();
+    assert_eq!(*r.app.world().get::<Transform>(a).unwrap(), start);
+    let state = r.app.world().resource::<gizmo::GizmoState>();
+    // The Esc was the gizmo's (the shell's Esc → Navigate waits).
+    assert!(!state.captures() && state.takes_escape());
+    r.key(KeyCode::Escape, ButtonState::Released);
+    r.app.update();
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().takes_escape());
+}
+
+#[test]
+fn a_press_released_in_place_sends_nothing_and_ctrl_z_is_not_z() {
+    let (mut r, _) = gizmo_rig(gizmo::TransformTool::Translate);
+    r.cursor(Some(arrow_point(&r, 0, 0.8)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.key(KeyCode::ControlLeft, ButtonState::Pressed);
+    r.key(KeyCode::KeyZ, ButtonState::Pressed);
+    r.app.update();
+    let handle = r
+        .app
+        .world()
+        .resource::<gizmo::GizmoState>()
+        .drag
+        .as_ref()
+        .unwrap()
+        .handle;
+    assert_eq!(handle, gizmo::Handle::Axis(0));
+    r.key(KeyCode::ControlLeft, ButtonState::Released);
+    r.key(KeyCode::KeyZ, ButtonState::Released);
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    // A moving model isn't snapped back to where the press found it.
+    assert!(set_poses(&mut r).is_empty());
+}
+
+#[test]
+fn a_press_away_from_the_gizmo_is_the_views_and_no_edits_means_no_gizmo() {
+    let (mut r, a) = gizmo_rig(gizmo::TransformTool::Translate);
+    let before = r.transform();
+    r.drag(
+        MouseButton::Left,
+        Vec2::new(700.0, 100.0),
+        &[Vec2::new(740.0, 100.0)],
+    );
+    assert_ne!(r.transform(), before, "it orbited");
+    // A server that mangles edits: the arrow is just the scene.
+    r.app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
+    r.cursor(Some(arrow_point(&r, 0, 0.8)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    let _ = a;
+}
+
+#[test]
+fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    {
+        let mut status = r.app.world_mut().resource_mut::<GzStatus>();
+        status.status = gz_core::transport::Status::Ready;
+        status.world = Some("w".into());
+        status.edits = Some(true);
+    }
+    r.app
+        .add_plugins((
+            AssetPlugin::default(),
+            bevy::gizmos::GizmoPlugin,
+            crate::edit::EditPlugin,
+            gizmo::GizmoPlugin,
+        ))
+        .insert_resource(gizmo::TransformTool::Rotate)
+        // bevy_gizmos' skinned-mesh bounds want it; the render plugins add it.
+        .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
+    r.app.update();
+    // Points on the ring about Gazebo Z, at +X and +Y.
+    let ring = |r: &Rig, axis: Vec3| {
+        let len = gizmo::GIZMO_PX
+            * gizmo::metres_per_px(
+                &r.transform(),
+                &r.projection(),
+                Vec2::new(800.0, 600.0),
+                Vec3::ZERO,
+            );
+        r.screen(gz_to_bevy() * axis * len * gizmo::RING)
+    };
+    r.cursor(Some(ring(&r, Vec3::X)));
+    r.app.update();
+    let state = r.app.world().resource::<gizmo::GizmoState>();
+    assert_eq!(state.hovered, Some(gizmo::Handle::Ring(2)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.cursor(Some(ring(&r, Vec3::Y)));
+    r.app.update();
+    let (axis, angle) = r
+        .app
+        .world()
+        .get::<Transform>(a)
+        .unwrap()
+        .rotation
+        .to_axis_angle();
+    assert!(
+        axis.z > 0.99 && (angle - FRAC_PI_2).abs() < 0.05,
+        "{axis} {angle}"
+    );
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    assert!(!set_poses(&mut r).is_empty());
+}

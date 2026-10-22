@@ -19,6 +19,7 @@
 //! keep it in view ([`modes`], DECISIONS.md D-60).
 
 pub mod controls;
+pub mod gizmo;
 pub mod input;
 pub mod modes;
 pub mod outline;

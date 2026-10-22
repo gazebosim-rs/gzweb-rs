@@ -9,8 +9,10 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Activate, ScrollArea};
+use gz_bevy::connection::GzStatus;
+use gz_bevy::edit::{edits_allowed, HasPlane, Held, SetPose};
 use gz_bevy::overlays::extras::SdfExtras;
-use gz_bevy::spawn::GzEntity;
+use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::Selection;
 use gz_core::scene::NodeKind;
@@ -40,7 +42,8 @@ pub(crate) struct InspectorBody;
 
 /// The content in the body, for this subject (kind, entity, the part's
 /// name; for several, the selection itself), built from this generation
-/// of the world's SDFormat (a new reply rebuilds it).
+/// of the world's SDFormat (a new reply rebuilds it), and for a server
+/// that does or doesn't take edits (the pose is fields or text).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub(crate) struct InspectorContent(
     pub(crate) InspectKind,
@@ -48,6 +51,7 @@ pub(crate) struct InspectorContent(
     pub(crate) u32,
     pub(crate) Option<String>,
     pub(crate) Option<Selection>,
+    pub(crate) bool,
 );
 
 /// The inspector region; [`rebuild_body`] fills its body.
@@ -294,6 +298,14 @@ pub(crate) fn pin_state(
     }
 }
 
+/// What tells whether the subject is movable (`pose_editable`), and the
+/// planes found this frame.
+type Movable<'w, 's> = (
+    Query<'w, 's, (&'static GzEntity, &'static ChildOf, Has<HasPlane>)>,
+    Query<'w, 's, Entity, With<GzWorldRoot>>,
+    Query<'w, 's, (), Added<HasPlane>>,
+);
+
 /// A new subject gets a new content entity, with its inspector's marker,
 /// so the inspector's observer builds it.
 #[allow(clippy::too_many_arguments)]
@@ -302,13 +314,25 @@ pub(crate) fn rebuild_body(
     selection: Res<Selection>,
     registry: Res<InspectorRegistry>,
     sdf: Option<Res<SdfExtras>>,
+    status: Option<Res<GzStatus>>,
     bodies: Query<(Entity, Option<&Children>), With<InspectorBody>>,
     added: Query<(), Added<InspectorBody>>,
     contents: Query<&InspectorContent>,
+    (nodes, roots, planes): Movable,
+    mut was_editable: Local<bool>,
     mut commands: Commands,
 ) {
     let sdf_changed = sdf.as_ref().is_some_and(|s| s.is_changed());
-    if !inspected.is_changed() && !selection.is_changed() && !sdf_changed && added.is_empty() {
+    let editable = edits_allowed(status.as_deref());
+    let edits_changed = std::mem::replace(&mut *was_editable, editable) != editable;
+    // A plane found after the body was built makes the pose text.
+    if !inspected.is_changed()
+        && !selection.is_changed()
+        && !sdf_changed
+        && !edits_changed
+        && added.is_empty()
+        && planes.is_empty()
+    {
         return;
     }
     // Only inspectors that read the SDFormat are built again for a new
@@ -324,6 +348,12 @@ pub(crate) fn rebuild_body(
         generation,
         inspected.part.as_ref().map(|p| p.name.clone()),
         (inspected.kind == InspectKind::Multi).then(|| selection.clone()),
+        // Only the Model inspector's pose can be edited, and only a
+        // movable model's.
+        inspected.kind == InspectKind::Model
+            && inspected.entity.is_some_and(|e| {
+                crate::inspectors::common::pose_editable(status.as_deref(), e, &nodes, &roots)
+            }),
     );
     for (body, children) in &bodies {
         let current = children
@@ -352,6 +382,9 @@ pub(crate) fn rebuild_body(
 
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<Inspected>()
+        .init_resource::<crate::inspectors::common::PoseEdit>()
+        .init_resource::<Held>()
+        .add_message::<SetPose>()
         .add_systems(
             Update,
             (choose_subject, rebuild_body, pin_state)
@@ -361,10 +394,15 @@ pub(crate) fn build(app: &mut App) {
         )
         .add_systems(
             Update,
-            crate::inspectors::common::pose_values.in_set(super::ShellSystems::Readouts),
+            (
+                crate::inspectors::common::send_pending_pose,
+                crate::inspectors::common::pose_values,
+            )
+                .in_set(super::ShellSystems::Readouts),
         )
         .add_observer(on_header_button)
         .add_observer(crate::inspectors::common::on_dismiss)
+        .add_observer(crate::inspectors::common::on_pose_commit)
         .add_observer(crate::inspectors::common::on_entity_action)
         .add_observer(crate::inspectors::common::on_select_path)
         .add_systems(

@@ -10,6 +10,7 @@ pub mod camera;
 pub mod collada;
 pub mod connection;
 pub mod driver;
+pub mod edit;
 pub mod heightmap;
 pub mod hud;
 pub mod joint_state;
