@@ -10,7 +10,9 @@ use bevy::prelude::*;
 use gz_core::control;
 use gz_core::msgs;
 use gz_core::topic::world_topic;
-use gz_core::transport::{Event, SendError, Status, Transport};
+use gz_core::transport::{
+    probe_reply_supports_binary, Event, SendError, Status, Transport, BINARY_PROBE_SERVICE,
+};
 use prost::Message as _;
 
 use crate::assets::WsAssetStore;
@@ -74,6 +76,9 @@ pub struct GzStatus {
     /// A socket is open or opening (false once it closes, until the next
     /// attempt).
     pub attempting: bool,
+    /// Whether the server takes edits (keeps binary requests whole,
+    /// DECISIONS.md D-76): `None` until its probe is answered.
+    pub edits: Option<bool>,
 }
 
 impl GzStatus {
@@ -87,6 +92,7 @@ impl GzStatus {
             attempts: 0,
             sim: None,
             attempting: false,
+            edits: None,
         }
     }
 }
@@ -332,6 +338,13 @@ impl WebsocketBackend {
                 if s == Status::Ready {
                     io.status.attempts = 0;
                     subscribe(&mut self.transport, world, io.config.interactive());
+                    if io.config.interactive() {
+                        if let Err(e) = self.transport.probe_binary_requests() {
+                            warn!("edit probe: {e}");
+                        }
+                    }
+                } else if io.status.edits.is_some() {
+                    io.status.edits = None;
                 }
                 io.status.status = s;
             }
@@ -369,6 +382,16 @@ impl WebsocketBackend {
                 msg_type,
                 payload,
             } => {
+                if service == BINARY_PROBE_SERVICE && io.status.edits.is_none() {
+                    let edits = probe_reply_supports_binary(&payload);
+                    self.transport.set_binary_requests(edits);
+                    io.status.edits = Some(edits);
+                    if edits {
+                        info!("the server takes edits (binary requests)");
+                    } else {
+                        info!("the server mangles binary requests: editing is off");
+                    }
+                }
                 log_reply(&service, &msg_type, &payload);
                 io.replies.push(GzServiceReply {
                     service,
