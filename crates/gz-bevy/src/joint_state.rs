@@ -68,6 +68,9 @@ fn subscribe_joint_states(
     mut states: ResMut<JointStates>,
     mut out: MessageWriter<GzCommand>,
 ) {
+    if !wanted.is_changed() && !status.as_ref().is_some_and(|s| s.is_changed()) {
+        return;
+    }
     let ready = status
         .as_deref()
         .filter(|s| s.status == Status::Ready)

@@ -112,3 +112,31 @@ fn a_sliding_joint_reads_in_metres() {
     frames(&mut app, 2);
     assert_eq!(live(&mut app), ["0.250 m", "0.1 m/s", "3 N"]);
 }
+
+#[test]
+fn an_end_that_isnt_in_the_scene_cant_be_selected() {
+    use bevy::ui::InteractionDisabled;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    // `slide`'s child, rail, is in the SDFormat but not the scene.
+    app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+        kind: PartKind::Joint,
+        owner: s.cart,
+        name: "slide".into(),
+    }];
+    frames(&mut app, 3);
+    let world = app.world_mut();
+    let paths: Vec<String> = world
+        .query::<&SelectPath>()
+        .iter(world)
+        .map(|p| p.0.clone())
+        .collect();
+    assert_eq!(paths, ["cart/base"], "the parent only");
+    let disabled = world
+        .query_filtered::<Has<InteractionDisabled>, With<crate::inspectors::common::QuickAction>>()
+        .iter(world)
+        .filter(|d| *d)
+        .count();
+    assert_eq!(disabled, 1, "Select child");
+}

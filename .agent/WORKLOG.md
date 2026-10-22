@@ -1288,3 +1288,17 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** one for each (the multi rebuild and the nested-joint lookup
   checked to fail without the fix); workspace 646 → 654 passing; coverage
   98.4% lines. check.sh passes.
+
+## 2026-10-22: M5b second review fixes (D-77 to D-80 amended)
+
+- **Order:** `choose_subject` runs after `prune_selection` and reads the
+  selection's live entries only, so a removal shows "(removed)" and a
+  respawn is selected again whatever the system order (the harness ran
+  them in the right order by luck; checked to fail without).
+- **Pin:** off for a multi-selection; unpinning goes back to the selection.
+- **Parts:** Follow and Track take a part's owner (`first_target`).
+- **Joint:** Select parent and child only for ends in the scene.
+- **SDFormat:** flags in any case; `__default__` topics are none.
+- **Pose rows:** X Y Z R P Yw (§3.5). Joint-state topics and body rebuilds
+  run on changes only. Workspace 654 → 659 passing; coverage 98.4%
+  lines. check.sh passes.

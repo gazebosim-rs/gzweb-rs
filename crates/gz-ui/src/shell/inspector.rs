@@ -7,6 +7,7 @@
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Activate, ScrollArea};
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::GzEntity;
@@ -109,10 +110,11 @@ pub(crate) fn on_header_button(
         InspectorHeader::Collapse => {
             out.write(UiCommand::ToggleInspector);
         }
-        InspectorHeader::Pin => {
+        InspectorHeader::Pin if inspected.kind != InspectKind::Multi => {
             // `pin_state` shows it.
             inspected.pinned = !inspected.pinned;
         }
+        InspectorHeader::Pin => {}
     }
 }
 
@@ -136,7 +138,25 @@ pub(crate) fn choose_subject(
     entities: Query<(Entity, &GzEntity)>,
     mut inspected: ResMut<Inspected>,
     mut was_selected: Local<bool>,
+    mut was_pinned: Local<bool>,
 ) {
+    // Whatever runs first, a despawned entity in the selection (one
+    // `prune_selection` hasn't dropped yet) is not selected.
+    let live = Selection {
+        entities: selection
+            .entities
+            .iter()
+            .copied()
+            .filter(|e| entities.contains(*e))
+            .collect(),
+        parts: selection
+            .parts
+            .iter()
+            .filter(|p| entities.contains(p.owner))
+            .cloned()
+            .collect(),
+    };
+    let unpinned = std::mem::replace(&mut *was_pinned, inspected.pinned) && !inspected.pinned;
     match inspected.entity {
         Some(e) if entities.get(e).is_err() => {
             let respawned = inspected.path.as_ref().and_then(|path| {
@@ -151,9 +171,13 @@ pub(crate) fn choose_subject(
                 if let Some(part) = inspected.part.as_mut() {
                     part.owner = e;
                 }
-                // It was the selection (pruning dropped it): it is again.
-                if *was_selected && selection.is_empty() {
-                    match inspected.part.clone() {
+                // It was the selection (pruning dropped it, or will): it is
+                // again.
+                if *was_selected && live.is_empty() {
+                    let part = inspected.part.clone();
+                    selection.entities.retain(|e| entities.contains(*e));
+                    selection.parts.retain(|p| entities.contains(p.owner));
+                    match part {
                         Some(part) => selection.parts.push(part),
                         None => selection.entities.push(e),
                     }
@@ -172,13 +196,13 @@ pub(crate) fn choose_subject(
         }
         None => *was_selected = false,
     }
-    if inspected.removed && (inspected.pinned || selection.is_empty()) {
+    if inspected.removed && (inspected.pinned || live.is_empty()) {
         return;
     }
     if inspected.pinned {
         return;
     }
-    if !selection.is_changed() && !inspected.removed {
+    if !selection.is_changed() && !inspected.removed && !unpinned {
         return;
     }
     let part_subject = |p: &gz_bevy::view::Part| {
@@ -193,7 +217,7 @@ pub(crate) fn choose_subject(
             ..default()
         })
     };
-    let want = match (selection.entities.as_slice(), selection.parts.as_slice()) {
+    let want = match (live.entities.as_slice(), live.parts.as_slice()) {
         ([], []) => Inspected::default(),
         ([], [p]) => part_subject(p).unwrap_or_default(),
         ([e], []) => match entities
@@ -217,22 +241,45 @@ pub(crate) fn choose_subject(
     inspected.set_if_neq(want);
 }
 
-/// The header's Pin shows whether the subject is pinned.
+/// The header's Pin shows whether the subject is pinned; a multi-selection
+/// has no one subject to keep, so Pin is off for it.
 pub(crate) fn pin_state(
     inspected: Res<Inspected>,
-    buttons: Query<(Entity, &InspectorHeader, Has<Active>)>,
+    buttons: Query<(
+        Entity,
+        &InspectorHeader,
+        Has<Active>,
+        Has<InteractionDisabled>,
+    )>,
     added: Query<(), Added<InspectorHeader>>,
     mut commands: Commands,
 ) {
     if !inspected.is_changed() && added.is_empty() {
         return;
     }
-    for (e, which, active) in &buttons {
-        if *which == InspectorHeader::Pin && active != inspected.pinned {
+    let multi = inspected.kind == InspectKind::Multi;
+    for (e, which, active, disabled) in &buttons {
+        if *which != InspectorHeader::Pin {
+            continue;
+        }
+        let mut pin = commands.entity(e);
+        if active != inspected.pinned {
             if inspected.pinned {
-                commands.entity(e).insert(Active);
+                pin.insert(Active);
             } else {
-                commands.entity(e).remove::<Active>();
+                pin.remove::<Active>();
+            }
+        }
+        if disabled != multi {
+            if multi {
+                pin.insert((
+                    InteractionDisabled,
+                    Tooltip::new("Pin").detail("Select one entity to pin it"),
+                ));
+            } else {
+                pin.remove::<InteractionDisabled>().insert(
+                    Tooltip::new("Pin").detail("Keep showing this when the selection changes"),
+                );
             }
         }
     }
@@ -240,15 +287,21 @@ pub(crate) fn pin_state(
 
 /// A new subject gets a new content entity, with its inspector's marker,
 /// so the inspector's observer builds it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_body(
     inspected: Res<Inspected>,
     selection: Res<Selection>,
     registry: Res<InspectorRegistry>,
     sdf: Option<Res<SdfExtras>>,
     bodies: Query<(Entity, Option<&Children>), With<InspectorBody>>,
+    added: Query<(), Added<InspectorBody>>,
     contents: Query<&InspectorContent>,
     mut commands: Commands,
 ) {
+    let sdf_changed = sdf.as_ref().is_some_and(|s| s.is_changed());
+    if !inspected.is_changed() && !selection.is_changed() && !sdf_changed && added.is_empty() {
+        return;
+    }
     let generation = sdf.map_or(0, |s| s.generation);
     let want = InspectorContent(
         inspected.kind,
@@ -288,7 +341,8 @@ pub(crate) fn build(app: &mut App) {
             Update,
             (choose_subject, rebuild_body, pin_state)
                 .chain()
-                .in_set(crate::GzUiSystems::Behaviour),
+                .in_set(crate::GzUiSystems::Behaviour)
+                .after(gz_bevy::view::select::prune_selection),
         )
         .add_systems(
             Update,

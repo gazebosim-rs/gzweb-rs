@@ -130,7 +130,7 @@ fn build_sensor(
                     d.pose.quat[3] as f32,
                 ));
                 let v = pose_texts(&pose);
-                let labels = ["X", "Y", "Z", "Roll", "Pitch", "Yaw"];
+                let labels = super::common::POSE_LABELS;
                 definition_group(
                     b,
                     "Pose (in link)",

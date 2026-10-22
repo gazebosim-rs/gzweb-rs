@@ -273,3 +273,51 @@ fn focus_replaces_parts_and_hide_reads_show_while_hidden() {
     let sel = app.world().resource::<Selection>().clone();
     assert_eq!((sel.entities, sel.parts.len()), (vec![s.sun], 0));
 }
+
+/// `choose_subject` with the selection still holding a despawned entity
+/// (`prune_selection` not run yet: the app doesn't order them).
+fn choose(app: &mut App) {
+    use bevy::ecs::system::RunSystemOnce;
+    app.world_mut()
+        .run_system_once(crate::shell::inspector::choose_subject)
+        .unwrap();
+}
+
+#[test]
+fn a_despawned_subject_is_removed_whatever_runs_first() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    select(&mut app, vec![s.krate]);
+    app.world_mut().entity_mut(s.krate).despawn();
+    // Not pruned yet.
+    assert_eq!(app.world().resource::<Selection>().entities, [s.krate]);
+    choose(&mut app);
+    let i = app.world().resource::<Inspected>().clone();
+    assert!(i.removed && i.kind == InspectKind::Model, "{i:?}");
+}
+
+#[test]
+fn unpinning_goes_back_to_the_selection_and_a_multi_selection_has_no_pin() {
+    use bevy::ui::InteractionDisabled;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    select(&mut app, vec![s.cart]);
+    let pin = pinned_header(&mut app);
+    app.world_mut().trigger(Activate { entity: pin });
+    frames(&mut app, 2);
+    select(&mut app, vec![s.krate]);
+    assert_eq!(app.world().resource::<Inspected>().entity, Some(s.cart));
+    app.world_mut().trigger(Activate { entity: pin });
+    frames(&mut app, 3);
+    assert_eq!(app.world().resource::<Inspected>().entity, Some(s.krate));
+    // Several selected: Pin is off and does nothing.
+    select(&mut app, vec![s.cart, s.krate]);
+    assert!(app.world().get::<InteractionDisabled>(pin).is_some());
+    app.world_mut().trigger(Activate { entity: pin });
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<Inspected>().pinned);
+    select(&mut app, vec![s.cart]);
+    assert!(app.world().get::<InteractionDisabled>(pin).is_none());
+}

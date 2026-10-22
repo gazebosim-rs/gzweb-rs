@@ -357,7 +357,7 @@ pub(crate) fn on_camera_item(
     if disabled {
         return;
     }
-    let selected = selection.and_then(|s| s.entities.first().copied());
+    let selected = selection.and_then(|s| s.first_target());
     let mode = match (item, v.mode, selected) {
         (CameraItem::Free, ..) => CameraMode::Free,
         (CameraItem::Follow, CameraMode::Follow(_), _)

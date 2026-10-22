@@ -319,6 +319,10 @@ pub(crate) enum PoseFrame {
     Parent,
 }
 
+/// A pose's rows (§3.5: Position X Y Z, Rotation R P Yw; yaw is Yw so it
+/// never reads as the Y position).
+pub(crate) const POSE_LABELS: [&str; 6] = ["X", "Y", "Z", "R", "P", "Yw"];
+
 /// One of a pose group's six values: x, y, z, roll, pitch, yaw.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PoseValue(pub(crate) PoseFrame, pub(crate) usize);
@@ -326,13 +330,7 @@ pub(crate) struct PoseValue(pub(crate) PoseFrame, pub(crate) usize);
 /// The Pose group (§3.5): live, X Y Z in m and Roll Pitch Yaw in degrees
 /// (Gazebo's fixed-axis roll, pitch, yaw), in `frame`.
 pub(crate) fn pose_group(body: &mut ChildSpawner, title: &str, frame: PoseFrame) {
-    group(
-        body,
-        title,
-        true,
-        &["X", "Y", "Z", "Roll", "Pitch", "Yaw"],
-        |i| PoseValue(frame, i),
-    );
+    group(body, title, true, &POSE_LABELS, |i| PoseValue(frame, i));
 }
 
 /// The subject's pose in Gazebo's frame: its own transform for the
