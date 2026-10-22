@@ -311,8 +311,8 @@ fn numbers(s: &str) -> Vec<f64> {
 
 fn flag(n: Node, tag: &'static str, default: bool) -> bool {
     match text(n, tag) {
-        Some("true" | "1") => true,
-        Some("false" | "0") => false,
+        Some(t) if t == "1" || t.eq_ignore_ascii_case("true") => true,
+        Some(t) if t == "0" || t.eq_ignore_ascii_case("false") => false,
         _ => default,
     }
 }
@@ -410,8 +410,9 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
             .map(|s| SensorExtras {
                 name: s.attribute("name").unwrap_or("").to_string(),
                 ty: s.attribute("type").unwrap_or("").to_string(),
+                // SDFormat's placeholder for "derive one" counts as none.
                 topic: text(s, "topic")
-                    .filter(|t| !t.is_empty())
+                    .filter(|t| !t.is_empty() && *t != "__default__")
                     .map(str::to_string),
                 update_rate: number(s, "update_rate").unwrap_or(0.0),
                 always_on: flag(s, "always_on", false),

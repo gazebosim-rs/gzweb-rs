@@ -97,6 +97,15 @@ fn build_joint(
         .as_deref()
         .and_then(|s| s.extras.as_ref())
         .and_then(|w| w.joint(&path, &part.name).cloned());
+    // Only ends that are links in the scene (not `world`, a frame or a
+    // model).
+    let in_scene = |p: Option<String>| p.filter(|p| models.iter().any(|g| &g.path == p));
+    let ends = joint.as_ref().map(|j| {
+        (
+            in_scene(link_path(&path, &j.parent)),
+            in_scene(link_path(&path, &j.child)),
+        )
+    });
     // A ball joint turns too (the overlays draw it without an axis ring).
     let rotates = joint
         .as_ref()
@@ -107,9 +116,6 @@ fn build_joint(
         .insert(Children::spawn(SpawnWith(move |b: &mut ChildSpawner| {
             b.spawn(title_row(&t, InspectKind::Joint, &part.name));
             b.spawn(breadcrumb(crumb));
-            let ends = joint
-                .as_ref()
-                .map(|j| (link_path(&path, &j.parent), link_path(&path, &j.child)));
             b.spawn(quick_actions()).with_children(|r| {
                 for (label, end) in [
                     ("Select parent", ends.as_ref().and_then(|e| e.0.clone())),

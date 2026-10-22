@@ -106,7 +106,7 @@ fn build_multi(
                     b,
                     "Pose (shared)",
                     true,
-                    &["X", "Y", "Z", "Roll", "Pitch", "Yaw"],
+                    &super::common::POSE_LABELS,
                     SharedPose,
                 );
             }

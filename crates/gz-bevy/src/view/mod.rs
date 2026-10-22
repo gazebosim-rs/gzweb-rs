@@ -352,6 +352,15 @@ impl Selection {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// What Follow and Track take from the selection: its first entity,
+    /// else its first joint's or sensor's model or link.
+    pub fn first_target(&self) -> Option<Entity> {
+        self.entities
+            .first()
+            .copied()
+            .or_else(|| self.parts.first().map(|p| p.owner))
+    }
 }
 
 /// A selected joint (on its model) or sensor (on its link).
@@ -910,8 +919,8 @@ impl ViewScene<'_, '_> {
     /// What ⇧F and ⇧T follow: the first selected entity, else the
     /// top-level model on `ray`.
     fn target(&mut self, ray: Option<Ray3d>) -> Option<Entity> {
-        if let Some(e) = self.selection.entities.first() {
-            return Some(*e);
+        if let Some(e) = self.selection.first_target() {
+            return Some(e);
         }
         let (hit, _) = self.hit(ray?)?;
         Some(self.model_of(hit))

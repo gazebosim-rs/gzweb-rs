@@ -434,3 +434,18 @@ fn joints_belong_to_the_model_that_declares_them() {
     assert_eq!(w.joints_of("outer/inner").count(), 1);
     assert_eq!(w.joints_of("outer2").count(), 0);
 }
+
+#[test]
+fn flags_read_in_any_case_and_a_default_topic_is_none() {
+    let xml = r#"<sdf version="1.9"><model name="m">
+      <static>True</static><self_collide>FALSE</self_collide>
+      <link name="l"><gravity>False</gravity>
+        <sensor name="c" type="camera"><topic>__default__</topic></sensor>
+      </link></model></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let m = w.model("m").unwrap();
+    assert!(m.is_static && !m.self_collide);
+    let l = w.link("m/l").unwrap();
+    assert!(!l.flags.gravity);
+    assert_eq!(l.sensors[0].topic, None);
+}
