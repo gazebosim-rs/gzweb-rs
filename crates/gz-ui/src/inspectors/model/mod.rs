@@ -7,12 +7,12 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::SdfExtras;
-use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
+use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors, GzWorldRoot};
 use gz_core::scene::NodeKind;
 
 use super::common::{
-    breadcrumb, crumb, definition_group, links, pose_group, quick_action, quick_action_node,
-    quick_actions, title_row, EntityAction, PoseFrame,
+    breadcrumb, crumb, definition_group, links, pose_editable, pose_group, quick_action,
+    quick_action_node, quick_actions, title_row, EntityAction, PoseFrame,
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
 use crate::format;
@@ -88,6 +88,8 @@ fn build_model(
     sdf: Option<Res<SdfExtras>>,
     children: Query<&Children>,
     entities: Query<(&GzEntity, Option<&GzSensors>)>,
+    nodes: Query<(&GzEntity, &ChildOf)>,
+    roots: Query<Entity, With<GzWorldRoot>>,
     mut commands: Commands,
 ) {
     let Some(model) = inspected.entity else {
@@ -118,6 +120,7 @@ fn build_model(
         }
     });
     let counts = parts(model, &path, &children, &entities, sdf.as_deref());
+    let editable = pose_editable(status.as_deref(), model, &nodes, &roots);
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -133,7 +136,7 @@ fn build_model(
                 r.spawn(quick_action(&t, "Save as…", Some("Not available yet")))
                     .insert(quick_action_node(&t));
             });
-            pose_group(b, "Pose", PoseFrame::World);
+            pose_group(b, &t, "Pose", PoseFrame::World, editable);
             let flag = |f: Option<bool>| f.map_or("—", format::yes_no).to_string();
             definition_group(
                 b,

@@ -5,11 +5,11 @@
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use gz_bevy::connection::GzStatus;
-use gz_bevy::spawn::{GzEntity, GzIndex, GzLight};
+use gz_bevy::spawn::{GzEntity, GzIndex, GzLight, GzWorldRoot};
 
 use super::common::{
-    breadcrumb, crumb, definition_group, links, pose_group, quick_action, quick_action_node,
-    quick_actions, title_row, EntityAction, PoseFrame,
+    breadcrumb, crumb, definition_group, links, pose_editable, pose_group, quick_action,
+    quick_action_node, quick_actions, title_row, EntityAction, PoseFrame,
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
 use crate::format;
@@ -33,6 +33,7 @@ impl Plugin for LightInspectorPlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_light(
     ev: On<Add<LightBody>>,
     inspected: Res<Inspected>,
@@ -40,6 +41,8 @@ fn build_light(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     lights: Query<(&GzEntity, Option<&GzLight>)>,
+    nodes: Query<(&GzEntity, &ChildOf)>,
+    roots: Query<Entity, With<GzWorldRoot>>,
     mut commands: Commands,
 ) {
     let Some(light) = inspected.entity else {
@@ -52,6 +55,7 @@ fn build_light(
     let world = world_name(status.as_deref(), index.as_deref());
     let crumb = crumb(world.as_deref(), &path);
     let desc = desc.map(|d| d.0.clone());
+    let editable = pose_editable(status.as_deref(), light, &nodes, &roots);
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -68,7 +72,7 @@ fn build_light(
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::Hide);
             });
-            pose_group(b, "Pose", PoseFrame::Parent);
+            pose_group(b, &t, "Pose", PoseFrame::Parent, editable);
             let Some(d) = desc else {
                 return;
             };

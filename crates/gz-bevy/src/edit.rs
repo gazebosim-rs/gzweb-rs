@@ -8,6 +8,7 @@
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use gz_core::msgs;
+use gz_core::scene::NodeKind;
 use gz_core::topic::world_topic;
 use prost::Message as _;
 
@@ -49,6 +50,12 @@ impl Held {
     pub fn release(&mut self, entity: Entity, now: f64) {
         self.0.insert(entity, Some(now + HOLD_AFTER_EDIT_SECS));
     }
+}
+
+/// Whether the tools and the inspector move `entity`: a model or a light
+/// under the world root (a link moves with its model).
+pub fn movable(entity: &GzEntity, parent: &ChildOf, root: Entity) -> bool {
+    parent.parent() == root && matches!(entity.kind, NodeKind::Model | NodeKind::Light)
 }
 
 /// Whether the connected server takes edits.
@@ -129,7 +136,6 @@ fn expire_holds(time: Res<Time<Real>>, entities: Query<()>, mut held: ResMut<Hel
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gz_core::scene::NodeKind;
     use gz_core::transport::Status;
 
     fn app(edits: Option<bool>) -> App {

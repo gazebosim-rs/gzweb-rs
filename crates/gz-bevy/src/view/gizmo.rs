@@ -9,12 +9,11 @@
 //! entities are [`Held`] meanwhile.
 
 use bevy::prelude::*;
-use gz_core::scene::NodeKind;
 
 use super::controls::{target, Views};
 use super::{viewport_ray, Selection};
 use crate::connection::GzStatus;
-use crate::edit::{edits_allowed, Held, SetPose};
+use crate::edit::{edits_allowed, movable, Held, SetPose};
 use crate::spawn::{GzEntity, GzWorldRoot};
 
 /// The arrows' length on screen (logical pixels).
@@ -25,7 +24,7 @@ pub const GRAB_PX: f32 = 8.0;
 const PLANE_FROM: f32 = 0.25;
 const PLANE_TO: f32 = 0.45;
 /// The rings' radius, as a share of the arrows' length.
-const RING: f32 = 0.8;
+pub const RING: f32 = 0.8;
 const RING_SEGMENTS: usize = 64;
 /// At most this often an edit goes out while dragging.
 pub const SEND_SECS: f64 = 0.1;
@@ -147,7 +146,7 @@ fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
 }
 
 /// The selection's entities the tools move: top-level models and lights.
-fn movable(
+fn selected_movable(
     selection: &Selection,
     nodes: &Query<(&GzEntity, &ChildOf, &Transform, &GlobalTransform)>,
     roots: &Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
@@ -160,9 +159,9 @@ fn movable(
         .iter()
         .copied()
         .filter(|e| {
-            nodes.get(*e).is_ok_and(|(g, parent, ..)| {
-                parent.parent() == root && matches!(g.kind, NodeKind::Model | NodeKind::Light)
-            })
+            nodes
+                .get(*e)
+                .is_ok_and(|(g, parent, ..)| movable(g, parent, root))
         })
         .collect()
 }
@@ -520,7 +519,7 @@ pub fn gizmo_input(
         return;
     }
 
-    let targets = movable(&selection, &nodes.p0(), &roots);
+    let targets = selected_movable(&selection, &nodes.p0(), &roots);
     let center = targets
         .first()
         .and_then(|e| nodes.p0().get(*e).ok().map(|(.., g)| g.translation()));
@@ -609,7 +608,7 @@ fn draw_gizmo(
         .next()
         .map_or(Quat::IDENTITY, |(_, g)| g.rotation());
     let axes = [root * Vec3::X, root * Vec3::Y, root * Vec3::Z];
-    let targets = movable(&selection, &nodes, &roots);
+    let targets = selected_movable(&selection, &nodes, &roots);
     let Some(center) = targets
         .first()
         .and_then(|e| nodes.get(*e).ok().map(|(.., g)| g.translation()))

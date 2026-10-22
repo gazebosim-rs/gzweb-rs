@@ -2812,3 +2812,68 @@ fn a_press_away_from_the_gizmo_is_the_views_and_no_edits_means_no_gizmo() {
     r.app.update();
     let _ = a;
 }
+
+#[test]
+fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    {
+        let mut status = r.app.world_mut().resource_mut::<GzStatus>();
+        status.status = gz_core::transport::Status::Ready;
+        status.world = Some("w".into());
+        status.edits = Some(true);
+    }
+    r.app
+        .add_plugins((
+            AssetPlugin::default(),
+            bevy::gizmos::GizmoPlugin,
+            crate::edit::EditPlugin,
+            gizmo::GizmoPlugin,
+        ))
+        .insert_resource(gizmo::TransformTool::Rotate)
+        // bevy_gizmos' skinned-mesh bounds want it; the render plugins add it.
+        .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
+    r.app.update();
+    // Points on the ring about Gazebo Z, at +X and +Y.
+    let ring = |r: &Rig, axis: Vec3| {
+        let len = gizmo::GIZMO_PX
+            * gizmo::metres_per_px(
+                &r.transform(),
+                &r.projection(),
+                Vec2::new(800.0, 600.0),
+                Vec3::ZERO,
+            );
+        r.screen(gz_to_bevy() * axis * len * gizmo::RING)
+    };
+    r.cursor(Some(ring(&r, Vec3::X)));
+    r.app.update();
+    let state = r.app.world().resource::<gizmo::GizmoState>();
+    assert_eq!(state.hovered, Some(gizmo::Handle::Ring(2)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.cursor(Some(ring(&r, Vec3::Y)));
+    r.app.update();
+    let (axis, angle) = r
+        .app
+        .world()
+        .get::<Transform>(a)
+        .unwrap()
+        .rotation
+        .to_axis_angle();
+    assert!(
+        axis.z > 0.99 && (angle - FRAC_PI_2).abs() < 0.05,
+        "{axis} {angle}"
+    );
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
+    assert!(!set_poses(&mut r).is_empty());
+}

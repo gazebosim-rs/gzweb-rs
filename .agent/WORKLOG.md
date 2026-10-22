@@ -1302,3 +1302,30 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Pose rows:** X Y Z R P Yw (§3.5). Joint-state topics and body rebuilds
   run on changes only. Workspace 654 → 659 passing; coverage 98.4%
   lines. check.sh passes.
+
+## 2026-10-21: M5c transform tools (D-83 to D-88)
+
+- **Server:** `Dockerfile.gazebo` builds the websocket server system with
+  `docker/websocket-server/binary-requests.patch` (gazebosim/gz-sim#4093)
+  and installs it over every copy; the connection probes `/gazebo/worlds`
+  with a `0x00`/`,` payload on Ready and sets `GzStatus::edits`.
+- **Edits:** `gz_bevy::edit` (`SetPose` to `set_pose`, `Held`, `movable`);
+  `apply_poses` skips held entities.
+- **Gizmo:** `gz_bevy::view::gizmo`, Translate (arrows, planes) and Rotate
+  (rings), screen-space picking, X/Y/Z, Shift snap, Esc, readout; sends at
+  10 Hz and on release. The UI gates the tools on `edits` and styles the
+  gizmo and readout.
+- **Inspector:** a top-level model's or light's pose is number fields when
+  the server takes edits; commits send `SetPose`; the body rebuilds when
+  the probe's answer changes.
+- **Left:** the joint command slider (no client publish, D-88).
+- **Live check** (`--release`, Jetty `diff_drive`): a scratch client sent
+  `set_pose` with round values (zero bytes) to the patched server on 9011,
+  got `true`, and `pose/info` read 2.000 0.500 0.325; the stock server on
+  9010 answered the probe empty. `--ui full --select vehicle_blue`: on 9011
+  the pose is fields showing that pose and Translate and Rotate are on; on
+  9010 the pose is text and the tools are disabled.
+- **Tests:** probe and binary requests, `set_pose` encoding, holds, gizmo
+  picking and drag math, arrow and ring drags through the plugin, snap and
+  Esc, tool gating, readout, pose fields and commits; workspace 646 → 675
+  passing; coverage 97.8% lines. check.sh passes.

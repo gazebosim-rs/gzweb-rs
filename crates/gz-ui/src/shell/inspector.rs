@@ -9,6 +9,8 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Activate, ScrollArea};
+use gz_bevy::connection::GzStatus;
+use gz_bevy::edit::edits_allowed;
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::input::InputMap;
@@ -40,7 +42,8 @@ pub(crate) struct InspectorBody;
 
 /// The content in the body, for this subject (kind, entity, the part's
 /// name; for several, the selection itself), built from this generation
-/// of the world's SDFormat (a new reply rebuilds it).
+/// of the world's SDFormat (a new reply rebuilds it), and for a server
+/// that does or doesn't take edits (the pose is fields or text).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub(crate) struct InspectorContent(
     pub(crate) InspectKind,
@@ -48,6 +51,7 @@ pub(crate) struct InspectorContent(
     pub(crate) u32,
     pub(crate) Option<String>,
     pub(crate) Option<Selection>,
+    pub(crate) bool,
 );
 
 /// The inspector region; [`rebuild_body`] fills its body.
@@ -293,13 +297,22 @@ pub(crate) fn rebuild_body(
     selection: Res<Selection>,
     registry: Res<InspectorRegistry>,
     sdf: Option<Res<SdfExtras>>,
+    status: Option<Res<GzStatus>>,
     bodies: Query<(Entity, Option<&Children>), With<InspectorBody>>,
     added: Query<(), Added<InspectorBody>>,
     contents: Query<&InspectorContent>,
+    mut was_editable: Local<bool>,
     mut commands: Commands,
 ) {
     let sdf_changed = sdf.as_ref().is_some_and(|s| s.is_changed());
-    if !inspected.is_changed() && !selection.is_changed() && !sdf_changed && added.is_empty() {
+    let editable = edits_allowed(status.as_deref());
+    let edits_changed = std::mem::replace(&mut *was_editable, editable) != editable;
+    if !inspected.is_changed()
+        && !selection.is_changed()
+        && !sdf_changed
+        && !edits_changed
+        && added.is_empty()
+    {
         return;
     }
     let generation = sdf.map_or(0, |s| s.generation);
@@ -309,6 +322,7 @@ pub(crate) fn rebuild_body(
         generation,
         inspected.part.as_ref().map(|p| p.name.clone()),
         (inspected.kind == InspectKind::Multi).then(|| selection.clone()),
+        editable,
     );
     for (body, children) in &bodies {
         let current = children
@@ -350,6 +364,7 @@ pub(crate) fn build(app: &mut App) {
         )
         .add_observer(on_header_button)
         .add_observer(crate::inspectors::common::on_dismiss)
+        .add_observer(crate::inspectors::common::on_pose_commit)
         .add_observer(crate::inspectors::common::on_entity_action)
         .add_observer(crate::inspectors::common::on_select_path)
         .add_systems(
