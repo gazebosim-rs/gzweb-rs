@@ -472,6 +472,8 @@ pub(crate) enum EntityAction {
     ShowInertia,
     /// Turn the collisions overlay on or off.
     ShowCollision,
+    /// Turn the joints overlay on or off (a joint's Show axis).
+    ShowJoints,
     /// Hide or show the subject.
     Hide,
 }
@@ -522,6 +524,9 @@ pub(crate) fn on_entity_action(
         EntityAction::ShowCollision => {
             overlays.write(OverlayCommand::toggle(Overlay::Collisions));
         }
+        EntityAction::ShowJoints => {
+            overlays.write(OverlayCommand::toggle(Overlay::Joints));
+        }
         EntityAction::Hide => {
             if let Ok(mut v) = visibility.get_mut(subject) {
                 let hidden = *v == Visibility::Hidden;
@@ -532,6 +537,29 @@ pub(crate) fn on_entity_action(
                 });
             }
         }
+    }
+}
+
+/// A quick action that selects the entity at this scene path (a joint's
+/// parent or child link).
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SelectPath(pub(crate) String);
+
+pub(crate) fn on_select_path(
+    ev: On<Activate>,
+    actions: Query<&SelectPath, Without<InteractionDisabled>>,
+    entities: Query<(Entity, &GzEntity)>,
+    mut selection: ResMut<Selection>,
+) {
+    let Ok(SelectPath(path)) = actions.get(ev.entity) else {
+        return;
+    };
+    if let Some((e, _)) = entities.iter().find(|(_, g)| &g.path == path) {
+        gz_bevy::view::select(
+            &mut selection.reborrow(),
+            gz_bevy::view::SelectMode::Replace,
+            &[e],
+        );
     }
 }
 

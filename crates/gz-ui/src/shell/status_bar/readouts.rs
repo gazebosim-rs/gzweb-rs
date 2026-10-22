@@ -56,11 +56,15 @@ impl StatusSources<'_, '_> {
 
     /// "sel: amr_01", "3 selected" or "sel: —".
     fn selection(&self) -> String {
-        let selected = self.selection.as_deref().map_or(&[][..], |s| &s.entities);
-        let first = selected
+        let Some(s) = self.selection.as_deref() else {
+            return format::selection(0, None);
+        };
+        let first = s
+            .entities
             .first()
-            .map(|e| crate::shell::viewport::hud::systems::entity_name(&self.names, *e));
-        format::selection(selected.len(), first.as_deref())
+            .map(|e| crate::shell::viewport::hud::systems::entity_name(&self.names, *e))
+            .or_else(|| s.parts.first().map(|p| p.name.clone()));
+        format::selection(s.len(), first.as_deref())
     }
 
     /// The frame rate, smoothed.

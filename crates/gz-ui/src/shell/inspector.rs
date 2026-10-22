@@ -23,6 +23,7 @@ use crate::theme::visuals::Active;
 use crate::theme::Theme;
 use crate::widgets::layout::column;
 use crate::widgets::{icon_button, section_header, IconButtonSize, Tooltip};
+use gz_bevy::view::PartKind;
 
 /// The inspector header's buttons.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,13 +37,15 @@ pub(crate) enum InspectorHeader {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct InspectorBody;
 
-/// The content in the body, for this subject (kind, entity), built from
-/// this generation of the world's SDFormat (a new reply rebuilds it).
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+/// The content in the body, for this subject (kind, entity, the part's
+/// name), built from this generation of the world's SDFormat (a new reply
+/// rebuilds it).
+#[derive(Component, Clone, Debug, PartialEq)]
 pub(crate) struct InspectorContent(
     pub(crate) InspectKind,
     pub(crate) Option<Entity>,
     pub(crate) u32,
+    pub(crate) Option<String>,
 );
 
 /// The inspector region; [`rebuild_body`] fills its body.
@@ -167,9 +170,22 @@ pub(crate) fn choose_subject(
     if !selection.is_changed() && !inspected.removed {
         return;
     }
-    let want = match selection.entities.as_slice() {
-        [] => Inspected::default(),
-        [e] => match entities
+    let part_subject = |p: &gz_bevy::view::Part| {
+        entities.get(p.owner).ok().map(|(_, g)| Inspected {
+            kind: match p.kind {
+                PartKind::Joint => InspectKind::Joint,
+                PartKind::Sensor => InspectKind::Sensor,
+            },
+            entity: Some(p.owner),
+            path: Some(g.path.clone()),
+            part: Some(p.clone()),
+            ..default()
+        })
+    };
+    let want = match (selection.entities.as_slice(), selection.parts.as_slice()) {
+        ([], []) => Inspected::default(),
+        ([], [p]) => part_subject(p).unwrap_or_default(),
+        ([e], []) => match entities
             .get(*e)
             .ok()
             .and_then(|(_, g)| kind_of(g.kind).map(|k| (g, k)))
@@ -206,20 +222,25 @@ pub(crate) fn rebuild_body(
     mut commands: Commands,
 ) {
     let generation = sdf.map_or(0, |s| s.generation);
-    let want = InspectorContent(inspected.kind, inspected.entity, generation);
+    let want = InspectorContent(
+        inspected.kind,
+        inspected.entity,
+        generation,
+        inspected.part.as_ref().map(|p| p.name.clone()),
+    );
     for (body, children) in &bodies {
         let current = children
             .into_iter()
             .flatten()
-            .find_map(|c| contents.get(*c).ok().map(|k| (*c, *k)));
-        if current.map(|c| c.1) == Some(want) {
+            .find_map(|c| contents.get(*c).ok().map(|k| (*c, k.clone())));
+        if current.as_ref().map(|c| &c.1) == Some(&want) {
             continue;
         }
         if let Some((old, _)) = current {
             commands.entity(old).despawn();
         }
         let mut content = commands.spawn((
-            want,
+            want.clone(),
             Node {
                 flex_shrink: 0.0,
                 ..column(0.0)
@@ -247,6 +268,7 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(on_header_button)
         .add_observer(crate::inspectors::common::on_dismiss)
         .add_observer(crate::inspectors::common::on_entity_action)
+        .add_observer(crate::inspectors::common::on_select_path)
         .add_systems(
             Update,
             crate::inspectors::common::removed_state.in_set(super::ShellSystems::Readouts),

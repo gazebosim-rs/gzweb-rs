@@ -1022,3 +1022,31 @@ fn the_footer_needs_a_model_and_isolate_forgets_a_gone_world() {
     let iso = footer(&mut app, Isolate);
     assert!(app.world().get::<Active>(iso).is_none());
 }
+
+#[test]
+fn a_sensor_row_selects_the_sensor() {
+    let (mut app, _) = live_tree();
+    caret(&mut app, "amr_01");
+    caret(&mut app, "base_link");
+    let base = entity(&mut app, "base_link");
+    click_row(&mut app, "gpu_lidar", &[]);
+    let sel = app.world().resource::<gz_bevy::view::Selection>().clone();
+    assert_eq!(
+        sel.parts,
+        [gz_bevy::view::Part {
+            kind: gz_bevy::view::PartKind::Sensor,
+            owner: base,
+            name: "gpu_lidar".into(),
+        }]
+    );
+    assert!(sel.entities.is_empty());
+    assert!(row_active(&mut app, "gpu_lidar"));
+    // ⌘/Ctrl adds the link; a plain click on it replaces both.
+    click_row(&mut app, "base_link", &[KeyCode::ControlLeft]);
+    let sel = app.world().resource::<gz_bevy::view::Selection>().clone();
+    assert_eq!((sel.entities.len(), sel.parts.len()), (1, 1));
+    assert!(all_text(&mut app).contains("2 selected"));
+    click_row(&mut app, "base_link", &[]);
+    let sel = app.world().resource::<gz_bevy::view::Selection>().clone();
+    assert_eq!((sel.entities, sel.parts.len()), (vec![base], 0));
+}

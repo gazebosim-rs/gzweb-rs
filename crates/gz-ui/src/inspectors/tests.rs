@@ -93,7 +93,7 @@ mod frame {
         world
             .query::<(Entity, &InspectorContent)>()
             .iter(world)
-            .map(|(e, c)| (e, *c))
+            .map(|(e, c)| (e, c.clone()))
             .collect()
     }
 
@@ -107,7 +107,7 @@ mod frame {
         assert_eq!(world_body.len(), 1);
         assert_eq!(
             world_body[0].1,
-            InspectorContent(InspectKind::World, None, 0)
+            InspectorContent(InspectKind::World, None, 0, None)
         );
         select(&mut app, vec![model]);
         let i = inspected(&app);
@@ -116,7 +116,10 @@ mod frame {
         // One content at a time, rebuilt for the new subject.
         let c = contents(&mut app);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].1, InspectorContent(InspectKind::Model, Some(model), 0));
+        assert_eq!(
+            c[0].1,
+            InspectorContent(InspectKind::Model, Some(model), 0, None)
+        );
         select(&mut app, vec![model, link]);
         assert_eq!(inspected(&app).kind, InspectKind::Multi);
         select(&mut app, vec![link]);

@@ -88,12 +88,16 @@ impl TreeSources<'_, '_> {
         }
     }
 
-    /// Row `row`'s entity is selected (§5.7: the row's `Active` look).
+    /// Row `row`'s entity, or its joint or sensor, is selected (§5.7: the
+    /// row's `Active` look).
     pub(crate) fn selected(&self, row: Row) -> bool {
-        self.model
-            .node(row)
-            .entity
-            .is_some_and(|e| self.selection.entities.contains(&e))
+        match self.model.node(row).entity {
+            Some(e) => self.selection.entities.contains(&e),
+            None => self
+                .model
+                .part(row)
+                .is_some_and(|p| self.selection.parts.contains(&p)),
+        }
     }
 
     /// The row height.

@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use super::{viewport_ray, Selection, Skip, ViewScene};
+use super::{viewport_ray, Part, Selection, Skip, ViewScene};
 
 /// How a pick changes the selection: a plain click replaces it, Shift adds
 /// and ⌘/Ctrl toggles (spec §6.2).
@@ -53,11 +53,41 @@ impl Selection {
 }
 
 /// Applies a pick to the selection, changing it (and so its change
-/// detection) only if the pick changes what is selected.
+/// detection) only if the pick changes what is selected. Replacing also
+/// drops the selected parts.
 pub fn select(selection: &mut Mut<Selection>, mode: SelectMode, picked: &[Entity]) {
     let next = selection.applied(mode, picked);
-    if next != selection.entities {
+    let clear_parts = mode == SelectMode::Replace && !selection.parts.is_empty();
+    if next != selection.entities || clear_parts {
         selection.entities = next;
+        if clear_parts {
+            selection.parts.clear();
+        }
+    }
+}
+
+/// Applies a pick of parts as [`select`] does entities: replacing drops
+/// the selected entities.
+pub fn select_parts(selection: &mut Mut<Selection>, mode: SelectMode, picked: &[Part]) {
+    let mut parts = match mode {
+        SelectMode::Replace => Vec::new(),
+        _ => selection.parts.clone(),
+    };
+    for p in picked {
+        match parts.iter().position(|q| q == p) {
+            Some(i) if mode == SelectMode::Toggle => {
+                parts.remove(i);
+            }
+            Some(_) => {}
+            None => parts.push(p.clone()),
+        }
+    }
+    let clear_entities = mode == SelectMode::Replace && !selection.entities.is_empty();
+    if parts != selection.parts || clear_entities {
+        selection.parts = parts;
+        if clear_entities {
+            selection.entities.clear();
+        }
     }
 }
 
@@ -193,7 +223,9 @@ pub(super) fn pick_at(
 /// Drops selected entities that no longer exist (a deleted or respawned
 /// model), so nothing downstream sees a stale one.
 pub fn prune_selection(mut selection: ResMut<Selection>, entities: Query<()>) {
-    if selection.entities.iter().any(|e| entities.get(*e).is_err()) {
-        selection.entities.retain(|e| entities.get(*e).is_ok());
+    let gone = |e: &Entity| entities.get(*e).is_err();
+    if selection.entities.iter().any(gone) || selection.parts.iter().any(|p| gone(&p.owner)) {
+        selection.entities.retain(|e| !gone(e));
+        selection.parts.retain(|p| !gone(&p.owner));
     }
 }

@@ -72,6 +72,22 @@ impl JointKind {
         }
     }
 
+    /// The type as SDFormat writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JointKind::Revolute => "revolute",
+            JointKind::Continuous => "continuous",
+            JointKind::Prismatic => "prismatic",
+            JointKind::Fixed => "fixed",
+            JointKind::Ball => "ball",
+            JointKind::Universal => "universal",
+            JointKind::Revolute2 => "revolute2",
+            JointKind::Screw => "screw",
+            JointKind::Gearbox => "gearbox",
+            JointKind::Other => "other",
+        }
+    }
+
     /// Turns about its axes (drawn with a ring), rather than sliding along
     /// them.
     pub fn rotates(self) -> bool {

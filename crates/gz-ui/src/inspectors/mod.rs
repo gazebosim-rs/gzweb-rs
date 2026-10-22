@@ -18,18 +18,23 @@
 //! the shell closes the registry when it spawns.
 
 pub(crate) mod common;
+mod joint;
 mod light;
 mod link;
 mod model;
+mod sensor;
 mod world;
 
+pub use joint::{JointInspectorPlugin, JOINT};
 pub use light::{LightInspectorPlugin, LIGHT};
 pub use link::{LinkInspectorPlugin, LINK};
 pub use model::{ModelInspectorPlugin, MODEL};
+pub use sensor::{SensorInspectorPlugin, SENSOR};
 pub use world::{WorldInspectorPlugin, WORLD};
 
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
+use gz_bevy::view::Part;
 
 use crate::panels::ContentMarker;
 use crate::registry::{self, ui_id, Registered, Registry};
@@ -67,6 +72,9 @@ pub struct Inspected {
     pub removed: bool,
     /// The header's Pin: keep showing this when the selection changes.
     pub pinned: bool,
+    /// A joint or sensor subject: which one (`entity` is its model or
+    /// link).
+    pub part: Option<Part>,
 }
 
 /// What an inspector registers: its id, the kind of selection it is for,
@@ -144,6 +152,8 @@ impl PluginGroup for InspectorPlugins {
             .add(ModelInspectorPlugin)
             .add(LinkInspectorPlugin)
             .add(LightInspectorPlugin)
+            .add(JointInspectorPlugin)
+            .add(SensorInspectorPlugin)
     }
 }
 

@@ -68,6 +68,7 @@ fn models(
     let picked = selection
         .entities
         .iter()
+        .chain(selection.parts.iter().map(|p| &p.owner))
         .filter_map(|e| {
             let mut e = *e;
             loop {

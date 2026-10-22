@@ -40,7 +40,9 @@ use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
 pub use controls::ViewerControls;
 pub use input::InputMap;
 pub use modes::CameraMode;
-pub use select::{BoxSelectTool, Marquee, MarqueeRect, SelectInViews, SelectMode};
+pub use select::{
+    select, select_parts, BoxSelectTool, Marquee, MarqueeRect, SelectInViews, SelectMode,
+};
 
 /// How long snaps, focus and home animate (spec §12: cube snaps in 250 ms).
 pub const ANIMATION_SECS: f32 = 0.25;
@@ -212,7 +214,7 @@ pub fn apply_start_view(
             .filter_map(|name| index.by_name.get(name))
             .flat_map(|es| es.iter().filter(top).copied())
             .collect();
-        select::select(&mut selection.reborrow(), SelectMode::Replace, &picked);
+        select(&mut selection.reborrow(), SelectMode::Replace, &picked);
     }
     commands.remove_resource::<StartView>();
 }
@@ -330,12 +332,41 @@ pub struct ViewCommand {
     pub op: ViewOp,
 }
 
-/// The selected entities: top-level models picked in a view (spec §6.4),
-/// and whatever the full UI's Scene tree selects. One selection for every
-/// view; the orbit pivot fallback, focus, snaps, Follow and Track use it.
-#[derive(Resource, Debug, Clone, Default)]
+/// The selection: entities (top-level models picked in a view, spec §6.4,
+/// and the models, links and lights the full UI's Scene tree selects) and
+/// parts, the joints and sensors the tree selects, which have no entity of
+/// their own. One selection for every view; the orbit pivot fallback,
+/// focus, snaps, Follow and Track use its entities.
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Selection {
     pub entities: Vec<Entity>,
+    pub parts: Vec<Part>,
+}
+
+impl Selection {
+    /// How many things are selected, entities and parts.
+    pub fn len(&self) -> usize {
+        self.entities.len() + self.parts.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// A selected joint (on its model) or sensor (on its link).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Part {
+    pub kind: PartKind,
+    /// The model (a joint) or link (a sensor) it belongs to.
+    pub owner: Entity,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PartKind {
+    Joint,
+    Sensor,
 }
 
 /// A view's camera state. Lives on the camera entity next to its
@@ -1111,11 +1142,11 @@ fn apply(
     match op {
         ViewOp::Select { at, mode } => {
             let picked = select::pick_at(scene, (t, p), f.size, at);
-            select::select(&mut scene.selection.reborrow(), mode, picked.as_slice());
+            select(&mut scene.selection.reborrow(), mode, picked.as_slice());
         }
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
-            select::select(&mut scene.selection.reborrow(), mode, &picked);
+            select(&mut scene.selection.reborrow(), mode, &picked);
         }
         ViewOp::SetDragAction(action) => view.drag_action = action,
         ViewOp::PivotAt { at, orbit } => {
