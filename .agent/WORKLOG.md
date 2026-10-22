@@ -1270,3 +1270,21 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   inspector's values and actions on a fixture scene, joint states,
   sensor rows selecting, the SDFormat extras; workspace 631 → 646
   passing; coverage 98.4% lines. check.sh passes.
+
+## 2026-10-21: M5b review fixes (D-77 to D-80 amended)
+
+- **Multi:** the body rebuilds when the selection changes (its count,
+  kinds and Focus went stale).
+- **Removed subjects:** a part selection replaces one; Dismiss clears
+  parts; a pinned removed subject stays until Dismiss; a part follows its
+  owner's respawn as a part; the Pin button follows `pinned`.
+- **Joints:** `Joint::model`, the declaring model, for `WorldExtras::joint`
+  (it matched nested models' joints of the same name, in hash order),
+  `joints_of`, the tree and the Model inspector's count, so cross-model
+  joints are their declaring model's; a model's Gravity counts its own
+  links; ball joints read in degrees; limits carry units.
+- **Actions:** Focus and Select model replace parts; Hide reads Show while
+  hidden; focus on a part frames its owner.
+- **Tests:** one for each (the multi rebuild and the nested-joint lookup
+  checked to fail without the fix); workspace 646 → 654 passing; coverage
+  98.4% lines. check.sh passes.

@@ -97,7 +97,10 @@ fn build_joint(
         .as_deref()
         .and_then(|s| s.extras.as_ref())
         .and_then(|w| w.joint(&path, &part.name).cloned());
-    let rotates = joint.as_ref().is_none_or(|j| j.kind.rotates());
+    // A ball joint turns too (the overlays draw it without an axis ring).
+    let rotates = joint
+        .as_ref()
+        .is_none_or(|j| j.kind.rotates() || j.kind == gz_core::sdf::JointKind::Ball);
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -150,18 +153,18 @@ fn build_joint(
                 ("Upper".into(), limit(l.upper, rotates, l.upper >= 1e16)),
                 (
                     "Effort limit".into(),
-                    if l.effort < 0.0 {
-                        "—".into()
-                    } else {
-                        n(l.effort)
+                    match (l.effort < 0.0, rotates) {
+                        (true, _) => "—".into(),
+                        (false, true) => format!("{} N·m", n(l.effort)),
+                        (false, false) => format!("{} N", n(l.effort)),
                     },
                 ),
                 (
                     "Velocity limit".into(),
-                    if l.velocity < 0.0 {
-                        "—".into()
-                    } else {
-                        n(l.velocity)
+                    match (l.velocity < 0.0, rotates) {
+                        (true, _) => "—".into(),
+                        (false, true) => format!("{}/s", format::degrees(l.velocity as f32)),
+                        (false, false) => format!("{} m/s", n(l.velocity)),
                     },
                 ),
                 ("Damping".into(), n(l.damping)),

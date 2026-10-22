@@ -162,16 +162,16 @@ impl SceneSources<'_, '_> {
         b.finish()
     }
 
-    /// The joints by their model's path (a joint is kept on its child link
-    /// in the SDFormat, `model/link`).
+    /// The joints by the path of the model that declares them (a joint
+    /// whose child is a nested model's link is its declaring model's).
     fn joints(&self) -> HashMap<&str, Vec<&str>> {
         let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
         if let Some(extras) = self.extras.as_ref().and_then(|x| x.extras.as_ref()) {
-            for (link, le) in &extras.links {
-                if let Some((model, _)) = link.rsplit_once('/') {
-                    out.entry(model)
+            for le in extras.links.values() {
+                for j in &le.joints {
+                    out.entry(j.model.as_str())
                         .or_default()
-                        .extend(le.joints.iter().map(|j| j.name.as_str()));
+                        .push(j.name.as_str());
                 }
             }
         }

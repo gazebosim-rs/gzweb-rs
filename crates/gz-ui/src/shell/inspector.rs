@@ -38,14 +38,15 @@ pub(crate) enum InspectorHeader {
 pub(crate) struct InspectorBody;
 
 /// The content in the body, for this subject (kind, entity, the part's
-/// name), built from this generation of the world's SDFormat (a new reply
-/// rebuilds it).
+/// name; for several, the selection itself), built from this generation
+/// of the world's SDFormat (a new reply rebuilds it).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub(crate) struct InspectorContent(
     pub(crate) InspectKind,
     pub(crate) Option<Entity>,
     pub(crate) u32,
     pub(crate) Option<String>,
+    pub(crate) Option<Selection>,
 );
 
 /// The inspector region; [`rebuild_body`] fills its body.
@@ -97,12 +98,11 @@ pub(crate) fn inspector(theme: &Theme, layout: &ShellLayout, map: &InputMap) -> 
 /// inspector.
 pub(crate) fn on_header_button(
     ev: On<Activate>,
-    buttons: Query<(&InspectorHeader, Has<Active>)>,
+    buttons: Query<&InspectorHeader>,
     mut inspected: ResMut<Inspected>,
     mut out: MessageWriter<UiCommand>,
-    mut commands: Commands,
 ) {
-    let Ok((which, active)) = buttons.get(ev.entity) else {
+    let Ok(which) = buttons.get(ev.entity) else {
         return;
     };
     match which {
@@ -110,12 +110,8 @@ pub(crate) fn on_header_button(
             out.write(UiCommand::ToggleInspector);
         }
         InspectorHeader::Pin => {
-            if active {
-                commands.entity(ev.entity).remove::<Active>();
-            } else {
-                commands.entity(ev.entity).insert(Active);
-            }
-            inspected.pinned = !active;
+            // `pin_state` shows it.
+            inspected.pinned = !inspected.pinned;
         }
     }
 }
@@ -131,40 +127,55 @@ fn kind_of(kind: NodeKind) -> Option<InspectKind> {
 }
 
 /// The subject follows the selection: nothing is the world, one entity
-/// its kind, more the common fields. Pinned, it stays. Despawned, it moves
-/// to the entity now at its path, else shows as removed until something
-/// else is selected (or Dismiss).
+/// or part its kind, more the common fields. Pinned, it stays. Despawned,
+/// it moves to the entity now at its path (selected again if it was the
+/// selection), else shows as removed: while pinned until Dismiss, else
+/// until something else is selected.
 pub(crate) fn choose_subject(
     mut selection: ResMut<Selection>,
     entities: Query<(Entity, &GzEntity)>,
     mut inspected: ResMut<Inspected>,
     mut was_selected: Local<bool>,
 ) {
-    if inspected.entity.is_some_and(|e| entities.get(e).is_err()) {
-        let respawned = inspected.path.as_ref().and_then(|path| {
-            entities
-                .iter()
-                .find(|(_, g)| &g.path == path)
-                .map(|(e, _)| e)
-        });
-        match respawned {
-            Some(e) => {
+    match inspected.entity {
+        Some(e) if entities.get(e).is_err() => {
+            let respawned = inspected.path.as_ref().and_then(|path| {
+                entities
+                    .iter()
+                    .find(|(_, g)| &g.path == path)
+                    .map(|(e, _)| e)
+            });
+            if let Some(e) = respawned {
                 inspected.entity = Some(e);
                 inspected.removed = false;
+                if let Some(part) = inspected.part.as_mut() {
+                    part.owner = e;
+                }
                 // It was the selection (pruning dropped it): it is again.
-                if *was_selected && selection.entities.is_empty() {
-                    selection.entities.push(e);
+                if *was_selected && selection.is_empty() {
+                    match inspected.part.clone() {
+                        Some(part) => selection.parts.push(part),
+                        None => selection.entities.push(e),
+                    }
                 }
                 return;
             }
-            None if !inspected.removed => inspected.removed = true,
-            None => {}
+            if !inspected.removed {
+                inspected.removed = true;
+            }
         }
-        if inspected.removed && selection.entities.is_empty() {
-            return;
+        Some(e) => {
+            *was_selected = match &inspected.part {
+                Some(part) => selection.parts.contains(part),
+                None => selection.entities.contains(&e),
+            };
         }
+        None => *was_selected = false,
     }
-    if inspected.pinned && !inspected.removed {
+    if inspected.removed && (inspected.pinned || selection.is_empty()) {
+        return;
+    }
+    if inspected.pinned {
         return;
     }
     if !selection.is_changed() && !inspected.removed {
@@ -203,18 +214,35 @@ pub(crate) fn choose_subject(
             ..default()
         },
     };
-    let want = Inspected {
-        pinned: inspected.pinned && !inspected.removed,
-        ..want
-    };
-    *was_selected = want.entity.is_some();
     inspected.set_if_neq(want);
+}
+
+/// The header's Pin shows whether the subject is pinned.
+pub(crate) fn pin_state(
+    inspected: Res<Inspected>,
+    buttons: Query<(Entity, &InspectorHeader, Has<Active>)>,
+    added: Query<(), Added<InspectorHeader>>,
+    mut commands: Commands,
+) {
+    if !inspected.is_changed() && added.is_empty() {
+        return;
+    }
+    for (e, which, active) in &buttons {
+        if *which == InspectorHeader::Pin && active != inspected.pinned {
+            if inspected.pinned {
+                commands.entity(e).insert(Active);
+            } else {
+                commands.entity(e).remove::<Active>();
+            }
+        }
+    }
 }
 
 /// A new subject gets a new content entity, with its inspector's marker,
 /// so the inspector's observer builds it.
 pub(crate) fn rebuild_body(
     inspected: Res<Inspected>,
+    selection: Res<Selection>,
     registry: Res<InspectorRegistry>,
     sdf: Option<Res<SdfExtras>>,
     bodies: Query<(Entity, Option<&Children>), With<InspectorBody>>,
@@ -227,6 +255,7 @@ pub(crate) fn rebuild_body(
         inspected.entity,
         generation,
         inspected.part.as_ref().map(|p| p.name.clone()),
+        (inspected.kind == InspectKind::Multi).then(|| selection.clone()),
     );
     for (body, children) in &bodies {
         let current = children
@@ -257,7 +286,7 @@ pub(crate) fn build(app: &mut App) {
     app.init_resource::<Inspected>()
         .add_systems(
             Update,
-            (choose_subject, rebuild_body)
+            (choose_subject, rebuild_body, pin_state)
                 .chain()
                 .in_set(crate::GzUiSystems::Behaviour),
         )
@@ -271,6 +300,10 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(crate::inspectors::common::on_select_path)
         .add_systems(
             Update,
-            crate::inspectors::common::removed_state.in_set(super::ShellSystems::Readouts),
+            (
+                crate::inspectors::common::removed_state,
+                crate::inspectors::common::hide_label,
+            )
+                .in_set(super::ShellSystems::Readouts),
         );
 }

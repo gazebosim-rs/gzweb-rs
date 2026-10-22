@@ -969,11 +969,13 @@ impl ViewScene<'_, '_> {
     }
 
     /// The selection's bounds; an entity with no meshes (a light, say)
-    /// counts as the point it is at.
+    /// counts as the point it is at, and a joint or sensor as its model or
+    /// link.
     fn selection_bounds(&self) -> Option<Bounds> {
         self.selection
             .entities
             .iter()
+            .chain(self.selection.parts.iter().map(|p| &p.owner))
             .filter_map(|e| {
                 self.bounds_of(*e, Skip::NOTHING).or_else(|| {
                     let (_, global, ..) = self.nodes.get(*e).ok()?;

@@ -10,7 +10,7 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
-use gz_bevy::view::{Selection, ViewCommand, ViewOp};
+use gz_bevy::view::{SelectMode, Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
 
 use super::{InspectKind, Inspected};
@@ -446,8 +446,8 @@ pub(crate) fn on_dismiss(
 ) {
     if buttons.contains(ev.entity) {
         *inspected = Inspected::default();
-        if !selection.entities.is_empty() {
-            selection.entities.clear();
+        if !selection.is_empty() {
+            *selection = Selection::default();
         }
     }
 }
@@ -512,9 +512,7 @@ pub(crate) fn on_entity_action(
     };
     match action {
         EntityAction::Focus => {
-            if selection.entities != [subject] {
-                selection.entities = vec![subject];
-            }
+            gz_bevy::view::select(&mut selection.reborrow(), SelectMode::Replace, &[subject]);
             for view in &cameras {
                 views.write(ViewCommand {
                     view,
@@ -528,7 +526,7 @@ pub(crate) fn on_entity_action(
             while let Ok(parent) = parents.get(e) {
                 e = parent.parent();
                 if kinds.get(e).is_ok_and(|g| g.kind == NodeKind::Model) {
-                    selection.entities = vec![e];
+                    gz_bevy::view::select(&mut selection.reborrow(), SelectMode::Replace, &[e]);
                     break;
                 }
             }
@@ -570,11 +568,7 @@ pub(crate) fn on_select_path(
         return;
     };
     if let Some((e, _)) = entities.iter().find(|(_, g)| &g.path == path) {
-        gz_bevy::view::select(
-            &mut selection.reborrow(),
-            gz_bevy::view::SelectMode::Replace,
-            &[e],
-        );
+        gz_bevy::view::select(&mut selection.reborrow(), SelectMode::Replace, &[e]);
     }
 }
 
@@ -595,6 +589,36 @@ pub(crate) fn definition_group(body: &mut ChildSpawner, title: &str, rows: Vec<(
             g.spawn(value_row(&label, value));
         }
     });
+}
+
+/// The Hide quick action reads Show while its subject is hidden.
+pub(crate) fn hide_label(
+    inspected: Res<Inspected>,
+    visibility: Query<Ref<Visibility>>,
+    actions: Query<(&EntityAction, &Children)>,
+    added: Query<(), Added<EntityAction>>,
+    mut texts: Query<&mut Text>,
+) {
+    let Some(v) = inspected.entity.and_then(|e| visibility.get(e).ok()) else {
+        return;
+    };
+    if !v.is_changed() && added.is_empty() {
+        return;
+    }
+    let label = if *v == Visibility::Hidden {
+        "Show"
+    } else {
+        "Hide"
+    };
+    for (action, children) in &actions {
+        if *action == EntityAction::Hide {
+            for c in children {
+                if let Ok(mut t) = texts.get_mut(*c) {
+                    set_text(&mut t, label);
+                }
+            }
+        }
+    }
 }
 
 /// A small Gazebo scene for the inspectors' tests: the world root (Gazebo
@@ -633,6 +657,9 @@ pub(crate) mod fixture {
         <link name="wheel"/>
         <joint name="hinge" type="revolute"><parent>base</parent><child>wheel</child>
           <axis><xyz>0 1 0</xyz><limit><lower>-1</lower><upper>1</upper></limit></axis></joint>
+        <link name="rail"/>
+        <joint name="slide" type="prismatic"><parent>base</parent><child>rail</child>
+          <axis><xyz>1 0 0</xyz><limit><lower>0</lower><upper>0.5</upper><effort>30</effort><velocity>2</velocity></limit></axis></joint>
       </model>
       <model name="crate"><link name="l"/></model>
     </world></sdf>"#;

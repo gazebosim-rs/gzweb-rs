@@ -85,3 +85,30 @@ fn a_joint_shows_its_definition_and_live_state() {
     assert!(sel.parts.is_empty() && sel.entities.len() == 1, "{sel:?}");
     assert_eq!(app.world().resource::<JointStateWanted>().0, None);
 }
+
+#[test]
+fn a_sliding_joint_reads_in_metres() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+        kind: PartKind::Joint,
+        owner: s.cart,
+        name: "slide".into(),
+    }];
+    frames(&mut app, 3);
+    let text = all_text(&mut app);
+    for want in ["prismatic", "0.5 m", "30 N", "2 m/s"] {
+        assert!(text.contains(want), "{want} in {text}");
+    }
+    app.world_mut().resource_mut::<JointStates>().joints.insert(
+        "slide".into(),
+        JointState {
+            position: 0.25,
+            velocity: 0.1,
+            effort: 3.0,
+        },
+    );
+    frames(&mut app, 2);
+    assert_eq!(live(&mut app), ["0.250 m", "0.1 m/s", "3 N"]);
+}

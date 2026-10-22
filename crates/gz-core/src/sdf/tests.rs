@@ -399,3 +399,38 @@ fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
     );
     assert!(w.joint("plain", "hinge").is_none());
 }
+
+#[test]
+fn joints_belong_to_the_model_that_declares_them() {
+    // `outer` declares j (prismatic) and k, whose child is the nested
+    // model's link; `inner` declares its own j (revolute).
+    let xml = r#"<sdf version="1.9"><world name="w">
+      <model name="outer">
+        <link name="base"/>
+        <model name="inner">
+          <link name="l"/><link name="m"/>
+          <joint name="j" type="revolute"><parent>l</parent><child>m</child></joint>
+        </model>
+        <link name="arm"/>
+        <joint name="j" type="prismatic"><parent>base</parent><child>arm</child></joint>
+        <joint name="k" type="fixed"><parent>base</parent><child>inner::l</child></joint>
+      </model>
+      <model name="outer2"><link name="x"/></model>
+    </world></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    for _ in 0..20 {
+        assert_eq!(w.joint("outer", "j").unwrap().kind, JointKind::Prismatic);
+        assert_eq!(
+            w.joint("outer/inner", "j").unwrap().kind,
+            JointKind::Revolute
+        );
+    }
+    let k = w.joint("outer", "k").unwrap();
+    assert_eq!((k.model.as_str(), k.child.as_str()), ("outer", "inner::l"));
+    assert!(w.joint("outer/inner", "k").is_none());
+    let mut outer: Vec<&str> = w.joints_of("outer").map(|j| j.name.as_str()).collect();
+    outer.sort();
+    assert_eq!(outer, ["j", "k"]);
+    assert_eq!(w.joints_of("outer/inner").count(), 1);
+    assert_eq!(w.joints_of("outer2").count(), 0);
+}

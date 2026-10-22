@@ -136,6 +136,9 @@ pub struct Joint {
     /// `inner::link` for a nested model's).
     pub parent: String,
     pub child: String,
+    /// The path of the model that declares it (its child link may be a
+    /// nested model's).
+    pub model: String,
     /// Per axis, as `axes`.
     pub limits: Vec<AxisLimits>,
 }
@@ -256,15 +259,25 @@ impl WorldExtras {
         self.models.get(path)
     }
 
-    /// Model `model`'s joint `name` (joints live on their child links,
-    /// which are under the model's path).
+    /// The joint `name` that model `model` declares (not one of its nested
+    /// models'; joints live on their child links, under the model's path).
     pub fn joint(&self, model: &str, name: &str) -> Option<&Joint> {
         let prefix = format!("{model}/");
         self.links
             .iter()
             .filter(|(path, _)| path.starts_with(&prefix))
             .flat_map(|(_, l)| &l.joints)
-            .find(|j| j.name == name)
+            .find(|j| j.model == model && j.name == name)
+    }
+
+    /// The joints model `model` declares.
+    pub fn joints_of<'a>(&'a self, model: &'a str) -> impl Iterator<Item = &'a Joint> + 'a {
+        let prefix = format!("{model}/");
+        self.links
+            .iter()
+            .filter(move |(path, _)| path.starts_with(&prefix))
+            .flat_map(|(_, l)| &l.joints)
+            .filter(move |j| j.model == model)
     }
 }
 
@@ -464,6 +477,7 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
             axes,
             parent: text(j, "parent").unwrap_or("").to_string(),
             child: child_name.to_string(),
+            model: path.clone(),
             limits,
         });
     }

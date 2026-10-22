@@ -68,14 +68,9 @@ fn parts(
         .filter_map(|l| entities.get(*l).ok().and_then(|(_, s)| s))
         .map(|s| s.0.len())
         .sum();
-    let joints = sdf.and_then(|s| s.extras.as_ref()).map_or(0, |w| {
-        let prefix = format!("{path}/");
-        w.links
-            .iter()
-            .filter(|(p, _)| p.starts_with(&prefix) && !p[prefix.len()..].contains('/'))
-            .map(|(_, l)| l.joints.len())
-            .sum()
-    });
+    let joints = sdf
+        .and_then(|s| s.extras.as_ref())
+        .map_or(0, |w| w.joints_of(path).count());
     Parts {
         links: links.len(),
         sensors,
@@ -109,11 +104,12 @@ fn build_model(
         .and_then(|s| s.extras.as_ref())
         .and_then(|w| w.model(&path).cloned());
     let gravity = sdf.as_deref().and_then(|s| s.extras.as_ref()).map(|w| {
+        // Its own links, as Links counts them (not nested models').
         let prefix = format!("{path}/");
         let mut flags = w
             .links
             .iter()
-            .filter(|(p, _)| p.starts_with(&prefix))
+            .filter(|(p, _)| p.starts_with(&prefix) && !p[prefix.len()..].contains('/'))
             .map(|(_, l)| l.flags.gravity);
         match flags.next() {
             None => "—",

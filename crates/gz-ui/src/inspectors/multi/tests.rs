@@ -49,3 +49,21 @@ fn several_selected_share_what_they_have_in_common() {
     assert_eq!(shared(&mut app)[2], "0.500 m");
     assert_eq!(summary(&["link", "link"]), "2 links");
 }
+
+#[test]
+fn the_multi_body_follows_the_selection() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    app.world_mut().resource_mut::<Selection>().entities = vec![s.cart, s.krate];
+    frames(&mut app, 3);
+    assert!(all_text(&mut app).contains("2 selected"));
+    app.world_mut()
+        .resource_mut::<Selection>()
+        .entities
+        .push(s.sun);
+    frames(&mut app, 3);
+    let text = all_text(&mut app);
+    assert!(text.contains("2 models · 1 light"), "{text}");
+    assert!(!text.contains("2 selected"), "{text}");
+}
