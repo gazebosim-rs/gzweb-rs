@@ -33,7 +33,7 @@ use crate::widgets::layout::{column, row};
 
 /// A layout preset (§3.4, §7.4).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum LayoutPreset {
+pub enum LayoutPreset {
     Single,
     TwoColumns,
     TwoRows,
@@ -49,6 +49,17 @@ impl LayoutPreset {
         LayoutPreset::OnePlusTwo,
         LayoutPreset::Quad,
     ];
+
+    /// Its command-line name (`gzweb --layout`).
+    pub fn id(self) -> &'static str {
+        match self {
+            LayoutPreset::Single => "single",
+            LayoutPreset::TwoColumns => "two-columns",
+            LayoutPreset::TwoRows => "two-rows",
+            LayoutPreset::OnePlusTwo => "one-plus-two",
+            LayoutPreset::Quad => "quad",
+        }
+    }
 
     pub(crate) fn name(self) -> &'static str {
         match self {
@@ -133,6 +144,34 @@ impl LayoutPreset {
             (LayoutPreset::TwoRows | LayoutPreset::OnePlusTwo, _) => LayoutPreset::Quad,
             (p, _) => p,
         }
+    }
+}
+
+impl std::str::FromStr for LayoutPreset {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|p| p.id() == s).ok_or_else(|| {
+            let names: Vec<&str> = Self::ALL.iter().map(|p| p.id()).collect();
+            format!("unknown layout '{s}' ({})", names.join(", "))
+        })
+    }
+}
+
+/// The layout to start in (`gzweb --layout`, for a capture); applied
+/// once, then removed.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartLayout(pub LayoutPreset);
+
+/// Applies [`StartLayout`].
+fn apply_start_layout(
+    start: Option<Res<StartLayout>>,
+    mut layout: ResMut<ViewLayout>,
+    mut commands: Commands,
+) {
+    if let Some(start) = start {
+        layout.set_preset(start.0);
+        commands.remove_resource::<StartLayout>();
     }
 }
 
@@ -762,7 +801,13 @@ pub(crate) fn build(app: &mut App) {
         .add_message::<LayoutCommand>()
         .add_systems(
             Update,
-            (apply_layout_commands, view_floor, build_grid, follow_shares)
+            (
+                apply_start_layout,
+                apply_layout_commands,
+                view_floor,
+                build_grid,
+                follow_shares,
+            )
                 .chain()
                 .in_set(crate::GzUiSystems::Behaviour),
         )
@@ -775,3 +820,6 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(on_divider_drag_end)
         .add_observer(on_divider_click);
 }
+
+#[cfg(test)]
+mod tests;

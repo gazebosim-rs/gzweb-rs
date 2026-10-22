@@ -240,6 +240,7 @@ fn spawn_mask_camera(
                 },
                 Msaa::Off,
                 Tonemapping::None,
+                bevy::core_pipeline::tonemapping::DebandDither::Disabled,
                 RenderLayers::from_layers(&[SELECTED_LAYER, HOVERED_LAYER]),
                 Transform::IDENTITY,
                 ChildOf(view),

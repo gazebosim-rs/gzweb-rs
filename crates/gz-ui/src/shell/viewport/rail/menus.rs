@@ -9,7 +9,7 @@
 //!   speed… are disabled ("Not available yet").
 //! - **Overlays** (§7.3): checkbox items in the spec's order with their
 //!   keys; "Lidar scans / sensor data" waits for the Sensors panel (M7)
-//!   and "Apply to all views" for split views (M6): both disabled.
+//!   and "Apply to all views" for per-view overlays (M6b): both disabled.
 //! - **Layout** (§7.4): the five layout presets, the current one marked;
 //!   Maximize (Restore while maximized) and Close view, with several
 //!   views; Link cameras and Shared selection wait for M6b, disabled.

@@ -44,6 +44,7 @@ pub use layout::{
 };
 pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
 pub use top_bar::tools::Tool;
+pub use viewport::views::{LayoutPreset, StartLayout};
 
 use crate::inspectors::{InspectorPlugins, InspectorRegistry};
 use crate::panels::{PanelId, PanelPlugins, PanelRegistry};

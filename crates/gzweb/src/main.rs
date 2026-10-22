@@ -22,9 +22,12 @@
 //!   capture can show them (DECISIONS.md D-64). Not with `--snapshot`.
 //! - `--scene-filter TEXT` and `--scene-expand` start the full UI's Scene
 //!   tree filtered or with every row open (DECISIONS.md D-70).
+//! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
+//!   full UI's viewport in that layout (DECISIONS.md D-90).
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
-//! plus `ui=full|minimal|gallery` (default minimal), `theme=` and `hud=0`.
+//! plus `ui=full|minimal|gallery` (default minimal), `theme=`, `hud=0` and
+//! `layout=` (as `--layout`).
 
 use bevy::prelude::*;
 use bevy::window::WindowResizeConstraints;
@@ -47,6 +50,8 @@ struct Args {
     start: Option<gz_bevy::view::StartView>,
     /// `--scene-filter`, `--scene-expand`.
     scene: Option<gz_ui::panels::SceneTreeStart>,
+    /// `--layout`.
+    layout: Option<gz_ui::shell::LayoutPreset>,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
@@ -55,7 +60,8 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
-                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand]\n\
+                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] \
+                     [--layout single|two-columns|two-rows|one-plus-two|quad]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
                      --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
@@ -167,6 +173,7 @@ fn parse_args(
     let mut start = gz_bevy::view::StartView::default();
     let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut timeout_ms = 60000.0;
+    let mut layout = None;
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -227,6 +234,9 @@ fn parse_args(
             ),
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
+            "--layout" => {
+                layout = Some(value()?.parse().map_err(|e| format!("--layout: {e}"))?);
+            }
             "--settle-ms" => settle_ms = millis()?,
             "--timeout-ms" => timeout_ms = millis()?,
             "-h" | "--help" => return Ok(Command::Help),
@@ -252,6 +262,9 @@ fn parse_args(
     }
     if scene.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--scene-filter and --scene-expand need --ui full".into());
+    }
+    if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--layout needs --ui full".into());
     }
     // Only the full UI shows (and selects) a selection.
     if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
@@ -289,6 +302,7 @@ fn parse_args(
         window,
         start,
         scene,
+        layout,
     })))
 }
 
@@ -356,6 +370,8 @@ fn command() -> Result<Command, String> {
         window: None,
         start: None,
         scene: None,
+        layout: get("layout")
+            .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
     })))
 }
 
@@ -550,6 +566,9 @@ fn main() -> AppExit {
         ));
         if let Some(scene) = args.scene {
             app.insert_resource(scene);
+        }
+        if let Some(layout) = args.layout {
+            app.insert_resource(gz_ui::shell::StartLayout(layout));
         }
     }
     if let Some(req) = args.snapshot {
@@ -789,6 +808,17 @@ mod tests {
             parse(&["--scene-expand", "--ui", "minimal"], None).unwrap_err(),
             "--scene-filter and --scene-expand need --ui full"
         );
+        use gz_ui::shell::LayoutPreset;
+        let a = run_args(&["--layout", "quad", "--ui", "full"], None);
+        assert_eq!(a.layout, Some(LayoutPreset::Quad));
+        assert!(parse(&["--layout", "six"], None)
+            .unwrap_err()
+            .starts_with("--layout: unknown layout 'six'"));
+        assert_eq!(
+            parse(&["--layout", "quad", "--ui", "minimal"], None).unwrap_err(),
+            "--layout needs --ui full"
+        );
+        assert!(USAGE.contains("--layout"));
     }
 
     #[test]

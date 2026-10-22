@@ -2938,6 +2938,27 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
     r.button(MouseButton::Left, ButtonState::Released);
     r.app.update();
     assert!(!set_poses(&mut r).is_empty());
+    // The gizmo draws in the active view only (its own layer).
+    let layers = |r: &Rig| {
+        r.app
+            .world()
+            .resource::<GizmoConfigStore>()
+            .config::<gizmo::TransformGizmos>()
+            .0
+            .render_layers
+            .clone()
+    };
+    assert_eq!(layers(&r), RenderLayers::default());
+    r.app
+        .world_mut()
+        .resource_mut::<controls::ViewRouting>()
+        .active = Some(ViewId(1));
+    r.app.update();
+    assert_eq!(layers(&r), RenderLayers::layer(ViewId(1).layer()));
+    r.app
+        .world_mut()
+        .resource_mut::<controls::ViewRouting>()
+        .active = None;
     // A turn to undo and redo.
     r.app.update();
     let label = |r: &Rig| {

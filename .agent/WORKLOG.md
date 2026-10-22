@@ -1399,3 +1399,35 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   (another client's Reset, a restarted server) forget the moves; after a
   Reset, undoing the hides left is clean again; the spec's undoable Reset
   lines, D-16, D-74 and D-89 updated. 698 → 701 tests.
+
+## 2026-10-22: M6a split views (D-90 to D-92)
+
+- **Cameras:** each view camera has a `ViewId`, its own `ViewPlacement`
+  (now a component), outline mask (`Outlining` says whether anything is
+  outlined) and render layer; `ViewSlots` and `render::spawn_views` give
+  each view a camera dressed for the environment, a copy of the first; a
+  new environment respawns them keeping id, placement and state; a cubemap
+  sky installs on every camera. A dropped view's camera stays, off.
+- **Routing:** `ViewRouting::{hovered, active}`; presses, the wheel and
+  gestures go to the hovered view, a drag keeps its view, keys go to the
+  hovered else active view; the gizmo shows and picks in the active view
+  (its layer), and its drag and readout keep their view.
+- **Layout:** `viewport::views`: the five presets as a flex grid of view
+  nodes with share dividers (drag within `viewport_min`, double-click
+  reset, accent), `LayoutCommand` from the Layout popover (thumbnails,
+  Maximize/Restore, Close view) and ⇧Space, ⌘W, ⌥⌘→/↓; Close view
+  renumbers the cameras; the floor rule's width follows the preset
+  (`ShellLayout::floor_w`), then Single when it still doesn't fit.
+  `gzweb --layout` and `?layout=`.
+- **Per view:** rail, cube (its own cube scene and layer), pills, outline,
+  marquee and the accent frame on the active view; `ViewCameras` replaces
+  `MainView`.
+- **Live check** (`--release`, Jetty `diff_drive` on 9011, `--ui full
+  --layout quad --screenshot`): four views of the world with their own
+  compact rails and cubes and the active view's frame; Single unchanged.
+  Pointer and keys in a split layout not tried by hand.
+- **Tests:** two views' pointer and key routing, new and respawned view
+  cameras, the gizmo's layer; presets and placement, divider drag, clamp
+  and reset, hover and active, a rail and cube per view, Maximize, Close
+  view and splits, the floor; workspace 701 → 710 passing; coverage 98.3%
+  lines. check.sh passes.

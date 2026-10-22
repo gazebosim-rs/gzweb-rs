@@ -699,10 +699,11 @@ Bevy metres; "depth" is distance along the view axis.
 **Selection outline** (`view::outline`, gz-ui `viewport::outline`,
 DECISIONS.md D-75): the selection's meshes, and the Scene tree's hovered
 entity's (`outline::Hovered`), get unlit clones (red, green) on layers 28
-and 29; `MaskCamera`, a child of the main camera with its projection and
-`ViewPlacement`'s size, renders them into `OutlineMask`'s texture while
-anything is outlined (`place_mask`, after `apply_view_placement`); a
-`UiMaterial` node first under the view's controls, covering only the
+and 29; in each view, a `MaskCamera`, a child of the view's camera with
+its projection and `ViewPlacement`'s size, renders them into the view's
+`OutlineMask` texture while anything is outlined (`Outlining`;
+`place_mask`, after `apply_view_placement`); a
+`UiMaterial` node first under each view's controls, covering only the
 outlined meshes' screen rectangle (`outline_rect`), draws
 `selection_outline` outside the silhouettes (2 px; the hover 1 px at
 50%). No lights are on those layers, so the mask camera has no cascades.
@@ -762,14 +763,23 @@ full UI's shell reads `ui.sidebar`, `ui.inspector`, `tool.*` and `panel.*`
 from the same map.
 
 **Routing and placement** (full UI; minimal leaves both at their
-defaults). `controls::ViewRouting { pointer, keys }`, written by the shell
-each frame: without `pointer`, presses start no drag and the wheel and
-gestures are dropped (a drag already running continues); without `keys`,
-`ViewRouting::key_scopes` drops the `viewport` and `minimal` scopes for
-`key_input` and `fly_input`. `view::ViewPlacement { rect, scale, image }`:
-the shell writes the view node's window rect (logical) after UI layout;
-`apply_view_placement` (PostUpdate, set `ViewPlacementSystems`, before
-frustum culling) renders the main camera into `image`, an
+defaults). `controls::ViewRouting { pointer, keys, hovered, active }`,
+written by the shell each frame: without `pointer`, presses start no drag
+and the wheel and gestures are dropped (a drag already running continues);
+without `keys`, `ViewRouting::key_scopes` drops the `viewport` and
+`minimal` scopes for `key_input` and `fly_input`. `hovered` and `active`
+name views (`ViewId`): the pointer drives the hovered one (a drag keeps
+its own, `Drag::view`), keys go to `key_view()` (hovered, else active),
+and the gizmo to the active one (D-91); unnamed (minimal mode), the
+controls use the first view showing. Each view camera has a `ViewId`, its
+render layers (`ViewId::layers`: the scene's and its own) and a
+`view::ViewPlacement { rect, scale, image }` component: the shell writes
+each view node's window rect (logical) after UI layout, `None` for a view
+the layout dropped (its camera goes off); `ViewSlots` is how many views
+the layout has and `render::spawn_views` gives each a dressed camera, a
+copy of the first (D-90). `apply_view_placement` (PostUpdate, set
+`ViewPlacementSystems`, before frustum culling) renders each placed camera
+into its `image`, an
 `Rgba8UnormSrgb` render target of the rect's physical size (no CPU data,
 no copy on resize), and in the same frame sets the camera's target size and
 projection, so a resize or splitter drag never renders a frame at the old
@@ -1013,12 +1023,21 @@ banner), `connection` (phase), `format` (readouts).
   30% over the last frame (D-34). In the browser a successful connect
   stores the address in `localStorage` (`view::web::remember_url`), which
   the page uses when `?url=` is absent (D-33).
-- **View** (§9.3): `ViewNode` fills the viewport area; `place_view`
-  (PostUpdate after layout, before `ViewPlacementSystems`) writes its rect
-  to `ViewPlacement`; `show_view_image` shows the texture (hidden while no
-  world: the area's `bg` shows). `route_pointer` (PreUpdate after picking's
-  hover) writes `ViewRouting` (D-32). The UI camera is a `Camera2d` at
-  order 1.
+- **Views** (§9.3, M6; `viewport::views`): `ViewLayout` (preset, shares
+  per preset, maximized view, floor fallback) builds `ViewGrid`'s flex rows
+  and columns of `ViewNode(ViewId)`s and `ViewDivider`s (`build_grid`,
+  rebuilt when the preset or maximized view changes; `follow_shares` moves
+  the shares); `LayoutCommand` (the Layout popover, ⇧Space, ⌘W, ⌥⌘→/↓)
+  changes it, Close view renumbering the cameras; `view_floor` sets
+  `ShellLayout::floor_w` and the fallback (D-92). Each view node holds its
+  outline, active frame, cube, rail, pills, marquee and gizmo readout, and
+  `ViewCameras` finds a control's camera through its node. `place_view`
+  (PostUpdate after layout, before `ViewPlacementSystems`) writes each
+  node's rect to its camera's `ViewPlacement`; `show_view_image` shows each
+  camera's texture in its node (hidden while no world: the area's `bg`
+  shows). `route_pointer` (PreUpdate after picking's hover) writes
+  `ViewRouting`, with the hovered and active views (D-32, D-91). The UI
+  camera is a `Camera2d` at order 1.
 - **Connection side** (`gz-bevy::connection`): `GzReconnect { url }`
   reconnects now (new URL: attempts reset; same: counted), clearing a
   backoff and a rejection; `GzStatus::attempting` says a socket is open or
