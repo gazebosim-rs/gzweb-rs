@@ -195,7 +195,7 @@
       "label": "Reset world",
       "keys": "mod+shift+R",
       "scope": "global",
-      "note": "undoable; shows 'Reset · Undo' chip for 5 s"
+      "note": "not undoable (DECISIONS.md D-89: the server can't put a world back); forgets the moves on the undo stack"
     },
     {
       "id": "teleop.stop",

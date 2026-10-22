@@ -143,7 +143,9 @@ impl Plugin for ShellPlugin {
                     .chain()
                     .in_set(ShellSystems::Layout)
                     // Before the views see Esc cancel a marquee.
-                    .before(gz_bevy::view::controls::mouse_input),
+                    .before(gz_bevy::view::controls::mouse_input)
+                    // ⌘Z after an edit in the same frame undoes that edit.
+                    .before(gz_bevy::undo::UndoSystems),
             );
         routing::build(app);
         splitter::build(app);

@@ -24,6 +24,7 @@ pub mod snapshot;
 pub mod spawn;
 pub mod stl;
 pub mod submesh;
+pub mod undo;
 pub mod view;
 
 use bevy::prelude::*;

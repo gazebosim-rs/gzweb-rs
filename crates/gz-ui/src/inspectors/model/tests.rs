@@ -440,6 +440,64 @@ fn a_links_and_a_lights_pose_stay_text_and_a_scrub_sends_at_most_ten_a_second() 
 }
 
 #[test]
+fn ctrl_z_puts_a_pose_edit_back_and_the_dot_shows_the_world_is_dirty() {
+    use crate::shell::top_bar::world_button::UnsavedDot;
+    use crate::widgets::NumberCommit;
+    use gz_bevy::connection::GzStatus;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    select(&mut app, vec![s.cart]);
+    {
+        let mut status = app.world_mut().resource_mut::<GzStatus>();
+        status.edits = Some(true);
+        status.world = Some("w".into());
+    }
+    frames(&mut app, 3);
+    let dot = |app: &mut App| {
+        let d = find::<UnsavedDot>(app);
+        app.world().get::<Node>(d).unwrap().display != Display::None
+    };
+    assert!(!dot(&mut app));
+    let x = |app: &App| app.world().get::<Transform>(s.cart).unwrap().translation.x;
+    let field = pose_fields(&mut app, PoseFrame::World)[0].0;
+    // A scrub is one edit.
+    for (value, is_final) in [(1.5, false), (2.0, false), (2.5, true)] {
+        app.world_mut().trigger(NumberCommit {
+            entity: field,
+            value,
+            is_final,
+        });
+        app.update();
+    }
+    frames(&mut app, 2);
+    assert_eq!(x(&app), 2.5);
+    assert!(dot(&mut app));
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyZ]);
+    frames(&mut app, 2);
+    assert!((x(&app) - 1.0).abs() < 1e-5, "{}", x(&app));
+    assert!(!dot(&mut app));
+    chord(
+        &mut app,
+        &[KeyCode::ControlLeft, KeyCode::ShiftLeft, KeyCode::KeyZ],
+    );
+    frames(&mut app, 2);
+    assert_eq!(x(&app), 2.5);
+    assert!(dot(&mut app));
+    // Not while a field is being scrubbed: it would undo the scrub's start
+    // under it.
+    app.world_mut()
+        .entity_mut(field)
+        .insert(crate::widgets::number_field::Scrub {
+            value: 2.5,
+            moved: false,
+        });
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::KeyZ]);
+    frames(&mut app, 2);
+    assert_eq!(x(&app), 2.5);
+}
+
+#[test]
 fn a_scrub_past_straight_up_carries_on_and_a_held_back_step_still_goes_out() {
     use crate::widgets::NumberCommit;
     use gz_bevy::connection::GzStatus;

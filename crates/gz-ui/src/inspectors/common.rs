@@ -12,6 +12,7 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
+use gz_bevy::undo::{Change, Record};
 use gz_bevy::view::gizmo::SEND_SECS;
 use gz_bevy::view::{SelectMode, Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
@@ -525,7 +526,7 @@ pub(crate) fn on_pose_commit(
     mut subjects: Query<&mut Transform, With<GzEntity>>,
     mut held: Option<ResMut<Held>>,
     mut edit: ResMut<PoseEdit>,
-    mut edits: MessageWriter<SetPose>,
+    mut out: (MessageWriter<SetPose>, MessageWriter<Record>),
 ) {
     let (Ok(value), Some(entity)) = (values.get(ev.entity), inspected.entity) else {
         return;
@@ -536,11 +537,24 @@ pub(crate) fn on_pose_commit(
     let Ok(mut local) = subjects.get_mut(entity) else {
         return;
     };
+    let before = *local;
     let mut v = edit.numbers(Some(entity), &local);
     v[value.1] = ev.value;
     let pose = pose_from_numbers(v, local.scale);
     *local = pose;
     edit.set = Some((entity, pose, v));
+    // A scrub is one edit, from where it began (its steps join it).
+    out.1.write(Record {
+        verb: "move",
+        named: true,
+        changes: vec![Change::Pose {
+            entity,
+            before,
+            after: pose,
+        }],
+        scrub: Some(ev.entity),
+        open: !ev.is_final,
+    });
     let now = time.map_or(0.0, |t| t.elapsed_secs_f64());
     // Each scrub step holds again for a moment, so a scrub cut short (the
     // body rebuilt under it) can't hold the subject for good.
@@ -549,7 +563,7 @@ pub(crate) fn on_pose_commit(
     }
     let set_pose = SetPose { entity, pose };
     if ev.is_final || edit.sent_at.is_none_or(|t| now - t >= SEND_SECS) {
-        edits.write(set_pose);
+        out.0.write(set_pose);
         edit.sent_at = (!ev.is_final).then_some(now);
         edit.pending = None;
     } else {
@@ -679,6 +693,7 @@ pub(crate) fn on_entity_action(
     mut selection: ResMut<Selection>,
     mut views: MessageWriter<ViewCommand>,
     mut overlays: MessageWriter<OverlayCommand>,
+    mut records: MessageWriter<Record>,
 ) {
     let Ok(action) = actions.get(ev.entity) else {
         return;
@@ -727,11 +742,24 @@ pub(crate) fn on_entity_action(
         }
         EntityAction::Hide => {
             if let Ok(mut v) = visibility.get_mut(subject) {
-                let hidden = *v == Visibility::Hidden;
-                v.set_if_neq(if hidden {
+                let before = *v;
+                let hidden = before == Visibility::Hidden;
+                let after = if hidden {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
+                };
+                *v = after;
+                records.write(Record {
+                    verb: if hidden { "show" } else { "hide" },
+                    named: true,
+                    changes: vec![Change::Visibility {
+                        entity: subject,
+                        before,
+                        after,
+                    }],
+                    scrub: None,
+                    open: false,
                 });
             }
         }

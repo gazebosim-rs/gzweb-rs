@@ -286,13 +286,18 @@ websocket server, DECISIONS.md D-76), **M5d** undo.
   and holding the sim's poses meanwhile (D-85); the tools are off against a stock server (D-86);
   the inspector's pose edits movable models (D-87). Left: the joint command slider
   (D-88), Duplicate and Delete (M8), undo (M5d).
+- **M5d notes:** the undo stack (D-89): gizmo drags, pose commits (a scrub is one edit), eyes,
+  Hide, Hide others and Isolate, by scene path; ⌘Z and ⇧⌘Z; moves go back through `set_pose`;
+  the world button's unsaved dot follows the dirty state; a new world clears the stack. Reset
+  isn't undoable (the server can't put a world back) and forgets the moves. Left: the World
+  menu's Undo and Redo items and Save (M8), Delete's chip (M8).
 - One shared `Selection`: click/Shift/⌘ in views and tree, box select (B), hover highlight, and a
   selection outline (second render layer).
 - Inspectors: World, Model, Link, Joint, Light, Sensor, multi-select. Live-value streaming and
   the freeze-on-focus rule. All components view.
 - Translate/Rotate gizmos with snap and X/Y/Z constraints. Edits go through `set_pose` and the
   other services.
-- `UndoStack` and dirty-state rules (§7.1). Undo chips for Delete and Reset.
+- `UndoStack` and dirty-state rules (§7.1). Delete's undo chip (M8); Reset isn't undoable (D-89).
 - Inspector registry for real (PR #30 second review, item 8): `InspectorDef` says which
   selection kind it handles (`for_selection()` returns World today, and `BodyFn` sees no
   entity); the frame rebuilds its body when `Selection` changes; bodies are built like panel

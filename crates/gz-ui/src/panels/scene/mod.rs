@@ -80,7 +80,7 @@ impl Plugin for ScenePanelPlugin {
         .init_resource::<model::TreeState>()
         .init_resource::<model::TreeScroll>()
         .init_resource::<systems::TreeRows>()
-        .init_resource::<footer::Isolated>()
+        .init_resource::<gz_bevy::undo::Isolated>()
         .init_resource::<gz_bevy::view::outline::Hovered>()
         .add_systems(
             Update,

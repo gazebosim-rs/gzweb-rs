@@ -6,6 +6,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gz_bevy::edit::edits_allowed;
+use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
@@ -52,7 +53,7 @@ pub enum UiCommand {
 /// has them). An Esc that closes a menu does only that (§13: one step per
 /// Esc).
 #[derive(SystemParam)]
-pub(crate) struct Shortcuts<'w> {
+pub(crate) struct Shortcuts<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
     map: Option<Res<'w, InputMap>>,
     scopes: Option<Res<'w, ActiveScopes>>,
@@ -63,12 +64,19 @@ pub(crate) struct Shortcuts<'w> {
     marquee: Option<Res<'w, gz_bevy::view::Marquee>>,
     /// So does a gizmo drag (its Esc puts the selection back, D-84).
     gizmo: Option<Res<'w, gz_bevy::view::gizmo::GizmoState>>,
+    scrubs: Query<'w, 's, (), With<crate::widgets::number_field::Scrub>>,
 }
 
-impl Shortcuts<'_> {
+impl Shortcuts<'_, '_> {
     /// A gizmo drag is under way: the tool stays as it is until it ends.
     pub(crate) fn dragging(&self) -> bool {
         self.gizmo.as_ref().is_some_and(|g| g.captures())
+    }
+
+    /// An edit is under way (a gizmo drag or a field's scrub): undo waits
+    /// for it to end, so it doesn't undo the edit's start under it.
+    pub(crate) fn editing(&self) -> bool {
+        self.dragging() || !self.scrubs.is_empty()
     }
 
     /// The ids of the bindings pressed this frame.
@@ -95,16 +103,28 @@ impl Shortcuts<'_> {
     }
 }
 
-/// ⌘B, ⌘⌥I, the tool keys and the panels' own shortcuts.
+/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub) and the panels'
+/// own shortcuts.
 pub(crate) fn shortcut_keys(
     shortcuts: Shortcuts,
     panels: Res<PanelRegistry>,
     mut out: MessageWriter<UiCommand>,
+    mut undo: MessageWriter<UndoCommand>,
 ) {
     for id in shortcuts.pressed() {
         let cmd = match id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
+            "edit.undo" | "edit.redo" => {
+                if !shortcuts.editing() {
+                    undo.write(if id == "edit.undo" {
+                        UndoCommand::Undo
+                    } else {
+                        UndoCommand::Redo
+                    });
+                }
+                continue;
+            }
             id => match Tool::ALL.into_iter().find(|t| t.binding() == id) {
                 Some(_) if shortcuts.dragging() => continue,
                 Some(tool) => UiCommand::SetTool(tool),

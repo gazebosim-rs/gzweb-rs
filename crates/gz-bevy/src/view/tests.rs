@@ -2702,7 +2702,7 @@ fn gizmo_rig(tool: gizmo::TransformTool) -> (Rig, Entity) {
         .insert_resource(tool)
         .init_resource::<gizmo::Snap>()
         .init_resource::<gizmo::GizmoState>()
-        .add_plugins(crate::edit::EditPlugin)
+        .add_plugins((crate::edit::EditPlugin, crate::undo::UndoPlugin))
         .add_systems(Update, gizmo::gizmo_input.before(controls::mouse_input));
     r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
     r.app.update();
@@ -2763,6 +2763,17 @@ fn dragging_an_arrow_moves_the_model_along_it_and_sends_its_pose() {
     // The camera didn't orbit, and the release selected nothing new.
     assert_eq!(r.transform(), before);
     assert_eq!(selected(&r), [a]);
+    // One edit to undo, back to where the press began.
+    let stack = r.app.world().resource::<crate::undo::UndoStack>();
+    assert_eq!(stack.undo_label(), Some("move a"));
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(
+        r.app.world().get::<Transform>(a).unwrap().translation.x,
+        0.0
+    );
 }
 
 #[test]
@@ -2789,6 +2800,9 @@ fn shift_snaps_and_esc_puts_it_back() {
     r.key(KeyCode::Escape, ButtonState::Pressed);
     r.app.update();
     assert_eq!(*r.app.world().get::<Transform>(a).unwrap(), start);
+    // Put back: nothing to undo.
+    let stack = r.app.world().resource::<crate::undo::UndoStack>();
+    assert!(stack.undo_label().is_none() && !stack.is_dirty());
     let state = r.app.world().resource::<gizmo::GizmoState>();
     // The Esc was the gizmo's (the shell's Esc → Navigate waits).
     assert!(!state.captures() && state.takes_escape());
@@ -2867,6 +2881,7 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
             AssetPlugin::default(),
             bevy::gizmos::GizmoPlugin,
             crate::edit::EditPlugin,
+            crate::undo::UndoPlugin,
             gizmo::GizmoPlugin,
         ))
         .insert_resource(gizmo::TransformTool::Rotate)
@@ -2907,4 +2922,24 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
     r.button(MouseButton::Left, ButtonState::Released);
     r.app.update();
     assert!(!set_poses(&mut r).is_empty());
+    // A turn to undo and redo.
+    r.app.update();
+    let label = |r: &Rig| {
+        r.app
+            .world()
+            .resource::<crate::undo::UndoStack>()
+            .undo_label()
+            .map(str::to_string)
+    };
+    assert_eq!(label(&r).as_deref(), Some("rotate a"));
+    let turned = r.app.world().get::<Transform>(a).unwrap().rotation;
+    for (cmd, want) in [
+        (crate::undo::UndoCommand::Undo, Quat::IDENTITY),
+        (crate::undo::UndoCommand::Redo, turned),
+    ] {
+        r.app.world_mut().write_message(cmd);
+        r.app.update();
+        let now = r.app.world().get::<Transform>(a).unwrap().rotation;
+        assert!(now.angle_between(want) < 1e-4, "{cmd:?}");
+    }
 }

@@ -21,7 +21,7 @@ pub(crate) const READOUT_OFFSET: Vec2 = Vec2::new(14.0, 14.0);
 pub(crate) struct GizmoReadout;
 
 pub(crate) fn build(app: &mut App) {
-    app.add_plugins(gz_bevy::edit::EditPlugin);
+    app.add_plugins((gz_bevy::edit::EditPlugin, gz_bevy::undo::UndoPlugin));
     // Without Bevy's gizmos (unit tests) there is nothing to draw with.
     if app.world().contains_resource::<GizmoConfigStore>() {
         app.add_plugins(gz_bevy::view::gizmo::GizmoPlugin);

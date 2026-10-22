@@ -69,6 +69,7 @@ pub(crate) fn build(app: &mut App) {
                 transport::rtf_readout,
                 transport::steps_label_text,
                 world_button::world_texts,
+                world_button::unsaved_dot,
                 search::fit_search_placeholder,
             )
                 .in_set(ShellSystems::Readouts),

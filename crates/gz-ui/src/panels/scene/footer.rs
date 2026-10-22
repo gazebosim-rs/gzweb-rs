@@ -6,6 +6,7 @@ use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::spawn::{GzEntity, GzIndex};
+use gz_bevy::undo::{Change, Isolated, Record};
 use gz_bevy::view::{Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
 
@@ -47,11 +48,6 @@ impl FooterButton {
         Tooltip::new(self.label()).detail(detail)
     }
 }
-
-/// While Isolate is on: each top-level model's visibility before it, to
-/// put back when it goes off.
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct Isolated(pub(crate) Option<Vec<(Entity, Visibility)>>);
 
 /// The world's top-level models, and those the selection is part of.
 fn models(
@@ -97,10 +93,11 @@ pub(crate) fn footer_states(
     added: Query<(), Added<FooterButton>>,
     mut commands: Commands,
 ) {
-    let stale = isolated
-        .0
-        .as_ref()
-        .is_some_and(|saved| !saved.iter().any(|(e, _)| nodes.contains(*e)));
+    let stale = isolated.0.as_ref().is_some_and(|saved| {
+        !saved
+            .iter()
+            .any(|(p, _)| nodes.iter().any(|(_, g, _)| &g.path == p))
+    });
     if stale {
         isolated.0 = None;
     }
@@ -137,7 +134,8 @@ pub(crate) fn footer_states(
 
 /// Hide others hides the models outside the selection. Isolate saves every
 /// model's visibility, shows the selected ones, hides the rest and frames
-/// the selection; pressed again, it puts the visibility back.
+/// the selection; pressed again, it puts the visibility back. Each is one
+/// edit to undo.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn on_footer(
     ev: On<Activate>,
@@ -150,6 +148,7 @@ pub(crate) fn on_footer(
     mut visibility: Query<&mut Visibility>,
     mut isolated: ResMut<Isolated>,
     mut views: MessageWriter<ViewCommand>,
+    mut records: MessageWriter<Record>,
 ) {
     let Ok(which) = buttons.get(ev.entity) else {
         return;
@@ -158,52 +157,82 @@ pub(crate) fn on_footer(
     if picked.is_empty() && isolated.0.is_none() {
         return;
     }
-    let mut set = |e: Entity, v: Visibility| {
+    // What Isolate saves: every model's visibility, by path.
+    let saved: Vec<(String, Visibility)> = all
+        .iter()
+        .filter_map(|e| {
+            let path = nodes.get(*e).ok()?.1.path.clone();
+            visibility.get(*e).ok().map(|v| (path, *v))
+        })
+        .collect();
+    let mut changes = Vec::new();
+    let mut set = |e: Entity, after: Visibility| {
         if let Ok(mut current) = visibility.get_mut(e) {
-            current.set_if_neq(v);
+            let before = *current;
+            if before != after {
+                *current = after;
+                changes.push(Change::Visibility {
+                    entity: e,
+                    before,
+                    after,
+                });
+            }
         }
     };
-    match which {
-        FooterButton::NewGroup => {}
+    let verb = match which {
+        FooterButton::NewGroup => return,
         FooterButton::HideOthers => {
             for e in all.iter().filter(|e| !picked.contains(e)) {
                 set(*e, Visibility::Hidden);
             }
+            "hide others"
         }
         FooterButton::Isolate => {
             if let Some(saved) = isolated.0.take() {
-                for (e, v) in saved {
-                    set(e, v);
+                for (path, v) in &saved {
+                    if let Some((e, ..)) = nodes.iter().find(|(_, g, _)| &g.path == path) {
+                        set(e, *v);
+                    }
                 }
-                return;
-            }
-            let saved = all
-                .iter()
-                .filter_map(|e| visibility.get(*e).ok().map(|v| (*e, *v)))
-                .collect();
-            let mut set = |e: Entity, v: Visibility| {
-                if let Ok(mut current) = visibility.get_mut(e) {
-                    current.set_if_neq(v);
-                }
-            };
-            for e in &all {
-                let shown = picked.contains(e);
-                set(
-                    *e,
-                    if shown {
-                        Visibility::Inherited
-                    } else {
-                        Visibility::Hidden
-                    },
-                );
-            }
-            isolated.0 = Some(saved);
-            for view in &cameras {
-                views.write(ViewCommand {
-                    view,
-                    op: ViewOp::Focus { at: None },
+                changes.push(Change::Isolated {
+                    before: Some(saved),
+                    after: None,
                 });
+                "end isolate"
+            } else {
+                for e in &all {
+                    let shown = picked.contains(e);
+                    set(
+                        *e,
+                        if shown {
+                            Visibility::Inherited
+                        } else {
+                            Visibility::Hidden
+                        },
+                    );
+                }
+                changes.push(Change::Isolated {
+                    before: None,
+                    after: Some(saved.clone()),
+                });
+                isolated.0 = Some(saved);
+                for view in &cameras {
+                    views.write(ViewCommand {
+                        view,
+                        op: ViewOp::Focus { at: None },
+                    });
+                }
+                "isolate"
             }
         }
+    };
+    if !changes.is_empty() {
+        records.write(Record {
+            verb,
+            named: false,
+            changes,
+            scrub: None,
+            open: false,
+        });
     }
 }

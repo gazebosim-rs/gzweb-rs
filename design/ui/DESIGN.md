@@ -108,7 +108,7 @@ Row flex, `align-items: center`, gap 8, padding left 8, right 10. Contents left 
 | 3 | Vertical separator | 1×18 `line`, margin 0 4. |
 | 4 | Tool group | No container (no fill, border or padding; gap 2): the buttons sit on the bar's `surface`, white in light. Buttons (icon_btn 32, icon 17, radius 7) look like activity buttons (§3.2 states: transparent with `text_3` icon at rest, `hover`/`text` on hover, the selected tool `accent_soft`/`accent_text` with the inset 1px `accent_ring`): **Navigate** `navigate` (Esc), **Box select** `box_select` (B), **Translate** `translate` (T), **Rotate** `rotate` (R). Exactly one is active (radio). Then a text button "Snap 0.25 ▾" in mono 12 that opens the Snap popover (§7.6). |
 | 5 | Flexible spacer | flex 1 |
-| 6 | Transport group | No container, as the tool group; its icon buttons have the same activity-button look. **Reset** icon button `reset` (return-to-start glyph, the mirror of Step; undoable, see §7.1). **Play/Pause** a plain icon button like Reset and Step (no `primary` fill); shows `pause` when running, `play` when paused. **Step** icon button `step`. **Steps per click** text button mono 12 labelled "1 step ▾" (options 1, 10, 100, custom; tooltip "Steps per click"). Separator. **Sim clock** mono 13 weight 500 `text`, format `HH:MM:SS.mmm`. **RTF** status dot (7px; `ok` ≥ 90%, `warn` 50–90%, `danger` < 50%, `disabled` when paused) + "RTF 98%" mono 12 `text_2`; reads "paused" when paused. Hover RTF: tooltip with real time, sim time, iterations, step size. |
+| 6 | Transport group | No container, as the tool group; its icon buttons have the same activity-button look. **Reset** icon button `reset` (return-to-start glyph, the mirror of Step; not undoable, DECISIONS.md D-89). **Play/Pause** a plain icon button like Reset and Step (no `primary` fill); shows `pause` when running, `play` when paused. **Step** icon button `step`. **Steps per click** text button mono 12 labelled "1 step ▾" (options 1, 10, 100, custom; tooltip "Steps per click"). Separator. **Sim clock** mono 13 weight 500 `text`, format `HH:MM:SS.mmm`. **RTF** status dot (7px; `ok` ≥ 90%, `warn` 50–90%, `danger` < 50%, `disabled` when paused) + "RTF 98%" mono 12 `text_2`; reads "paused" when paused. Hover RTF: tooltip with real time, sim time, iterations, step size. |
 | 7 | Flexible spacer | flex 1 (keeps transport visually centered) |
 | 8 | Search / command bar trigger | 220 wide text button, border 1px `line`, fill `field`, icon `search`, placeholder "Search or run a command" `text_3`, key cap "⌘K" (mono 11, border `line`, radius 4). Opens the command palette (§7.7). |
 
@@ -435,7 +435,7 @@ The rail's Orbit/Pan/Zoom sets the view's plain left-drag action; it persists pe
 - **Platform.** ⌘ renders as Ctrl on Linux/Windows. Workspaces are Alt+1–4 on every platform (Ctrl+1–9 are browser tab shortcuts and collide with the ⌃ view presets). Reverse views are Shift+7/1/3.
 - **Web build.** Bindings in `web_reserved` (⌘W, ⌘N, ⌘T, ⌘⇧T, ⌘⇧N, ⌘1–9, ⌘D) cannot be intercepted by a page; each has a `web_alt` and tooltips show the alternate in the browser. `prevent_default_when_canvas_focused` lists chords the page must swallow (⌘K, ⌘S, ⌘O, Space, Tab) only while the viewport has focus, so the browser's own shortcuts keep working in text fields.
 - **Play/Pause** is a Space **tap** (decision Q4): key down and up within 200 ms with no pointer drag. Space held longer, or dragged while held, is temporary Pan and never toggles. Space does nothing in text fields. The transport Play button tooltip reads "Play · Space".
-- **Reset world** is ⌘⇧R and undoable (§7.1).
+- **Reset world** is ⌘⇧R; it isn't undoable (DECISIONS.md D-89).
 
 Key table (abbreviated; see the file for scope and web alternates): Esc Navigate · B box select · T translate · R rotate · X/Y/Z constrain · F focus · H home · 5 projection · 7/1/3 top/front/right (Shift+ for bottom/back/left) · Space tap play-pause · Space-hold pan · ⇧F follow · ⇧T track · ⇧Space maximize · ⌥⌘→/↓ split · ⌘W close view · G/C/I/J overlays · ⌘→ step · ⌘⇧R reset · X stop (teleop armed) · ⌘Z/⇧⌘Z undo/redo · ⌘C/V/D copy/paste/duplicate · Delete · F2 rename · ⌘N/O/S/⇧S/I file · ⌘K palette · ⌘B sidebar · ⌘⌥I inspector · Alt+1–4 workspaces · ⌘⇧E/A/T/P/C panels.
 
@@ -467,7 +467,7 @@ Header: file name (13/600) and state line mono 11 (`warn_text` "unsaved changes 
 
 **Dirty state.** The world is dirty when an authored property changes: an entity is spawned, deleted, renamed, re-parented, moved by a tool or the inspector, a toggle/field/plugin/light/sensor parameter changes, or an entity is hidden. Physics moving a dynamic body does not dirty the world. Camera, overlays, panel layout and workspaces never dirty it. Save writes the authored world: for dynamic entities that is the pose they had when last placed by the user (or loaded), not the live physics pose. Save as… offers "Use current poses" as a checkbox for users who want to bake a simulated state. The unsaved dot and the menu header follow this flag.
 
-**Undo scope.** Undoable: every operation that dirties the world, plus Reset world and Delete. Not undoable: play/pause/step, camera moves, layout changes, Teleop commands. Reset world and Delete also show a 5-second chip in the status bar ("Reset world · Undo", "Deleted amr_01 · Undo") so the undo is one click away. Undo of a move on a running sim restores the authored pose and lets physics continue from there. The stack is per world file and clears on Open or New.
+**Undo scope.** Undoable: every operation that dirties the world, plus Delete (not Reset world: DECISIONS.md D-89). Not undoable: play/pause/step, camera moves, layout changes, Teleop commands. Delete also shows a 5-second chip in the status bar ("Deleted amr_01 · Undo") so the undo is one click away. Undo of a move on a running sim restores the authored pose and lets physics continue from there. The stack is per world file and clears on Open or New.
 
 ### 7.2 Camera menu (rail)
 Free · Follow ‹selection› ⇧F · Track ‹selection› ⇧T · group "Look through" listing sensor cameras of the selection (shown when there are some) · separator · Follow offset… › · FOV & speed… ›. Current mode shown as checked.
@@ -653,7 +653,7 @@ Build in this order. Each milestone ends with screenshots compared against the n
 - [ ] Esc precedence: closes menu → cancels drag → returns to Navigate; never changes the camera drag action or releases follow.
 - [ ] Every panel renders its empty, loading and error states (§3.3.1); the no-world card and disconnected banner exist (§7.10).
 - [ ] Focusing a live inspector field freezes it; blur without change resumes streaming.
-- [ ] Delete and Reset show an Undo chip and ⌘Z reverses them.
+- [ ] Delete shows an Undo chip and ⌘Z reverses it (Reset isn't undoable, DECISIONS.md D-89).
 - [ ] No icon glyph is reused for two different actions (Reset ≠ Rotate ≠ Revert; Scene ≠ hamburger; Workspaces ≠ Layout; Focus ≠ Track ≠ Teleop).
 - [ ] Viewport camera regions match their UI nodes after window resize, splitter drag and UI scale change.
 - [ ] Theme switch, workspace switch and layout changes persist across restart (desktop) and reload (web).
