@@ -780,6 +780,8 @@ pub(crate) mod fixture {
       <model name="cart">
         <static>true</static>
         <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
+        <plugin filename="gz-sim-joint-state-publisher-system"
+                name="gz::sim::systems::JointStatePublisher"><topic>/cart/joints</topic></plugin>
         <link name="base">
           <kinematic>true</kinematic>
           <inertial><mass>2.5</mass><inertia><ixx>0.1</ixx><iyy>0.2</iyy><izz>0.3</izz></inertia></inertial>
@@ -791,7 +793,7 @@ pub(crate) mod fixture {
           <axis><xyz>0 1 0</xyz><limit><lower>-1</lower><upper>1</upper></limit></axis></joint>
         <link name="rail"/>
         <joint name="slide" type="prismatic"><parent>base</parent><child>rail</child>
-          <axis><xyz>1 0 0</xyz><limit><lower>0</lower><upper>0.5</upper><effort>30</effort><velocity>2</velocity></limit></axis></joint>
+          <axis><xyz expressed_in="__model__">1 0 0</xyz><limit><lower>0</lower><upper>0.5</upper><effort>30</effort><velocity>2</velocity></limit></axis></joint>
       </model>
       <model name="crate"><link name="l"/></model>
     </world></sdf>"#;

@@ -75,3 +75,45 @@ fn the_world_inspector_follows_the_server_and_resets_a_live_world() {
     frames(&mut app, 1);
     assert!(sent(&mut app).is_empty());
 }
+
+#[test]
+fn a_rebuilt_world_inspector_reads_the_server_and_the_phase() {
+    use gz_bevy::spawn::GzEntity;
+    use gz_bevy::view::Selection;
+    use gz_core::scene::NodeKind;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let model = app
+        .world_mut()
+        .spawn((
+            GzEntity {
+                name: "cart".into(),
+                id: 0,
+                kind: NodeKind::Model,
+                path: "cart".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+        ))
+        .id();
+    let round_trip = |app: &mut App| {
+        app.world_mut().resource_mut::<Selection>().entities = vec![model];
+        frames(app, 3);
+        app.world_mut().resource_mut::<Selection>().entities.clear();
+        frames(app, 3);
+    };
+    // Not live: a World body built again keeps Reset off.
+    round_trip(&mut app);
+    let reset = action(&mut app, WorldAction::Reset);
+    assert!(app.world().get::<InteractionDisabled>(reset).is_some());
+    // Live: it reads the world straight away, with no new stats.
+    go_live(&mut app, true);
+    round_trip(&mut app);
+    let reset = action(&mut app, WorldAction::Reset);
+    assert!(app.world().get::<InteractionDisabled>(reset).is_none());
+    assert_eq!(
+        fields(&mut app)[0],
+        (WorldField::Name, "warehouse_demo".into(), ColorRole::Text)
+    );
+    assert_eq!(fields(&mut app)[2].1, "1 ms");
+}

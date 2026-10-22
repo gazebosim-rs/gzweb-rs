@@ -48,10 +48,14 @@ fn a_joint_shows_its_definition_and_live_state() {
     ] {
         assert!(text.contains(want), "{want} in {text}");
     }
-    // The model's joint states are wanted; until one arrives, "—".
+    // The model's joint states are wanted, on its publisher's topic;
+    // until one arrives, "—".
     assert_eq!(
-        app.world().resource::<JointStateWanted>().0.as_deref(),
-        Some("cart")
+        app.world().resource::<JointStateWanted>().clone(),
+        JointStateWanted {
+            model: Some("cart".into()),
+            topic: Some("/cart/joints".into())
+        }
     );
     assert_eq!(live(&mut app), ["—", "—", "—"]);
     app.world_mut().resource_mut::<JointStates>().joints.insert(
@@ -83,7 +87,7 @@ fn a_joint_shows_its_definition_and_live_state() {
     frames(&mut app, 3);
     let sel = app.world().resource::<Selection>().clone();
     assert!(sel.parts.is_empty() && sel.entities.len() == 1, "{sel:?}");
-    assert_eq!(app.world().resource::<JointStateWanted>().0, None);
+    assert_eq!(app.world().resource::<JointStateWanted>().model, None);
 }
 
 #[test]
@@ -98,7 +102,7 @@ fn a_sliding_joint_reads_in_metres() {
     }];
     frames(&mut app, 3);
     let text = all_text(&mut app);
-    for want in ["prismatic", "0.5 m", "30 N", "2 m/s"] {
+    for want in ["prismatic", "1  0  0 (model)", "0.5 m", "30 N", "2 m/s"] {
         assert!(text.contains(want), "{want} in {text}");
     }
     app.world_mut().resource_mut::<JointStates>().joints.insert(

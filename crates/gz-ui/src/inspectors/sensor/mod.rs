@@ -149,10 +149,10 @@ fn build_sensor(
                     ),
                     (
                         "Topic".into(),
-                        output
-                            .as_ref()
-                            .and_then(|o| o.topic.clone())
-                            .unwrap_or_else(|| "Default".into()),
+                        // Unknown until the SDFormat arrives.
+                        output.as_ref().map_or_else(dash, |o| {
+                            o.topic.clone().unwrap_or_else(|| "Default".into())
+                        }),
                     ),
                     (
                         "Message type".into(),

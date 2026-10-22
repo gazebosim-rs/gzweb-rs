@@ -39,3 +39,23 @@ fn a_sensor_shows_its_output_and_opens_the_sensors_panel() {
     assert_eq!(message_type("imu"), Some("gz.msgs.IMU"));
     assert_eq!(message_type("custom"), None);
 }
+
+#[test]
+fn before_the_sdformat_the_output_is_unknown() {
+    use gz_bevy::overlays::extras::SdfExtras;
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let s = fixture::scene(&mut app);
+    app.world_mut().insert_resource(SdfExtras::default());
+    app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+        kind: PartKind::Sensor,
+        owner: s.base,
+        name: "lidar".into(),
+    }];
+    frames(&mut app, 3);
+    let text = all_text(&mut app);
+    assert!(
+        !text.contains("Default") && !text.contains("/scan"),
+        "{text}"
+    );
+}

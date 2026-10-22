@@ -1303,6 +1303,27 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   run on changes only. Workspace 654 → 659 passing; coverage 98.4%
   lines. check.sh passes.
 
+## 2026-10-22: M5b third review fixes (D-77, D-80 amended)
+
+- **World:** a World body built again (after a deselect) reads the
+  server's fields and the phase's Reset at once, not at the next status
+  change; World, Light and Multi bodies don't rebuild for a new SDFormat
+  (they don't read it).
+- **Subject:** a respawn is taken up only while pinned or with nothing
+  else selected, so a selection in the same frame wins; a subject shown
+  removed looks for its respawn only as entities arrive, and the live
+  selection is built only when the subject changes.
+- **Pin:** off for the World too.
+- **Multi:** Focus is on for joints and sensors alone (they frame their
+  owners, D-79).
+- **Sensor:** Topic reads "—" until the SDFormat arrives.
+- **Joint:** the JointStatePublisher's `<topic>` is subscribed when set;
+  the Axis row shows the SDFormat's `xyz` and its frame; the wanted
+  states update on changes only.
+- **Tests:** one for each (the five UI ones checked to fail without the
+  fix), plus reconnect and world change for joint states; workspace
+  659 → 667 passing; coverage 98.4% lines. check.sh passes.
+
 ## 2026-10-21: M5c transform tools (D-83 to D-88)
 
 - **Server:** `Dockerfile.gazebo` builds the websocket server system with
@@ -1327,8 +1348,8 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   9010 the pose is text and the tools are disabled.
 - **Tests:** probe and binary requests, `set_pose` encoding, holds, gizmo
   picking and drag math, arrow and ring drags through the plugin, snap and
-  Esc, tool gating, readout, pose fields and commits; workspace 646 → 679
-  passing; coverage 97.8% lines. check.sh passes.
+  Esc, tool gating, readout, pose fields and commits; workspace 667 → 687
+  passing (on M5b's fixes); coverage 98.3% lines. check.sh passes.
 - **Review fixes:** lights and models with a plane aren't movable (gz-sim
   moves neither); the probe needs a `StringMsg_V`; a drag's Esc doesn't
   also switch to Navigate and the tool keys wait for it; ⌘/Ctrl+Z isn't Z;

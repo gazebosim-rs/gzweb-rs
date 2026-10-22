@@ -88,12 +88,8 @@ fn build_multi(
             b.spawn(title_row(&t, InspectKind::Multi, &title));
             b.spawn(breadcrumb(crumb));
             b.spawn(quick_actions()).with_children(|r| {
-                let focus = if posed {
-                    None
-                } else {
-                    Some("Joints and sensors have no bounds")
-                };
-                r.spawn(quick_action(&t, "Focus", focus))
+                // Joints and sensors frame their owners (D-79).
+                r.spawn(quick_action(&t, "Focus", None))
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::FocusSelection);
                 r.spawn(quick_action(&t, "Group", Some("Not available yet")))
