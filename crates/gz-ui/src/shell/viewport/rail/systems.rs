@@ -232,9 +232,7 @@ impl CameraReadout<'_, '_> {
     }
 
     fn selected(&self) -> Option<Entity> {
-        self.selection
-            .as_ref()
-            .and_then(|s| s.entities.first().copied())
+        self.selection.as_ref().and_then(|s| s.first_target())
     }
 
     /// What Follow or Track names: the camera's target while it is the

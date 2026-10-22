@@ -1244,3 +1244,82 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   overlay sized to `OutlineMask::rect`; `place_mask` writes only changes.
 - **Tests:** a regression test for each (checked to fail without the fix
   for the wireframe and the near-plane clipping).
+
+## 2026-10-21: M5b inspectors (D-77 to D-82)
+
+- **Frame:** `InspectKind`, `Inspected` and content markers; the body
+  rebuilds for a new subject or SDFormat reply; pin; a removed subject
+  follows its respawn or shows "(removed)" with Dismiss.
+- **Inspectors:** Model (live world pose, Physics, Plugins, parts), Link
+  (live pose in the model, inertial, flags, geometry; Select model, Show
+  inertia, Show collision), Light (live pose, parameters; Focus, Hide),
+  Joint (live position, velocity, effort; definition; Select parent and
+  child, Show axis), Sensor (pose on the link, output; View in Sensors),
+  multi-selection (count, kinds, shared pose).
+- **Data:** gz-core's SDFormat reader keeps model and link flags, model
+  plugins, sensor outputs and joint parents, children, limits and
+  dynamics; lights keep specular and attenuation; `GeometryDesc::kind_name`,
+  `JointKind::as_str`; `gz_bevy::joint_state` subscribes to a model's
+  joint states while a joint is inspected.
+- **Selection:** `Selection::parts` for joints and sensors, selected from
+  the tree; focus frames a selection without meshes at its position.
+- **Live check** (`--release`, Jetty `diff_drive`, `--select
+  vehicle_blue`): the Model inspector shows the live world pose, Physics
+  from the SDFormat, the DiffDrive plugin, 4 links and 3 joints.
+- **Tests:** frame (subject, pin, respawn, removed and Dismiss), each
+  inspector's values and actions on a fixture scene, joint states,
+  sensor rows selecting, the SDFormat extras; workspace 631 → 646
+  passing; coverage 98.4% lines. check.sh passes.
+
+## 2026-10-21: M5b review fixes (D-77 to D-80 amended)
+
+- **Multi:** the body rebuilds when the selection changes (its count,
+  kinds and Focus went stale).
+- **Removed subjects:** a part selection replaces one; Dismiss clears
+  parts; a pinned removed subject stays until Dismiss; a part follows its
+  owner's respawn as a part; the Pin button follows `pinned`.
+- **Joints:** `Joint::model`, the declaring model, for `WorldExtras::joint`
+  (it matched nested models' joints of the same name, in hash order),
+  `joints_of`, the tree and the Model inspector's count, so cross-model
+  joints are their declaring model's; a model's Gravity counts its own
+  links; ball joints read in degrees; limits carry units.
+- **Actions:** Focus and Select model replace parts; Hide reads Show while
+  hidden; focus on a part frames its owner.
+- **Tests:** one for each (the multi rebuild and the nested-joint lookup
+  checked to fail without the fix); workspace 646 → 654 passing; coverage
+  98.4% lines. check.sh passes.
+
+## 2026-10-22: M5b second review fixes (D-77 to D-80 amended)
+
+- **Order:** `choose_subject` runs after `prune_selection` and reads the
+  selection's live entries only, so a removal shows "(removed)" and a
+  respawn is selected again whatever the system order (the harness ran
+  them in the right order by luck; checked to fail without).
+- **Pin:** off for a multi-selection; unpinning goes back to the selection.
+- **Parts:** Follow and Track take a part's owner (`first_target`).
+- **Joint:** Select parent and child only for ends in the scene.
+- **SDFormat:** flags in any case; `__default__` topics are none.
+- **Pose rows:** X Y Z R P Yw (§3.5). Joint-state topics and body rebuilds
+  run on changes only. Workspace 654 → 659 passing; coverage 98.4%
+  lines. check.sh passes.
+
+## 2026-10-22: M5b third review fixes (D-77, D-80 amended)
+
+- **World:** a World body built again (after a deselect) reads the
+  server's fields and the phase's Reset at once, not at the next status
+  change; World, Light and Multi bodies don't rebuild for a new SDFormat
+  (they don't read it).
+- **Subject:** a respawn is taken up only while pinned or with nothing
+  else selected, so a selection in the same frame wins; a subject shown
+  removed looks for its respawn only as entities arrive, and the live
+  selection is built only when the subject changes.
+- **Pin:** off for the World too.
+- **Multi:** Focus is on for joints and sensors alone (they frame their
+  owners, D-79).
+- **Sensor:** Topic reads "—" until the SDFormat arrives.
+- **Joint:** the JointStatePublisher's `<topic>` is subscribed when set;
+  the Axis row shows the SDFormat's `xyz` and its frame; the wanted
+  states update on changes only.
+- **Tests:** one for each (the five UI ones checked to fail without the
+  fix), plus reconnect and world change for joint states; workspace
+  659 → 667 passing; coverage 98.4% lines. check.sh passes.

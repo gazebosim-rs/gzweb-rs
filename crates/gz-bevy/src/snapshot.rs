@@ -573,6 +573,8 @@ mod tests {
                     cast_shadows: false,
                     direction: Some([0.0, 0.0, -1.0]),
                     msg_intensity: 1.0,
+                    specular: [0.0; 3],
+                    attenuation: [1.0, 0.0, 0.0],
                 }),
             ))
             .id();

@@ -15,6 +15,7 @@
 use std::collections::HashSet;
 
 use bevy::prelude::*;
+use gz_bevy::view::{Part, PartKind};
 
 use crate::widgets::EntityKind;
 
@@ -310,6 +311,24 @@ impl TreeModel {
             .rev()
             .find(|&i| self.nodes[i as usize].depth + 1 == depth)
             .filter(|_| depth > 0)
+    }
+
+    /// The joint or sensor row `row` shows, as a selection part: on the
+    /// entity of its parent row (the model, or the link).
+    pub(crate) fn part(&self, row: Row) -> Option<Part> {
+        let (kind, name) = match &self.node(row).key {
+            NodeKey::Joint(_, name) => (PartKind::Joint, name),
+            NodeKey::Sensor(_, name) => (PartKind::Sensor, name),
+            _ => return None,
+        };
+        let owner = self
+            .parent(row.node)
+            .and_then(|p| self.nodes[p as usize].entity)?;
+        Some(Part {
+            kind,
+            owner,
+            name: name.clone(),
+        })
     }
 }
 

@@ -150,6 +150,11 @@ fn joint_poses_and_axes_resolve_into_the_child_frame() {
     // Model z, in the joint frame (rolled with the arm): +y... normalised.
     let axis = rotate(inverse(mul(arm_in_model, arm.pose)).quat, [0.0, 0.0, 1.0]);
     assert!(near(arm.axes[0], axis), "{:?}", arm.axes);
+    // As written, for the inspector.
+    assert_eq!(
+        arm.written_axes,
+        [([0.0, 0.0, 2.0], Some("__model__".to_string()))]
+    );
     assert!((arm.axes[0].iter().map(|c| c * c).sum::<f64>() - 1.0).abs() < 1e-9);
 }
 
@@ -317,4 +322,146 @@ fn nested_links_resolve_through_their_model() {
     // origin is (0, 0, -1) below it and, in its turned axes, 1 m along -x.
     let j = &w.link("m/inner/tip").unwrap().joints[0];
     assert!(near(j.pose.pos, [-1.0, 0.0, -1.0]), "{:?}", j.pose.pos);
+}
+
+#[test]
+fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
+    let xml = r#"<sdf version="1.9"><world name="w">
+      <model name="cart">
+        <static>true</static>
+        <self_collide>1</self_collide>
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
+        <plugin filename="libcustom.so"/>
+        <plugin filename="gz-sim-joint-state-publisher-system"
+                name="gz::sim::systems::JointStatePublisher">
+          <topic>/cart/joints</topic>
+        </plugin>
+        <link name="base">
+          <gravity>false</gravity>
+          <kinematic>true</kinematic>
+          <sensor name="lidar" type="gpu_lidar">
+            <topic>/scan</topic>
+            <update_rate>10</update_rate>
+            <always_on>true</always_on>
+            <visualize>1</visualize>
+          </sensor>
+          <sensor name="imu" type="imu"/>
+        </link>
+        <link name="wheel"/>
+        <joint name="hinge" type="revolute">
+          <parent>base</parent>
+          <child>wheel</child>
+          <axis>
+            <xyz>0 1 0</xyz>
+            <limit><lower>-1.5</lower><upper>1.5</upper><effort>20</effort></limit>
+            <dynamics><damping>0.2</damping></dynamics>
+          </axis>
+        </joint>
+      </model>
+      <model name="plain"><link name="l"/></model>
+    </world></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let cart = w.model("cart").unwrap();
+    assert!(cart.is_static && cart.self_collide);
+    assert_eq!(
+        cart.plugins,
+        [
+            "gz::sim::systems::DiffDrive",
+            "libcustom.so",
+            "gz::sim::systems::JointStatePublisher"
+        ]
+    );
+    assert_eq!(cart.joint_state_topic.as_deref(), Some("/cart/joints"));
+    let plain = w.model("plain").unwrap();
+    assert!(!plain.is_static && !plain.self_collide && plain.plugins.is_empty());
+    assert_eq!(plain.joint_state_topic, None);
+    let base = w.link("cart/base").unwrap();
+    assert_eq!(
+        base.flags,
+        LinkFlags {
+            gravity: false,
+            kinematic: true,
+            wind: false
+        }
+    );
+    assert_eq!(w.link("plain/l").unwrap().flags, LinkFlags::default());
+    assert_eq!(
+        base.sensors[0],
+        SensorExtras {
+            name: "lidar".into(),
+            ty: "gpu_lidar".into(),
+            topic: Some("/scan".into()),
+            update_rate: 10.0,
+            always_on: true,
+            visualize: true,
+        }
+    );
+    assert_eq!(base.sensors[1].topic, None);
+    let hinge = w.joint("cart", "hinge").unwrap();
+    assert_eq!(
+        (hinge.parent.as_str(), hinge.child.as_str()),
+        ("base", "wheel")
+    );
+    assert_eq!(
+        hinge.limits,
+        [AxisLimits {
+            lower: -1.5,
+            upper: 1.5,
+            effort: 20.0,
+            damping: 0.2,
+            ..AxisLimits::default()
+        }]
+    );
+    assert_eq!(hinge.written_axes, [([0.0, 1.0, 0.0], None)]);
+    assert!(w.joint("plain", "hinge").is_none());
+}
+
+#[test]
+fn joints_belong_to_the_model_that_declares_them() {
+    // `outer` declares j (prismatic) and k, whose child is the nested
+    // model's link; `inner` declares its own j (revolute).
+    let xml = r#"<sdf version="1.9"><world name="w">
+      <model name="outer">
+        <link name="base"/>
+        <model name="inner">
+          <link name="l"/><link name="m"/>
+          <joint name="j" type="revolute"><parent>l</parent><child>m</child></joint>
+        </model>
+        <link name="arm"/>
+        <joint name="j" type="prismatic"><parent>base</parent><child>arm</child></joint>
+        <joint name="k" type="fixed"><parent>base</parent><child>inner::l</child></joint>
+      </model>
+      <model name="outer2"><link name="x"/></model>
+    </world></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    for _ in 0..20 {
+        assert_eq!(w.joint("outer", "j").unwrap().kind, JointKind::Prismatic);
+        assert_eq!(
+            w.joint("outer/inner", "j").unwrap().kind,
+            JointKind::Revolute
+        );
+    }
+    let k = w.joint("outer", "k").unwrap();
+    assert_eq!((k.model.as_str(), k.child.as_str()), ("outer", "inner::l"));
+    assert!(w.joint("outer/inner", "k").is_none());
+    let mut outer: Vec<&str> = w.joints_of("outer").map(|j| j.name.as_str()).collect();
+    outer.sort();
+    assert_eq!(outer, ["j", "k"]);
+    assert_eq!(w.joints_of("outer/inner").count(), 1);
+    assert_eq!(w.joints_of("outer2").count(), 0);
+}
+
+#[test]
+fn flags_read_in_any_case_and_a_default_topic_is_none() {
+    let xml = r#"<sdf version="1.9"><model name="m">
+      <static>True</static><self_collide>FALSE</self_collide>
+      <link name="l"><gravity>False</gravity>
+        <sensor name="c" type="camera"><topic>__default__</topic></sensor>
+      </link></model></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let m = w.model("m").unwrap();
+    assert!(m.is_static && !m.self_collide);
+    let l = w.link("m/l").unwrap();
+    assert!(!l.flags.gravity);
+    assert_eq!(l.sensors[0].topic, None);
 }

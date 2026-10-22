@@ -196,7 +196,7 @@ pub(crate) fn spawn_shell(
     let map = map.map_or_else(InputMap::builtin, |m| m.clone());
     let t = theme.clone();
     let l = layout.clone();
-    let (panels, inspectors) = (panels.clone(), inspectors.clone());
+    let panels = panels.clone();
     commands.spawn((
         Region::Root,
         Node {
@@ -228,7 +228,7 @@ pub(crate) fn spawn_shell(
                 body.spawn(collapsed_bar(&t, Side::Sidebar, &map));
                 body.spawn(viewport::viewport_area(&t, &map));
                 body.spawn(collapsed_bar(&t, Side::Inspector, &map));
-                body.spawn(inspector::inspector(&t, &l, &map, &inspectors));
+                body.spawn(inspector::inspector(&t, &l, &map));
             });
             root.spawn(status_bar::status_bar(&t, &map));
         })),

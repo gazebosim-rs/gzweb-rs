@@ -2650,3 +2650,29 @@ fn mod_toggles_with_ctrl_or_cmd_in_a_browser() {
     assert!(cmd.mod_key(Platform::Mac) && !ctrl.mod_key(Platform::Mac));
     assert!(ctrl.mod_key(Platform::Linux) && !cmd.mod_key(Platform::Linux));
 }
+
+#[test]
+fn focus_on_a_joint_or_sensor_frames_its_owner() {
+    let (mut r, _, b) = two_models();
+    r.app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+        kind: PartKind::Joint,
+        owner: b,
+        name: "j".into(),
+    }];
+    r.op(ViewOp::Focus { at: None });
+    r.settle();
+    // The far model's cube, gz (0, 3, 0.5): Bevy (0, 0.5, -3).
+    assert_near(r.pivot(), Vec3::new(0.0, 0.5, -3.0), 1e-3);
+}
+
+#[test]
+fn follow_with_a_joint_or_sensor_selected_follows_its_owner() {
+    let (mut r, a, _) = two_models();
+    r.app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+        kind: PartKind::Sensor,
+        owner: a,
+        name: "s".into(),
+    }];
+    r.op(ViewOp::Follow { at: None });
+    assert_eq!(r.view().mode, CameraMode::Follow(a));
+}

@@ -72,6 +72,22 @@ impl JointKind {
         }
     }
 
+    /// The type as SDFormat writes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            JointKind::Revolute => "revolute",
+            JointKind::Continuous => "continuous",
+            JointKind::Prismatic => "prismatic",
+            JointKind::Fixed => "fixed",
+            JointKind::Ball => "ball",
+            JointKind::Universal => "universal",
+            JointKind::Revolute2 => "revolute2",
+            JointKind::Screw => "screw",
+            JointKind::Gearbox => "gearbox",
+            JointKind::Other => "other",
+        }
+    }
+
     /// Turns about its axes (drawn with a ring), rather than sliding along
     /// them.
     pub fn rotates(self) -> bool {
@@ -109,28 +125,111 @@ pub struct Inertial {
 
 /// A joint, drawn on its child link: its frame in the child link's frame
 /// and its axes in the joint frame (unit vectors; one, or two for
-/// universal and revolute2 joints).
+/// universal and revolute2 joints), with their limits and dynamics.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Joint {
     pub name: String,
     pub kind: JointKind,
     pub pose: Pose,
     pub axes: Vec<[f64; 3]>,
+    /// Per axis, its `<xyz>` as the SDFormat writes it and the frame it is
+    /// expressed in (`None` for the joint's).
+    pub written_axes: Vec<([f64; 3], Option<String>)>,
+    /// The parent and child links as the SDFormat names them (`world`, or
+    /// `inner::link` for a nested model's).
+    pub parent: String,
+    pub child: String,
+    /// The path of the model that declares it (its child link may be a
+    /// nested model's).
+    pub model: String,
+    /// Per axis, as `axes`.
+    pub limits: Vec<AxisLimits>,
 }
 
-/// Everything the overlays draw on one link.
+/// An axis's `<limit>` and `<dynamics>`, SDFormat's defaults when absent
+/// (lower and upper ±1e16, effort and velocity −1: unlimited).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AxisLimits {
+    pub lower: f64,
+    pub upper: f64,
+    pub effort: f64,
+    pub velocity: f64,
+    pub damping: f64,
+    pub friction: f64,
+}
+
+impl Default for AxisLimits {
+    fn default() -> Self {
+        Self {
+            lower: -1e16,
+            upper: 1e16,
+            effort: -1.0,
+            velocity: -1.0,
+            damping: 0.0,
+            friction: 0.0,
+        }
+    }
+}
+
+/// A link's `<gravity>`, `<kinematic>` and `<enable_wind>` (SDFormat's
+/// defaults: gravity on, the others off).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinkFlags {
+    pub gravity: bool,
+    pub kinematic: bool,
+    pub wind: bool,
+}
+
+impl Default for LinkFlags {
+    fn default() -> Self {
+        Self {
+            gravity: true,
+            kinematic: false,
+            wind: false,
+        }
+    }
+}
+
+/// A sensor's output settings (the scene message has none of them).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SensorExtras {
+    pub name: String,
+    pub ty: String,
+    /// `<topic>` as written; Gazebo derives one when it is absent.
+    pub topic: Option<String>,
+    pub update_rate: f64,
+    pub always_on: bool,
+    pub visualize: bool,
+}
+
+/// Everything the overlays draw on one link, and what its inspector shows.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LinkExtras {
     pub collisions: Vec<Collision>,
     pub inertial: Option<Inertial>,
     /// The joints whose child this link is.
     pub joints: Vec<Joint>,
+    pub flags: LinkFlags,
+    pub sensors: Vec<SensorExtras>,
 }
 
-/// A world's links' extras by link path.
+/// A model's `<static>`, `<self_collide>` and plugins.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ModelExtras {
+    pub is_static: bool,
+    pub self_collide: bool,
+    /// Its `<plugin>`s' names (else file names).
+    pub plugins: Vec<String>,
+    /// The `<topic>` its JointStatePublisher sets, if any (else it
+    /// publishes on the default topic).
+    pub joint_state_topic: Option<String>,
+}
+
+/// A world's links' and models' extras by path.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorldExtras {
     pub links: HashMap<String, LinkExtras>,
+    pub models: HashMap<String, ModelExtras>,
 }
 
 impl WorldExtras {
@@ -161,6 +260,31 @@ impl WorldExtras {
     pub fn link(&self, path: &str) -> Option<&LinkExtras> {
         self.links.get(path)
     }
+
+    pub fn model(&self, path: &str) -> Option<&ModelExtras> {
+        self.models.get(path)
+    }
+
+    /// The joint `name` that model `model` declares (not one of its nested
+    /// models'; joints live on their child links, under the model's path).
+    pub fn joint(&self, model: &str, name: &str) -> Option<&Joint> {
+        let prefix = format!("{model}/");
+        self.links
+            .iter()
+            .filter(|(path, _)| path.starts_with(&prefix))
+            .flat_map(|(_, l)| &l.joints)
+            .find(|j| j.model == model && j.name == name)
+    }
+
+    /// The joints model `model` declares.
+    pub fn joints_of<'a>(&'a self, model: &'a str) -> impl Iterator<Item = &'a Joint> + 'a {
+        let prefix = format!("{model}/");
+        self.links
+            .iter()
+            .filter(move |(path, _)| path.starts_with(&prefix))
+            .flat_map(|(_, l)| &l.joints)
+            .filter(move |j| j.model == model)
+    }
 }
 
 type Node<'a, 'i> = roxmltree::Node<'a, 'i>;
@@ -189,6 +313,14 @@ fn numbers(s: &str) -> Vec<f64> {
     s.split_whitespace()
         .filter_map(|t| t.parse().ok())
         .collect()
+}
+
+fn flag(n: Node, tag: &'static str, default: bool) -> bool {
+    match text(n, tag) {
+        Some(t) if t == "1" || t.eq_ignore_ascii_case("true") => true,
+        Some(t) if t == "0" || t.eq_ignore_ascii_case("false") => false,
+        _ => default,
+    }
 }
 
 fn vec3(n: Node, tag: &'static str, default: [f64; 3]) -> [f64; 3] {
@@ -237,6 +369,27 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
     };
     let links: Vec<Node> = children(model, "link").collect();
     let in_model = |frame: &str| frame_in_model(model, frame, 0);
+    out.models.insert(
+        path.clone(),
+        ModelExtras {
+            is_static: flag(model, "static", false),
+            self_collide: flag(model, "self_collide", false),
+            plugins: children(model, "plugin")
+                .filter_map(|p| p.attribute("name").or(p.attribute("filename")))
+                .map(str::to_string)
+                .collect(),
+            joint_state_topic: children(model, "plugin")
+                .filter(|p| {
+                    p.attribute("name")
+                        .is_some_and(|n| n.ends_with("JointStatePublisher"))
+                        || p.attribute("filename")
+                            .is_some_and(|f| f.contains("joint-state-publisher"))
+                })
+                .find_map(|p| text(p, "topic"))
+                .filter(|t| !t.is_empty())
+                .map(str::to_string),
+        },
+    );
     // A pose that belongs to `owner` (a link), in that link's frame.
     let in_link =
         |owner: &str, (pose, relative_to): (Pose, Option<String>)| match relative_to.as_deref() {
@@ -264,6 +417,24 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                 ..inertial(i)
             });
         }
+        extras.flags = LinkFlags {
+            gravity: flag(*link, "gravity", true),
+            kinematic: flag(*link, "kinematic", false),
+            wind: flag(*link, "enable_wind", false),
+        };
+        extras.sensors = children(*link, "sensor")
+            .map(|s| SensorExtras {
+                name: s.attribute("name").unwrap_or("").to_string(),
+                ty: s.attribute("type").unwrap_or("").to_string(),
+                // SDFormat's placeholder for "derive one" counts as none.
+                topic: text(s, "topic")
+                    .filter(|t| !t.is_empty() && *t != "__default__")
+                    .map(str::to_string),
+                update_rate: number(s, "update_rate").unwrap_or(0.0),
+                always_on: flag(s, "always_on", false),
+                visualize: flag(s, "visualize", false),
+            })
+            .collect();
     }
 
     for j in children(model, "joint") {
@@ -273,7 +444,7 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
         // A nested model's link: `inner::link` is `path/inner/link`.
         let child_path = format!("{path}/{}", child_name.replace("::", "/"));
         let pose = in_link(child_name, pose_of(j));
-        let axes = ["axis", "axis2"]
+        let written_axes: Vec<([f64; 3], Option<String>)> = ["axis", "axis2"]
             .into_iter()
             .filter_map(|tag| child(j, tag))
             .map(|a| {
@@ -283,17 +454,45 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                     .map(numbers)
                     .and_then(|v| <[f64; 3]>::try_from(v).ok())
                     .unwrap_or([0.0, 0.0, 1.0]);
+                let frame = xyz
+                    .and_then(|x| x.attribute("expressed_in"))
+                    .filter(|f| !f.is_empty())
+                    .map(str::to_string);
+                (v, frame)
+            })
+            .collect();
+        let axes = written_axes
+            .iter()
+            .map(|(v, frame)| {
                 // An axis expressed in the model frame turns into the
                 // joint frame: undo the joint's rotation in the model.
-                let in_model_frame =
-                    xyz.and_then(|x| x.attribute("expressed_in")) == Some("__model__");
-                let v = if in_model_frame {
+                let v = if frame.as_deref() == Some("__model__") {
                     let joint_in_model = mul(in_model(child_name), pose);
-                    rotate(inverse(joint_in_model).quat, v)
+                    rotate(inverse(joint_in_model).quat, *v)
                 } else {
-                    v
+                    *v
                 };
                 unit(v)
+            })
+            .collect();
+        let limits = ["axis", "axis2"]
+            .into_iter()
+            .filter_map(|tag| child(j, tag))
+            .map(|a| {
+                let d = AxisLimits::default();
+                let limit = child(a, "limit");
+                let dynamics = child(a, "dynamics");
+                let of = |n: Option<Node>, tag, default| {
+                    n.and_then(|n| number(n, tag)).unwrap_or(default)
+                };
+                AxisLimits {
+                    lower: of(limit, "lower", d.lower),
+                    upper: of(limit, "upper", d.upper),
+                    effort: of(limit, "effort", d.effort),
+                    velocity: of(limit, "velocity", d.velocity),
+                    damping: of(dynamics, "damping", d.damping),
+                    friction: of(dynamics, "friction", d.friction),
+                }
             })
             .collect();
         out.links.entry(child_path).or_default().joints.push(Joint {
@@ -301,6 +500,11 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
             kind: JointKind::parse(j.attribute("type").unwrap_or("")),
             pose,
             axes,
+            written_axes,
+            parent: text(j, "parent").unwrap_or("").to_string(),
+            child: child_name.to_string(),
+            model: path.clone(),
+            limits,
         });
     }
 

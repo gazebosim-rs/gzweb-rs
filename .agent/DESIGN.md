@@ -551,6 +551,21 @@ is set; G toggles it. Dark lines, because gizmos aren't exposed.
 60° vertical FOV, near/far 0.01/1000, clear colour `0xb2b2b2` unless the
 scene sets a background.
 
+## Inspectors
+
+`gz_ui::inspectors` (DECISIONS.md D-77 to D-82): one folder per kind (world,
+model, link, light, joint, sensor, multi), each registering an
+`InspectorDef` for an `InspectKind` with a content marker; `common` holds
+the shared title row, breadcrumb, quick actions (`EntityAction`,
+`SelectPath`), live groups and pose rows (`pose_group`, `pose_values`),
+definition groups and link rows, the removed state and Dismiss, and the
+tests' `fixture`. `shell::inspector` keeps `Inspected` from the
+`Selection` (`choose_subject`) and rebuilds the body (`rebuild_body`) for a
+new subject or SDFormat generation. Data: the scene's components (live
+poses, `GzLight`, `GzSensors`, `GzVisual`) and `SdfExtras` (model and link
+flags, inertials, sensor outputs, joint definitions); joint states from
+`gz_bevy::joint_state`.
+
 ## Views, input and UI modes
 
 **UI modes** (`gz_bevy::UiMode`, `.agent/UI_PLAN.md` §2, DECISIONS.md D-10)

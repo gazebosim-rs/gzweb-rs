@@ -12,6 +12,7 @@ pub mod connection;
 pub mod driver;
 pub mod heightmap;
 pub mod hud;
+pub mod joint_state;
 pub mod material;
 pub mod mesh_file;
 pub mod messages;

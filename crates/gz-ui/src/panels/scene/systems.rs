@@ -18,7 +18,7 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
 use gz_bevy::view::input::{InputMap, KeyMods, Platform};
-use gz_bevy::view::select::select;
+use gz_bevy::view::{select, select_parts};
 use gz_bevy::view::{SelectMode, Selection};
 use gz_core::scene::NodeKind;
 
@@ -162,16 +162,16 @@ impl SceneSources<'_, '_> {
         b.finish()
     }
 
-    /// The joints by their model's path (a joint is kept on its child link
-    /// in the SDFormat, `model/link`).
+    /// The joints by the path of the model that declares them (a joint
+    /// whose child is a nested model's link is its declaring model's).
     fn joints(&self) -> HashMap<&str, Vec<&str>> {
         let mut out: HashMap<&str, Vec<&str>> = HashMap::new();
         if let Some(extras) = self.extras.as_ref().and_then(|x| x.extras.as_ref()) {
-            for (link, le) in &extras.links {
-                if let Some((model, _)) = link.rsplit_once('/') {
-                    out.entry(model)
+            for le in extras.links.values() {
+                for j in &le.joints {
+                    out.entry(j.model.as_str())
                         .or_default()
-                        .extend(le.joints.iter().map(|j| j.name.as_str()));
+                        .push(j.name.as_str());
                 }
             }
         }
@@ -253,14 +253,21 @@ pub(super) fn apply_start(
     }
 }
 
-/// The tree asks for the world's SDFormat (its joints) while it shows.
+/// The world's SDFormat is wanted while the tree shows (its joints) or
+/// an entity is inspected.
 pub(super) fn want_sdf(
     layout: Option<Res<crate::shell::ShellLayout>>,
+    inspected: Option<Res<crate::inspectors::Inspected>>,
     wanted: Option<ResMut<SdfWanted>>,
 ) {
+    use crate::inspectors::InspectKind;
     if let Some(mut wanted) = wanted {
+        // The tree's joints, and the inspectors' definitions (flags,
+        // inertials, sensor outputs, joint limits).
+        let inspecting =
+            inspected.is_some_and(|i| !matches!(i.kind, InspectKind::World | InspectKind::Multi));
         let shown = panel_shown(SCENE)(layout);
-        wanted.set_if_neq(SdfWanted(shown));
+        wanted.set_if_neq(SdfWanted(shown || inspecting));
     }
 }
 
@@ -574,10 +581,9 @@ pub(super) fn on_row_activate(
 }
 
 /// Moves the cursor to row `i` and selects (spec §5.7, §6.4): the row's
-/// model, link or light, or nothing for the world (its inspector). Shift
-/// selects the shown rows from the anchor (the last row picked without
-/// Shift) to this one; ⌘/Ctrl toggles the row. Joints and sensors have no
-/// scene entity: they only move the cursor.
+/// model, link, light, joint or sensor, or nothing for the world (its
+/// inspector). Shift selects the shown rows from the anchor (the last row
+/// picked without Shift) to this one; ⌘/Ctrl toggles the row.
 fn select_row(
     i: usize,
     rows: &[Row],
@@ -597,21 +603,28 @@ fn select_row(
         .anchor
         .as_ref()
         .and_then(|a| rows.iter().position(|r| &model.node(*r).key == a));
+    let mode = SelectMode::from_keys(false, toggle);
     match (
         anchor.filter(|_| held.shift),
         node.key == NodeKey::World,
         node.entity,
     ) {
         (Some(a), _, _) => {
-            let range: Vec<Entity> = rows[a.min(i)..=a.max(i)]
-                .iter()
-                .filter_map(|r| model.node(*r).entity)
-                .collect();
-            select(selection, SelectMode::Replace, &range);
+            let range = &rows[a.min(i)..=a.max(i)];
+            let entities: Vec<Entity> =
+                range.iter().filter_map(|r| model.node(*r).entity).collect();
+            let parts: Vec<_> = range.iter().filter_map(|r| model.part(*r)).collect();
+            select(selection, SelectMode::Replace, &entities);
+            select_parts(selection, SelectMode::Add, &parts);
             return;
         }
         (None, true, _) if !toggle => select(selection, SelectMode::Replace, &[]),
-        (None, false, Some(e)) => select(selection, SelectMode::from_keys(false, toggle), &[e]),
+        (None, false, Some(e)) => select(selection, mode, &[e]),
+        (None, false, None) => {
+            if let Some(part) = model.part(rows[i]) {
+                select_parts(selection, mode, &[part]);
+            }
+        }
         _ => {}
     }
     if state.anchor.as_ref() != Some(&key) {
