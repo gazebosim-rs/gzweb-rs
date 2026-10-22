@@ -253,14 +253,21 @@ pub(super) fn apply_start(
     }
 }
 
-/// The tree asks for the world's SDFormat (its joints) while it shows.
+/// The world's SDFormat is wanted while the tree shows (its joints) or
+/// an entity is inspected.
 pub(super) fn want_sdf(
     layout: Option<Res<crate::shell::ShellLayout>>,
+    inspected: Option<Res<crate::inspectors::Inspected>>,
     wanted: Option<ResMut<SdfWanted>>,
 ) {
+    use crate::inspectors::InspectKind;
     if let Some(mut wanted) = wanted {
+        // The tree's joints, and the inspectors' definitions (flags,
+        // inertials, sensor outputs, joint limits).
+        let inspecting =
+            inspected.is_some_and(|i| !matches!(i.kind, InspectKind::World | InspectKind::Multi));
         let shown = panel_shown(SCENE)(layout);
-        wanted.set_if_neq(SdfWanted(shown));
+        wanted.set_if_neq(SdfWanted(shown || inspecting));
     }
 }
 

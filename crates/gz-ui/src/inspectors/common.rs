@@ -7,11 +7,16 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
-use gz_bevy::view::Selection;
+use gz_bevy::camera::MainCamera;
+use gz_bevy::overlays::{Overlay, OverlayCommand};
+use gz_bevy::spawn::{GzEntity, GzWorldRoot};
+use gz_bevy::view::{Selection, ViewCommand, ViewOp};
+use gz_core::scene::NodeKind;
 
 use super::{InspectKind, Inspected};
 use crate::assets::text;
 use crate::assets::IconId;
+use crate::format;
 use crate::theme::{
     border, radius, ColorRole, Fill, FontFamily, Ink, Opacity, Stroke, Theme, TypeStyle, SPACE,
 };
@@ -125,10 +130,8 @@ pub(crate) fn title_row(t: &Theme, kind: InspectKind, name: &str) -> impl Bundle
                 },
             ));
             r.spawn(flex_spacer());
-            r.spawn((
-                button(&t, "Dismiss", ButtonVariant::Normal),
-                DismissButton,
-                Node {
+            r.spawn((button(&t, "Dismiss", ButtonVariant::Normal), DismissButton))
+                .insert(Node {
                     display: Display::None,
                     height: px(t.s.button_h),
                     padding: UiRect::horizontal(px(SPACE[4])),
@@ -137,8 +140,7 @@ pub(crate) fn title_row(t: &Theme, kind: InspectKind, name: &str) -> impl Bundle
                     align_items: AlignItems::Center,
                     border_radius: rounded(radius::SM),
                     ..default()
-                },
-            ));
+                });
             r.spawn(icon_button(
                 &t,
                 IconId::More,
@@ -212,21 +214,25 @@ pub(crate) fn quick_action(t: &Theme, label: &str, unavailable: Option<&str>) ->
         None => Tooltip::new(label.clone()),
     };
     (
-        button(t, label.clone(), ButtonVariant::Normal),
+        button(t, label, ButtonVariant::Normal),
         QuickAction,
-        Node {
-            height: px(t.s.button_h),
-            flex_grow: 1.0,
-            flex_basis: px(0),
-            border: UiRect::all(px(border::HAIRLINE)),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            border_radius: rounded(radius::SM),
-            ..default()
-        },
         Disabled(unavailable.is_some()),
         tooltip,
     )
+}
+
+/// A quick action's size: one of three equal buttons.
+pub(crate) fn quick_action_node(t: &Theme) -> Node {
+    Node {
+        height: px(t.s.button_h),
+        flex_grow: 1.0,
+        flex_basis: px(0),
+        border: UiRect::all(px(border::HAIRLINE)),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border_radius: rounded(radius::SM),
+        ..default()
+    }
 }
 
 /// A quick action that is unavailable whatever the subject's state.
@@ -305,6 +311,87 @@ pub(crate) fn links(body: &mut ChildSpawner, names: &[&str]) {
     });
 }
 
+/// Which pose a [`pose_group`] shows: in the world, or in its parent's
+/// frame (a link's in its model's).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PoseFrame {
+    World,
+    Parent,
+}
+
+/// One of a pose group's six values: x, y, z, roll, pitch, yaw.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PoseValue(pub(crate) PoseFrame, pub(crate) usize);
+
+/// The Pose group (§3.5): live, X Y Z in m and Roll Pitch Yaw in degrees
+/// (Gazebo's fixed-axis roll, pitch, yaw), in `frame`.
+pub(crate) fn pose_group(body: &mut ChildSpawner, title: &str, frame: PoseFrame) {
+    group(
+        body,
+        title,
+        true,
+        &["X", "Y", "Z", "Roll", "Pitch", "Yaw"],
+        |i| PoseValue(frame, i),
+    );
+}
+
+/// The subject's pose in Gazebo's frame: its own transform for the
+/// parent's frame (the world root turns Gazebo into Bevy, so everything
+/// under it is in Gazebo axes), or relative to the root for the world.
+pub(crate) fn gazebo_pose(
+    frame: PoseFrame,
+    local: &Transform,
+    global: &GlobalTransform,
+    root: Option<&GlobalTransform>,
+) -> Transform {
+    match (frame, root) {
+        (PoseFrame::Parent, _) => *local,
+        (PoseFrame::World, Some(root)) => global.reparented_to(root),
+        (PoseFrame::World, None) => global.compute_transform(),
+    }
+}
+
+/// The six values of a pose: metres and degrees.
+pub(crate) fn pose_texts(pose: &Transform) -> [String; 6] {
+    let (yaw, pitch, roll) = pose.rotation.to_euler(EulerRot::ZYX);
+    let t = pose.translation;
+    [
+        format::metres(t.x),
+        format::metres(t.y),
+        format::metres(t.z),
+        format::degrees(roll),
+        format::degrees(pitch),
+        format::degrees(yaw),
+    ]
+}
+
+/// The pose groups follow the subject as the sim moves it (§3.5: live
+/// values stream while unfocused; these are read-only until M5c).
+pub(crate) fn pose_values(
+    inspected: Res<Inspected>,
+    subjects: Query<(Ref<Transform>, Ref<GlobalTransform>)>,
+    roots: Query<&GlobalTransform, With<GzWorldRoot>>,
+    added: Query<(), Added<PoseValue>>,
+    mut values: Query<(&PoseValue, &mut Text)>,
+) {
+    let Some((local, global)) = inspected.entity.and_then(|e| subjects.get(e).ok()) else {
+        return;
+    };
+    // The world pose follows the propagated transform, a step after the
+    // local one.
+    if !local.is_changed() && !global.is_changed() && added.is_empty() && !inspected.is_changed() {
+        return;
+    }
+    let root = roots.iter().next();
+    let mut cache: [Option<[String; 6]>; 2] = [None, None];
+    for (value, mut text) in &mut values {
+        let slot = &mut cache[value.0 as usize];
+        let texts =
+            slot.get_or_insert_with(|| pose_texts(&gazebo_pose(value.0, &local, &global, root)));
+        set_text(&mut text, &texts[value.1]);
+    }
+}
+
 /// While the subject is removed: the name in `text_3` with "(removed)",
 /// the quick actions disabled, Dismiss shown (§2 states).
 pub(crate) fn removed_state(
@@ -361,6 +448,283 @@ pub(crate) fn on_dismiss(
         *inspected = Inspected::default();
         if !selection.entities.is_empty() {
             selection.entities.clear();
+        }
+    }
+}
+
+/// "warehouse_demo › amr_01 › base_link": the world, then the scene path.
+pub(crate) fn crumb(world: Option<&str>, path: &str) -> String {
+    world
+        .into_iter()
+        .chain(path.split('/'))
+        .collect::<Vec<_>>()
+        .join(" › ")
+}
+
+/// What an entity inspector's quick actions do.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EntityAction {
+    /// Frame the subject in the views (F).
+    Focus,
+    /// Select the link's model.
+    SelectModel,
+    /// Turn the inertia overlay on or off.
+    ShowInertia,
+    /// Turn the collisions overlay on or off.
+    ShowCollision,
+    /// Hide or show the subject.
+    Hide,
+}
+
+/// The quick actions. Focus frames the subject: it selects it first if it
+/// isn't (pinned), since focus frames the selection.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn on_entity_action(
+    ev: On<Activate>,
+    actions: Query<&EntityAction, Without<InteractionDisabled>>,
+    inspected: Res<Inspected>,
+    parents: Query<&ChildOf>,
+    kinds: Query<&GzEntity>,
+    cameras: Query<Entity, With<MainCamera>>,
+    mut visibility: Query<&mut Visibility>,
+    mut selection: ResMut<Selection>,
+    mut views: MessageWriter<ViewCommand>,
+    mut overlays: MessageWriter<OverlayCommand>,
+) {
+    let (Ok(action), Some(subject)) = (actions.get(ev.entity), inspected.entity) else {
+        return;
+    };
+    match action {
+        EntityAction::Focus => {
+            if selection.entities != [subject] {
+                selection.entities = vec![subject];
+            }
+            for view in &cameras {
+                views.write(ViewCommand {
+                    view,
+                    op: ViewOp::Focus { at: None },
+                });
+            }
+        }
+        EntityAction::SelectModel => {
+            let mut e = subject;
+            while let Ok(parent) = parents.get(e) {
+                e = parent.parent();
+                if kinds.get(e).is_ok_and(|g| g.kind == NodeKind::Model) {
+                    selection.entities = vec![e];
+                    break;
+                }
+            }
+        }
+        EntityAction::ShowInertia => {
+            overlays.write(OverlayCommand::toggle(Overlay::Inertia));
+        }
+        EntityAction::ShowCollision => {
+            overlays.write(OverlayCommand::toggle(Overlay::Collisions));
+        }
+        EntityAction::Hide => {
+            if let Ok(mut v) = visibility.get_mut(subject) {
+                let hidden = *v == Visibility::Hidden;
+                v.set_if_neq(if hidden {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                });
+            }
+        }
+    }
+}
+
+/// A row of `label` and a value text, for definitions (not live).
+pub(crate) fn value_row(label: &str, value: impl Into<String>) -> impl Bundle {
+    property_row(
+        label.to_string(),
+        text(TypeStyle::MONO_SMALL, ColorRole::Text, value.into()),
+    )
+}
+
+/// A group of rows of label and value (definitions, from the scene and
+/// the world's SDFormat).
+pub(crate) fn definition_group(body: &mut ChildSpawner, title: &str, rows: Vec<(String, String)>) {
+    body.spawn(layout::group()).with_children(|g| {
+        g.spawn(group_header(title, None));
+        for (label, value) in rows {
+            g.spawn(value_row(&label, value));
+        }
+    });
+}
+
+/// A small Gazebo scene for the inspectors' tests: the world root (Gazebo
+/// to Bevy), a model `cart` at (1, 2, 0.5) turned 90° about z with a link
+/// `base` 0.1 above it holding a box visual and a lidar, a model `crate`,
+/// a directional light `sun`, and their SDFormat extras.
+#[cfg(test)]
+pub(crate) mod fixture {
+    use bevy::prelude::*;
+    use gz_bevy::overlays::extras::SdfExtras;
+    use gz_bevy::spawn::{
+        gz_to_bevy, GzEntity, GzIndex, GzLight, GzSensors, GzVisual, GzWorldRoot,
+    };
+    use gz_core::scene::{LightDesc, LightType, NodeKind, Pose, SensorDesc, VisualDesc};
+    use gz_core::sdf::WorldExtras;
+
+    use crate::test_support::frames;
+
+    pub(crate) struct Scene {
+        pub(crate) cart: Entity,
+        pub(crate) base: Entity,
+        pub(crate) krate: Entity,
+        pub(crate) sun: Entity,
+    }
+
+    pub(crate) const SDF: &str = r#"<sdf version="1.9"><world name="w">
+      <model name="cart">
+        <static>true</static>
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
+        <link name="base">
+          <kinematic>true</kinematic>
+          <inertial><mass>2.5</mass><inertia><ixx>0.1</ixx><iyy>0.2</iyy><izz>0.3</izz></inertia></inertial>
+          <collision name="hull"><geometry><box><size>1 1 1</size></box></geometry></collision>
+          <sensor name="lidar" type="gpu_lidar"><topic>/scan</topic><update_rate>10</update_rate></sensor>
+        </link>
+        <link name="wheel"/>
+        <joint name="hinge" type="revolute"><parent>base</parent><child>wheel</child>
+          <axis><xyz>0 1 0</xyz><limit><lower>-1</lower><upper>1</upper></limit></axis></joint>
+      </model>
+      <model name="crate"><link name="l"/></model>
+    </world></sdf>"#;
+
+    fn node(
+        app: &mut App,
+        parent: Entity,
+        name: &str,
+        path: &str,
+        kind: NodeKind,
+        t: Transform,
+    ) -> Entity {
+        app.world_mut()
+            .spawn((
+                GzEntity {
+                    name: name.into(),
+                    id: 0,
+                    kind,
+                    path: path.into(),
+                },
+                t,
+                Visibility::default(),
+                ChildOf(parent),
+            ))
+            .id()
+    }
+
+    pub(crate) fn scene(app: &mut App) -> Scene {
+        let root = app
+            .world_mut()
+            .spawn((
+                GzWorldRoot,
+                Transform::from_rotation(gz_to_bevy()),
+                Visibility::default(),
+            ))
+            .id();
+        {
+            let mut index = app.world_mut().resource_mut::<GzIndex>();
+            index.root = Some(root);
+            index.scene = Some(gz_core::scene::SceneDesc::from_msg(
+                &Default::default(),
+                Default::default(),
+            ));
+        }
+        let cart = node(
+            app,
+            root,
+            "cart",
+            "cart",
+            NodeKind::Model,
+            Transform::from_xyz(1.0, 2.0, 0.5)
+                .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
+        );
+        let base = node(
+            app,
+            cart,
+            "base",
+            "cart/base",
+            NodeKind::Link,
+            Transform::from_xyz(0.0, 0.0, 0.1),
+        );
+        app.world_mut()
+            .entity_mut(base)
+            .insert(GzSensors(vec![SensorDesc {
+                name: "lidar".into(),
+                id: 0,
+                ty: "gpu_lidar".into(),
+                pose: Pose::IDENTITY,
+            }]));
+        let body = node(
+            app,
+            base,
+            "body",
+            "cart/base/body",
+            NodeKind::Visual,
+            Transform::default(),
+        );
+        app.world_mut()
+            .entity_mut(body)
+            .insert(GzVisual(VisualDesc {
+                proto_type: "box".into(),
+                geometry: gz_core::scene::GeometryDesc::Box { size: [1.0; 3] },
+                material: gz_core::scene::MaterialDesc::absent(),
+                cast_shadows: true,
+                transparency: 0.0,
+            }));
+        node(
+            app,
+            cart,
+            "wheel",
+            "cart/wheel",
+            NodeKind::Link,
+            Transform::default(),
+        );
+        let krate = node(
+            app,
+            root,
+            "crate",
+            "crate",
+            NodeKind::Model,
+            Transform::default(),
+        );
+        let sun = node(
+            app,
+            root,
+            "sun",
+            "sun",
+            NodeKind::Light,
+            Transform::from_xyz(0.0, 0.0, 10.0),
+        );
+        app.world_mut().entity_mut(sun).insert(GzLight(LightDesc {
+            ty: LightType::Directional,
+            color: [0.8; 3],
+            intensity: 1.0,
+            range: 0.0,
+            angle: None,
+            inner_angle: None,
+            penumbra: None,
+            decay: None,
+            cast_shadows: true,
+            direction: Some([0.0, 0.0, -1.0]),
+            msg_intensity: 1.0,
+            specular: [0.2; 3],
+            attenuation: [1.0, 0.0, 0.0],
+        }));
+        let mut sdf = SdfExtras::default();
+        sdf.extras = Some(WorldExtras::parse(SDF).unwrap());
+        sdf.generation = 1;
+        app.insert_resource(sdf);
+        frames(app, 2);
+        Scene {
+            cart,
+            base,
+            krate,
+            sun,
         }
     }
 }

@@ -105,7 +105,10 @@ mod frame {
         let link = spawn(&mut app, "base_link", NodeKind::Link);
         let world_body = contents(&mut app);
         assert_eq!(world_body.len(), 1);
-        assert_eq!(world_body[0].1, InspectorContent(InspectKind::World, None));
+        assert_eq!(
+            world_body[0].1,
+            InspectorContent(InspectKind::World, None, 0)
+        );
         select(&mut app, vec![model]);
         let i = inspected(&app);
         assert_eq!((i.kind, i.entity), (InspectKind::Model, Some(model)));
@@ -113,7 +116,7 @@ mod frame {
         // One content at a time, rebuilt for the new subject.
         let c = contents(&mut app);
         assert_eq!(c.len(), 1);
-        assert_eq!(c[0].1, InspectorContent(InspectKind::Model, Some(model)));
+        assert_eq!(c[0].1, InspectorContent(InspectKind::Model, Some(model), 0));
         select(&mut app, vec![model, link]);
         assert_eq!(inspected(&app).kind, InspectKind::Multi);
         select(&mut app, vec![link]);

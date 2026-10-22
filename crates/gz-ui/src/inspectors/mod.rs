@@ -18,8 +18,14 @@
 //! the shell closes the registry when it spawns.
 
 pub(crate) mod common;
+mod light;
+mod link;
+mod model;
 mod world;
 
+pub use light::{LightInspectorPlugin, LIGHT};
+pub use link::{LinkInspectorPlugin, LINK};
+pub use model::{ModelInspectorPlugin, MODEL};
 pub use world::{WorldInspectorPlugin, WORLD};
 
 use bevy::app::PluginGroupBuilder;
@@ -133,7 +139,11 @@ pub struct InspectorPlugins;
 
 impl PluginGroup for InspectorPlugins {
     fn build(self) -> PluginGroupBuilder {
-        PluginGroupBuilder::start::<Self>().add(WorldInspectorPlugin)
+        PluginGroupBuilder::start::<Self>()
+            .add(WorldInspectorPlugin)
+            .add(ModelInspectorPlugin)
+            .add(LinkInspectorPlugin)
+            .add(LightInspectorPlugin)
     }
 }
 

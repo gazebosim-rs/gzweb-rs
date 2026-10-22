@@ -318,3 +318,84 @@ fn nested_links_resolve_through_their_model() {
     let j = &w.link("m/inner/tip").unwrap().joints[0];
     assert!(near(j.pose.pos, [-1.0, 0.0, -1.0]), "{:?}", j.pose.pos);
 }
+
+#[test]
+fn models_links_sensors_and_joints_carry_what_the_inspectors_show() {
+    let xml = r#"<sdf version="1.9"><world name="w">
+      <model name="cart">
+        <static>true</static>
+        <self_collide>1</self_collide>
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
+        <plugin filename="libcustom.so"/>
+        <link name="base">
+          <gravity>false</gravity>
+          <kinematic>true</kinematic>
+          <sensor name="lidar" type="gpu_lidar">
+            <topic>/scan</topic>
+            <update_rate>10</update_rate>
+            <always_on>true</always_on>
+            <visualize>1</visualize>
+          </sensor>
+          <sensor name="imu" type="imu"/>
+        </link>
+        <link name="wheel"/>
+        <joint name="hinge" type="revolute">
+          <parent>base</parent>
+          <child>wheel</child>
+          <axis>
+            <xyz>0 1 0</xyz>
+            <limit><lower>-1.5</lower><upper>1.5</upper><effort>20</effort></limit>
+            <dynamics><damping>0.2</damping></dynamics>
+          </axis>
+        </joint>
+      </model>
+      <model name="plain"><link name="l"/></model>
+    </world></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let cart = w.model("cart").unwrap();
+    assert!(cart.is_static && cart.self_collide);
+    assert_eq!(
+        cart.plugins,
+        ["gz::sim::systems::DiffDrive", "libcustom.so"]
+    );
+    let plain = w.model("plain").unwrap();
+    assert!(!plain.is_static && !plain.self_collide && plain.plugins.is_empty());
+    let base = w.link("cart/base").unwrap();
+    assert_eq!(
+        base.flags,
+        LinkFlags {
+            gravity: false,
+            kinematic: true,
+            wind: false
+        }
+    );
+    assert_eq!(w.link("plain/l").unwrap().flags, LinkFlags::default());
+    assert_eq!(
+        base.sensors[0],
+        SensorExtras {
+            name: "lidar".into(),
+            ty: "gpu_lidar".into(),
+            topic: Some("/scan".into()),
+            update_rate: 10.0,
+            always_on: true,
+            visualize: true,
+        }
+    );
+    assert_eq!(base.sensors[1].topic, None);
+    let hinge = w.joint("cart", "hinge").unwrap();
+    assert_eq!(
+        (hinge.parent.as_str(), hinge.child.as_str()),
+        ("base", "wheel")
+    );
+    assert_eq!(
+        hinge.limits,
+        [AxisLimits {
+            lower: -1.5,
+            upper: 1.5,
+            effort: 20.0,
+            damping: 0.2,
+            ..AxisLimits::default()
+        }]
+    );
+    assert!(w.joint("plain", "hinge").is_none());
+}

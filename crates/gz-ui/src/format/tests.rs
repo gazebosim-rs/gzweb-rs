@@ -73,3 +73,20 @@ fn selection_names_one_and_counts_more() {
     .ends_with("step —"));
     assert_eq!(format::rtf_detail(None), "No statistics yet");
 }
+
+#[test]
+fn inspector_values_read_as_the_spec_writes_them() {
+    assert_eq!(format::metres(1.2), "1.200 m");
+    assert_eq!(format::metres(-0.05), "\u{2212}0.050 m");
+    assert_eq!(format::metres(-0.0001), "0.000 m");
+    assert_eq!(
+        format::degrees(-std::f32::consts::FRAC_PI_2),
+        "\u{2212}90.0°"
+    );
+    assert_eq!(format::number(0.25, 3), "0.25");
+    assert_eq!(format::number(10.0, 3), "10");
+    assert_eq!(format::number(-1.5, 3), "\u{2212}1.5");
+    assert_eq!(format::number(-0.0001, 3), "0");
+    assert_eq!(format::yes_no(true), "Yes");
+    assert_eq!(format::hex([1.0, 0.5, 0.0]), format!("#{}", "FF8000"));
+}

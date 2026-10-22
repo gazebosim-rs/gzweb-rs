@@ -8,6 +8,7 @@
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, ScrollArea};
+use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::Selection;
@@ -35,9 +36,14 @@ pub(crate) enum InspectorHeader {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct InspectorBody;
 
-/// The content in the body, for this subject (kind, entity).
+/// The content in the body, for this subject (kind, entity), built from
+/// this generation of the world's SDFormat (a new reply rebuilds it).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct InspectorContent(pub(crate) InspectKind, pub(crate) Option<Entity>);
+pub(crate) struct InspectorContent(
+    pub(crate) InspectKind,
+    pub(crate) Option<Entity>,
+    pub(crate) u32,
+);
 
 /// The inspector region; [`rebuild_body`] fills its body.
 pub(crate) fn inspector(theme: &Theme, layout: &ShellLayout, map: &InputMap) -> impl Bundle {
@@ -194,11 +200,13 @@ pub(crate) fn choose_subject(
 pub(crate) fn rebuild_body(
     inspected: Res<Inspected>,
     registry: Res<InspectorRegistry>,
+    sdf: Option<Res<SdfExtras>>,
     bodies: Query<(Entity, Option<&Children>), With<InspectorBody>>,
     contents: Query<&InspectorContent>,
     mut commands: Commands,
 ) {
-    let want = InspectorContent(inspected.kind, inspected.entity);
+    let generation = sdf.map_or(0, |s| s.generation);
+    let want = InspectorContent(inspected.kind, inspected.entity, generation);
     for (body, children) in &bodies {
         let current = children
             .into_iter()
@@ -232,8 +240,13 @@ pub(crate) fn build(app: &mut App) {
                 .chain()
                 .in_set(crate::GzUiSystems::Behaviour),
         )
+        .add_systems(
+            Update,
+            crate::inspectors::common::pose_values.in_set(super::ShellSystems::Readouts),
+        )
         .add_observer(on_header_button)
         .add_observer(crate::inspectors::common::on_dismiss)
+        .add_observer(crate::inspectors::common::on_entity_action)
         .add_systems(
             Update,
             crate::inspectors::common::removed_state.in_set(super::ShellSystems::Readouts),

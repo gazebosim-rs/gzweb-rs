@@ -155,6 +155,24 @@ pub enum GeometryDesc {
     Unsupported(String),
 }
 
+impl GeometryDesc {
+    /// The shape's name as SDFormat writes it: `box`, `mesh`, …
+    pub fn kind_name(&self) -> &str {
+        match self {
+            GeometryDesc::Box { .. } => "box",
+            GeometryDesc::Cylinder { .. } => "cylinder",
+            GeometryDesc::Capsule { .. } => "capsule",
+            GeometryDesc::Cone { .. } => "cone",
+            GeometryDesc::Ellipsoid { .. } => "ellipsoid",
+            GeometryDesc::Sphere { .. } => "sphere",
+            GeometryDesc::Plane { .. } => "plane",
+            GeometryDesc::Mesh { .. } => "mesh",
+            GeometryDesc::Heightmap(_) => "heightmap",
+            GeometryDesc::Unsupported(kind) => kind,
+        }
+    }
+}
+
 /// A terrain: heights from the message or from a grayscale image, over
 /// `size[0]` × `size[1]` metres centred on `origin`, `size[2]` metres from
 /// black to white. Row 0 of the heights (or the image's top row) is +Y.
@@ -304,6 +322,10 @@ pub struct LightDesc {
     pub direction: Option<[f64; 3]>,
     /// The message's `intensity` field (not used by gzweb).
     pub msg_intensity: f64,
+    /// The message's specular colour and attenuation (constant, linear,
+    /// quadratic), as Gazebo has them (the inspector shows them).
+    pub specular: [f32; 3],
+    pub attenuation: [f64; 3],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -853,6 +875,16 @@ pub fn light_desc(light: &msgs::Light) -> LightDesc {
         cast_shadows: light.cast_shadows,
         direction,
         msg_intensity: light.intensity as f64,
+        specular: light
+            .specular
+            .as_ref()
+            .map(|c| [c.r, c.g, c.b])
+            .unwrap_or([0.0; 3]),
+        attenuation: [
+            light.attenuation_constant as f64,
+            light.attenuation_linear as f64,
+            light.attenuation_quadratic as f64,
+        ],
     }
 }
 

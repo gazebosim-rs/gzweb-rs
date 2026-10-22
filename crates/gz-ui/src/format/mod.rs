@@ -111,6 +111,47 @@ pub fn signed(v: f32, decimals: usize) -> String {
     }
 }
 
+/// A length in metres: "1.200 m", "−0.050 m".
+pub fn metres(v: f32) -> String {
+    format!("{} m", signed(v, 3))
+}
+
+/// An angle in degrees, from radians: "12.5°", "−90.0°".
+pub fn degrees(radians: f32) -> String {
+    format!("{}°", signed(radians.to_degrees(), 1))
+}
+
+/// A plain number, up to `decimals` places without trailing zeros:
+/// "0.25", "10", "−1.5".
+pub fn number(v: f64, decimals: usize) -> String {
+    let s = format!("{v:.decimals$}");
+    let s = if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
+    };
+    match s.strip_prefix('-') {
+        Some("0") => "0".into(),
+        Some(rest) => format!("\u{2212}{rest}"),
+        None => s,
+    }
+}
+
+/// "Yes" or "No".
+pub fn yes_no(v: bool) -> &'static str {
+    if v {
+        "Yes"
+    } else {
+        "No"
+    }
+}
+
+/// A colour as hex: "#C0C0C0".
+pub fn hex(rgb: [f32; 3]) -> String {
+    let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{:02X}{:02X}{:02X}", c(rgb[0]), c(rgb[1]), c(rgb[2]))
+}
+
 /// "sel: amr_01" for one entity, "3 selected" for more (§3.6 item 8),
 /// "sel: —" for none.
 pub fn selection(count: usize, first: Option<&str>) -> String {
