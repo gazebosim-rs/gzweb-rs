@@ -1357,3 +1357,11 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   and each step holds only a moment; pose fields and the gizmo read this
   frame's transform; a reconnect still asking keeps the tool; the gizmo's
   state changes only when it does. Tests for each.
+- **PR review fixes:** an arrow pointing at the camera or a ring seen edge
+  on isn't offered, and a drag freezes while its axis is end on (it threw
+  the model metres); a ring turns the selection about the gizmo's centre;
+  holds last until the server answers each `set_pose` (3 s at most), then
+  0.5 s; a scrub's held-back step goes out when its time is up; the fields'
+  six numbers stand while the pose is theirs (pitch past ±90° flipped); a
+  scrub that changed nothing commits nothing; a plane found late turns the
+  pose back to text and blocks commits. 687 → 690 tests.

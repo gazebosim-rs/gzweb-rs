@@ -197,11 +197,13 @@ pub(crate) struct ShownText(pub String);
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct NumberTag;
 
-/// A scrub in progress: its value so far. Each move adds to it with the
-/// modifiers held then, so pressing Shift mid-drag doesn't jump.
+/// A scrub in progress: its value so far, and whether it has committed
+/// one. Each move adds to it with the modifiers held then, so pressing
+/// Shift mid-drag doesn't jump.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Scrub {
     pub value: f64,
+    pub moved: bool,
 }
 
 /// Set while the text doesn't evaluate (the border turns `danger`).
@@ -405,9 +407,10 @@ pub(crate) fn on_scrub_start(
 ) {
     if let Ok(parent) = tags.get(ev.entity) {
         if let Ok(field) = fields.get(parent.parent()) {
-            commands
-                .entity(parent.parent())
-                .insert(Scrub { value: field.value });
+            commands.entity(parent.parent()).insert(Scrub {
+                value: field.value,
+                moved: false,
+            });
         }
     }
 }
@@ -434,6 +437,7 @@ pub(crate) fn on_scrub(
     scrub.value = v;
     if v != field.value {
         field.value = v;
+        scrub.moved = true;
         commands.trigger(NumberCommit {
             entity: root,
             value: v,
@@ -443,7 +447,8 @@ pub(crate) fn on_scrub(
 }
 
 /// Scrub end: a final commit of the scrub's value (the field's may have
-/// been set from outside since the last move, by a value streaming in).
+/// been set from outside since the last move, by a value streaming in),
+/// unless it never changed the value.
 pub(crate) fn on_scrub_end(
     ev: On<PointerDragEnd>,
     tags: Query<&ChildOf, With<NumberTag>>,
@@ -457,11 +462,13 @@ pub(crate) fn on_scrub_end(
                 field.value = scrub.value;
             }
             commands.entity(root).remove::<Scrub>();
-            commands.trigger(NumberCommit {
-                entity: root,
-                value: scrub.value,
-                is_final: true,
-            });
+            if scrub.moved {
+                commands.trigger(NumberCommit {
+                    entity: root,
+                    value: scrub.value,
+                    is_final: true,
+                });
+            }
         }
     }
 }

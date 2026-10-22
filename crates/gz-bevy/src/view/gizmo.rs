@@ -233,6 +233,15 @@ fn area(poly: &[Vec2]) -> f32 {
 /// A plane square seen this edge-on (square pixels) can't be grabbed: it
 /// would take clicks meant for the arrow it lies along.
 const MIN_PLANE_AREA: f32 = 40.0;
+/// An arrow shorter than this share of [`GIZMO_PX`] (pointing almost at
+/// the camera) can't be grabbed, nor a ring showing less than this share
+/// of its face (seen almost edge-on): a pixel of pointer would be metres
+/// along the axis, or a half turn.
+const MIN_SHOWN: f32 = 0.25;
+/// A drag stops following the pointer while the line of sight is within
+/// this (cosine) of the arrow's axis, or of a plane's or ring's own plane.
+const END_ON: f32 = 0.97;
+const EDGE_ON: f32 = 0.1;
 
 /// Whether `q` is inside the convex polygon `poly`.
 fn inside(q: Vec2, poly: &[Vec2]) -> bool {
@@ -309,6 +318,15 @@ fn pick(
         } else {
             area(&pts)
         };
+        let full = std::f32::consts::PI * (RING * GIZMO_PX).powi(2);
+        let end_on = match h {
+            Handle::Axis(_) => pts[0].distance(pts[1]) < MIN_SHOWN * GIZMO_PX,
+            Handle::Ring(_) => shown < MIN_SHOWN * full,
+            Handle::Plane(_) => false,
+        };
+        if end_on {
+            continue;
+        }
         let d = match h {
             Handle::Plane(_) if shown >= MIN_PLANE_AREA && inside(cursor, &pts) => 0.0,
             Handle::Plane(_) => continue,
@@ -325,19 +343,24 @@ fn pick(
     best.map(|(_, h)| h)
 }
 
-/// Where the ray meets the plane through `center` with normal `n`.
+/// Where the ray meets the plane through `center` with normal `n` (unit),
+/// unless it all but grazes it.
 fn on_plane(ray: Ray3d, center: Vec3, n: Vec3) -> Option<Vec3> {
     let denom = ray.direction.dot(n);
-    if denom.abs() < 1e-4 {
+    if denom.abs() < EDGE_ON {
         return None;
     }
     let s = (center - ray.origin).dot(n) / denom;
     (s > 0.0).then(|| ray.origin + *ray.direction * s)
 }
 
-/// The parameter along the line `center + dir·s` closest to the ray.
+/// The parameter along the line `center + dir·s` (`dir` unit) closest to
+/// the ray, unless the ray runs almost along it.
 fn along(ray: Ray3d, center: Vec3, dir: Vec3) -> Option<f32> {
     let d = *ray.direction;
+    if d.dot(dir).abs() > END_ON {
+        return None;
+    }
     let w = center - ray.origin;
     let (a, b, c) = (dir.dot(dir), dir.dot(d), d.dot(d));
     let (dd, e) = (dir.dot(w), d.dot(w));
@@ -354,7 +377,7 @@ fn snap_to(v: f32, step: f32) -> f32 {
 }
 
 /// The drag's move: a translation or a rotation (in Gazebo's frame, about
-/// each entity's own origin), and the readout's text when snapping.
+/// the gizmo's centre), and the readout's text when snapping.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Move {
     Translate(Vec3),
@@ -409,13 +432,16 @@ fn drag_move(
     }
 }
 
-fn apply_move(m: Move, start: &Transform) -> Transform {
+/// `start` moved; a turn is about `pivot` (the gizmo's centre in the
+/// parent's frame), so a selection turns as one.
+fn apply_move(m: Move, start: &Transform, pivot: Vec3) -> Transform {
     match m {
         Move::Translate(d) => Transform {
             translation: start.translation + d,
             ..*start
         },
         Move::Rotate(q) => Transform {
+            translation: pivot + q * (start.translation - pivot),
             rotation: (q * start.rotation).normalize(),
             ..*start
         },
@@ -522,10 +548,15 @@ pub fn gizmo_input(
         };
         if let Some((m, text)) = moved {
             let mut q = nodes.p1();
+            // The gizmo sits on the first.
+            let pivot = drag
+                .targets
+                .first()
+                .map_or(Vec3::ZERO, |(_, t)| t.translation);
             let poses: Vec<Transform> = drag
                 .targets
                 .iter()
-                .map(|(_, start)| apply_move(m, start))
+                .map(|(_, start)| apply_move(m, start, pivot))
                 .collect();
             for ((e, _), pose) in drag.targets.iter().zip(&poses) {
                 if let Ok(mut t) = q.get_mut(*e) {

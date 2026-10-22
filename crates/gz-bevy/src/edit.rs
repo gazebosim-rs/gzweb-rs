@@ -1,9 +1,11 @@
 //! Pose edits (spec §6.1, M5c): a [`SetPose`] becomes a `set_pose`
 //! request for the entity's Gazebo id, sent only to a server that takes
 //! edits ([`GzStatus::edits`], DECISIONS.md D-76). While an entity is being
-//! dragged, and a moment after, the sim's poses for it are [`Held`], so
-//! the stream doesn't pull it back under the pointer or flash the old pose
-//! before the edit arrives.
+//! dragged, and until the server has answered its edits and a moment
+//! after, the sim's poses for it are [`Held`], so the stream doesn't pull
+//! it back under the pointer or flash the old pose before the edit lands.
+
+use std::collections::VecDeque;
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -12,11 +14,14 @@ use gz_core::scene::{GeometryDesc, NodeKind};
 use gz_core::topic::world_topic;
 use prost::Message as _;
 
-use crate::connection::{GzCommand, GzStatus};
+use crate::connection::{GzCommand, GzServiceReply, GzStatus};
 use crate::spawn::{GzEntity, GzVisual, GzWorldRoot};
 
-/// How long after an edit the sim's poses for its entity stay held.
+/// How long after an edit (and after the server answered it) the sim's
+/// poses for its entity stay held.
 pub const HOLD_AFTER_EDIT_SECS: f64 = 0.5;
+/// How long a `set_pose` the server hasn't answered keeps its entity held.
+pub const REPLY_TIMEOUT_SECS: f64 = 3.0;
 
 /// Move an entity (a model or a light under the world root) to `pose`, in
 /// its parent's frame (Gazebo's axes).
@@ -26,29 +31,59 @@ pub struct SetPose {
     pub pose: Transform,
 }
 
-/// Entities whose incoming poses are ignored: while dragged (`None`), or
-/// until a time (`Time<Real>` seconds).
+/// Entities whose incoming poses are ignored: while dragged, until a time
+/// (`Time<Real>` seconds), and while a `set_pose` for them is unanswered.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct Held(pub HashMap<Entity, Option<f64>>);
+pub struct Held {
+    /// While dragged (`None`), or until a time.
+    pub until: HashMap<Entity, Option<f64>>,
+    /// The `set_pose`s sent and not yet answered, oldest first, with when
+    /// they went (the server answers in order; a reply doesn't name its
+    /// entity).
+    awaiting: VecDeque<(Entity, f64)>,
+}
 
 impl Held {
     /// Whether `entity`'s poses are held at `now`.
     pub fn holds(&self, entity: Entity, now: f64) -> bool {
-        match self.0.get(&entity) {
+        match self.until.get(&entity) {
             Some(None) => true,
-            Some(Some(until)) => now < *until,
+            Some(Some(until)) => now < *until || self.awaits(entity, now),
             None => false,
+        }
+    }
+
+    /// Whether a `set_pose` for `entity` is still to be answered.
+    fn awaits(&self, entity: Entity, now: f64) -> bool {
+        self.awaiting
+            .iter()
+            .any(|(e, at)| *e == entity && now - at < REPLY_TIMEOUT_SECS)
+    }
+
+    /// A `set_pose` for `entity` went out at `now`.
+    fn sent(&mut self, entity: Entity, now: f64) {
+        self.awaiting.push_back((entity, now));
+    }
+
+    /// The server answered the oldest `set_pose`: its entity's poses come
+    /// through a moment later, once it isn't dragged.
+    fn answered(&mut self, now: f64) {
+        let Some((e, _)) = self.awaiting.pop_front() else {
+            return;
+        };
+        if let Some(Some(until)) = self.until.get_mut(&e) {
+            *until = until.max(now + HOLD_AFTER_EDIT_SECS);
         }
     }
 
     /// Holds `entity` while it is dragged.
     pub fn hold(&mut self, entity: Entity) {
-        self.0.insert(entity, None);
+        self.until.insert(entity, None);
     }
 
     /// Lets `entity`'s poses through again a moment after `now`.
     pub fn release(&mut self, entity: Entity, now: f64) {
-        self.0.insert(entity, Some(now + HOLD_AFTER_EDIT_SECS));
+        self.until.insert(entity, Some(now + HOLD_AFTER_EDIT_SECS));
     }
 }
 
@@ -105,17 +140,26 @@ impl Plugin for EditPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SetPose>()
             .add_message::<GzCommand>()
+            .add_message::<GzServiceReply>()
             .init_resource::<Held>()
-            .add_systems(Update, (mark_planes, send_set_poses, expire_holds));
+            .add_systems(
+                Update,
+                (
+                    mark_planes,
+                    (send_set_poses, answered, expire_holds).chain(),
+                ),
+            );
     }
 }
 
-/// Sends each [`SetPose`] to a server that takes edits; drops it (with a
-/// warning) otherwise.
+/// Sends each [`SetPose`] to a server that takes edits (its entity held
+/// until the answer); drops it (with a warning) otherwise.
 fn send_set_poses(
     mut edits: MessageReader<SetPose>,
     status: Option<Res<GzStatus>>,
+    time: Res<Time<Real>>,
     entities: Query<&GzEntity>,
+    mut held: ResMut<Held>,
     mut out: MessageWriter<GzCommand>,
 ) {
     for edit in edits.read() {
@@ -126,6 +170,20 @@ fn send_set_poses(
         };
         if let Ok(g) = entities.get(edit.entity) {
             out.write(set_pose_request(world, g, &edit.pose));
+            held.sent(edit.entity, time.elapsed_secs_f64());
+        }
+    }
+}
+
+/// The server's answers to `set_pose`.
+fn answered(
+    mut replies: MessageReader<GzServiceReply>,
+    time: Res<Time<Real>>,
+    mut held: ResMut<Held>,
+) {
+    for r in replies.read() {
+        if r.service.ends_with("/set_pose") {
+            held.answered(time.elapsed_secs_f64());
         }
     }
 }
@@ -152,14 +210,29 @@ fn mark_planes(
     }
 }
 
-/// Forgets holds that have run out, and those of entities that are gone.
+/// Forgets holds that have run out, those of entities that are gone, and
+/// `set_pose`s the server never answered.
 fn expire_holds(time: Res<Time<Real>>, entities: Query<()>, mut held: ResMut<Held>) {
     let now = time.elapsed_secs_f64();
-    let stale = |e: &Entity, until: &Option<f64>| {
-        entities.get(*e).is_err() || until.is_some_and(|u| now >= u)
+    if held
+        .awaiting
+        .front()
+        .is_some_and(|(_, at)| now - at >= REPLY_TIMEOUT_SECS)
+    {
+        held.awaiting
+            .retain(|(_, at)| now - at < REPLY_TIMEOUT_SECS);
+    }
+    let stale = |held: &Held, e: &Entity, until: &Option<f64>| {
+        entities.get(*e).is_err() || until.is_some_and(|u| now >= u) && !held.awaits(*e, now)
     };
-    if held.0.iter().any(|(e, u)| stale(e, u)) {
-        held.0.retain(|e, u| !stale(e, u));
+    if held.until.iter().any(|(e, u)| stale(&held, e, u)) {
+        let keep: Vec<Entity> = held
+            .until
+            .iter()
+            .filter(|(e, u)| !stale(&held, e, u))
+            .map(|(e, _)| *e)
+            .collect();
+        held.until.retain(|e, _| keep.contains(e));
     }
 }
 
@@ -304,5 +377,46 @@ mod tests {
         held.release(e, 10.0);
         assert!(held.holds(e, 10.0 + HOLD_AFTER_EDIT_SECS / 2.0));
         assert!(!held.holds(e, 10.0 + HOLD_AFTER_EDIT_SECS));
+        // Sent and unanswered: held past the moment, until the answer and
+        // a moment after it, or until the server is given up on.
+        held.release(e, 20.0);
+        held.sent(e, 20.0);
+        assert!(held.holds(e, 21.0));
+        held.answered(22.0);
+        assert!(held.holds(e, 22.0 + HOLD_AFTER_EDIT_SECS / 2.0));
+        assert!(!held.holds(e, 22.0 + HOLD_AFTER_EDIT_SECS));
+        held.release(e, 30.0);
+        held.sent(e, 30.0);
+        assert!(!held.holds(e, 30.0 + REPLY_TIMEOUT_SECS));
+        // An answer with nothing sent is no one's.
+        held.answered(40.0);
+        held.answered(40.0);
+    }
+
+    #[test]
+    fn a_set_pose_holds_until_its_answer() {
+        let mut app = app(Some(true));
+        let e = cart(&mut app);
+        app.world_mut().resource_mut::<Held>().release(e, 0.0);
+        app.world_mut().write_message(SetPose {
+            entity: e,
+            pose: Transform::IDENTITY,
+        });
+        app.update();
+        let late = HOLD_AFTER_EDIT_SECS + 1.0;
+        assert!(app.world().resource::<Held>().holds(e, late));
+        // Another service's answer isn't it.
+        for service in ["/world/w/control", "/world/w/set_pose"] {
+            app.world_mut().write_message(GzServiceReply {
+                service: service.into(),
+                msg_type: "gz.msgs.Boolean".into(),
+                payload: Vec::new(),
+            });
+            app.update();
+        }
+        let now = app.world().resource::<Time<Real>>().elapsed_secs_f64();
+        let held = app.world().resource::<Held>();
+        assert!(held.awaiting.is_empty());
+        assert!(!held.holds(e, now + HOLD_AFTER_EDIT_SECS));
     }
 }
