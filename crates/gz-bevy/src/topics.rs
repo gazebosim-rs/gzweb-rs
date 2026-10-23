@@ -63,7 +63,7 @@ impl GzTopics {
 }
 
 /// Who holds a topic: a short, stable name for the part of the app
-/// (`"topics.echo"`, `"joint_state"`).
+/// (`"topics_echo"`, `"joint_state"`).
 pub type Holder = &'static str;
 
 /// The topics the app wants and who wants them, each holder with the rate

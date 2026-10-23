@@ -13,9 +13,11 @@
 //!
 //! - **Static:** the [`PanelDef`]: title, icon, binding, place in the
 //!   activity bar, its [`HeaderAction`]s, the [`PanelView`] it starts
-//!   with, and the marker component its content is built under.
+//!   with, the marker component its content is built under, and its
+//!   footer (D-98: [`PanelAction`]s and a footer content marker, drawn by
+//!   the shell under every state).
 //! - **What changes:** its own systems write its view, activity badge,
-//!   header count and header actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
+//!   header count and actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
 //!   (through [`SetPanelStatus`](crate::shell::SetPanelStatus), which marks
 //!   a change only), in [`ShellSystems::Panels`](crate::shell::ShellSystems).
 //!   The shell rebuilds a body only when its view differs.
@@ -23,10 +25,14 @@
 //!   the panel's own observer on `Add<Marker>` fills it with whatever
 //!   system parameters it needs. The body is full-bleed; the shell pads
 //!   only the empty, loading and error states.
-//! - **Actions:** buttons in an empty or error state ([`PanelAction`]) and
-//!   in the header ([`HeaderAction`]) trigger [`PanelActionActivated`],
-//!   which the panel observes. Reconnect ([`PanelAction::reconnect`]) is
-//!   the shell's own.
+//! - **Actions:** buttons in an empty or error state or the footer
+//!   ([`PanelAction`]) and in the header ([`HeaderAction`]) trigger
+//!   [`PanelActionActivated`], which the panel observes. Reconnect
+//!   ([`PanelAction::reconnect`]) is the shell's own. One unavailable for
+//!   good says why (`unavailable`).
+//! - **Hosts:** a panel shows in a host (D-98: a sidebar slot, a pop-out
+//!   in M7e); gate a system that only feeds what it shows with
+//!   [`panel_shown`](crate::shell::panel_shown).
 //! - **Bodies are disposable views.** A view change, a swap or (M7) a
 //!   pop-out respawns a body; the shell keeps it across a second slot
 //!   opening or closing and moves it on a swap, but a panel never relies
@@ -64,7 +70,7 @@ pub use plot::{PlotCharts, PlotPanelPlugin, PLOT};
 pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
 pub use sensors::{SensorsPanelPlugin, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TELEOP};
-pub use topics::{TopicsPanelPlugin, TOPICS};
+pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
 
 ui_id! {
     /// A panel's id: a short, stable name ("scene"), unique among the

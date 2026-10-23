@@ -3183,6 +3183,7 @@ dependencies = [
  "gz-bevy",
  "gz-core",
  "png",
+ "prost",
  "resvg",
  "serde_json",
  "tiny-skia 0.12.0",

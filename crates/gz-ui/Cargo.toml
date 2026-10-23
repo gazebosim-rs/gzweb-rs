@@ -25,6 +25,8 @@ png = "0.18"
 
 [dev-dependencies]
 serde_json.workspace = true
+# Topic messages for the Topics panel's tests.
+prost.workspace = true
 
 [lints]
 workspace = true
