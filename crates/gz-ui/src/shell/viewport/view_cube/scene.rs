@@ -269,6 +269,8 @@ type CubeImages = Or<(With<CubeImage>, With<CubeShadow>)>;
 #[allow(clippy::type_complexity)]
 pub(crate) fn show_cube_texture(
     scenes: Query<&CubeScene>,
+    parents: Query<&ChildOf, With<ViewCube>>,
+    reveals: Query<&crate::shell::viewport::views::Reveal>,
     theme: Res<Theme>,
     mut shown: Query<(Entity, &ChildOf, Option<&mut ImageNode>, Has<CubeShadow>), CubeImages>,
     mut commands: Commands,
@@ -280,7 +282,14 @@ pub(crate) fn show_cube_texture(
         let Ok(scene) = scenes.get(cube.parent()) else {
             continue;
         };
+        // The view's reveal fades the cube with the rail (§3.4).
+        let reveal = parents
+            .get(cube.parent())
+            .ok()
+            .and_then(|view| reveals.get(view.parent()).ok())
+            .map_or(1.0, |r| r.0);
         let color = if shadow { tint } else { plain };
+        let color = color.with_alpha(color.alpha() * reveal);
         match image_node {
             Some(mut i) => {
                 if i.color != color {

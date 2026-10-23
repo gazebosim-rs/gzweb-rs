@@ -431,8 +431,9 @@ fn a_world_loading_takes_focus_from_the_hidden_address_field() {
 /// opacity back; a finished fade too.
 #[test]
 fn an_interrupted_card_fade_restores_its_opacities() {
-    use super::connect_card::{Fading, PreFade};
+    use super::connect_card::Fading;
     use crate::theme::Opacity;
+    use crate::widgets::fade::PreFade;
     let mut app = shell_app((1440, 900), 1.0);
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
         40,

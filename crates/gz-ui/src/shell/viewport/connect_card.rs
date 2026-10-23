@@ -15,9 +15,9 @@ use crate::assets::fonts::text;
 use crate::format;
 use crate::shell::connection::{ConnectionView, CurrentPhase, Phase};
 use crate::theme::{
-    elevation, motion, radius, ColorRole, Fill, Ink, Opacity, Shadow, Stroke, Theme, TypeStyle,
-    SPACE,
+    elevation, motion, radius, ColorRole, Fill, Shadow, Stroke, Theme, TypeStyle, SPACE,
 };
+use crate::widgets::fade::{fade_tree, FadeQueries, PreFade};
 use crate::widgets::focus::Hiding;
 use crate::widgets::layout::{column, row, set_shown};
 use crate::widgets::text::set_text;
@@ -54,11 +54,6 @@ pub(crate) struct CardStatus;
 /// gets [`Hiding`], so focus in it goes at once (DECISIONS.md D-52).
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Fading(pub f32);
-
-/// An entity's own opacity before the card's fade, restored when the fade
-/// ends or is interrupted (a world that drops again while the card fades).
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct PreFade(pub f32);
 
 /// The fade's length: `panel_slide_ms` (160).
 pub(crate) fn fade_secs() -> f32 {
@@ -170,9 +165,6 @@ pub(crate) fn card_status(phase: Phase, status: Option<&GzStatus>) -> String {
     }
 }
 
-/// Anything with a colour role (what the fade's opacity applies to).
-type WithRole = Or<(With<Fill>, With<Stroke>, With<Ink>, With<Shadow>)>;
-
 /// The card's node, its fade, and whether it has opacities to put back.
 type CardFade = (
     Entity,
@@ -188,9 +180,7 @@ type CardFade = (
 pub(crate) fn fade_card(
     time: Res<Time<Real>>,
     mut cards: Query<CardFade, With<ConnectCard>>,
-    children: Query<&Children>,
-    roles: Query<(), WithRole>,
-    mut opacities: Query<(Option<&mut Opacity>, Option<&PreFade>)>,
+    mut fades: FadeQueries,
     mut commands: Commands,
 ) {
     for (card, mut node, fading, faded) in &mut cards {
@@ -205,50 +195,11 @@ pub(crate) fn fade_card(
             None if faded => (None, false),
             None => continue,
         };
-        let mut stack = vec![card];
-        while let Some(e) = stack.pop() {
-            if roles.contains(e) {
-                if let Ok((opacity, pre)) = opacities.get_mut(e) {
-                    fade_one(&mut commands, e, opacity, pre, alpha);
-                }
-            }
-            if let Ok(c) = children.get(e) {
-                stack.extend(c.iter());
-            }
-        }
+        fade_tree(&mut commands, &mut fades, card, alpha);
         if done {
             set_shown(&mut node, false);
             commands.entity(card).remove::<(Fading, Hiding)>();
         }
-    }
-}
-
-/// One entity's opacity at `alpha` of its own (`None`: its own again).
-fn fade_one(
-    commands: &mut Commands,
-    e: Entity,
-    opacity: Option<Mut<Opacity>>,
-    pre: Option<&PreFade>,
-    alpha: Option<f32>,
-) {
-    let base = pre.map_or_else(|| opacity.as_deref().map_or(1.0, |o| o.0), |p| p.0);
-    let want = Opacity(alpha.map_or(base, |a| base * a));
-    match opacity {
-        Some(mut o) => {
-            o.set_if_neq(want);
-        }
-        None => {
-            commands.entity(e).insert(want);
-        }
-    }
-    match (alpha, pre) {
-        (Some(_), None) => {
-            commands.entity(e).insert(PreFade(base));
-        }
-        (None, Some(_)) => {
-            commands.entity(e).remove::<PreFade>();
-        }
-        _ => {}
     }
 }
 

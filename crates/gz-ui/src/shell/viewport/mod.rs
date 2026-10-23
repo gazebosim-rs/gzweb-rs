@@ -47,6 +47,7 @@ pub(crate) fn view_node(
     let map = map.clone();
     (
         ViewNode(id),
+        views::Reveal::default(),
         // A marquee or readout dragged off the view stays in it.
         views::pane(
             share,
@@ -61,6 +62,7 @@ pub(crate) fn view_node(
             v.spawn(outline::outline());
             v.spawn(views::active_frame());
             v.spawn(view_cube::view_cube(&t));
+            v.spawn(views::face_marker(&t));
             v.spawn(rail::rail(&t, &map));
             v.spawn(hud::scale_label(&t));
             v.spawn(marquee::marquee());

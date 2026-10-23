@@ -537,3 +537,83 @@ fn a_layout_change_shows_its_views_images_at_once() {
         .count();
     assert_eq!(shown, 4);
 }
+
+#[test]
+fn an_inactive_view_shows_its_face_marker_until_hovered() {
+    use crate::shell::viewport::rail::Rail;
+    use crate::shell::viewport::view_cube::ViewCube;
+    use gz_bevy::view::{ViewCommand, ViewOp};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        Duration::from_millis(60),
+    ));
+    frames(&mut app, 3);
+    let n = nodes(&mut app);
+    // (rail shown, cube shown, marker shown, marker text) for a view.
+    let look = |app: &mut App, view: Entity| {
+        let world = app.world_mut();
+        let mut kids =
+            world.query::<(&ChildOf, &Node, Has<Rail>, Has<ViewCube>, Has<FaceMarker>)>();
+        let mut out = (false, false, false);
+        for (p, node, rail, cube, marker) in kids.iter(world) {
+            if p.parent() != view {
+                continue;
+            }
+            let shown = node.display != Display::None;
+            if rail {
+                out.0 = shown;
+            }
+            if cube {
+                out.1 = shown;
+            }
+            if marker {
+                out.2 = shown;
+            }
+        }
+        out
+    };
+    // View 0 is active: in full. View 1: its marker.
+    assert_eq!(look(&mut app, n[0].1), (true, true, false));
+    assert_eq!(look(&mut app, n[1].1), (false, false, true));
+    // Hovering view 1 brings its cube and rail back within 100 ms.
+    let right = n[1].2 .0 + n[1].2 .1 / 2.0;
+    cursor(&mut app, right);
+    frames(&mut app, 2);
+    assert_eq!(look(&mut app, n[1].1), (true, true, false));
+    // The marker reads the face the view looks at: a top view's TOP.
+    let cam = camera(&mut app, 0);
+    app.world_mut().write_message(ViewCommand {
+        view: cam,
+        op: ViewOp::Snap(gz_bevy::view::SnapView::Top),
+    });
+    cursor(&mut app, n[1].2 .0 + Vec2::new(5.0, 300.0));
+    frames(&mut app, 8);
+    app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(1));
+    frames(&mut app, 3);
+    assert_eq!(look(&mut app, n[0].1), (false, false, true));
+    let world = app.world_mut();
+    let labels: Vec<(Entity, String)> = world
+        .query_filtered::<(Entity, &Text), With<FaceMarkerLabel>>()
+        .iter(world)
+        .map(|(e, t)| (e, t.0.clone()))
+        .collect();
+    let in0 = labels
+        .iter()
+        .find(|(e, _)| {
+            let world = app.world();
+            let mut at = *e;
+            while let Some(p) = world.get::<ChildOf>(at) {
+                at = p.parent();
+                if at == n[0].1 {
+                    return true;
+                }
+            }
+            false
+        })
+        .unwrap();
+    assert_eq!(in0.1, "TOP");
+    // One view: always in full.
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    let n = nodes(&mut app);
+    assert_eq!(look(&mut app, n[0].1), (true, true, false));
+}
