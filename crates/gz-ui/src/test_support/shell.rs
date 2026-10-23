@@ -217,6 +217,15 @@ pub(crate) fn key(app: &mut App, key_code: KeyCode, state: ButtonState) {
     });
 }
 
+/// Focuses `e` (as Tab would) and presses `key_code` in it.
+pub(crate) fn focused_key(app: &mut App, e: Entity, key_code: KeyCode) {
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(e, bevy::input_focus::FocusCause::Navigated);
+    chord(app, &[key_code]);
+    app.update();
+}
+
 pub(crate) fn chord(app: &mut App, keys: &[KeyCode]) {
     for k in keys {
         key(app, *k, ButtonState::Pressed);

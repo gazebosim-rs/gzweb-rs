@@ -309,21 +309,28 @@ fn splitter_drags_follow_the_pointer_at_any_ui_scale() {
 #[test]
 fn splitter_drags_clamp_and_double_click_resets() {
     let l = ShellLayout::for_width(1440.0, Some(SCENE));
-    // The sidebar widens dragging right, the inspector dragging left.
-    assert_eq!(l.drag_width(Side::Sidebar, 300.0, 50.0), 350.0);
-    assert_eq!(l.drag_width(Side::Inspector, 300.0, -50.0), 350.0);
-    assert_eq!(l.drag_width(Side::Sidebar, 300.0, -500.0), 240.0);
-    assert_eq!(l.drag_width(Side::Inspector, 300.0, 500.0), 260.0);
-    assert_eq!(l.drag_width(Side::Sidebar, 300.0, 500.0), 480.0);
+    // Each side within its limits.
+    assert_eq!(l.width_range(Side::Sidebar), (240.0, 480.0));
+    assert_eq!(l.width_range(Side::Inspector).0, 260.0);
     // Short of the floor: 1440 − 56 − 300 − 240 = 844 is the most, so at
     // 1000 px only 1000 − 56 − 300 − 240 = 404.
-    let narrow = ShellLayout {
+    let mut narrow = ShellLayout {
         window_w: 1000.0,
         inspector_open: true,
         sidebar_open: true,
         ..l
     };
-    assert_eq!(narrow.drag_width(Side::Sidebar, 300.0, 400.0), 404.0);
+    assert_eq!(narrow.width_range(Side::Sidebar), (240.0, 404.0));
+    narrow.resize(Side::Sidebar, 700.0);
+    assert_eq!(narrow.sidebar_w, 404.0);
+    narrow.resize(Side::Sidebar, 100.0);
+    assert_eq!(narrow.sidebar_w, 240.0);
+    // No room at all: the minimum.
+    let tiny = ShellLayout {
+        window_w: 600.0,
+        ..narrow.clone()
+    };
+    assert_eq!(tiny.width_range(Side::Sidebar), (240.0, 240.0));
     // Slot split: both slots at least 180.
     assert_eq!(ShellLayout::split_after(0.55, 0.0, 600.0), 0.55);
     assert_eq!(
@@ -679,6 +686,45 @@ fn a_splitter_resets_only_on_a_primary_double_click_without_a_drag() {
     splitter_click(&mut app, bar, PointerButton::Primary, 1);
     splitter_click(&mut app, bar, PointerButton::Primary, 2);
     assert_eq!(layout(&app).sidebar_w, 300.0);
+}
+
+/// The side splitters are tab stops: the arrows move them by a step (the
+/// inspector's is after its splitter: Left widens it), Home and End to
+/// the side's limits, End short of the floor.
+#[test]
+fn the_side_splitters_move_with_the_keys() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let world = app.world_mut();
+    let bar = |world: &mut World, side| {
+        world
+            .query::<(Entity, &ShellSplitter)>()
+            .iter(world)
+            .find(|(_, s)| s.0 == side)
+            .unwrap()
+            .0
+    };
+    let (sidebar, inspector) = (bar(world, Side::Sidebar), bar(world, Side::Inspector));
+    let step = crate::widgets::splitter::KEY_STEP;
+    let start = layout(&app);
+    focused_key(&mut app, inspector, KeyCode::ArrowLeft);
+    assert_eq!(layout(&app).inspector_w, start.inspector_w + step);
+    focused_key(&mut app, inspector, KeyCode::ArrowRight);
+    assert_eq!(layout(&app).inspector_w, start.inspector_w);
+    focused_key(&mut app, sidebar, KeyCode::ArrowRight);
+    assert_eq!(layout(&app).sidebar_w, start.sidebar_w + step);
+    focused_key(&mut app, sidebar, KeyCode::Home);
+    assert_eq!(layout(&app).sidebar_w, 240.0);
+    focused_key(&mut app, sidebar, KeyCode::End);
+    let l = layout(&app);
+    assert_eq!(l.sidebar_w, l.width_range(Side::Sidebar).1);
+    assert!(l.viewport_w() >= l.floor_w);
+    // The splitter holds the layout's width and range.
+    let s = *app
+        .world()
+        .get::<crate::widgets::Splitter>(sidebar)
+        .unwrap();
+    assert_eq!((s.size, s.min, s.max), (l.sidebar_w, 240.0, l.sidebar_w));
 }
 
 /// The start-up collapse rules apply to the window's first real size

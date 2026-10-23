@@ -1,7 +1,7 @@
 //! The shell's layout state and rules (spec §2.1, §3.2, §3.3.2), as plain
 //! data and functions so they can be tested without an app:
 //! panel widths and collapse, the start-up collapse rules, the viewport
-//! floor, splitter drags, and the activity bar's slot logic.
+//! floor, splitter widths, and the activity bar's slot logic.
 
 use bevy::prelude::*;
 
@@ -226,25 +226,21 @@ impl ShellLayout {
         }
     }
 
-    /// The width a splitter drag gives `side`: `start` moved by `dx`
-    /// (towards the viewport widens it), within the side's limits and
-    /// short of the viewport floor.
-    pub fn drag_width(&self, side: Side, start: f32, dx: f32) -> f32 {
+    /// The widths a splitter can give `side`: within the side's limits and
+    /// short of the viewport floor (`min` when even that is too wide).
+    pub fn width_range(&self, side: Side) -> (f32, f32) {
         let (_, min, max) = Self::limits(side);
-        let sign = match side {
-            Side::Sidebar => 1.0,
-            Side::Inspector => -1.0,
-        };
-        let room = self.viewport_w() + self.width(side) - self.floor_w;
         // (`side` is open while it's dragged: no bar of its own to count.)
-        (start + sign * dx).min(room).clamp(min, max)
+        let room = self.viewport_w() + self.width(side) - self.floor_w;
+        (min, max.min(room).max(min))
     }
 
-    /// Applies a splitter drag.
-    pub fn drag(&mut self, side: Side, start: f32, dx: f32) {
+    /// Applies a splitter's drag or key: `side` `w` wide, within
+    /// [`ShellLayout::width_range`].
+    pub fn resize(&mut self, side: Side, w: f32) {
+        let (min, max) = self.width_range(side);
         self.startup = false;
-        let w = self.drag_width(side, start, dx);
-        self.set_width(side, w);
+        self.set_width(side, w.clamp(min, max));
     }
 
     /// A splitter double-click: back to the default width (then the floor

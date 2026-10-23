@@ -920,8 +920,11 @@ panels) take their children from the caller.
   values (`is_final` false while scrubbing).
 - Slider: Bevy's slider, plus Up/Down; `modifier_steps` (PreUpdate, before
   focus dispatch) scales `SliderStep` while Shift or Alt is held.
-- Splitter: drags (divided by `UiScale`) set the pane's width or height
-  within min/max; arrow keys, Home and End move it (D-41).
+- Splitter: controlled (D-96). The owner keeps the pane's size and range
+  in the `Splitter` and applies `SplitterMoved` (drags divided by
+  `UiScale`, D-41; arrow keys, Home and End) and `SplitterReset` (a
+  primary double-click without a drag). `splitter_control` is the
+  behaviour on an owner's node; `splitter` adds the 6 px node and line.
 - `focus::text_focus_system`: while a text field has focus the viewer's
   `ActiveScopes` are emptied (single-letter keys do nothing, §13), and in the
   browser `view::web::set_text_focus` stops the canvas preventing any key's
@@ -961,8 +964,8 @@ banner), `connection` (phase), `format` (readouts).
   collapsed below 1280, sidebar below 1100) and the floor rule; `fit`
   re-applies the floor rule on a resize and reopens what it closed when
   space returns; `show`/`toggle` never collapse the side being opened;
-  `drag_width` clamps a splitter drag to the side's limits and short of the
-  floor; `split_after` keeps both slots ≥ 180 (DECISIONS.md D-30). Widths are
+  `width_range` is a splitter's range, the side's limits short of the
+  floor, and `resize` applies it; `split_after` keeps both slots ≥ 180 (DECISIONS.md D-30). Widths are
   UI logical pixels (window width / `UiScale`). `apply_layout` writes it to
   the nodes (`Display::None` collapses, so nothing overlays the view). A
   collapsed side shows its 24 px bar (`Region::SidebarBar`/`InspectorBar`)
@@ -974,12 +977,13 @@ banner), `connection` (phase), `format` (readouts).
   `shortcut_keys` maps `ui.sidebar`, `ui.inspector`, `tool.*` and `panel.*`
   from the `InputMap` in the live scopes (`ViewRouting::key_scopes`, so
   tool keys need the view; nothing while typing).
-- **Splitters**: `ShellSplitter(Side)`, a 6 px absolute hit area centred on
-  the panel's border pixel, `GlobalZIndex(10)`, col-resize cursor; drags
-  set the width through `ShellLayout::drag`, the region's border is
-  `accent` while dragging, and a double-click (`PointerClick::count`)
-  resets. The slot row splitter is in flow, 6 px with a 32×2 `cube_edge`
-  grip.
+- **Splitters** (D-96): each owns a widget `Splitter`. `ShellSplitter(Side)`
+  is a 6 px absolute hit area centred on the panel's border pixel,
+  `GlobalZIndex(10)`; it sets the width through `ShellLayout::resize`, the
+  region's border is `accent` while dragging, and a double-click resets
+  (`UiCommand::ResetWidth`). The slot row splitter is in flow, 6 px with a
+  32×2 `cube_edge` grip, and sets `ShellLayout::split`; a double-click
+  puts 0.55 back. The view dividers set their preset's share.
 - **Top bar** (§3.1): logo, world button (name, `.sdf` in `text_3`; no
   dirty dot yet), separator, tool radio group (`Tool` resource; buttons
   follow it, keys set it) with Snap, with no container and activity-style

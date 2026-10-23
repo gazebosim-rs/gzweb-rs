@@ -1,9 +1,11 @@
 //! The gallery's behaviour: the theme switch (T and the button), the
-//! theme name and token values, and the capture.
+//! theme name and token values, the scene panel's splitter, and the
+//! capture.
 
 use bevy::input_focus::{FocusCause, InputFocus, InputFocusVisible};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::Screenshot;
+use bevy::ui::ComputedNode;
 use bevy::ui_widgets::Activate;
 
 use super::components::FocusExample;
@@ -13,6 +15,55 @@ use crate::theme::Theme;
 use crate::widgets::focus::TextFocus;
 use crate::widgets::number_field::NumberInput;
 use crate::widgets::text::set_text;
+use crate::widgets::{Splitter, SplitterMoved, SplitterReset};
+
+/// The scene panel's default width and its splitter's range.
+pub(crate) const TREE_W: f32 = 320.0;
+const TREE_MIN_W: f32 = 240.0;
+const TREE_MAX_W: f32 = 420.0;
+
+/// The pane a gallery splitter sizes.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SizesPane(pub Entity);
+
+/// Keeps the splitter's size the pane's laid-out width.
+pub(crate) fn sized_pane_ranges(
+    mut splitters: Query<(&mut Splitter, &SizesPane)>,
+    nodes: Query<&ComputedNode>,
+) {
+    for (mut s, pane) in &mut splitters {
+        let Ok(n) = nodes.get(pane.0) else {
+            continue;
+        };
+        let w = n.size().x * n.inverse_scale_factor();
+        let want = s.with_range(w, TREE_MIN_W, TREE_MAX_W);
+        s.set_if_neq(want);
+    }
+}
+
+fn set_pane_width(pane: Option<&SizesPane>, nodes: &mut Query<&mut Node>, w: f32) {
+    if let Some(mut node) = pane.and_then(|p| nodes.get_mut(p.0).ok()) {
+        node.width = px(w);
+    }
+}
+
+/// The splitter's drag and keys set the pane's width.
+pub(crate) fn on_pane_resized(
+    ev: On<SplitterMoved>,
+    panes: Query<&SizesPane>,
+    mut nodes: Query<&mut Node>,
+) {
+    set_pane_width(panes.get(ev.entity).ok(), &mut nodes, ev.size);
+}
+
+/// A double-click puts the pane back to its default width.
+pub(crate) fn on_pane_reset(
+    ev: On<SplitterReset>,
+    panes: Query<&SizesPane>,
+    mut nodes: Query<&mut Node>,
+) {
+    set_pane_width(panes.get(ev.entity).ok(), &mut nodes, TREE_W);
+}
 
 /// T switches light ↔ dark (not while typing in a field).
 pub(crate) fn toggle_theme_key(

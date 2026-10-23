@@ -360,12 +360,19 @@ fn slot_buttons(
     }
 }
 
+type SlotSplitters<'w, 's> = Query<
+    'w,
+    's,
+    (&'static mut Node, &'static mut Visibility),
+    (With<SlotSplitter>, Without<SlotView>),
+>;
+
 /// Writes the slot split into the slots: one slot takes the sidebar; with
 /// two, the primary takes `split` of it and the row splitter shows.
 pub(crate) fn apply_slots(
     layout: Res<ShellLayout>,
     mut slots: Query<(&SlotView, &mut Node)>,
-    mut splitters: Query<&mut Node, (With<SlotSplitter>, Without<SlotView>)>,
+    mut splitters: SlotSplitters,
 ) {
     if !layout.is_changed() {
         return;
@@ -381,8 +388,13 @@ pub(crate) fn apply_slots(
         node.flex_grow = grow;
         node.display = display;
     }
-    for mut node in &mut splitters {
+    for (mut node, mut visibility) in &mut splitters {
         node.display = layout::display(two);
+        visibility.set_if_neq(if two {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     }
 }
 
@@ -416,12 +428,15 @@ pub(crate) fn build(app: &mut App) {
             .chain()
             .in_set(ShellSystems::Slots),
     )
+    .add_systems(
+        Update,
+        slot_splitter::slot_splitter_ranges.in_set(ShellSystems::Readouts),
+    )
     .add_observer(on_slot_action)
     .add_observer(body::on_action_button)
     .add_observer(body::on_reconnect)
-    .add_observer(slot_splitter::on_slot_drag_start)
-    .add_observer(slot_splitter::on_slot_drag)
-    .add_observer(slot_splitter::on_slot_drag_end);
+    .add_observer(slot_splitter::on_slots_resized)
+    .add_observer(slot_splitter::on_slots_reset);
 }
 
 #[cfg(test)]
