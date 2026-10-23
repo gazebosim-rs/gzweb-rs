@@ -215,8 +215,14 @@ default, off in `--snapshot` mode (`--reconnect` / `--no-reconnect`). gzweb
 doesn't reconnect.
 
 **Messages.** Send a `GzCommand` (`Play`, `Pause`, `Step(n)`, `Reset`,
-`Stop`, `Subscribe`, `Unsubscribe`, `Throttle`, `Request`); one the
-connection can't send right now is dropped and logged, not queued.
+`Stop`, `Subscribe`, `Unsubscribe`, `Throttle`, `Request`,
+`RefreshTopics`); one the connection can't send right now is dropped and
+logged, not queued. Parts of the app subscribe through
+`gz_bevy::topics::GzSubscriptions` (hold and release by holder), not
+`Subscribe` directly, so two holders of one topic share it (D-97); the
+app subscribing a world topic the client takes itself taps it.
+`GzTopics` keeps the server's topic list and `GzTraffic` each received
+topic's count and rate.
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In
@@ -1000,8 +1006,10 @@ banner), `connection` (phase), `format` (readouts).
   Console badges (hidden at zero). Click: inactive → primary slot; active →
   collapse, or expand if collapsed; Shift → secondary; a panel in the other
   slot swaps there. Their tooltips open right (D-49).
-- **Sidebar slots** (§3.3, §3.3.2): `SlotView(Slot)` nodes, rebuilt by
-  `rebuild_slots` when their panel, state or count changes: section header
+- **Sidebar slots** (§3.3, §3.3.2): `SlotView(Slot)` nodes, each a
+  `PanelHost` (D-98: header, body, then the panel's footer; `ShownPanels`
+  says what the hosts hold and show), rebuilt by `rebuild_hosts` when
+  their panel, state or count changes: section header
   (title, Scene's entity count when live; Swap with two slots, collapse on
   the primary, close on the secondary; D-36) and a body from `panel_view`:
   ready (empty until M4/M7), loading skeleton, or the centred empty/error

@@ -333,31 +333,36 @@ quality policy, **M6c** one splitter.
 - One splitter (PR #30 second review, item 9): done in M6c (D-96).
 
 ### M7 — Panels
+In five PRs: **M7a** panel hosts, footers, shared subscriptions and Topics, **M7b** Plot, **M7c**
+Assets, **M7d** Sensors and Teleop (with the joint command slider, D-88), **M7e** Console and
+pop-out windows.
+
+- **M7a notes:** the server's topic list, shared subscriptions (a release never drops another
+  holder's topic; holding a world topic the client takes taps it) and per-topic rates
+  (D-97); `PanelHost` and `ShownPanels`, a shell-drawn footer under every state, actions
+  that say why they're unavailable, the Scene footer on it (D-98); the Topics panel: filter,
+  chips, the list with rates, the echo in text format while shown, "Topic ended", Copy,
+  `gzweb --echo` (D-99). Left: Plot field (M7b); Publish and Services until a server takes
+  publications and lists services; the native clipboard (Bevy's `system_clipboard`, which
+  needs BSL-1.0 allowed in `deny.toml`).
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).
-- Pop-out windows (§7.11). Generalize the sidebar's two hard-wired slots (PR #30 second
-  review, item 13: `rebuild_slots` walks the two `SlotView`s, `slot_counts` finds a count
-  through its `PanelHeader`, `ShellLayout::is_active` knows only the two slots) to a
-  `PanelHost { panel }` component on a slot or a window, rebuilt per host; bodies already
-  move between hosts (D-58).
+- Pop-out windows (§7.11). The sidebar's slots are `PanelHost`s, rebuilt per host, and
+  `ShownPanels` replaces the slot checks (PR #30 second review, item 13: done in M7a, D-98);
+  a window is one more host.
 - The panels' §3.3.1 states from their data (D-58: each writes its `PanelView`): Topics
-  Ready once the client keeps the server's topic list (today `gz-bevy` only logs it), and
-  "Topic ended" for a dropped echo; Sensors "Select a model with sensors" vs "No sensors in
+  done in M7a (D-99); Sensors "Select a model with sensors" vs "No sensors in
   this world" (needs the world's sensors in the scene model and M5's selection); Assets
   "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled.
-  Topics' Publish and Services header actions enabled.
-- Footers (PR #33 review, N10): §3.3's optional footer has no place in the contract yet, so
-  Plot's (Add field…, Export CSV, Pop out) could only live in its ready content and its empty
-  state would lose it. Decide before Plot: likely `PanelDef::footer(..)` with `PanelAction`s
-  drawn by the shell under every state (equal-width buttons, §3.3), their enabled state in
-  `PanelState` like header actions; Console's footer is a command input, so also a footer
-  content marker, built by the panel's observer like `.content::<Marker>()`.
-- Gating (PR #30 second review, item 6): a topic echo's and a camera's `image`
-  subscriptions run only while their panel is shown (`panel_shown(id)` on the systems that
-  subscribe, plus unsubscribing when it hides); Plot's series and the Console's log keep
-  recording while closed, so their data lives in always-on resources and only the view is
-  gated.
+  Topics' Publish and Services stay unavailable on the stock server (D-99).
+- Footers (PR #33 review, N10): done in M7a (D-98): `PanelDef::footer_action` and
+  `footer_content`, drawn by the shell under every state; Console's command input is footer
+  content.
+- Gating (PR #30 second review, item 6): the echo holds its topic only while Topics shows
+  (M7a, D-97, D-99); a camera's `image` subscription will do the same through
+  `GzSubscriptions` (M7d). Plot's series and the Console's log keep recording while closed,
+  so their data lives in always-on resources and only the view is gated.
 
 ### M8 — Menus, command palette, workspaces, persistence
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
