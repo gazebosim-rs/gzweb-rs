@@ -95,6 +95,10 @@ pub struct GizmoState {
     pub readout: Option<(Vec2, String)>,
     /// This frame's Esc cancelled a drag.
     pub escaped: bool,
+    /// The view the gizmo was last drawn in: only there can a press grab
+    /// it (a press that makes another view active doesn't, the gizmo
+    /// wasn't on it).
+    pub shown_in: Option<ViewId>,
 }
 
 impl GizmoState {
@@ -168,12 +172,15 @@ fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
 /// its drag's), sized for that view: on that view's own layer.
 fn gizmo_layer(
     routing: Res<ViewRouting>,
-    state: Res<GizmoState>,
+    mut state: ResMut<GizmoState>,
     views: Views,
     store: Option<ResMut<GizmoConfigStore>>,
 ) {
     let Some(mut store) = store else { return };
     let want = state.drag.as_ref().map_or(routing.active, |d| d.view);
+    if state.shown_in != want {
+        state.shown_in = want;
+    }
     let id = want.or_else(|| {
         views
             .iter()
@@ -628,7 +635,9 @@ pub fn gizmo_input(
         .first()
         .and_then(|e| center_of(*e, &nodes.p0(), &roots));
     let hovered = match (center, cursor) {
-        (Some(c), Some(at)) if routing.pointer && over(&routing, view) => {
+        (Some(c), Some(at))
+            if routing.pointer && over(&routing, view) && state.shown_in == view =>
+        {
             pick(*tool, at, (ct, cp, size), c, &axes)
         }
         _ => None,

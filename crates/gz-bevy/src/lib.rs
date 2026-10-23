@@ -263,6 +263,7 @@ pub(crate) mod test_util {
         .init_resource::<render::GzEnvironment>()
         .init_resource::<render::GzGrid>()
         .init_resource::<render::PendingSky>()
+        .init_resource::<render::StudioCubemap>()
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
             world: Some("w".into()),

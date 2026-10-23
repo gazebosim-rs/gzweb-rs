@@ -2917,6 +2917,15 @@ fn the_plugin_hovers_draws_and_a_ring_turns_the_model() {
         r.screen(gz_to_bevy() * axis * len * gizmo::RING)
     };
     r.cursor(Some(ring(&r, Vec3::X)));
+    // Drawn in another view last frame: nothing to grab here yet (a press
+    // that made this view active doesn't take the gizmo).
+    r.app
+        .world_mut()
+        .resource_mut::<gizmo::GizmoState>()
+        .shown_in = Some(ViewId(3));
+    r.app.update();
+    let state = r.app.world().resource::<gizmo::GizmoState>();
+    assert_eq!((state.hovered, state.shown_in), (None, None));
     r.app.update();
     let state = r.app.world().resource::<gizmo::GizmoState>();
     assert_eq!(state.hovered, Some(gizmo::Handle::Ring(2)));
@@ -3024,7 +3033,17 @@ fn the_pointer_drives_the_view_under_it_and_keys_the_hovered_or_active_one() {
     // crosses into the left one.
     set(&mut r, Some(1), Some(1));
     let at = Vec2::new(W * 0.75, H / 2.0);
-    r.drag(MouseButton::Left, at, &[at + Vec2::new(-40.0, 0.0)]);
+    r.cursor(Some(at));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    for x in [W * 0.6, W * 0.4, W * 0.3] {
+        // Into the left view, which the shell now says is hovered.
+        set(&mut r, Some(u8::from(x < W / 2.0)).map(|l| 1 - l), Some(1));
+        r.cursor(Some(Vec2::new(x, H / 2.0)));
+        r.app.update();
+    }
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.app.update();
     assert_eq!(pose(&r, r.camera), left);
     assert_ne!(pose(&r, other), right);
     // Keys: the hovered view, else the active one.

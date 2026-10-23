@@ -166,6 +166,7 @@ pub fn configure(app: &mut App, quality: Quality) {
         .init_resource::<GzEnvironment>()
         .init_resource::<GzGrid>()
         .init_resource::<PendingSky>()
+        .init_resource::<StudioCubemap>()
         .init_gizmo_group::<GridGizmos>();
 }
 
@@ -486,6 +487,7 @@ pub fn apply_environment(
     mut ambient: ResMut<GlobalAmbientLight>,
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
+    mut studio: ResMut<StudioCubemap>,
     cameras: Query<ViewState, With<MainCamera>>,
     planets: Query<Entity, With<GzAtmosphere>>,
 ) {
@@ -514,6 +516,7 @@ pub fn apply_environment(
     pending.0 = None;
 
     let mut dress = Dress {
+        studio: &mut studio,
         config: &config,
         env: &env,
         plan: &plan,
@@ -551,6 +554,7 @@ pub struct Placed {
 
 /// What dresses a view camera for the environment.
 struct Dress<'a> {
+    studio: &'a mut StudioCubemap,
     config: &'a GzConfig,
     env: &'a GzEnvironment,
     plan: &'a Environment,
@@ -584,7 +588,11 @@ impl Dress<'_> {
         match self.plan {
             Environment::Ambient => {}
             Environment::Studio => {
-                cam.insert(studio_light(self.images, self.env.ambient_or_default()));
+                cam.insert(studio_light(
+                    self.images,
+                    self.studio,
+                    self.env.ambient_or_default(),
+                ));
             }
             Environment::Atmosphere => {
                 cam.insert(AtmosphereSettings::default());
@@ -622,15 +630,21 @@ pub fn spawn_views(
     asset_server: Res<AssetServer>,
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
+    mut studio: ResMut<StudioCubemap>,
     cameras: Query<(&Transform, &Projection, Option<&ViewCamera>, &ViewId), With<MainCamera>>,
     mut commands: Commands,
 ) {
     let Some(slots) = slots else { return };
+    let want = slots.0.min(ViewId::MAX);
+    // Most frames: every view has its camera.
+    if cameras.iter().filter(|c| c.3 .0 < want).count() >= usize::from(want) {
+        return;
+    }
     let have: Vec<ViewId> = cameras.iter().map(|c| *c.3).collect();
     let Some((t, p, view, _)) = cameras.iter().min_by_key(|c| *c.3) else {
         return;
     };
-    let missing: Vec<ViewId> = (0..slots.0.min(ViewId::MAX))
+    let missing: Vec<ViewId> = (0..want)
         .map(ViewId)
         .filter(|id| !have.contains(id))
         .collect();
@@ -639,6 +653,7 @@ pub fn spawn_views(
     }
     let plan = plan(&env, &config);
     let mut dress = Dress {
+        studio: &mut studio,
         config: &config,
         env: &env,
         plan: &plan,
@@ -653,7 +668,7 @@ pub fn spawn_views(
             Placed {
                 transform: *t,
                 projection: p.clone(),
-                view: view.cloned(),
+                view: view.map(ViewCamera::copied),
                 id: Some(id),
                 placement: Some(ViewPlacement::default()),
             },
@@ -661,9 +676,25 @@ pub fn spawn_views(
     }
 }
 
-fn studio_light(images: &mut Assets<Image>, ambient: Vec3) -> GeneratedEnvironmentMapLight {
+/// The studio cubemap for an ambient colour, shared by every view.
+#[derive(Resource, Debug, Default)]
+pub struct StudioCubemap(Option<(Vec3, Handle<Image>)>);
+
+fn studio_light(
+    images: &mut Assets<Image>,
+    studio: &mut StudioCubemap,
+    ambient: Vec3,
+) -> GeneratedEnvironmentMapLight {
+    let map = match &studio.0 {
+        Some((a, h)) if *a == ambient => h.clone(),
+        _ => {
+            let h = images.add(studio_cubemap(ambient));
+            studio.0 = Some((ambient, h.clone()));
+            h
+        }
+    };
     GeneratedEnvironmentMapLight {
-        environment_map: images.add(studio_cubemap(ambient)),
+        environment_map: map,
         intensity: units::UNIT_LUMINANCE * units::FILL,
         ..default()
     }
@@ -673,8 +704,10 @@ fn studio_light(images: &mut Assets<Image>, ambient: Vec3) -> GeneratedEnvironme
 /// lights the scene as brightly as it looks. A cubemap Bevy can't use
 /// (failed to load, or not six square power-of-two faces of at most 8192 px)
 /// falls back to the studio environment.
+#[allow(clippy::too_many_arguments)]
 pub fn install_sky(
     mut pending: ResMut<PendingSky>,
+    mut studio: ResMut<StudioCubemap>,
     config: Res<GzConfig>,
     env: Res<GzEnvironment>,
     asset_server: Res<AssetServer>,
@@ -685,8 +718,18 @@ pub fn install_sky(
     let Some((handle, cameras)) = pending.0.clone() else {
         return;
     };
-    let usable = match images.get_mut(&handle) {
-        Some(mut image) => make_cubemap(&mut image),
+    // One already made a cube (a view added later) stays as it is: changing
+    // it would upload it again.
+    let cube = |i: &Image| {
+        i.texture_view_descriptor
+            .as_ref()
+            .is_some_and(|d| d.dimension == Some(TextureViewDimension::Cube))
+    };
+    let usable = match images.get(&handle) {
+        Some(image) if cube(image) => true,
+        Some(_) => images
+            .get_mut(&handle)
+            .is_some_and(|mut image| make_cubemap(&mut image)),
         None if matches!(asset_server.load_state(&handle), LoadState::Failed(_)) => false,
         None => return,
     };
@@ -713,7 +756,11 @@ pub fn install_sky(
                 });
             }
         } else if ibl {
-            cam.insert(studio_light(&mut images, env.ambient_or_default()));
+            cam.insert(studio_light(
+                &mut images,
+                &mut studio,
+                env.ambient_or_default(),
+            ));
         }
     }
     if ibl {
@@ -1403,6 +1450,10 @@ mod tests {
             .get_mut::<Transform>(first)
             .unwrap()
             .translation = Vec3::new(1.0, 2.0, 3.0);
+        // Following something: new views start free.
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().get_mut::<ViewCamera>(first).unwrap().mode =
+            crate::view::CameraMode::Follow(target);
         // Three views: two new cameras, copies of the first, placed nowhere
         // yet, each dressed (the studio light) and on its own layer.
         app.insert_resource(ViewSlots(3));
@@ -1430,6 +1481,21 @@ mod tests {
             .collect();
         views.sort_by_key(|v| v.0);
         assert_eq!(views.len(), 3);
+        let world = app.world_mut();
+        let free = world
+            .query::<(&ViewId, &ViewCamera)>()
+            .iter(world)
+            .filter(|(id, v)| id.0 > 0 && v.mode == crate::view::CameraMode::Free)
+            .count();
+        assert_eq!(free, 2);
+        // One studio cubemap for them all.
+        let world = app.world_mut();
+        let maps: Vec<_> = world
+            .query::<&GeneratedEnvironmentMapLight>()
+            .iter(world)
+            .map(|l| l.environment_map.id())
+            .collect();
+        assert!(maps.len() == 3 && maps.iter().all(|m| *m == maps[0]));
         for (i, (id, at, placed, lit, layers)) in views.iter().enumerate() {
             assert_eq!(*id, ViewId(i as u8));
             assert_eq!(*at, Vec3::new(1.0, 2.0, 3.0));
@@ -1490,6 +1556,12 @@ mod tests {
             .unwrap();
         assert_eq!(light.environment_map, sky);
         assert_eq!(light.intensity, units::UNIT_LUMINANCE);
+        // A view added later gets it too, the cubemap as it was (made a
+        // cube once, not changed again).
+        let other = app.world_mut().spawn_empty().id();
+        app.world_mut().resource_mut::<PendingSky>().0 = Some((sky, vec![other]));
+        app.update();
+        assert!(app.world().get::<Skybox>(other).is_some());
     }
 
     #[test]

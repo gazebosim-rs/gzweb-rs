@@ -116,8 +116,8 @@ pub(crate) fn shortcut_keys(
 ) {
     for id in shortcuts.pressed() {
         let views = match id.as_str() {
-            "view.maximize" => Some(LayoutCommand::Maximize),
-            "view.close" => Some(LayoutCommand::Close),
+            "view.maximize" => Some(LayoutCommand::Maximize(None)),
+            "view.close" => Some(LayoutCommand::Close(None)),
             "view.split_right" => Some(LayoutCommand::Split { down: false }),
             "view.split_down" => Some(LayoutCommand::Split { down: true }),
             _ => None,

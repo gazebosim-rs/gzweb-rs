@@ -181,7 +181,7 @@ fn the_banner_turns_red_after_a_minute() {
     let bar = find::<DisconnectBanner>(&mut app);
     let dim = find::<DimOverlay>(&mut app);
     assert!(displayed(&app, card) && !displayed(&app, bar) && !displayed(&app, dim));
-    let view = find::<ViewNode>(&mut app);
+    let view = find::<super::views::ViewGrid>(&mut app);
     assert_eq!(
         app.world().get::<Visibility>(view),
         Some(&Visibility::Hidden)

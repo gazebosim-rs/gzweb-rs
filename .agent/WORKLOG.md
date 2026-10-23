@@ -1431,3 +1431,14 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   and reset, hover and active, a rail and cube per view, Maximize, Close
   view and splits, the floor; workspace 701 → 710 passing; coverage 98.3%
   lines. check.sh passes.
+- **PR review fixes:** a rail's Close view and Maximize act on its own
+  view (the commands carry it, and a press on a view's controls is that
+  view's even over the next one); the active view stays among those
+  showing (Maximize makes it the maximized one); views keep
+  `viewport_min` as the area narrows (`fit_share` each frame, the gap left
+  out of the length); Close and splits wait for the preset to show and for
+  the mouse; the gizmo grabs only where it was drawn; layout changes show
+  the views' images at once (after placement); the grid hides without a
+  world; views clip; one studio cubemap; a cube sky isn't re-made; new
+  views start free; the floor while maximized is one view's; thumbnails
+  are buttons (Enter, Space); §9.3 amended by D-90. 710 → 716 tests.

@@ -47,7 +47,15 @@ pub(crate) fn view_node(
     let map = map.clone();
     (
         ViewNode(id),
-        views::pane(share, grow, Node::default()),
+        // A marquee or readout dragged off the view stays in it.
+        views::pane(
+            share,
+            grow,
+            Node {
+                overflow: Overflow::clip(),
+                ..default()
+            },
+        ),
         Children::spawn(SpawnWith(move |v: &mut ChildSpawner| {
             // First, under the view's controls.
             v.spawn(outline::outline());
@@ -104,7 +112,7 @@ pub(crate) fn build(app: &mut App) {
         Update,
         (
             connect_card::prefill_address,
-            view::show_view_image,
+            view::show_views,
             marquee::marquee_box,
         )
             .in_set(GzUiSystems::Behaviour),
@@ -121,10 +129,13 @@ pub(crate) fn build(app: &mut App) {
     .add_systems(Update, connect_card::fade_card.after(GzUiSystems::Visuals))
     .add_systems(
         PostUpdate,
-        view::place_view
-            .after(UiSystems::Layout)
-            .before(ViewPlacementSystems)
-            .before(VisibilitySystems::UpdateFrusta),
+        (
+            view::place_view
+                .after(UiSystems::Layout)
+                .before(ViewPlacementSystems)
+                .before(VisibilitySystems::UpdateFrusta),
+            view::show_view_image.after(ViewPlacementSystems),
+        ),
     )
     .add_observer(connect_card::on_connect_button)
     .add_observer(connect_card::on_address_submit);

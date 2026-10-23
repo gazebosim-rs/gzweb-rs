@@ -69,21 +69,30 @@ pub(crate) fn place_view(
     }
 }
 
-/// Each view node shows its camera's texture once it exists, and nothing
-/// (the area's `bg`) while no world is loaded.
-pub(crate) fn show_view_image(
-    cameras: Query<(&ViewId, &ViewPlacement), With<MainCamera>>,
+/// The views (and their dividers) show while a world is loaded; without
+/// one the area's `bg` shows, and nothing in the grid takes the pointer.
+pub(crate) fn show_views(
     phase: Res<CurrentPhase>,
-    mut views: Query<(Entity, &ViewNode, Option<&mut ImageNode>, &mut Visibility)>,
-    mut commands: Commands,
+    mut grids: Query<&mut Visibility, With<super::views::ViewGrid>>,
 ) {
     let shown = if phase.0.no_world() {
         Visibility::Hidden
     } else {
         Visibility::Inherited
     };
-    for (e, node, image, mut v) in &mut views {
+    for mut v in &mut grids {
         v.set_if_neq(shown);
+    }
+}
+
+/// Each view node shows its camera's texture: after placement, so a view
+/// node new this frame (a layout change) or a new texture shows at once.
+pub(crate) fn show_view_image(
+    cameras: Query<(&ViewId, &ViewPlacement), With<MainCamera>>,
+    mut views: Query<(Entity, &ViewNode, Option<&mut ImageNode>)>,
+    mut commands: Commands,
+) {
+    for (e, node, image) in &mut views {
         let Some(handle) = cameras
             .iter()
             .find(|(id, _)| **id == node.0)

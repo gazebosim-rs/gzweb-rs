@@ -11,6 +11,7 @@ use super::*;
 use crate::shell::viewport::rail::RailButton;
 use crate::shell::viewport::view::ViewNode;
 use crate::shell::viewport::view_cube::scene::CubeScene;
+use crate::shell::ShellLayout;
 use crate::test_support::frames;
 use crate::test_support::shell::*;
 
@@ -165,12 +166,13 @@ fn with_divider(app: &mut App, axis: usize) -> Entity {
 #[test]
 fn a_divider_drags_its_share_short_of_the_floor_and_a_double_click_resets_it() {
     let mut app = split(900, LayoutPreset::TwoColumns);
-    let row = AREA.1.x;
+    // The views' length: the gap left out.
+    let row = AREA.1.x - 2.0;
     drag_divider(&mut app, 0, -100.0);
     let share = layout(&app).shares()[0];
     assert!((share - (0.6 - 100.0 / row)).abs() < 1e-4, "{share}");
     let n = nodes(&mut app);
-    assert!((n[0].2 .1.x - (row - 2.0) * share).abs() < 1.0);
+    assert!((n[0].2 .1.x - row * share).abs() < 1.0);
     // Not below 240 a side.
     drag_divider(&mut app, 0, -1000.0);
     let n = nodes(&mut app);
@@ -316,12 +318,12 @@ fn maximize_shows_one_view_and_close_view_renumbers_the_rest() {
     let n = nodes(&mut app);
     assert_eq!(n.len(), 1);
     assert_eq!((n[0].0, n[0].2), (ViewId(2), AREA));
-    command(&mut app, LayoutCommand::Maximize);
+    command(&mut app, LayoutCommand::Maximize(None));
     assert_eq!(nodes(&mut app).len(), 4);
     // Close view 1: the views after it move up, its camera goes last.
     app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(1));
     app.world_mut().resource_mut::<ViewRouting>().hovered = None;
-    command(&mut app, LayoutCommand::Close);
+    command(&mut app, LayoutCommand::Close(None));
     assert_eq!(layout(&app).preset, LayoutPreset::OnePlusTwo);
     let after: Vec<Entity> = (0..4).map(|i| camera(&mut app, i)).collect();
     assert_eq!(after, [before[0], before[2], before[3], before[1]]);
@@ -329,10 +331,10 @@ fn maximize_shows_one_view_and_close_view_renumbers_the_rest() {
     let cams = cameras(&mut app);
     assert!(cams[3].3.rect.is_none() && !cams[3].2);
     // Down to one: nothing more to close.
-    command(&mut app, LayoutCommand::Close);
-    command(&mut app, LayoutCommand::Close);
+    command(&mut app, LayoutCommand::Close(None));
+    command(&mut app, LayoutCommand::Close(None));
     assert_eq!(layout(&app).preset, LayoutPreset::Single);
-    command(&mut app, LayoutCommand::Close);
+    command(&mut app, LayoutCommand::Close(None));
     assert_eq!(layout(&app).preset, LayoutPreset::Single);
     // Splits: right, then down.
     command(&mut app, LayoutCommand::Split { down: false });
@@ -375,6 +377,9 @@ fn shares_clamp_or_split_evenly() {
     assert_eq!(share_after(0.5, 100.0, 1000.0, 240.0), 0.6);
     assert_eq!(share_after(0.5, -400.0, 1000.0, 240.0), 0.24);
     assert_eq!(share_after(0.5, 10.0, 400.0, 240.0), 0.5);
+    // Before layout: as it was.
+    assert_eq!(fit_share(0.6, 0.0, 240.0), 0.6);
+    assert_eq!(fit_share(0.6, 502.0, 240.0), 1.0 - 240.0 / 502.0);
     assert_eq!(
         ViewLayout::floor(LayoutPreset::Quad, 240.0, 2.0),
         Vec2::new(482.0, 482.0)
@@ -382,4 +387,153 @@ fn shares_clamp_or_split_evenly() {
     for p in LayoutPreset::ALL {
         assert_eq!(p.panes().len(), usize::from(p.count()));
     }
+}
+
+#[test]
+fn a_rail_menu_over_another_view_acts_on_its_own() {
+    use super::super::rail::menus::LayoutItem;
+    use bevy::picking::hover::HoverMap;
+    use bevy::picking::pointer::PointerId;
+    let mut app = split(900, LayoutPreset::Quad);
+    let before: Vec<Entity> = (0..4).map(|i| camera(&mut app, i)).collect();
+    // View 1's Close view item, wherever it hangs.
+    let n = nodes(&mut app);
+    let world = app.world_mut();
+    let items: Vec<(Entity, LayoutItem)> = world
+        .query::<(Entity, &LayoutItem)>()
+        .iter(world)
+        .map(|(e, i)| (e, *i))
+        .collect();
+    let views = n.clone();
+    let in_view = |app: &mut App, e: Entity| {
+        let world = app.world_mut();
+        let mut q = world.query::<&ChildOf>();
+        let mut at = e;
+        while let Ok(p) = q.get(world, at) {
+            at = p.parent();
+            if let Some(v) = views.iter().find(|v| v.1 == at) {
+                return Some(v.0);
+            }
+        }
+        None
+    };
+    let close = items
+        .iter()
+        .filter(|(_, i)| *i == LayoutItem::Close)
+        .map(|(e, _)| *e)
+        .find(|e| in_view(&mut app, *e) == Some(ViewId(1)))
+        .expect("view 1's Close view");
+    // The pointer over view 3's rect, but on view 1's menu: view 1's.
+    let window = find::<Window>(&mut app);
+    let over3 = n[3].2 .0 + n[3].2 .1 / 2.0;
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .set_cursor_position(Some(over3));
+    app.world_mut()
+        .resource_mut::<HoverMap>()
+        .entry(PointerId::Mouse)
+        .or_default()
+        .insert(close, hit());
+    app.update();
+    assert_eq!(routing(&app).hovered, Some(ViewId(1)));
+    app.world_mut().resource_mut::<HoverMap>().clear();
+    app.world_mut().trigger(Activate { entity: close });
+    frames(&mut app, 3);
+    assert_eq!(layout(&app).preset, LayoutPreset::OnePlusTwo);
+    let after: Vec<Entity> = (0..4).map(|i| camera(&mut app, i)).collect();
+    assert_eq!(after, [before[0], before[2], before[3], before[1]]);
+}
+
+#[test]
+fn the_active_view_is_always_one_that_shows() {
+    let mut app = split(900, LayoutPreset::Quad);
+    app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(3));
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    assert_eq!(routing(&app).active, Some(ViewId(0)));
+    // Maximizing a view makes it the active one; restoring keeps it.
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Quad));
+    command(&mut app, LayoutCommand::Maximize(Some(ViewId(2))));
+    assert_eq!(routing(&app).active, Some(ViewId(2)));
+    command(&mut app, LayoutCommand::Maximize(None));
+    assert_eq!(routing(&app).active, Some(ViewId(2)));
+    // The floor's fallback shows view 0 only.
+    let mut app = live_view(520);
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Quad));
+    assert!(layout(&app).fallback);
+    app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(3));
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::TwoRows));
+    assert_eq!(routing(&app).active, Some(ViewId(0)));
+}
+
+#[test]
+fn close_and_split_wait_for_the_preset_to_show_and_for_the_mouse() {
+    // The fallback: nothing to close or split.
+    let mut app = split(520, LayoutPreset::Quad);
+    assert!(layout(&app).fallback);
+    command(&mut app, LayoutCommand::Close(None));
+    command(&mut app, LayoutCommand::Split { down: false });
+    assert_eq!(layout(&app).preset, LayoutPreset::Quad);
+    // A drag under way keeps its view: no renumbering meanwhile.
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    mouse(&mut app, ButtonState::Pressed);
+    command(&mut app, LayoutCommand::Close(None));
+    assert_eq!(layout(&app).preset, LayoutPreset::TwoColumns);
+    mouse(&mut app, ButtonState::Released);
+    command(&mut app, LayoutCommand::Close(None));
+    assert_eq!(layout(&app).preset, LayoutPreset::Single);
+}
+
+#[test]
+fn a_narrow_area_keeps_each_view_at_the_floor() {
+    // 1024 wide with a 440 px sidebar: 504 px for Two columns at 3:2,
+    // which would make one view 201 px.
+    let mut app = shell_app((1024, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    {
+        let mut shell = app.world_mut().resource_mut::<ShellLayout>();
+        shell.startup = false;
+        shell.sidebar_open = true;
+        shell.sidebar_w = 440.0;
+        shell.inspector_open = false;
+    }
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::TwoColumns));
+    assert!(!layout(&app).fallback);
+    let n = nodes(&mut app);
+    assert_eq!(n.len(), 2);
+    for (_, _, (_, size)) in &n {
+        assert!(size.x >= 240.0, "{size}");
+    }
+    // The share is kept for when there is room again.
+    assert_eq!(layout(&app).shares()[0], 0.6);
+}
+
+#[test]
+fn quads_columns_move_together_and_one_plus_twos_rows_split_its_right() {
+    let mut app = split(900, LayoutPreset::Quad);
+    drag_divider(&mut app, 0, 60.0);
+    let n = nodes(&mut app);
+    assert_eq!(n[0].2 .1.x, n[2].2 .1.x, "both rows' columns");
+    assert!(n[0].2 .1.x > n[1].2 .1.x);
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::OnePlusTwo));
+    drag_divider(&mut app, 1, -100.0);
+    let n = nodes(&mut app);
+    assert!(n[1].2 .1.y < n[2].2 .1.y);
+    assert_eq!(n[0].2 .1.y, AREA.1.y);
+}
+
+#[test]
+fn a_layout_change_shows_its_views_images_at_once() {
+    let mut app = split(900, LayoutPreset::Quad);
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    app.world_mut()
+        .write_message(LayoutCommand::Preset(LayoutPreset::Quad));
+    app.update();
+    let world = app.world_mut();
+    let shown = world
+        .query_filtered::<(), (With<ViewNode>, With<ImageNode>)>()
+        .iter(world)
+        .count();
+    assert_eq!(shown, 4);
 }

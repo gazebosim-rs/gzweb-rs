@@ -54,8 +54,18 @@ pub(crate) struct PointerOver<'w, 's> {
 }
 
 impl PointerOver<'_, '_> {
-    /// The view whose node's rect the pointer is in (whatever is on top).
+    /// The view the pointer is over: the one whose controls are under it
+    /// (a rail's menu may hang over the next view), else the one whose
+    /// node's rect it is in.
     fn view(&self) -> Option<ViewId> {
+        let own = self.hits().find_map(|e| {
+            std::iter::once(e)
+                .chain(self.parents.iter_ancestors(e))
+                .find_map(|a| self.views.get(a).ok().map(|v| v.0 .0))
+        });
+        if own.is_some() {
+            return own;
+        }
         let c = self
             .windows
             .single()

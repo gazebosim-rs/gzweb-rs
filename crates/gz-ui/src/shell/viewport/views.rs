@@ -255,10 +255,11 @@ impl ViewLayout {
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LayoutCommand {
     Preset(LayoutPreset),
-    /// Maximize the key view, or restore the layout (⇧Space).
-    Maximize,
-    /// Close the key view (⌘W): one view fewer.
-    Close,
+    /// Maximize a view (the rail's, from its popover; else the key view),
+    /// or restore the layout (⇧Space).
+    Maximize(Option<ViewId>),
+    /// Close a view (the rail's; else the key view, ⌘W): one view fewer.
+    Close(Option<ViewId>),
     /// Split the view right or down (⌥⌘→, ⌥⌘↓).
     Split {
         down: bool,
@@ -555,22 +556,54 @@ pub(crate) fn build_grid(
     }
 }
 
-/// The panes grow by their divider's share as it moves.
-pub(crate) fn follow_shares(layout: Res<ViewLayout>, mut panes: Query<(&Shares, &mut Node)>) {
-    if !layout.is_changed() {
-        return;
-    }
+/// The panes grow by their divider's share as it moves, kept so that
+/// each side is at least `viewport_min` in its row or column as it is now
+/// laid out (§2.1: never below the floor; a narrower area or an opened
+/// panel moves it, the stored share comes back with the room). Runs every
+/// frame: the rows' sizes change without the layout.
+pub(crate) fn follow_shares(
+    layout: Res<ViewLayout>,
+    theme: Res<Theme>,
+    sizes: Query<&ComputedNode>,
+    mut panes: Query<(&Shares, &ChildOf, &mut Node)>,
+) {
     let shares = layout.shares();
-    for (share, mut node) in &mut panes {
+    for (share, parent, mut node) in &mut panes {
         let Some(share) = share.0 else {
             continue;
         };
-        let s = shares[share.axis];
+        let length = sizes.get(parent.parent()).map_or(0.0, |n| {
+            let size = n.size() * n.inverse_scale_factor();
+            if share.axis == 0 {
+                size.x
+            } else {
+                size.y
+            }
+        });
+        let s = fit_share(
+            shares[share.axis],
+            length - theme.s.viewport_divider,
+            theme.s.viewport_min,
+        );
         let grow = if share.first { s } else { 1.0 - s };
         if node.flex_grow != grow {
             node.flex_grow = grow;
         }
     }
+}
+
+/// `share` of `length` (the views', the gap left out) kept to at least
+/// `min` a side, or half each when they can't both have it; as it is
+/// before the first layout (`length` 0).
+pub(crate) fn fit_share(share: f32, length: f32, min: f32) -> f32 {
+    if length <= 0.0 {
+        return share;
+    }
+    if length < 2.0 * min {
+        return 0.5;
+    }
+    let lo = min / length;
+    share.clamp(lo, 1.0 - lo)
 }
 
 pub(crate) fn on_divider_drag_start(
@@ -609,7 +642,8 @@ pub(crate) fn on_divider_drag(
     else {
         return;
     };
-    let length = if d.0 == 0 { size.x } else { size.y };
+    // The views' length: the gap is no one's.
+    let length = if d.0 == 0 { size.x } else { size.y } - theme.s.viewport_divider;
     let moved = if d.0 == 0 {
         ev.distance.x
     } else {
@@ -625,11 +659,10 @@ pub(crate) fn on_divider_drag(
 /// column `length` long: each side at least `min`, or half each when they
 /// can't both be.
 pub(crate) fn share_after(start: f32, moved: f32, length: f32, min: f32) -> f32 {
-    if length < 2.0 * min || length <= 0.0 {
-        return 0.5;
+    if length <= 0.0 {
+        return start;
     }
-    let lo = min / length;
-    (start + moved / length).clamp(lo, 1.0 - lo)
+    fit_share(start + moved / length, length, min)
 }
 
 pub(crate) fn on_divider_drag_end(
@@ -691,11 +724,13 @@ pub(crate) fn view_floor(
     mut layout: ResMut<ViewLayout>,
     mut shell: ResMut<ShellLayout>,
 ) {
-    let need = ViewLayout::floor(
-        layout.preset,
-        theme.s.viewport_min,
-        theme.s.viewport_divider,
-    );
+    // A maximized view is one view: it needs one view's room.
+    let shown = if layout.maximized.is_some() {
+        LayoutPreset::Single
+    } else {
+        layout.preset
+    };
+    let need = ViewLayout::floor(shown, theme.s.viewport_min, theme.s.viewport_divider);
     if shell.floor_w != need.x {
         shell.set_floor(need.x);
     }
@@ -705,7 +740,7 @@ pub(crate) fn view_floor(
         .map_or(0.0, |n| n.size().y * n.inverse_scale_factor());
     // Not laid out yet: no fallback on its account.
     let short = height > 0.0 && height < need.y;
-    let fallback = layout.preset != LayoutPreset::Single && (shell.viewport_w() < need.x || short);
+    let fallback = shown != LayoutPreset::Single && (shell.viewport_w() < need.x || short);
     if layout.fallback != fallback {
         layout.fallback = fallback;
     }
@@ -746,9 +781,13 @@ pub(crate) fn active_frames(
 }
 
 /// Applies [`LayoutCommand`]s. Closing a view renumbers the ones after it
-/// (their cameras take the ids down), so the views keep their order.
+/// (their cameras take the ids down), so the views keep their order; it
+/// waits while a mouse button is down (a drag keeps its view by id).
+/// Closing and splitting need the preset showing (not the floor's
+/// fallback, nor a maximized view).
 pub(crate) fn apply_layout_commands(
     mut reader: MessageReader<LayoutCommand>,
+    buttons: Res<ButtonInput<MouseButton>>,
     mut layout: ResMut<ViewLayout>,
     mut routing: ResMut<ViewRouting>,
     mut cameras: Query<
@@ -758,22 +797,32 @@ pub(crate) fn apply_layout_commands(
 ) {
     for cmd in reader.read() {
         let key = routing.key_view().unwrap_or(ViewId(0));
+        let split = layout.preset.count() > 1 && !layout.fallback;
+        let showing = !layout.fallback && layout.maximized.is_none();
         match *cmd {
             LayoutCommand::Preset(p) => layout.set_preset(p),
             LayoutCommand::Split { down } => {
-                let p = layout.preset.split(down);
-                layout.set_preset(p);
+                if showing {
+                    let p = layout.preset.split(down);
+                    layout.set_preset(p);
+                }
             }
-            LayoutCommand::Maximize => {
-                let several = layout.preset.count() > 1 && !layout.fallback;
-                layout.maximized = (layout.maximized.is_none() && several).then_some(key);
+            LayoutCommand::Maximize(view) => {
+                layout.maximized = match layout.maximized {
+                    None if split => Some(view.unwrap_or(key)),
+                    _ => None,
+                };
+                // The maximized view is the one the tools apply to.
+                if let Some(id) = layout.maximized {
+                    routing.active = Some(id);
+                }
             }
-            LayoutCommand::Close => {
+            LayoutCommand::Close(view) => {
                 let count = layout.preset.count();
-                if count < 2 || layout.maximized.is_some() {
+                if count < 2 || !showing || buttons.get_pressed().next().is_some() {
                     continue;
                 }
-                let closed = key.0.min(count - 1);
+                let closed = view.unwrap_or(key).0.min(count - 1);
                 for (mut id, mut layers) in &mut cameras {
                     let now = match id.0 {
                         n if n == closed => count - 1,
@@ -785,13 +834,24 @@ pub(crate) fn apply_layout_commands(
                 }
                 let p = layout.preset.without_one();
                 layout.set_preset(p);
-                let active = ViewId(closed.min(p.count() - 1));
-                routing.active = Some(active);
+                routing.active = Some(ViewId(closed.min(p.count() - 1)));
                 if routing.hovered.is_some_and(|h| h.0 >= p.count()) {
                     routing.hovered = None;
                 }
             }
         }
+    }
+}
+
+/// The active view is always one that shows: after a layout change, the
+/// floor's fallback or a restore, one that went is replaced by the first.
+pub(crate) fn keep_active(layout: Res<ViewLayout>, mut routing: ResMut<ViewRouting>) {
+    if !layout.is_changed() {
+        return;
+    }
+    let ids = layout.ids();
+    if routing.active.is_none_or(|a| !ids.contains(&a)) {
+        routing.active = ids.first().copied();
     }
 }
 
@@ -803,8 +863,11 @@ pub(crate) fn build(app: &mut App) {
             Update,
             (
                 apply_start_layout,
-                apply_layout_commands,
+                // Renumbering before a new environment respawns the
+                // cameras from their ids.
+                apply_layout_commands.before(gz_bevy::render::apply_environment),
                 view_floor,
+                keep_active,
                 build_grid,
                 follow_shares,
             )

@@ -426,6 +426,17 @@ impl ViewCamera {
         self.animation.is_some()
     }
 
+    /// A new view's start from this one: the same pivot, drag action and
+    /// projection settings, free and still (no target, no animation).
+    pub fn copied(&self) -> Self {
+        Self {
+            mode: CameraMode::Free,
+            follow_last: None,
+            animation: None,
+            ..self.clone()
+        }
+    }
+
     fn half_tan(&self) -> f32 {
         (self.perspective.fov / 2.0).tan()
     }

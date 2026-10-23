@@ -17,7 +17,6 @@
 //!   marked.
 
 use bevy::ecs::spawn::SpawnWith;
-use bevy::picking::events::PointerClick;
 use bevy::picking::hover::Hovered;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -199,6 +198,10 @@ fn thumbnail(t: &Theme, preset: LayoutPreset) -> impl Bundle {
         Fill(ColorRole::Surface),
         Stroke(ColorRole::Line),
         Hovered::default(),
+        bevy::ui_widgets::Button,
+        bevy::input_focus::tab_navigation::TabIndex(0),
+        crate::widgets::focus::PressFocusless,
+        crate::theme::FocusRing,
         bevy::picking::cursor::EntityCursor::System(bevy::window::SystemCursorIcon::Pointer),
         crate::widgets::a11y(accesskit::Role::Button, preset.name()),
         Tooltip::new(preset.name()).side(TooltipSide::Below),
@@ -366,9 +369,9 @@ pub(crate) fn layout_states(
     }
 }
 
-/// A thumbnail picks its preset.
+/// A thumbnail picks its preset (a click, or Enter or Space on it).
 pub(crate) fn on_thumbnail(
-    ev: On<PointerClick>,
+    ev: On<Activate>,
     thumbs: Query<&LayoutPreset>,
     mut out: MessageWriter<LayoutCommand>,
 ) {
@@ -382,19 +385,16 @@ pub(crate) fn on_layout_item(
     ev: On<Activate>,
     items: Query<&LayoutItem, Without<InteractionDisabled>>,
     views: ViewCameras,
-    mut routing: ResMut<gz_bevy::view::controls::ViewRouting>,
     mut out: MessageWriter<LayoutCommand>,
 ) {
     let Ok(item) = items.get(ev.entity) else {
         return;
     };
-    // The view whose rail it is.
-    if let Some(id) = views.id_of(ev.entity) {
-        routing.active = Some(id);
-    }
+    // The view whose rail it is, wherever the menu hangs.
+    let view = views.id_of(ev.entity);
     out.write(match item {
-        LayoutItem::Maximize => LayoutCommand::Maximize,
-        LayoutItem::Close => LayoutCommand::Close,
+        LayoutItem::Maximize => LayoutCommand::Maximize(view),
+        LayoutItem::Close => LayoutCommand::Close(view),
     });
 }
 
