@@ -12,8 +12,9 @@
 //!   Sensors panel (M7), disabled; Apply to all views gives every view
 //!   this view's set.
 //! - **Layout** (§7.4): the five layout presets, the current one marked;
-//!   Maximize (Restore while maximized) and Close view, with several
-//!   views; Link cameras and Shared selection wait for M6b, disabled.
+//!   Maximize (Restore while maximized), Close view and Link cameras,
+//!   with several views; Shared selection on (one selection everywhere,
+//!   §6.4; separate ones come later).
 //! - The compact rail's drag flyout: Orbit, Pan, Zoom, the current one
 //!   marked.
 
@@ -179,6 +180,48 @@ pub(crate) enum LayoutItem {
     Close,
 }
 
+/// The Layout popover's Link cameras checkbox.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct LinkCameras;
+
+/// Link cameras turns linking on or off.
+pub(crate) fn on_link_cameras(
+    ev: On<Activate>,
+    items: Query<(), (With<LinkCameras>, Without<InteractionDisabled>)>,
+    linked: Option<ResMut<gz_bevy::view::LinkedViews>>,
+) {
+    if let (true, Some(mut linked)) = (items.contains(ev.entity), linked) {
+        linked.0 = !linked.0;
+    }
+}
+
+/// Link cameras shows whether views are linked, and needs several.
+pub(crate) fn link_cameras_state(
+    layout: Res<ViewLayout>,
+    linked: Option<Res<gz_bevy::view::LinkedViews>>,
+    items: Query<(Entity, Has<InteractionDisabled>, Has<bevy::ui::Checked>), With<LinkCameras>>,
+    mut commands: Commands,
+) {
+    let several = layout.ids().len() > 1;
+    let on = linked.is_some_and(|l| l.0);
+    for (e, disabled, checked) in &items {
+        if several == disabled {
+            if several {
+                commands.entity(e).remove::<InteractionDisabled>();
+            } else {
+                commands.entity(e).insert(InteractionDisabled);
+            }
+        }
+        if on != checked {
+            if on {
+                commands.entity(e).insert(bevy::ui::Checked);
+            } else {
+                commands.entity(e).remove::<bevy::ui::Checked>();
+            }
+        }
+    }
+}
+
 /// A view in a layout thumbnail.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct ThumbPane;
@@ -290,13 +333,23 @@ pub(crate) fn layout_popover(t: &Theme, map: &InputMap) -> impl Bundle {
                 ));
             }
             p.spawn(menu_separator());
-            for (label, on) in [("Link cameras", false), ("Shared selection", true)] {
-                p.spawn((
-                    menu_checkbox(&theme, MenuItemProps::new(label), on),
-                    InteractionDisabled,
-                    Tooltip::new(label).detail(NOT_YET).side(TooltipSide::Left),
-                ));
-            }
+            p.spawn((
+                menu_checkbox(&theme, MenuItemProps::new("Link cameras"), false),
+                LinkCameras,
+                InteractionDisabled,
+                Tooltip::new("Link cameras")
+                    .detail("Pans and zooms move every view")
+                    .side(TooltipSide::Left),
+            ));
+            // One selection for every view, the tree and the inspector
+            // (§6.4); separate selections come later.
+            p.spawn((
+                menu_checkbox(&theme, MenuItemProps::new("Shared selection"), true),
+                InteractionDisabled,
+                Tooltip::new("Shared selection")
+                    .detail("Every view shares one selection")
+                    .side(TooltipSide::Left),
+            ));
         },
     )
 }

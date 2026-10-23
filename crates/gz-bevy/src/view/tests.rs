@@ -3074,3 +3074,57 @@ fn the_pointer_drives_the_view_under_it_and_keys_the_hovered_or_active_one() {
     }
     assert_eq!(pose(&r, other), off);
 }
+
+#[test]
+fn linked_views_follow_pans_zooms_and_focus_but_not_orbits() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    let state = |r: &Rig, e: Entity| {
+        let w = r.app.world();
+        let t = *w.get::<Transform>(e).unwrap();
+        let v = w.get::<ViewCamera>(e).unwrap().clone();
+        let p = w.get::<Projection>(e).unwrap().clone();
+        (t, v.pivot, reach(&v, &t, &p))
+    };
+    let send = |r: &mut Rig, view: Entity, op: ViewOp| {
+        r.app.world_mut().write_message(ViewCommand { view, op });
+        r.app.update();
+    };
+    let (t0, p0, d0) = state(&r, r.camera);
+    // A pan in view 1 moves view 0's camera and pivot by as much.
+    let (t1, ..) = state(&r, other);
+    send(&mut r, other, ViewOp::Pan(Vec2::new(40.0, 0.0)));
+    let moved = state(&r, other).0.translation - t1.translation;
+    assert!(moved.length() > 1e-3);
+    let (t, p, _) = state(&r, r.camera);
+    assert!((t.translation - (t0.translation + moved)).length() < 1e-4);
+    assert!((p - (p0 + moved)).length() < 1e-4);
+    assert_eq!(t.rotation, t0.rotation, "its own direction");
+    // A zoom scales view 0's distance by as much.
+    let before = state(&r, other).2;
+    send(&mut r, other, ViewOp::Zoom(3.0));
+    let ratio = state(&r, other).2 / before;
+    assert!(ratio < 1.0);
+    let (_, _, d) = state(&r, r.camera);
+    assert!((d - d0 * ratio).abs() < 1e-3, "{d} {}", d0 * ratio);
+    // An orbit stays with its view.
+    let still = state(&r, r.camera);
+    send(&mut r, other, ViewOp::Orbit(Vec2::new(50.0, 10.0)));
+    assert_eq!(state(&r, r.camera).0, still.0);
+    // Home in view 1 takes view 0's pivot along as it animates: by the
+    // same shift.
+    let (p_a, p_b) = (state(&r, r.camera).1, state(&r, other).1);
+    send(&mut r, other, ViewOp::Home);
+    for _ in 0..40 {
+        r.app.update();
+    }
+    let p_home = state(&r, other).1;
+    assert!(p_home.length() < 1e-3);
+    assert!((state(&r, r.camera).1 - (p_a + p_home - p_b)).length() < 1e-3);
+    // Unlinked: nothing carries.
+    r.app.insert_resource(LinkedViews(false));
+    let still = state(&r, r.camera);
+    send(&mut r, other, ViewOp::Pan(Vec2::new(40.0, 0.0)));
+    assert_eq!(state(&r, r.camera).0, still.0);
+}

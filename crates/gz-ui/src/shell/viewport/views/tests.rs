@@ -685,3 +685,30 @@ fn each_rail_turns_its_own_views_overlays_and_apply_to_all_copies_them() {
         .all(|d| d);
     assert!(disabled);
 }
+
+#[test]
+fn link_cameras_toggles_linking_with_several_views() {
+    use crate::shell::viewport::rail::menus::LinkCameras;
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::view::LinkedViews;
+    let mut app = live_view(900);
+    let boxes = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<LinkCameras>>()
+            .iter(world)
+            .collect::<Vec<_>>()
+    };
+    let one = boxes(&mut app)[0];
+    assert!(app.world().get::<InteractionDisabled>(one).is_some());
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::TwoColumns));
+    let b = boxes(&mut app)[0];
+    assert!(app.world().get::<InteractionDisabled>(b).is_none());
+    app.world_mut().trigger(Activate { entity: b });
+    frames(&mut app, 2);
+    assert!(app.world().resource::<LinkedViews>().0);
+    assert!(app.world().get::<bevy::ui::Checked>(b).is_some());
+    app.world_mut().trigger(Activate { entity: b });
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<LinkedViews>().0);
+}

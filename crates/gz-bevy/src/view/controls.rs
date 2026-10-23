@@ -247,6 +247,7 @@ impl Plugin for ViewerControls {
             .init_resource::<BrowserWheel>()
             .init_resource::<ViewRouting>()
             .init_resource::<super::ViewSlots>()
+            .init_resource::<super::LinkedViews>()
             .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()

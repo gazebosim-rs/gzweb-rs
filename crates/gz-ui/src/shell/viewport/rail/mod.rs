@@ -267,11 +267,13 @@ pub(crate) fn build(app: &mut App) {
             systems::overlay_states,
             menus::layout_states,
             menus::apply_to_all_state,
+            menus::link_cameras_state,
         )
             .in_set(crate::shell::ShellSystems::Readouts),
     )
     .add_observer(menus::on_thumbnail)
     .add_observer(menus::on_apply_to_all)
+    .add_observer(menus::on_link_cameras)
     .add_observer(menus::on_layout_item)
     .add_observer(systems::on_rail_button)
     .add_observer(systems::on_drag_item)

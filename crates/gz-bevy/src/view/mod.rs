@@ -814,6 +814,8 @@ struct Animation {
     elapsed: f32,
     /// Switch to orthographic and mark the view snapped at the end.
     snap: Option<SnapView>,
+    /// A focus or home that linked views follow ([`LinkedViews`]).
+    link: bool,
 }
 
 /// Bounds in Bevy world space.
@@ -1139,45 +1141,144 @@ fn pivot_depth(view: &ViewCamera, t: &Transform, p: &Projection) -> f32 {
     }
 }
 
-/// Applies [`ViewCommand`]s, then advances animations, and publishes the
-/// first view's pivot as [`GzCameraTarget`]. Idle frames change nothing.
+/// Link cameras (spec §7.4, DECISIONS.md D-94): a pan, zoom, fly, focus
+/// or home in one view moves every other showing view's pivot the same
+/// way and scales its reach (distance, or orthographic height) the same,
+/// each keeping its own direction and projection. Orbits, snaps and
+/// projection changes stay with their view.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LinkedViews(pub bool);
+
+/// How one view's move carries to the views linked to it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Link {
+    shift: Vec3,
+    scale: f32,
+}
+
+impl Link {
+    /// From the view's pivot and reach before and after.
+    fn between(pivot: (Vec3, Vec3), reach: (f32, f32)) -> Self {
+        let scale = if reach.0 > f32::EPSILON && reach.1.is_finite() {
+            reach.1 / reach.0
+        } else {
+            1.0
+        };
+        Self {
+            shift: pivot.1 - pivot.0,
+            scale,
+        }
+    }
+
+    /// Moves a linked view: its pivot and camera by the shift, then its
+    /// reach by the scale about the pivot.
+    fn carry(self, view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
+        t.translation += self.shift;
+        view.pivot += self.shift;
+        if (self.scale - 1.0).abs() > f32::EPSILON {
+            match ortho_height(p) {
+                Some(h) => set_ortho_height(p, (h * self.scale).max(MIN_ORTHO_HEIGHT)),
+                None => {
+                    let d = t.translation - view.pivot;
+                    if d.length() * self.scale >= MIN_DISTANCE {
+                        t.translation = view.pivot + d * self.scale;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The views [`apply_view_commands`] moves.
+type ViewMoves<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut ViewCamera,
+        &'static mut Transform,
+        &'static mut Projection,
+        &'static Camera,
+        Option<&'static ViewId>,
+    ),
+>;
+
+/// Applies [`ViewCommand`]s, then advances animations, carries linked
+/// moves to the other views, and publishes the first view's pivot as
+/// [`GzCameraTarget`]. Idle frames change nothing.
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
-    mut views: Query<(
-        &mut ViewCamera,
-        &mut Transform,
-        &mut Projection,
-        &Camera,
-        Option<&ViewId>,
-    )>,
+    mut views: ViewMoves,
     mut scene: ViewScene,
     time: Res<Time<Real>>,
+    linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
 ) {
-    let busy = !commands.is_empty() || views.iter().any(|(v, ..)| v.animating());
+    let linked = linked.is_some_and(|l| l.0);
+    let busy = !commands.is_empty() || views.iter().any(|(_, v, ..)| v.animating());
     if busy {
         let world = scene.extent();
         let frame = |camera: &Camera| Frame {
             size: camera.logical_viewport_size().unwrap_or(Vec2::ZERO),
             world,
         };
+        let mut links: Vec<(Entity, Link)> = Vec::new();
         for cmd in commands.read() {
-            let Ok((mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
+            let Ok((_, mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
                 continue;
             };
             let f = frame(camera);
+            let before = (t.translation, reach(&view, &t, &p));
             apply(cmd.op, &mut view, &mut t, &mut p, &f, &mut scene);
             fit_clip(&mut view, &mut t, &mut p, &f);
+            if !linked {
+                continue;
+            }
+            let after = (t.translation, reach(&view, &t, &p));
+            match cmd.op {
+                ViewOp::Pan(_) | ViewOp::Fly { .. } => links.push((
+                    cmd.view,
+                    Link {
+                        shift: after.0 - before.0,
+                        scale: 1.0,
+                    },
+                )),
+                ViewOp::Zoom(_) | ViewOp::ZoomAt { .. } => links.push((
+                    cmd.view,
+                    Link::between((Vec3::ZERO, Vec3::ZERO), (before.1, after.1)),
+                )),
+                ViewOp::Focus { .. } | ViewOp::Home => {
+                    if let Some(a) = view.animation.as_mut() {
+                        a.link = true;
+                    }
+                }
+                _ => {}
+            }
         }
         let dt = time.delta_secs();
-        for (mut view, mut t, mut p, camera, _) in &mut views {
+        for (e, mut view, mut t, mut p, camera, _) in &mut views {
             if view.animating() {
+                let carries = view.animation.as_ref().is_some_and(|a| a.link) && linked;
+                let before = (view.pivot, reach(&view, &t, &p));
                 animate(&mut view, &mut t, &mut p, dt);
+                fit_clip(&mut view, &mut t, &mut p, &frame(camera));
+                if carries {
+                    let after = (view.pivot, reach(&view, &t, &p));
+                    links.push((e, Link::between((before.0, after.0), (before.1, after.1))));
+                }
+            }
+        }
+        for (lead, link) in links {
+            for (e, mut view, mut t, mut p, camera, _) in &mut views {
+                if e == lead || !camera.is_active {
+                    continue;
+                }
+                link.carry(&mut view, &mut t, &mut p);
                 fit_clip(&mut view, &mut t, &mut p, &frame(camera));
             }
         }
     }
-    if let Some((view, ..)) = views.iter().min_by_key(|v| v.4.copied()) {
+    if let Some((_, view, ..)) = views.iter().min_by_key(|v| v.5.copied()) {
         let gz = (gz_to_bevy().inverse() * view.pivot).to_array();
         if target.0 != gz {
             target.0 = gz;
@@ -1467,6 +1568,7 @@ fn start(view: &mut ViewCamera, from: Pose, to: Pose, snap: Option<SnapView>) {
         to,
         elapsed: 0.0,
         snap,
+        link: false,
     });
 }
 
