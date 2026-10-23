@@ -537,3 +537,254 @@ fn a_layout_change_shows_its_views_images_at_once() {
         .count();
     assert_eq!(shown, 4);
 }
+
+#[test]
+fn an_inactive_view_shows_its_face_marker_until_hovered() {
+    use crate::shell::viewport::rail::Rail;
+    use crate::shell::viewport::view_cube::ViewCube;
+    use gz_bevy::view::{ViewCommand, ViewOp};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        Duration::from_millis(60),
+    ));
+    frames(&mut app, 3);
+    let n = nodes(&mut app);
+    // (rail shown, cube shown, marker shown, marker text) for a view.
+    let look = |app: &mut App, view: Entity| {
+        let world = app.world_mut();
+        let mut kids =
+            world.query::<(&ChildOf, &Node, Has<Rail>, Has<ViewCube>, Has<FaceMarker>)>();
+        let mut out = (false, false, false);
+        for (p, node, rail, cube, marker) in kids.iter(world) {
+            if p.parent() != view {
+                continue;
+            }
+            let shown = node.display != Display::None;
+            if rail {
+                out.0 = shown;
+            }
+            if cube {
+                out.1 = shown;
+            }
+            if marker {
+                out.2 = shown;
+            }
+        }
+        out
+    };
+    // View 0 is active: in full. View 1: its marker.
+    assert_eq!(look(&mut app, n[0].1), (true, true, false));
+    assert_eq!(look(&mut app, n[1].1), (false, false, true));
+    // Hovering view 1 brings its cube and rail back within 100 ms.
+    let right = n[1].2 .0 + n[1].2 .1 / 2.0;
+    cursor(&mut app, right);
+    frames(&mut app, 2);
+    assert_eq!(look(&mut app, n[1].1), (true, true, false));
+    // The marker reads the face the view looks at: a top view's TOP.
+    let cam = camera(&mut app, 0);
+    app.world_mut().write_message(ViewCommand {
+        view: cam,
+        op: ViewOp::Snap(gz_bevy::view::SnapView::Top),
+    });
+    cursor(&mut app, n[1].2 .0 + Vec2::new(5.0, 300.0));
+    frames(&mut app, 8);
+    app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(1));
+    frames(&mut app, 3);
+    assert_eq!(look(&mut app, n[0].1), (false, false, true));
+    let world = app.world_mut();
+    let labels: Vec<(Entity, String)> = world
+        .query_filtered::<(Entity, &Text), With<FaceMarkerLabel>>()
+        .iter(world)
+        .map(|(e, t)| (e, t.0.clone()))
+        .collect();
+    let in0 = labels
+        .iter()
+        .find(|(e, _)| {
+            let world = app.world();
+            let mut at = *e;
+            while let Some(p) = world.get::<ChildOf>(at) {
+                at = p.parent();
+                if at == n[0].1 {
+                    return true;
+                }
+            }
+            false
+        })
+        .unwrap();
+    assert_eq!(in0.1, "TOP");
+    // One view: always in full.
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    let n = nodes(&mut app);
+    assert_eq!(look(&mut app, n[0].1), (true, true, false));
+}
+
+#[test]
+fn each_rail_turns_its_own_views_overlays_and_apply_to_all_copies_them() {
+    use crate::shell::viewport::rail::menus::{ApplyToAll, OverlayItem};
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::overlays::{Overlay, OverlaySet};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let in_view = |app: &mut App, e: Entity| {
+        let world = app.world();
+        let mut at = e;
+        while let Some(p) = world.get::<ChildOf>(at) {
+            at = p.parent();
+            if let Some(v) = n.iter().find(|v| v.1 == at) {
+                return Some(v.0);
+            }
+        }
+        None
+    };
+    let world = app.world_mut();
+    let items: Vec<(Entity, Overlay)> = world
+        .query::<(Entity, &OverlayItem)>()
+        .iter(world)
+        .map(|(e, i)| (e, i.0))
+        .collect();
+    let joints1 = items
+        .iter()
+        .find(|(e, o)| *o == Overlay::Joints && in_view(&mut app, *e) == Some(ViewId(1)))
+        .unwrap()
+        .0;
+    app.world_mut().trigger(Activate { entity: joints1 });
+    frames(&mut app, 3);
+    let set = |app: &mut App, id| {
+        let e = camera(app, id);
+        app.world().get::<OverlaySet>(e).unwrap().0
+    };
+    assert!(set(&mut app, 1).joints && !set(&mut app, 0).joints);
+    // Its view's checkbox is checked, the other's not.
+    let checked = |app: &mut App, e: Entity| app.world().get::<bevy::ui::Checked>(e).is_some();
+    let joints0 = items
+        .iter()
+        .find(|(e, o)| *o == Overlay::Joints && in_view(&mut app, *e) == Some(ViewId(0)))
+        .unwrap()
+        .0;
+    assert!(checked(&mut app, joints1) && !checked(&mut app, joints0));
+    // Apply to all views from view 1: view 0 shows joints too.
+    let world = app.world_mut();
+    let applies: Vec<Entity> = world
+        .query_filtered::<Entity, With<ApplyToAll>>()
+        .iter(world)
+        .collect();
+    let apply1 = *applies
+        .iter()
+        .find(|e| in_view(&mut app, **e) == Some(ViewId(1)))
+        .unwrap();
+    assert!(app.world().get::<InteractionDisabled>(apply1).is_none());
+    app.world_mut().trigger(Activate { entity: apply1 });
+    frames(&mut app, 3);
+    assert!(set(&mut app, 0).joints);
+    // One view: nothing to apply to.
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    let world = app.world_mut();
+    let disabled = world
+        .query_filtered::<Has<InteractionDisabled>, With<ApplyToAll>>()
+        .iter(world)
+        .all(|d| d);
+    assert!(disabled);
+}
+
+#[test]
+fn link_cameras_toggles_linking_with_several_views() {
+    use crate::shell::viewport::rail::menus::LinkCameras;
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::view::LinkedViews;
+    let mut app = live_view(900);
+    let boxes = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<LinkCameras>>()
+            .iter(world)
+            .collect::<Vec<_>>()
+    };
+    let one = boxes(&mut app)[0];
+    assert!(app.world().get::<InteractionDisabled>(one).is_some());
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::TwoColumns));
+    let b = boxes(&mut app)[0];
+    assert!(app.world().get::<InteractionDisabled>(b).is_none());
+    app.world_mut().trigger(Activate { entity: b });
+    frames(&mut app, 2);
+    assert!(app.world().resource::<LinkedViews>().0);
+    assert!(app.world().get::<bevy::ui::Checked>(b).is_some());
+    app.world_mut().trigger(Activate { entity: b });
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<LinkedViews>().0);
+}
+
+#[test]
+fn a_hidden_rail_comes_back_with_its_widgets_looks_and_its_menus_closed() {
+    use crate::shell::viewport::view_cube::scene::CubeScene;
+    use crate::theme::Opacity;
+    use crate::widgets::fade::PreFade;
+    use bevy::ui_widgets::{MenuAction, MenuEvent};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        Duration::from_millis(60),
+    ));
+    frames(&mut app, 4);
+    let n = nodes(&mut app);
+    // Every entity under view 1's node.
+    let under = |app: &mut App, view: Entity| {
+        let world = app.world();
+        crate::test_support::descendants(world, view)
+    };
+    // Hidden: nothing under it keeps a fade's opacity, and its cube
+    // camera is off.
+    let world = app.world_mut();
+    let rail = world
+        .query_filtered::<(Entity, &ChildOf), With<crate::shell::viewport::rail::Rail>>()
+        .iter(world)
+        .find(|(_, p)| p.parent() == n[1].1)
+        .map(|(e, _)| e)
+        .unwrap();
+    let in_rail = under(&mut app, rail);
+    let held = in_rail
+        .iter()
+        .filter(|e| app.world().get::<PreFade>(**e).is_some())
+        .count();
+    assert_eq!(held, 0, "the marker keeps its fade, the rail doesn't");
+    let world = app.world_mut();
+    let scene = world
+        .query::<(&ChildOf, &CubeScene)>()
+        .iter(world)
+        .find(|(p, _)| p.parent() == n[1].1)
+        .map(|(_, s)| s.camera)
+        .unwrap();
+    assert!(!app.world().get::<Camera>(scene).unwrap().is_active);
+    // A widget's look changing meanwhile is what comes back.
+    let item = *in_rail
+        .iter()
+        .find(|e| app.world().get::<Opacity>(**e).is_some())
+        .unwrap();
+    app.world_mut().get_mut::<Opacity>(item).unwrap().0 = 0.4;
+    let right = n[1].2 .0 + n[1].2 .1 / 2.0;
+    cursor(&mut app, right);
+    frames(&mut app, 3);
+    assert_eq!(app.world().get::<Opacity>(item).unwrap().0, 0.4);
+    assert!(app.world().get::<Camera>(scene).unwrap().is_active);
+    // Going inactive closes its rail's menus.
+    #[derive(Resource, Default)]
+    struct Closed(Vec<Entity>);
+    app.init_resource::<Closed>();
+    app.add_observer(|ev: On<MenuEvent>, mut closed: ResMut<Closed>| {
+        if matches!(ev.event().action, MenuAction::CloseAll) {
+            closed.0.push(ev.event().source);
+        }
+    });
+    cursor(&mut app, n[0].2 .0 + Vec2::new(5.0, 300.0));
+    frames(&mut app, 3);
+    let closed = app.world().resource::<Closed>().0.clone();
+    assert!(!closed.is_empty());
+    assert!(closed.iter().all(|m| under(&mut app, n[1].1).contains(m)));
+}
+
+#[test]
+fn back_to_one_view_unlinks_the_cameras() {
+    use gz_bevy::view::LinkedViews;
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.world_mut().resource_mut::<LinkedViews>().0 = true;
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    assert!(!app.world().resource::<LinkedViews>().0);
+}

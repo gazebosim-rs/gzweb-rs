@@ -20,6 +20,7 @@ pub(crate) mod badge;
 pub(crate) mod button;
 pub(crate) mod chip;
 pub(crate) mod cursor;
+pub(crate) mod fade;
 pub(crate) mod focus;
 pub mod layout;
 pub(crate) mod menu;

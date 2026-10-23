@@ -1442,3 +1442,43 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   world; views clip; one studio cubemap; a cube sky isn't re-made; new
   views start free; the floor while maximized is one view's; thumbnails
   are buttons (Enter, Space); §9.3 amended by D-90. 710 → 716 tests.
+
+## 2026-10-23: M6b inactive views, per-view overlays, Link cameras (D-93 to D-95)
+
+- **Inactive views:** with several showing, a view neither active nor
+  hovered shows a 34 px face marker (the face it looks at) at 80% for its
+  cube and hides its rail and chip; hovering fades them back over 100 ms
+  (`views::Reveal`; the connect card's subtree fade is now
+  `widgets::fade`).
+- **Overlays:** each view camera has its own `OverlaySet`; `OverlayCommand`
+  acts on one view or all; the `Overlays` resource is what any showing
+  view has on; each overlay draws on its own render layer (a gizmo group
+  per overlay, collision meshes, wireframe lines) that a view sees while
+  it's on there. The rail's menu and badge are its view's; Apply to all
+  views. Wireframes are line meshes everywhere.
+- **Link cameras:** pans, zooms, fly, focus and home carry to the other
+  views' pivots and reach; orbits and snaps don't. Shared selection stays
+  on (disabled).
+- **Quality:** every view keeps the full stack (see the review fixes for
+  the measurement). `gzweb --no-vsync`.
+- **Live check** (`--release`, a fresh patched Jetty `diff_drive` on 9011,
+  `--ui full --layout two-columns --overlays frames,joints --screenshot`):
+  both views draw frames, joints and the grid; the right view shows its W
+  face marker and no rail. Not tried by hand: the hover reveal, the
+  per-view menu, Link cameras.
+- **Tests:** the face marker and reveal, per-view overlay commands and
+  layers, a rail per view's overlays and Apply to all, Link cameras (pan,
+  zoom, orbit, home; the checkbox), the active view's cascades, line-mesh
+  wireframes on their layer; workspace 716 → 722 passing; coverage 98.3%
+  lines. check.sh passes.
+- **PR review fixes:** Link cameras carry a wheel zoom's zoom about the
+  new pivot, land a running animation before carrying a pan or zoom, carry
+  pivots and reach for pans and flies, leave a focus every view got alone,
+  move a view's own animation with a carry, and unlink back to one view;
+  a hidden rail restores its widgets' opacities, closes its menus and
+  stops its cube camera; collisions are layered before visibility; the
+  cascades span every showing view. **Measured again** with Bevy's render
+  diagnostics (the window's frame rate is paced by the compositor):
+  Single 2.56 ms High / 2.27 Low, Quad 5.55 / 3.84; dropping the
+  environment light saves ~0.6 ms in Quad (refiltered every frame per
+  camera), SSAO, bloom and TAA nothing measurable. 722 → 729 tests.

@@ -814,6 +814,8 @@ struct Animation {
     elapsed: f32,
     /// Switch to orthographic and mark the view snapped at the end.
     snap: Option<SnapView>,
+    /// A focus or home that linked views follow ([`LinkedViews`]).
+    link: bool,
 }
 
 /// Bounds in Bevy world space.
@@ -1139,45 +1141,178 @@ fn pivot_depth(view: &ViewCamera, t: &Transform, p: &Projection) -> f32 {
     }
 }
 
-/// Applies [`ViewCommand`]s, then advances animations, and publishes the
-/// first view's pivot as [`GzCameraTarget`]. Idle frames change nothing.
+/// Link cameras (spec §7.4, DECISIONS.md D-94): a pan, zoom, fly, focus
+/// or home in one view moves every other showing view's pivot the same
+/// way and scales its reach (distance, or orthographic height) the same,
+/// each keeping its own direction and projection. Orbits, snaps and
+/// projection changes stay with their view.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LinkedViews(pub bool);
+
+/// How one view's move carries to the views linked to it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Link {
+    shift: Vec3,
+    scale: f32,
+}
+
+impl Link {
+    /// From the view's pivot and reach before and after.
+    fn between(pivot: (Vec3, Vec3), reach: (f32, f32)) -> Self {
+        let scale = if reach.0 > f32::EPSILON && reach.1.is_finite() {
+            reach.1 / reach.0
+        } else {
+            1.0
+        };
+        Self {
+            shift: pivot.1 - pivot.0,
+            scale,
+        }
+    }
+
+    /// Moves a linked view: its pivot and camera by the shift, then its
+    /// reach by the scale about the pivot. A view animating towards a pose
+    /// of its own (a snap) has that pose moved too, so the animation keeps
+    /// the carry; one animating as a linked move itself (a focus every
+    /// view got) is left to land where it was sent.
+    fn carry(self, view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
+        if let Some(anim) = view.animation.as_mut() {
+            if anim.link {
+                return;
+            }
+            for pose in [&mut anim.from, &mut anim.to] {
+                pose.pivot += self.shift;
+                pose.offset *= self.scale;
+                pose.ortho_height *= self.scale;
+            }
+        }
+        t.translation += self.shift;
+        view.pivot += self.shift;
+        if (self.scale - 1.0).abs() > f32::EPSILON {
+            match ortho_height(p) {
+                Some(h) => set_ortho_height(p, (h * self.scale).max(MIN_ORTHO_HEIGHT)),
+                None => {
+                    let d = t.translation - view.pivot;
+                    if d.length() * self.scale >= MIN_DISTANCE {
+                        t.translation = view.pivot + d * self.scale;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// [`reach`] for a camera at `at` (orthographic `height`, if it is) about
+/// `pivot`.
+fn reach_from(at: Vec3, height: Option<f32>, half_tan: f32, pivot: Vec3) -> f32 {
+    match height {
+        Some(h) => h / (2.0 * half_tan),
+        None => (at - pivot).length(),
+    }
+}
+
+/// The views [`apply_view_commands`] moves.
+type ViewMoves<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut ViewCamera,
+        &'static mut Transform,
+        &'static mut Projection,
+        &'static Camera,
+        Option<&'static ViewId>,
+    ),
+>;
+
+/// Applies [`ViewCommand`]s, then advances animations, carries linked
+/// moves to the other views, and publishes the first view's pivot as
+/// [`GzCameraTarget`]. Idle frames change nothing.
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
-    mut views: Query<(
-        &mut ViewCamera,
-        &mut Transform,
-        &mut Projection,
-        &Camera,
-        Option<&ViewId>,
-    )>,
+    mut views: ViewMoves,
     mut scene: ViewScene,
     time: Res<Time<Real>>,
+    linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
 ) {
-    let busy = !commands.is_empty() || views.iter().any(|(v, ..)| v.animating());
+    let linked = linked.is_some_and(|l| l.0);
+    let busy = !commands.is_empty() || views.iter().any(|(_, v, ..)| v.animating());
     if busy {
         let world = scene.extent();
         let frame = |camera: &Camera| Frame {
             size: camera.logical_viewport_size().unwrap_or(Vec2::ZERO),
             world,
         };
+        let mut links: Vec<(Entity, Link)> = Vec::new();
         for cmd in commands.read() {
-            let Ok((mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
+            let Ok((_, mut view, mut t, mut p, camera, _)) = views.get_mut(cmd.view) else {
                 continue;
             };
             let f = frame(camera);
+            let carried = matches!(
+                cmd.op,
+                ViewOp::Pan(_) | ViewOp::Fly { .. } | ViewOp::Zoom(_) | ViewOp::ZoomAt { .. }
+            );
+            // These land a running animation first (`apply`): measure from
+            // where it lands, so its jump isn't carried.
+            if linked && carried {
+                finish(&mut view, &mut t, &mut p);
+            }
+            let before = (view.pivot, t.translation, ortho_height(&p));
             apply(cmd.op, &mut view, &mut t, &mut p, &f, &mut scene);
             fit_clip(&mut view, &mut t, &mut p, &f);
+            if !linked {
+                continue;
+            }
+            match cmd.op {
+                ViewOp::Pan(_) | ViewOp::Fly { .. } => {
+                    let r0 = reach_from(before.1, before.2, view.half_tan(), before.0);
+                    links.push((
+                        cmd.view,
+                        Link::between((before.0, view.pivot), (r0, reach(&view, &t, &p))),
+                    ));
+                }
+                // A zoom about a point (the wheel's): the pivot moving to
+                // the point is no move of the view, so only the zoom
+                // carries, measured about the new pivot.
+                ViewOp::Zoom(_) | ViewOp::ZoomAt { .. } => {
+                    let r0 = reach_from(before.1, before.2, view.half_tan(), view.pivot);
+                    let r1 = reach(&view, &t, &p);
+                    links.push((cmd.view, Link::between((Vec3::ZERO, Vec3::ZERO), (r0, r1))));
+                }
+                ViewOp::Focus { .. } | ViewOp::Home => {
+                    if let Some(a) = view.animation.as_mut() {
+                        a.link = true;
+                    }
+                }
+                _ => {}
+            }
         }
         let dt = time.delta_secs();
-        for (mut view, mut t, mut p, camera, _) in &mut views {
+        for (e, mut view, mut t, mut p, camera, _) in &mut views {
             if view.animating() {
+                let carries = view.animation.as_ref().is_some_and(|a| a.link) && linked;
+                let before = (view.pivot, reach(&view, &t, &p));
                 animate(&mut view, &mut t, &mut p, dt);
+                fit_clip(&mut view, &mut t, &mut p, &frame(camera));
+                if carries {
+                    let after = (view.pivot, reach(&view, &t, &p));
+                    links.push((e, Link::between((before.0, after.0), (before.1, after.1))));
+                }
+            }
+        }
+        for (lead, link) in links {
+            for (e, mut view, mut t, mut p, camera, _) in &mut views {
+                if e == lead || !camera.is_active {
+                    continue;
+                }
+                link.carry(&mut view, &mut t, &mut p);
                 fit_clip(&mut view, &mut t, &mut p, &frame(camera));
             }
         }
     }
-    if let Some((view, ..)) = views.iter().min_by_key(|v| v.4.copied()) {
+    if let Some((_, view, ..)) = views.iter().min_by_key(|v| v.5.copied()) {
         let gz = (gz_to_bevy().inverse() * view.pivot).to_array();
         if target.0 != gz {
             target.0 = gz;
@@ -1467,6 +1602,7 @@ fn start(view: &mut ViewCamera, from: Pose, to: Pose, snap: Option<SnapView>) {
         to,
         elapsed: 0.0,
         snap,
+        link: false,
     });
 }
 

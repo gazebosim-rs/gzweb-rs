@@ -8,11 +8,13 @@
 //!   the sensors (M5, M7) and isn't shown. Follow offset… and FOV &
 //!   speed… are disabled ("Not available yet").
 //! - **Overlays** (§7.3): checkbox items in the spec's order with their
-//!   keys; "Lidar scans / sensor data" waits for the Sensors panel (M7)
-//!   and "Apply to all views" for per-view overlays (M6b): both disabled.
+//!   keys, for the rail's view; "Lidar scans / sensor data" waits for the
+//!   Sensors panel (M7), disabled; Apply to all views gives every view
+//!   this view's set.
 //! - **Layout** (§7.4): the five layout presets, the current one marked;
-//!   Maximize (Restore while maximized) and Close view, with several
-//!   views; Link cameras and Shared selection wait for M6b, disabled.
+//!   Maximize (Restore while maximized), Close view and Link cameras,
+//!   with several views; Shared selection on (one selection everywhere,
+//!   §6.4; separate ones come later).
 //! - The compact rail's drag flyout: Orbit, Pan, Zoom, the current one
 //!   marked.
 
@@ -22,7 +24,7 @@ use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
-use gz_bevy::overlays::{Overlay, OverlayCommand, Overlays};
+use gz_bevy::overlays::{Overlay, OverlayCommand, OverlaySet, Overlays};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::{CameraMode, Selection, ViewCommand, ViewOp};
 
@@ -161,9 +163,10 @@ pub(crate) fn overlays_menu(t: &Theme, map: &InputMap) -> impl Bundle {
             p.spawn(menu_separator());
             p.spawn((
                 menu_item(&theme, MenuItemProps::new("Apply to all views")),
+                ApplyToAll,
                 InteractionDisabled,
                 Tooltip::new("Apply to all views")
-                    .detail(NOT_YET)
+                    .detail("Every view shows this view's overlays")
                     .side(TooltipSide::Left),
             ));
         },
@@ -175,6 +178,53 @@ pub(crate) fn overlays_menu(t: &Theme, map: &InputMap) -> impl Bundle {
 pub(crate) enum LayoutItem {
     Maximize,
     Close,
+}
+
+/// The Layout popover's Link cameras checkbox.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct LinkCameras;
+
+/// Link cameras turns linking on or off.
+pub(crate) fn on_link_cameras(
+    ev: On<Activate>,
+    items: Query<(), (With<LinkCameras>, Without<InteractionDisabled>)>,
+    linked: Option<ResMut<gz_bevy::view::LinkedViews>>,
+) {
+    if let (true, Some(mut linked)) = (items.contains(ev.entity), linked) {
+        linked.0 = !linked.0;
+    }
+}
+
+/// Link cameras shows whether views are linked, and needs several: back
+/// to one view, linking goes off (a later split starts unlinked).
+pub(crate) fn link_cameras_state(
+    layout: Res<ViewLayout>,
+    linked: Option<ResMut<gz_bevy::view::LinkedViews>>,
+    items: Query<(Entity, Has<InteractionDisabled>, Has<bevy::ui::Checked>), With<LinkCameras>>,
+    mut commands: Commands,
+) {
+    let several = layout.ids().len() > 1;
+    let mut linked = linked;
+    if let Some(l) = linked.as_mut().filter(|l| l.0 && !several) {
+        l.0 = false;
+    }
+    let on = linked.is_some_and(|l| l.0);
+    for (e, disabled, checked) in &items {
+        if several == disabled {
+            if several {
+                commands.entity(e).remove::<InteractionDisabled>();
+            } else {
+                commands.entity(e).insert(InteractionDisabled);
+            }
+        }
+        if on != checked {
+            if on {
+                commands.entity(e).insert(bevy::ui::Checked);
+            } else {
+                commands.entity(e).remove::<bevy::ui::Checked>();
+            }
+        }
+    }
 }
 
 /// A view in a layout thumbnail.
@@ -288,13 +338,23 @@ pub(crate) fn layout_popover(t: &Theme, map: &InputMap) -> impl Bundle {
                 ));
             }
             p.spawn(menu_separator());
-            for (label, on) in [("Link cameras", false), ("Shared selection", true)] {
-                p.spawn((
-                    menu_checkbox(&theme, MenuItemProps::new(label), on),
-                    InteractionDisabled,
-                    Tooltip::new(label).detail(NOT_YET).side(TooltipSide::Left),
-                ));
-            }
+            p.spawn((
+                menu_checkbox(&theme, MenuItemProps::new("Link cameras"), false),
+                LinkCameras,
+                InteractionDisabled,
+                Tooltip::new("Link cameras")
+                    .detail("Pans and zooms move every view")
+                    .side(TooltipSide::Left),
+            ));
+            // One selection for every view, the tree and the inspector
+            // (§6.4); separate selections come later.
+            p.spawn((
+                menu_checkbox(&theme, MenuItemProps::new("Shared selection"), true),
+                InteractionDisabled,
+                Tooltip::new("Shared selection")
+                    .detail("Every view shares one selection")
+                    .side(TooltipSide::Left),
+            ));
         },
     )
 }
@@ -430,16 +490,63 @@ pub(crate) fn on_camera_item(
     });
 }
 
-/// An Overlays checkbox → turns its overlay on or off, from what is on
-/// (the checkbox shows that, whatever it toggled itself to).
+/// An Overlays checkbox → turns its overlay on or off in its view, from
+/// what is on there (the checkbox shows that, whatever it toggled itself
+/// to).
 pub(crate) fn on_overlay_item(
     ev: On<Activate>,
     items: Query<&OverlayItem>,
     overlays: Option<Res<Overlays>>,
+    views: ViewCameras,
+    sets: Query<&OverlaySet>,
     mut out: MessageWriter<OverlayCommand>,
 ) {
     if let Ok(item) = items.get(ev.entity) {
-        let on = overlays.is_some_and(|o| o.is_on(item.0));
-        out.write(OverlayCommand::set(item.0, !on));
+        let shown = super::systems::view_overlays(&views, &sets, overlays.as_deref(), ev.entity);
+        let cmd = OverlayCommand::set(item.0, !shown.is_on(item.0));
+        out.write(match views.of(ev.entity) {
+            Some((camera, ..)) => cmd.in_view(camera),
+            None => cmd,
+        });
+    }
+}
+
+/// The Overlays menu's Apply to all views.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct ApplyToAll;
+
+/// Apply to all views: every view shows what this one does.
+pub(crate) fn on_apply_to_all(
+    ev: On<Activate>,
+    items: Query<(), (With<ApplyToAll>, Without<InteractionDisabled>)>,
+    overlays: Option<Res<Overlays>>,
+    views: ViewCameras,
+    sets: Query<&OverlaySet>,
+    mut out: MessageWriter<OverlayCommand>,
+) {
+    if !items.contains(ev.entity) {
+        return;
+    }
+    let shown = super::systems::view_overlays(&views, &sets, overlays.as_deref(), ev.entity);
+    for o in Overlay::ALL {
+        out.write(OverlayCommand::set(o, shown.is_on(o)));
+    }
+}
+
+/// Apply to all views needs another view to apply to.
+pub(crate) fn apply_to_all_state(
+    layout: Res<ViewLayout>,
+    items: Query<(Entity, Has<InteractionDisabled>), With<ApplyToAll>>,
+    mut commands: Commands,
+) {
+    let several = layout.ids().len() > 1;
+    for (e, disabled) in &items {
+        if several == disabled {
+            if several {
+                commands.entity(e).remove::<InteractionDisabled>();
+            } else {
+                commands.entity(e).insert(InteractionDisabled);
+            }
+        }
     }
 }

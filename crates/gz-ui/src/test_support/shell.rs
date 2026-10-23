@@ -83,6 +83,7 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .init_resource::<gz_bevy::view::BoxSelectTool>()
         .init_resource::<gz_bevy::view::Marquee>()
         .init_resource::<gz_bevy::camera::GzCameraTarget>()
+        .init_resource::<gz_bevy::view::LinkedViews>()
         .add_systems(
             Update,
             (
@@ -136,6 +137,7 @@ fn view_camera(physical: UVec2, scale: f32, id: ViewId) -> impl Bundle {
         MainCamera,
         id,
         id.layers(),
+        gz_bevy::overlays::OverlaySet::default(),
     )
 }
 

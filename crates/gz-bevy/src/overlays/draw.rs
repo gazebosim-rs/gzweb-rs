@@ -21,9 +21,16 @@ use super::extras::SdfExtras;
 use super::Overlays;
 use crate::spawn::{pose_transform, GzEntity};
 
-/// Gizmo settings for the overlays.
+/// Gizmo settings for each overlay: a group each, so each draws on its
+/// overlay's layer (only the views showing it see it).
 #[derive(Default, Reflect, GizmoConfigGroup)]
-pub struct OverlayGizmos;
+pub struct FrameGizmos;
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct JointGizmos;
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct InertiaGizmos;
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct ComGizmos;
 
 /// A model's frame axes, in metres.
 pub const FRAME_MODEL: f32 = 0.5;
@@ -43,9 +50,15 @@ pub const LEAD_DENSITY: f32 = 11340.0;
 
 /// Draws overlay gizmos over everything.
 pub fn setup_overlay_gizmos(mut store: ResMut<GizmoConfigStore>) {
-    let (config, _) = store.config_mut::<OverlayGizmos>();
-    config.depth_bias = -1.0;
-    config.line.width = 2.0;
+    fn over<T: GizmoConfigGroup>(store: &mut GizmoConfigStore) {
+        let (config, _) = store.config_mut::<T>();
+        config.depth_bias = -1.0;
+        config.line.width = 2.0;
+    }
+    over::<FrameGizmos>(&mut store);
+    over::<JointGizmos>(&mut store);
+    over::<InertiaGizmos>(&mut store);
+    over::<ComGizmos>(&mut store);
 }
 
 /// The links' world transforms and their SDFormat extras.
@@ -72,7 +85,7 @@ fn at(frame: &GlobalTransform, pose: &Pose) -> GlobalTransform {
 pub fn draw_frames(
     overlays: Res<Overlays>,
     nodes: Query<(&GzEntity, &GlobalTransform)>,
-    mut gizmos: Gizmos<OverlayGizmos>,
+    mut gizmos: Gizmos<FrameGizmos>,
 ) {
     if !overlays.frames {
         return;
@@ -100,7 +113,7 @@ pub fn draw_joints(
     overlays: Res<Overlays>,
     extras: Res<SdfExtras>,
     nodes: Query<(&GzEntity, &GlobalTransform)>,
-    mut gizmos: Gizmos<OverlayGizmos>,
+    mut gizmos: Gizmos<JointGizmos>,
 ) {
     if !overlays.joints {
         return;
@@ -202,7 +215,7 @@ pub fn draw_inertia(
     overlays: Res<Overlays>,
     extras: Res<SdfExtras>,
     nodes: Query<(&GzEntity, &GlobalTransform)>,
-    mut gizmos: Gizmos<OverlayGizmos>,
+    mut gizmos: Gizmos<InertiaGizmos>,
 ) {
     if !overlays.inertia {
         return;
@@ -233,7 +246,7 @@ pub fn draw_center_of_mass(
     overlays: Res<Overlays>,
     extras: Res<SdfExtras>,
     nodes: Query<(&GzEntity, &GlobalTransform)>,
-    mut gizmos: Gizmos<OverlayGizmos>,
+    mut gizmos: Gizmos<ComGizmos>,
 ) {
     if !overlays.center_of_mass {
         return;

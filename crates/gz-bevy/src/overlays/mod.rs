@@ -2,12 +2,16 @@
 //! grid, collisions, inertia, centre of mass, joints, frames and
 //! wireframe, as the Gazebo GUI draws them (DECISIONS.md D-62).
 //!
-//! [`Overlays`] is what is on; [`OverlayCommand`] changes it, from the
-//! viewport keys (G, C, I, J; [`crate::view::controls`]) and the full UI's
-//! Overlays menu alike. The grid stays [`GzGrid`], which the scene's own
-//! `grid` flag sets; [`Overlays::grid`] mirrors it. The state lives with
-//! the views ([`crate::view::ViewerControls`] registers it); the drawing is
-//! [`OverlayRenderPlugin`], added with a renderer.
+//! Each view has its own set ([`OverlaySet`] on its camera; spec §3.4,
+//! DECISIONS.md D-93); [`OverlayCommand`] changes a view's, or every
+//! view's, from the viewport keys (G, C, I, J; [`crate::view::controls`])
+//! and the full UI's Overlays menu alike. The [`Overlays`] resource is
+//! what any view shows, which is what gets drawn; each overlay draws on a
+//! render layer of its own ([`Overlay::layer`]), which a view's camera
+//! sees while the overlay is on in it ([`view_layers`]). The scene's own
+//! `grid` flag ([`GzGrid`]) turns every view's grid on or off. The state
+//! lives with the views ([`crate::view::ViewerControls`] registers it);
+//! the drawing is [`OverlayRenderPlugin`], added with a renderer.
 //!
 //! - **Frames** (models and links) and **joints**, **inertia** and the
 //!   **centre of mass** are gizmo lines, drawn over the scene
@@ -17,12 +21,9 @@
 //! - Collisions, inertials and joints aren't in the scene message: they
 //!   come from the world's SDFormat, asked for the first time one of them
 //!   is turned on ([`extras`]).
-//! - **Wireframe** draws every visual's triangle edges over it: Bevy's
-//!   `WireframePlugin` where the GPU has line polygons, else (the browser)
-//!   line meshes built from the triangles ([`wireframe`]).
-//!
-//! The overlays are one set for every view; M6b makes them per view (spec
-//! §3.4, DECISIONS.md D-92).
+//! - **Wireframe** draws every visual's triangle edges over it: line
+//!   meshes built from the triangles, on the wireframe's layer
+//!   ([`wireframe`]).
 
 pub mod collisions;
 pub mod draw;
@@ -95,6 +96,11 @@ impl Overlay {
         }
     }
 
+    /// The render layer it draws on: a view sees it while it's on there.
+    pub fn layer(self) -> usize {
+        OVERLAY_LAYER + Overlay::ALL.iter().position(|o| *o == self).unwrap_or(0)
+    }
+
     /// Drawn from the world's SDFormat ([`extras`]).
     pub fn needs_sdf(self) -> bool {
         matches!(
@@ -119,10 +125,14 @@ impl std::str::FromStr for Overlay {
     }
 }
 
-/// The overlays that are on.
+/// The first overlay's render layer ([`Overlay::layer`]).
+pub const OVERLAY_LAYER: usize = 40;
+
+/// The overlays that are on: a view's ([`OverlaySet`]), or what any view
+/// shows (the resource).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Overlays {
-    /// Mirrors [`GzGrid::visible`].
+    /// Starts as the scene's [`GzGrid`] says.
     pub grid: bool,
     pub collisions: bool,
     pub inertia: bool,
@@ -166,50 +176,159 @@ impl Overlays {
     pub fn need_sdf(&self) -> bool {
         Overlay::ALL.iter().any(|o| o.needs_sdf() && self.is_on(*o))
     }
+
+    /// What's on in either.
+    pub fn or(self, other: Overlays) -> Overlays {
+        let mut out = self;
+        for o in Overlay::ALL {
+            if other.is_on(o) {
+                *out.flag(o) = true;
+            }
+        }
+        out
+    }
+
+    /// The render layers of the overlays that are on.
+    pub fn layers(&self) -> impl Iterator<Item = usize> + '_ {
+        Overlay::ALL
+            .into_iter()
+            .filter(|o| self.is_on(*o))
+            .map(Overlay::layer)
+    }
 }
 
-/// Turns an overlay on (`Some(true)`), off, or over (`None`).
+/// A view's own overlays, on its camera.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq, Deref, DerefMut)]
+pub struct OverlaySet(pub Overlays);
+
+/// Turns an overlay on (`Some(true)`), off, or over (`None`), in one view
+/// (its camera) or in every view (`None`: over is from what any shows).
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverlayCommand {
     pub overlay: Overlay,
     pub on: Option<bool>,
+    pub view: Option<Entity>,
 }
 
 impl OverlayCommand {
+    /// Over in every view.
     pub fn toggle(overlay: Overlay) -> Self {
-        Self { overlay, on: None }
+        Self {
+            overlay,
+            on: None,
+            view: None,
+        }
     }
 
+    /// On or off in every view.
     pub fn set(overlay: Overlay, on: bool) -> Self {
         Self {
             overlay,
             on: Some(on),
+            view: None,
+        }
+    }
+
+    /// The same, in the view on camera `view` only.
+    pub fn in_view(self, view: Entity) -> Self {
+        Self {
+            view: Some(view),
+            ..self
         }
     }
 }
 
-/// Applies [`OverlayCommand`]s (the grid's to [`GzGrid`]) and keeps
-/// [`Overlays::grid`] in step with the grid the scene asked for.
+/// The views' own overlay sets.
+pub type ViewOverlays<'w, 's> = Query<
+    'w,
+    's,
+    (Entity, &'static mut OverlaySet, &'static Camera),
+    With<crate::view::ViewCamera>,
+>;
+
+/// Applies [`OverlayCommand`]s to the views' sets, turns every view's grid
+/// on or off when the scene's [`GzGrid`] changes, and keeps the
+/// [`Overlays`] resource what any showing view has on. Without view sets
+/// (no views to keep them on) the commands change the resource itself.
 pub fn apply_overlay_commands(
     mut commands: MessageReader<OverlayCommand>,
-    mut overlays: ResMut<Overlays>,
-    mut grid: ResMut<GzGrid>,
+    mut views: ViewOverlays,
+    mut union: ResMut<Overlays>,
+    grid: Res<GzGrid>,
 ) {
-    for c in commands.read() {
-        if c.overlay == Overlay::Grid {
-            let on = c.on.unwrap_or(!grid.visible);
-            grid.set_if_neq(GzGrid { visible: on });
-        } else {
-            let now = overlays.is_on(c.overlay);
+    if views.is_empty() {
+        for c in commands.read() {
+            let now = union.is_on(c.overlay);
             let on = c.on.unwrap_or(!now);
             if on != now {
-                *overlays.flag(c.overlay) = on;
+                *union.flag(c.overlay) = on;
+            }
+        }
+        if grid.is_changed() && union.grid != grid.visible {
+            union.grid = grid.visible;
+        }
+        return;
+    }
+    if grid.is_changed() {
+        for (_, mut set, _) in &mut views {
+            if set.grid != grid.visible {
+                set.grid = grid.visible;
             }
         }
     }
-    if overlays.grid != grid.visible {
-        overlays.grid = grid.visible;
+    for c in commands.read() {
+        let all_on = union.is_on(c.overlay);
+        for (e, mut set, _) in &mut views {
+            if c.view.is_some_and(|v| v != e) {
+                continue;
+            }
+            let now = set.is_on(c.overlay);
+            let on =
+                c.on.unwrap_or(if c.view.is_some() { !now } else { !all_on });
+            if on != now {
+                *set.flag(c.overlay) = on;
+            }
+        }
     }
+    let any = views
+        .iter()
+        .filter(|(_, _, camera)| camera.is_active)
+        .fold(Overlays::default(), |acc, (_, set, _)| acc.or(set.0));
+    union.set_if_neq(any);
+}
+
+/// A view camera's layers: the scene's, its own, and its overlays'.
+#[allow(clippy::type_complexity)]
+pub fn view_layers(
+    mut cameras: Query<
+        (
+            &crate::view::ViewId,
+            &OverlaySet,
+            &mut bevy::camera::visibility::RenderLayers,
+        ),
+        Or<(Changed<crate::view::ViewId>, Changed<OverlaySet>)>,
+    >,
+) {
+    for (id, set, mut layers) in &mut cameras {
+        let want = set.layers().fold(id.layers(), |l, n| l.with(n));
+        layers.set_if_neq(want);
+    }
+}
+
+/// The overlay gizmo groups draw on their overlays' layers (a renderer's
+/// app with views only: without views the one camera sees the scene's).
+pub fn overlay_gizmo_layers(store: Option<ResMut<GizmoConfigStore>>) {
+    fn on<T: GizmoConfigGroup>(store: &mut GizmoConfigStore, o: Overlay) {
+        if let Some((config, _)) = store.get_config_mut::<T>() {
+            config.render_layers = bevy::camera::visibility::RenderLayers::layer(o.layer());
+        }
+    }
+    let Some(mut store) = store else { return };
+    on::<crate::render::GridGizmos>(&mut store, Overlay::Grid);
+    on::<draw::FrameGizmos>(&mut store, Overlay::Frames);
+    on::<draw::JointGizmos>(&mut store, Overlay::Joints);
+    on::<draw::InertiaGizmos>(&mut store, Overlay::Inertia);
+    on::<draw::ComGizmos>(&mut store, Overlay::CenterOfMass);
 }
 
 /// Draws the overlays: gizmos, collision meshes, wireframes, and the
@@ -223,8 +342,10 @@ impl Plugin for OverlayRenderPlugin {
             .init_resource::<extras::SdfExtras>()
             .init_resource::<extras::SdfWanted>()
             .init_resource::<wireframe::WireframeLines>()
-            .init_gizmo_group::<draw::OverlayGizmos>()
-            .add_plugins(bevy::pbr::wireframe::WireframePlugin::default())
+            .init_gizmo_group::<draw::FrameGizmos>()
+            .init_gizmo_group::<draw::JointGizmos>()
+            .init_gizmo_group::<draw::InertiaGizmos>()
+            .init_gizmo_group::<draw::ComGizmos>()
             .add_systems(Startup, draw::setup_overlay_gizmos)
             .add_systems(
                 Update,
@@ -240,6 +361,13 @@ impl Plugin for OverlayRenderPlugin {
             .add_systems(
                 Update,
                 (wireframe::apply_wireframe, wireframe::build_lines).chain(),
+            )
+            // Mesh files instance after Update: layered before the views
+            // check what they see, so they never show in every view.
+            .add_systems(
+                PostUpdate,
+                collisions::layer_collisions
+                    .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
             )
             .add_systems(
                 PostUpdate,

@@ -203,7 +203,8 @@ impl GzEnvironment {
     }
 }
 
-/// Whether the ground grid is drawn (the scene's `grid` flag; G toggles it).
+/// The scene's `grid` flag: every view's grid starts as it says (a view's G
+/// toggles its own, `overlays::OverlaySet`).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GzGrid {
     pub visible: bool,
@@ -339,7 +340,9 @@ pub fn ortho_cascades(near: f32, far: f32) -> CascadeShadowConfig {
 ///   matching perspective view's.
 ///
 /// Switching back restores the perspective effects, with TAA's history
-/// reset. The cascades are per light, so the first view decides them.
+/// reset. The cascades are per light, so they span every showing view's
+/// depths: the nearest near bound to the farthest far one (a perspective
+/// view's 0.1–150 m, an orthographic one's slab).
 #[allow(clippy::type_complexity)]
 pub fn projection_effects(
     config: Res<GzConfig>,
@@ -353,12 +356,15 @@ pub fn projection_effects(
             Option<&ViewCamera>,
             Has<OrthoEffects>,
             Option<&FogAdjust>,
+            &Camera,
         ),
         With<MainCamera>,
     >,
     mut suns: Query<&mut CascadeShadowConfig>,
 ) {
-    for (i, (entity, projection, t, view, marked, fog)) in cameras.iter().enumerate() {
+    // (near, first cascade's far bound, far) over the showing views.
+    let mut span: Option<(f32, f32, f32)> = None;
+    for (entity, projection, t, view, marked, fog, cam) in &cameras {
         let ortho = match projection {
             Projection::Orthographic(o) => Some((o.near, o.far)),
             _ => None,
@@ -408,21 +414,37 @@ pub fn projection_effects(
                 camera.insert((adjusted_fog(base, adjust), adjust));
             }
         }
-        if i == 0 {
-            let want = match ortho {
+        if cam.is_active {
+            let this = match ortho {
                 Some((near, far)) => {
                     // The view's far plane is the world's far side plus a
                     // margin; the world is as deep in front of the pivot.
                     let extent = far - depth - crate::view::ORTHO_MARGIN;
-                    ortho_cascades(near.max(depth - extent), far)
+                    let near = near.max(depth - extent).max(0.1);
+                    let far = far.max(near * 1.01);
+                    (near, near + (far - near) / 4.0, far)
                 }
-                None => sun_cascades(),
+                None => (0.1, 5.0, 150.0),
             };
-            for mut c in &mut suns {
-                if c.bounds != want.bounds || c.minimum_distance != want.minimum_distance {
-                    *c = want.clone();
-                }
-            }
+            span = Some(span.map_or(this, |s| {
+                (s.0.min(this.0), s.1.min(this.1), s.2.max(this.2))
+            }));
+        }
+    }
+    let Some((near, first, far)) = span else {
+        return;
+    };
+    let want = CascadeShadowConfigBuilder {
+        num_cascades: 4,
+        minimum_distance: near,
+        first_cascade_far_bound: first,
+        maximum_distance: far,
+        overlap_proportion: 0.2,
+    }
+    .build();
+    for mut c in &mut suns {
+        if c.bounds != want.bounds || c.minimum_distance != want.minimum_distance {
+            *c = want.clone();
         }
     }
 }
@@ -469,6 +491,7 @@ type ViewState = (
     Option<&'static ViewCamera>,
     Option<&'static ViewId>,
     Option<&'static ViewPlacement>,
+    Option<&'static crate::overlays::OverlaySet>,
 );
 
 /// Applies a changed [`GzEnvironment`]. The camera is respawned, keeping its
@@ -525,7 +548,7 @@ pub fn apply_environment(
         loads: &mut loads,
         pending: &mut pending,
     };
-    for (old, transform, projection, view, id, placement) in &cameras {
+    for (old, transform, projection, view, id, placement, overlays) in &cameras {
         commands.entity(old).despawn();
         // Keep the view: pose, projection, controller state, which view it
         // is and where it shows.
@@ -537,6 +560,7 @@ pub fn apply_environment(
                 view: view.cloned(),
                 id: id.copied(),
                 placement: placement.cloned(),
+                overlays: overlays.copied(),
             },
         );
     }
@@ -550,6 +574,7 @@ pub struct Placed {
     pub view: Option<ViewCamera>,
     pub id: Option<ViewId>,
     pub placement: Option<ViewPlacement>,
+    pub overlays: Option<crate::overlays::OverlaySet>,
 }
 
 /// What dresses a view camera for the environment.
@@ -581,6 +606,9 @@ impl Dress<'_> {
         }
         if let Some(placement) = state.placement {
             cam.insert(placement);
+        }
+        if let Some(overlays) = state.overlays {
+            cam.insert(overlays);
         }
         if let Some(fog) = &self.env.fog {
             cam.insert(distance_fog(fog));
@@ -621,7 +649,7 @@ impl Dress<'_> {
 /// starts as a copy of the first view, dressed for the environment, and
 /// placed nowhere until the shell places it. Views the layout drops keep
 /// their cameras (off), so they come back as they were.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn spawn_views(
     slots: Option<Res<ViewSlots>>,
     env: Res<GzEnvironment>,
@@ -631,7 +659,16 @@ pub fn spawn_views(
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
     mut studio: ResMut<StudioCubemap>,
-    cameras: Query<(&Transform, &Projection, Option<&ViewCamera>, &ViewId), With<MainCamera>>,
+    cameras: Query<
+        (
+            &Transform,
+            &Projection,
+            Option<&ViewCamera>,
+            &ViewId,
+            Option<&crate::overlays::OverlaySet>,
+        ),
+        With<MainCamera>,
+    >,
     mut commands: Commands,
 ) {
     let Some(slots) = slots else { return };
@@ -641,7 +678,7 @@ pub fn spawn_views(
         return;
     }
     let have: Vec<ViewId> = cameras.iter().map(|c| *c.3).collect();
-    let Some((t, p, view, _)) = cameras.iter().min_by_key(|c| *c.3) else {
+    let Some((t, p, view, _, overlays)) = cameras.iter().min_by_key(|c| *c.3) else {
         return;
     };
     let missing: Vec<ViewId> = (0..want)
@@ -671,6 +708,7 @@ pub fn spawn_views(
                 view: view.map(ViewCamera::copied),
                 id: Some(id),
                 placement: Some(ViewPlacement::default()),
+                overlays: overlays.copied(),
             },
         );
     }
@@ -865,8 +903,14 @@ pub fn cube_direction(face: usize, s: f32, t: f32) -> Vec3 {
 pub struct GridGizmos;
 
 /// Gazebo's default grid: 20 × 20 cells of 1 m on the ground plane.
-pub fn draw_grid(grid: Res<GzGrid>, mut gizmos: Gizmos<GridGizmos>) {
-    if !grid.visible {
+/// Drawn while the scene asks for it or any view shows it (each view sees
+/// it on its grid layer while it is on there).
+pub fn draw_grid(
+    grid: Res<GzGrid>,
+    overlays: Option<Res<crate::overlays::Overlays>>,
+    mut gizmos: Gizmos<GridGizmos>,
+) {
+    if !grid.visible && !overlays.is_some_and(|o| o.grid) {
         return;
     }
     gizmos.grid(
@@ -1164,6 +1208,40 @@ mod tests {
         );
         let mut q = app.world_mut().query::<&CascadeShadowConfig>();
         assert_eq!(q.single(app.world()).unwrap().bounds, sun_cascades().bounds);
+    }
+
+    #[test]
+    fn the_cascades_span_every_showing_views_depths() {
+        let (mut app, _) = effects_app(Quality::High, None);
+        // A second view, orthographic and far back: both get shadows.
+        let config = GzConfig::default();
+        let second = app
+            .world_mut()
+            .run_system_once(move |mut commands: Commands| {
+                let view = ViewCamera::new(Vec3::ZERO, camera::perspective());
+                camera::spawn_main_camera(
+                    &mut commands,
+                    &config,
+                    crate::view::home_transform(),
+                    Some(view),
+                    CLEAR_COLOR,
+                )
+            })
+            .unwrap();
+        let (_, far) = go_ortho(&mut app, second, 400.0);
+        let config = |app: &mut App| {
+            let mut q = app.world_mut().query::<&CascadeShadowConfig>();
+            let c = q.single(app.world()).unwrap();
+            (c.minimum_distance, c.bounds.clone())
+        };
+        let (near, bounds) = config(&mut app);
+        // The perspective view's near shadows and the slab's far ones.
+        assert!((near - 0.1).abs() < 1e-4, "{near}");
+        assert!((bounds[3] - far).abs() < 1e-3, "{bounds:?}");
+        // Only the perspective view showing: its usual cascades.
+        app.world_mut().get_mut::<Camera>(second).unwrap().is_active = false;
+        app.update();
+        assert_eq!(config(&mut app).1, sun_cascades().bounds);
     }
 
     #[test]
@@ -1503,8 +1581,22 @@ mod tests {
             assert!(*lit);
             assert_eq!(*layers, id.layers());
         }
+        // New views start with the first's overlays.
+        let world = app.world_mut();
+        let sets: Vec<bool> = world
+            .query::<&crate::overlays::OverlaySet>()
+            .iter(world)
+            .map(|s| s.frames)
+            .collect();
+        assert!(sets.len() == 3 && sets.iter().all(|f| !f));
         // A new environment respawns them all, each keeping which view it
-        // is and where it shows; fewer views keep the cameras.
+        // is, where it shows and its overlays; fewer views keep the cameras.
+        let world = app.world_mut();
+        let mut q =
+            world.query_filtered::<(&ViewId, &mut crate::overlays::OverlaySet), With<MainCamera>>();
+        for (id, mut set) in q.iter_mut(world) {
+            set.frames = id.0 == 2;
+        }
         app.insert_resource(ViewSlots(1));
         show(
             &mut app,
@@ -1524,6 +1616,14 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 3);
         assert!(ids.contains(&(ViewId(0), rect)));
+        let world = app.world_mut();
+        let framed: Vec<ViewId> = world
+            .query_filtered::<(&ViewId, &crate::overlays::OverlaySet), With<MainCamera>>()
+            .iter(world)
+            .filter(|(_, s)| s.frames)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(framed, [ViewId(2)]);
     }
 
     #[test]

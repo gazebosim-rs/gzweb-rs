@@ -247,6 +247,7 @@ impl Plugin for ViewerControls {
             .init_resource::<BrowserWheel>()
             .init_resource::<ViewRouting>()
             .init_resource::<super::ViewSlots>()
+            .init_resource::<super::LinkedViews>()
             .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
@@ -262,6 +263,7 @@ impl Plugin for ViewerControls {
                     super::select::prune_selection,
                     apply_view_commands,
                     apply_overlay_commands,
+                    crate::overlays::view_layers,
                 )
                     .chain()
                     // A new environment respawns the camera from its state:
@@ -275,6 +277,7 @@ impl Plugin for ViewerControls {
                     .after(apply_view_commands)
                     .after(crate::spawn::apply_poses),
             );
+        app.add_systems(PostStartup, crate::overlays::overlay_gizmo_layers);
         app.configure_sets(
             PostUpdate,
             ViewPlacementSystems
@@ -698,7 +701,11 @@ pub fn key_input(
                 at: target.and_then(|t| t.cursor),
             },
             Action::ToggleOverlay(o) => {
-                overlay_out.write(OverlayCommand::toggle(o));
+                let cmd = OverlayCommand::toggle(o);
+                overlay_out.write(match target {
+                    Some(t) => cmd.in_view(t.view),
+                    None => cmd,
+                });
                 continue;
             }
             // The stats say which way to toggle; without them, nothing.

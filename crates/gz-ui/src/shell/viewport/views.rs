@@ -29,6 +29,7 @@ use super::view::ViewNode;
 use crate::shell::layout::ShellLayout;
 use crate::shell::regions::pass_through;
 use crate::theme::{ColorRole, Fill, Theme};
+use crate::widgets::fade::{fade_tree, FadeQueries};
 use crate::widgets::layout::{column, row};
 
 /// A layout preset (§3.4, §7.4).
@@ -780,6 +781,180 @@ pub(crate) fn active_frames(
     }
 }
 
+/// How far a view's controls show, 1 (the cube and the rail) to 0 (the
+/// inactive view's face marker), easing over [`REVEAL_SECS`] (§3.4).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Reveal(pub(crate) f32);
+
+impl Default for Reveal {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+/// How long the hover reveal fades (§3.4: 100 ms).
+pub(crate) const REVEAL_SECS: f32 = 0.1;
+/// The face marker's side and opacity (§3.4: 34 px at 80%).
+pub(crate) const MARKER_PX: f32 = 34.0;
+pub(crate) const MARKER_OPACITY: f32 = 0.8;
+
+/// An inactive view's flat face marker, where its cube is.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct FaceMarker;
+
+/// The face marker's label (TOP, N, …).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct FaceMarkerLabel;
+
+/// A hidden face marker: a 34 px `cube_top` square with a `cube_edge`
+/// border, centred where the cube is, reading the face the view looks at.
+pub(crate) fn face_marker(theme: &Theme) -> impl Bundle {
+    let s = &theme.s;
+    // Centred on the cube: its right inset plus half of it, less half of
+    // the marker.
+    let right = super::view_cube::CUBE_RIGHT + (s.view_cube - MARKER_PX) / 2.0;
+    let top = s.viewport_inset + (s.view_cube - MARKER_PX) / 2.0;
+    (
+        FaceMarker,
+        Name::new("face marker"),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(top),
+            right: px(right),
+            width: px(MARKER_PX),
+            height: px(MARKER_PX),
+            display: Display::None,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border: UiRect::all(px(crate::theme::border::HAIRLINE)),
+            border_radius: crate::widgets::rounded(crate::theme::radius::XS),
+            ..default()
+        },
+        Fill(ColorRole::CubeTop),
+        crate::theme::Stroke(ColorRole::CubeEdge),
+        pass_through(),
+        children![(
+            FaceMarkerLabel,
+            crate::assets::fonts::text(
+                super::view_cube::systems::label_type(theme),
+                ColorRole::CubeLabel,
+                "TOP",
+            ),
+            pass_through(),
+        )],
+    )
+}
+
+/// The view a view's controls show for: shown in full while it is the
+/// active or the hovered view (or the only one), else its face marker
+/// (§3.4 "Inactive view"), easing between the two. The cube and rail
+/// fade (the target chip with the rail) and go once hidden, so they take
+/// no pointer; the marker fades the other way, to 80%.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub(crate) fn reveal_views(
+    time: Res<Time<Real>>,
+    routing: Res<ViewRouting>,
+    layout: Res<ViewLayout>,
+    mut views: Query<(&ViewNode, &mut Reveal, &Children, Ref<ViewNode>)>,
+    mut controls: Query<
+        (&mut Node, Has<FaceMarker>),
+        Or<(
+            With<super::rail::Rail>,
+            With<super::view_cube::ViewCube>,
+            With<FaceMarker>,
+        )>,
+    >,
+    (menus, parents, scenes, mut cameras): (
+        Query<Entity, With<crate::widgets::menu::Menu>>,
+        Query<&ChildOf>,
+        Query<&super::view_cube::scene::CubeScene>,
+        Query<&mut Camera>,
+    ),
+    mut fades: FadeQueries,
+    mut commands: Commands,
+) {
+    let one = layout.ids().len() < 2;
+    let step = time.delta_secs() / REVEAL_SECS;
+    for (node, mut reveal, children, added) in &mut views {
+        let full = one || routing.active == Some(node.0) || routing.hovered == Some(node.0);
+        let want = if full { 1.0 } else { 0.0 };
+        let now = if one {
+            1.0
+        } else if reveal.0 < want {
+            (reveal.0 + step).min(want)
+        } else {
+            (reveal.0 - step).max(want)
+        };
+        if now == reveal.0 && !added.is_added() {
+            continue;
+        }
+        // Going inactive: its rail's menus close (one opened from the keys
+        // would outlive the rail).
+        if now < reveal.0 && reveal.0 >= 1.0 {
+            for menu in &menus {
+                if parents.iter_ancestors(menu).any(|a| children.contains(&a)) {
+                    commands.trigger(bevy::ui_widgets::MenuEvent {
+                        source: menu,
+                        action: bevy::ui_widgets::MenuAction::CloseAll,
+                    });
+                }
+            }
+        }
+        reveal.0 = now;
+        for &c in children {
+            // A hidden cube renders nothing.
+            if let Ok(scene) = scenes.get(c) {
+                if let Ok(mut camera) = cameras.get_mut(scene.camera) {
+                    if camera.is_active != (now > 0.0) {
+                        camera.is_active = now > 0.0;
+                    }
+                }
+            }
+            let Ok((mut n, marker)) = controls.get_mut(c) else {
+                continue;
+            };
+            // Hidden, the controls have their own opacities back, so a
+            // widget's look changing meanwhile is what it comes back with.
+            let (shown, alpha) = if marker {
+                (now < 1.0, Some(MARKER_OPACITY * (1.0 - now)))
+            } else {
+                (now > 0.0, (now > 0.0 && now < 1.0).then_some(now))
+            };
+            crate::widgets::layout::set_shown(&mut n, shown);
+            fade_tree(&mut commands, &mut fades, c, alpha);
+        }
+    }
+}
+
+/// The marker reads the face its view looks at: the snapped one, else the
+/// one facing the camera most.
+pub(crate) fn face_labels(
+    cameras: ViewCameras,
+    mut labels: Query<(Entity, &mut Text), With<FaceMarkerLabel>>,
+) {
+    use super::view_cube::pick::{self, CubeRegion};
+    for (e, mut text) in &mut labels {
+        let Some((_, v, t, _)) = cameras.of(e) else {
+            continue;
+        };
+        let face = match v.snapped {
+            Some(s) => CubeRegion::of_snap(s).0,
+            None => {
+                let to_camera = pick::gz_rotation(t.rotation) * Vec3::Z;
+                CubeRegion::FACES
+                    .into_iter()
+                    .max_by(|a, b| {
+                        a.as_vec3()
+                            .dot(to_camera)
+                            .total_cmp(&b.as_vec3().dot(to_camera))
+                    })
+                    .unwrap_or(IVec3::Z)
+            }
+        };
+        crate::widgets::text::set_text(&mut text, pick::face_label(face));
+    }
+}
+
 /// Applies [`LayoutCommand`]s. Closing a view renumbers the ones after it
 /// (their cameras take the ids down), so the views keep their order; it
 /// waits while a mouse button is down (a drag keeps its view by id).
@@ -790,10 +965,7 @@ pub(crate) fn apply_layout_commands(
     buttons: Res<ButtonInput<MouseButton>>,
     mut layout: ResMut<ViewLayout>,
     mut routing: ResMut<ViewRouting>,
-    mut cameras: Query<
-        (&mut ViewId, &mut bevy::camera::visibility::RenderLayers),
-        With<MainCamera>,
-    >,
+    mut cameras: Query<&mut ViewId, With<MainCamera>>,
 ) {
     for cmd in reader.read() {
         let key = routing.key_view().unwrap_or(ViewId(0));
@@ -823,14 +995,14 @@ pub(crate) fn apply_layout_commands(
                     continue;
                 }
                 let closed = view.unwrap_or(key).0.min(count - 1);
-                for (mut id, mut layers) in &mut cameras {
+                // Their layers follow (`overlays::view_layers`).
+                for mut id in &mut cameras {
                     let now = match id.0 {
                         n if n == closed => count - 1,
                         n if n > closed && n < count => n - 1,
                         _ => continue,
                     };
                     *id = ViewId(now);
-                    *layers = id.layers();
                 }
                 let p = layout.preset.without_one();
                 layout.set_preset(p);
@@ -876,8 +1048,11 @@ pub(crate) fn build(app: &mut App) {
         )
         .add_systems(
             Update,
-            (active_frames, divider_fills).in_set(crate::shell::ShellSystems::Readouts),
+            (active_frames, divider_fills, face_labels)
+                .in_set(crate::shell::ShellSystems::Readouts),
         )
+        // After the widgets' looks, so the fade wins.
+        .add_systems(Update, reveal_views.after(crate::GzUiSystems::Visuals))
         .add_observer(on_divider_drag_start)
         .add_observer(on_divider_drag)
         .add_observer(on_divider_drag_end)

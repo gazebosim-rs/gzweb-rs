@@ -7,7 +7,6 @@ use super::input::{Platform, Scope};
 use super::*;
 use crate::camera::perspective as gz_perspective;
 use crate::connection::{GzCommand, GzStatus, SimStats};
-use crate::render::GzGrid;
 use crate::UiMode;
 use bevy::camera::visibility::SetViewVisibility;
 use bevy::camera::{RenderTarget, RenderTargetInfo};
@@ -1185,9 +1184,9 @@ fn ctrl_right_steps_a_paused_sim() {
 #[test]
 fn viewport_keys_drive_the_view_and_the_grid() {
     let mut r = rig(default_view());
-    assert!(!r.app.world().resource::<GzGrid>().visible);
+    assert!(!r.app.world().resource::<crate::overlays::Overlays>().grid);
     r.chord(&[KeyCode::KeyG]);
-    assert!(r.app.world().resource::<GzGrid>().visible);
+    assert!(r.app.world().resource::<crate::overlays::Overlays>().grid);
 
     r.chord(&[KeyCode::Digit5]);
     assert!(r.ortho().is_some());
@@ -1932,7 +1931,7 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
     let mut r = rig(default_view());
     routing(&mut r, false, false);
     r.chord(&[KeyCode::KeyG]);
-    assert!(!r.app.world().resource::<GzGrid>().visible);
+    assert!(!r.app.world().resource::<crate::overlays::Overlays>().grid);
     // Fly keys are the view's too.
     r.key(KeyCode::KeyW, ButtonState::Pressed);
     r.frames(3);
@@ -1945,7 +1944,7 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
     assert_eq!(r.sent(), [GzCommand::Play]);
     routing(&mut r, false, true);
     r.chord(&[KeyCode::KeyG]);
-    assert!(r.app.world().resource::<GzGrid>().visible);
+    assert!(r.app.world().resource::<crate::overlays::Overlays>().grid);
     let all = [Scope::Global, Scope::Viewport, Scope::Minimal];
     let off = controls::ViewRouting {
         pointer: true,
@@ -3074,4 +3073,166 @@ fn the_pointer_drives_the_view_under_it_and_keys_the_hovered_or_active_one() {
         r.app.update();
     }
     assert_eq!(pose(&r, other), off);
+}
+
+#[test]
+fn linked_views_follow_pans_zooms_and_focus_but_not_orbits() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    let state = |r: &Rig, e: Entity| {
+        let w = r.app.world();
+        let t = *w.get::<Transform>(e).unwrap();
+        let v = w.get::<ViewCamera>(e).unwrap().clone();
+        let p = w.get::<Projection>(e).unwrap().clone();
+        (t, v.pivot, reach(&v, &t, &p))
+    };
+    let send = |r: &mut Rig, view: Entity, op: ViewOp| {
+        r.app.world_mut().write_message(ViewCommand { view, op });
+        r.app.update();
+    };
+    let (t0, p0, d0) = state(&r, r.camera);
+    // A pan in view 1 moves view 0's camera and pivot by as much.
+    let (t1, ..) = state(&r, other);
+    send(&mut r, other, ViewOp::Pan(Vec2::new(40.0, 0.0)));
+    let moved = state(&r, other).0.translation - t1.translation;
+    assert!(moved.length() > 1e-3);
+    let (t, p, _) = state(&r, r.camera);
+    assert!((t.translation - (t0.translation + moved)).length() < 1e-4);
+    assert!((p - (p0 + moved)).length() < 1e-4);
+    assert_eq!(t.rotation, t0.rotation, "its own direction");
+    // A zoom scales view 0's distance by as much.
+    let before = state(&r, other).2;
+    send(&mut r, other, ViewOp::Zoom(3.0));
+    let ratio = state(&r, other).2 / before;
+    assert!(ratio < 1.0);
+    let (_, _, d) = state(&r, r.camera);
+    assert!((d - d0 * ratio).abs() < 1e-3, "{d} {}", d0 * ratio);
+    // An orbit stays with its view.
+    let still = state(&r, r.camera);
+    send(&mut r, other, ViewOp::Orbit(Vec2::new(50.0, 10.0)));
+    assert_eq!(state(&r, r.camera).0, still.0);
+    // Home in view 1 takes view 0's pivot along as it animates: by the
+    // same shift.
+    let (p_a, p_b) = (state(&r, r.camera).1, state(&r, other).1);
+    send(&mut r, other, ViewOp::Home);
+    for _ in 0..40 {
+        r.app.update();
+    }
+    let p_home = state(&r, other).1;
+    assert!(p_home.length() < 1e-3);
+    assert!((state(&r, r.camera).1 - (p_a + p_home - p_b)).length() < 1e-3);
+    // Unlinked: nothing carries.
+    r.app.insert_resource(LinkedViews(false));
+    let still = state(&r, r.camera);
+    send(&mut r, other, ViewOp::Pan(Vec2::new(40.0, 0.0)));
+    assert_eq!(state(&r, r.camera).0, still.0);
+}
+
+#[test]
+fn linked_wheel_zooms_carry_the_zoom_not_the_pivot_move() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    let send = |r: &mut Rig, view: Entity, op: ViewOp| {
+        r.app.world_mut().write_message(ViewCommand { view, op });
+        r.app.update();
+    };
+    let dist = |r: &Rig, e: Entity| {
+        let w = r.app.world();
+        let t = w.get::<Transform>(e).unwrap();
+        (t.translation - w.get::<ViewCamera>(e).unwrap().pivot).length()
+    };
+    // Off-centre and off-axis: the wheel's zoom about the point under
+    // the cursor moves view 1's pivot there first.
+    let d0 = dist(&r, r.camera);
+    send(
+        &mut r,
+        other,
+        ViewOp::ZoomAt {
+            at: Vec2::new(W / 2.0 * 0.15, H * 0.3),
+            steps: 1.0,
+        },
+    );
+    let ratio = dist(&r, r.camera) / d0;
+    assert!((ratio - ZOOM_STEP).abs() < 1e-3, "{ratio}");
+}
+
+#[test]
+fn a_linked_pan_mid_snap_carries_the_pan_only() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    let pivot = |r: &Rig, e: Entity| r.app.world().get::<ViewCamera>(e).unwrap().pivot;
+    let send = |r: &mut Rig, view: Entity, op: ViewOp| {
+        r.app.world_mut().write_message(ViewCommand { view, op });
+        r.app.update();
+    };
+    send(&mut r, other, ViewOp::Snap(SnapView::Top));
+    let p0 = pivot(&r, r.camera);
+    // Mid-snap: the pan lands the snap first, and only the pan (a few
+    // centimetres) carries, not the snap's jump.
+    send(&mut r, other, ViewOp::Pan(Vec2::new(10.0, 0.0)));
+    let moved = pivot(&r, r.camera) - p0;
+    assert!(moved.length() < 0.5, "{moved}");
+}
+
+#[test]
+fn a_home_every_linked_view_got_lands_each_at_home() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    // Move both away, then home both, as the inspector's focus sends to
+    // every view.
+    for e in [r.camera, other] {
+        r.app.world_mut().write_message(ViewCommand {
+            view: e,
+            op: ViewOp::Pan(Vec2::new(60.0, 20.0)),
+        });
+    }
+    r.app.update();
+    for e in [r.camera, other] {
+        r.app.world_mut().write_message(ViewCommand {
+            view: e,
+            op: ViewOp::Home,
+        });
+    }
+    for _ in 0..40 {
+        r.app.update();
+    }
+    for e in [r.camera, other] {
+        let p = r.app.world().get::<ViewCamera>(e).unwrap().pivot;
+        assert!(p.length() < 1e-3, "{p}");
+    }
+}
+
+#[test]
+fn a_linked_orthographic_fly_up_carries_its_zoom() {
+    let mut r = rig(default_view());
+    let other = two_views(&mut r);
+    r.app.insert_resource(LinkedViews(true));
+    for (e, op) in [
+        (other, ViewOp::SetProjection(ProjectionKind::Orthographic)),
+        (
+            r.camera,
+            ViewOp::SetProjection(ProjectionKind::Orthographic),
+        ),
+    ] {
+        r.app.world_mut().write_message(ViewCommand { view: e, op });
+    }
+    r.app.update();
+    let height =
+        |r: &Rig, e: Entity| ortho_height(r.app.world().get::<Projection>(e).unwrap()).unwrap();
+    let (h0, h1) = (height(&r, r.camera), height(&r, other));
+    r.app.world_mut().write_message(ViewCommand {
+        view: other,
+        op: ViewOp::Fly {
+            dir: Vec3::Y,
+            secs: 0.1,
+        },
+    });
+    r.app.update();
+    let ratio = height(&r, other) / h1;
+    assert!(ratio > 1.0);
+    assert!((height(&r, r.camera) / h0 - ratio).abs() < 1e-4);
 }
