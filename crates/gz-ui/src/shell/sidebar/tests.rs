@@ -113,8 +113,40 @@ fn the_row_splitter_resizes_the_slots_within_their_minimum() {
     assert!((split - MIN_SLOT_H / (828.0 - 6.0)).abs() < 1e-4, "{split}");
     assert!(app
         .world()
-        .get::<crate::shell::sidebar::slot_splitter::SlotDrag>(bar)
+        .get::<crate::widgets::splitter::SplitterDrag>(bar)
         .is_none());
+    // A double-click puts the default split back.
+    for count in [1, 2] {
+        app.world_mut().trigger(PointerClick {
+            entity: bar,
+            pointer: Pointer::new(
+                PointerId::Mouse,
+                Location {
+                    target: bevy::camera::NormalizedRenderTarget::None {
+                        width: 1,
+                        height: 1,
+                    },
+                    position: Vec2::ZERO,
+                },
+            ),
+            button: PointerButton::Primary,
+            hit: HitData::new(Entity::PLACEHOLDER, 0.0, None, None),
+            duration: std::time::Duration::from_millis(80),
+            count,
+        });
+        frames(&mut app, 1);
+    }
+    assert_eq!(layout(&app).split, crate::shell::layout::DEFAULT_SPLIT);
+    // Its range: both slots at least their minimum.
+    let s = *app.world().get::<crate::widgets::Splitter>(bar).unwrap();
+    assert_eq!((s.min, s.max), (MIN_SLOT_H, 828.0 - 6.0 - MIN_SLOT_H));
+    assert!((s.size - 0.55 * (828.0 - 6.0)).abs() < 1e-3, "{}", s.size);
+    // With one slot it is out of the tab order (hidden as undisplayed).
+    let shown = |app: &App| app.world().get::<InheritedVisibility>(bar).unwrap().get();
+    assert!(shown(&app));
+    app.world_mut().write_message(UiCommand::CloseSecondary);
+    frames(&mut app, 2);
+    assert!(!shown(&app));
 }
 
 fn bodies(app: &mut App) -> Vec<(Entity, PanelId)> {

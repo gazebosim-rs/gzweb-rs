@@ -8,18 +8,15 @@
 //! (cube, rail, pills) are its children. The grid is flex rows and columns,
 //! so the views and their 2 px gaps (`viewport_divider`, the area's `bg`)
 //! are laid out in the frame the area is; a divider's 6 px hit area
-//! (`viewport_divider_hit`) drags its share, double-click resets it, and
-//! it turns `accent` while dragging. Views the layout drops keep their
-//! cameras, off, so a preset brought back shows them as they were.
+//! (`viewport_divider_hit`, a [`Splitter`]) drags its share, or moves it
+//! with the keys, double-click resets it, and it turns `accent` while
+//! dragging. Views the layout drops keep their cameras, off, so a preset
+//! brought back shows them as they were.
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
-use bevy::picking::events::{PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
-use bevy::picking::hover::Hovered;
-use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::ui::ComputedNode;
-use bevy::window::SystemCursorIcon;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::input::InputMap;
@@ -31,6 +28,8 @@ use crate::shell::regions::pass_through;
 use crate::theme::{ColorRole, Fill, Theme};
 use crate::widgets::fade::{fade_tree, FadeQueries};
 use crate::widgets::layout::{column, row};
+use crate::widgets::splitter::SplitterDrag;
+use crate::widgets::{splitter_control, SplitAxis, Splitter, SplitterMoved, SplitterReset};
 
 /// A layout preset (§3.4, §7.4).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -295,14 +294,6 @@ pub(crate) struct DividerGap(pub(crate) usize);
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ViewDivider(pub(crate) usize);
 
-/// A divider drag in progress: the share it started from.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct DividerDrag(f32);
-
-/// Whether a divider's last click ended a drag (see the shell splitter's).
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DividerClicked(bool);
-
 /// The views' cameras, found by [`ViewId`] or from a UI node in a view's
 /// node (its controls, their menus).
 #[derive(SystemParam)]
@@ -394,7 +385,7 @@ pub(crate) fn pane(share: Option<Share>, grow: f32, node: Node) -> impl Bundle {
 fn divider(theme: &Theme, axis: usize) -> impl Bundle {
     let (gap, hit) = (theme.s.viewport_divider, theme.s.viewport_divider_hit);
     let off = px(-(hit - gap) / 2.0);
-    let (gap_node, hit_node, cursor, label) = if axis == 0 {
+    let (gap_node, hit_node, split) = if axis == 0 {
         (
             Node {
                 width: px(gap),
@@ -409,8 +400,7 @@ fn divider(theme: &Theme, axis: usize) -> impl Bundle {
                 width: px(hit),
                 ..default()
             },
-            SystemCursorIcon::ColResize,
-            "Resize views",
+            SplitAxis::Columns,
         )
     } else {
         (
@@ -427,8 +417,7 @@ fn divider(theme: &Theme, axis: usize) -> impl Bundle {
                 height: px(hit),
                 ..default()
             },
-            SystemCursorIcon::RowResize,
-            "Resize views",
+            SplitAxis::Rows,
         )
     };
     (
@@ -438,11 +427,9 @@ fn divider(theme: &Theme, axis: usize) -> impl Bundle {
         children![(
             ViewDivider(axis),
             hit_node,
-            DividerClicked::default(),
-            Hovered::default(),
+            // The first pane is before the divider.
+            splitter_control(Splitter::new(split, 1.0), "Resize views"),
             GlobalZIndex(5),
-            bevy::picking::cursor::EntityCursor::System(cursor),
-            crate::widgets::a11y(accesskit::Role::Splitter, label),
         )],
     )
 }
@@ -607,93 +594,84 @@ pub(crate) fn fit_share(share: f32, length: f32, min: f32) -> f32 {
     share.clamp(lo, 1.0 - lo)
 }
 
-pub(crate) fn on_divider_drag_start(
-    ev: On<PointerDragStart>,
-    dividers: Query<&ViewDivider>,
+/// The length a divider's views share along its row or column (UI
+/// pixels, the gap left out).
+fn divider_length(
+    theme: &Theme,
+    d: &ViewDivider,
+    gap: &ChildOf,
+    gaps: &Query<&ChildOf, With<DividerGap>>,
+    nodes: &Query<&ComputedNode>,
+) -> Option<f32> {
+    let size = gaps
+        .get(gap.parent())
+        .ok()
+        .and_then(|row| nodes.get(row.parent()).ok())
+        .map(|n| n.size() * n.inverse_scale_factor())?;
+    Some(if d.0 == 0 { size.x } else { size.y } - theme.s.viewport_divider)
+}
+
+/// Keeps each divider's size its first pane's length, and its range each
+/// side at least `viewport_min` (an even split when they can't both be).
+pub(crate) fn divider_ranges(
     layout: Res<ViewLayout>,
-    mut commands: Commands,
+    theme: Res<Theme>,
+    gaps: Query<&ChildOf, With<DividerGap>>,
+    nodes: Query<&ComputedNode>,
+    mut dividers: Query<(&ViewDivider, &ChildOf, &mut Splitter)>,
 ) {
-    if let Ok(d) = dividers.get(ev.entity) {
-        commands
-            .entity(ev.entity)
-            .insert(DividerDrag(layout.shares()[d.0]));
+    let min = theme.s.viewport_min;
+    for (d, gap, mut s) in &mut dividers {
+        let Some(length) = divider_length(&theme, d, gap, &gaps, &nodes) else {
+            continue;
+        };
+        let length = length.max(0.0);
+        let share = fit_share(layout.shares()[d.0], length, min);
+        let (lo, hi) = if length < 2.0 * min {
+            (length / 2.0, length / 2.0)
+        } else {
+            (min, length - min)
+        };
+        let want = s.with_range(share * length, lo, hi);
+        s.set_if_neq(want);
     }
 }
 
-/// The share follows the pointer across the divider's row or column (UI
-/// pixels: the drag divides by `UiScale`, D-41), each side at least
-/// `viewport_min` where it can be (an even split where it can't).
-pub(crate) fn on_divider_drag(
-    ev: On<PointerDrag>,
-    scale: Res<UiScale>,
+/// A drag or a key sets the divider's share (§3.4).
+pub(crate) fn on_divider_moved(
+    ev: On<SplitterMoved>,
     theme: Res<Theme>,
-    dividers: Query<(&ViewDivider, &DividerDrag, &ChildOf)>,
+    dividers: Query<(&ViewDivider, &ChildOf)>,
     gaps: Query<&ChildOf, With<DividerGap>>,
     nodes: Query<&ComputedNode>,
     mut layout: ResMut<ViewLayout>,
 ) {
-    let Ok((d, drag, gap)) = dividers.get(ev.entity) else {
+    let Ok((d, gap)) = dividers.get(ev.entity) else {
         return;
     };
-    let Some(size) = gaps
-        .get(gap.parent())
-        .ok()
-        .and_then(|row| nodes.get(row.parent()).ok())
-        .map(|n| n.size() * n.inverse_scale_factor())
-    else {
+    let Some(length) = divider_length(&theme, d, gap, &gaps, &nodes).filter(|l| *l > 0.0) else {
         return;
     };
-    // The views' length: the gap is no one's.
-    let length = if d.0 == 0 { size.x } else { size.y } - theme.s.viewport_divider;
-    let moved = if d.0 == 0 {
-        ev.distance.x
-    } else {
-        ev.distance.y
-    } / scale.0;
-    let share = share_after(drag.0, moved, length, theme.s.viewport_min);
+    let share = fit_share(ev.size / length, length, theme.s.viewport_min);
     if layout.shares()[d.0] != share {
         layout.set_share(d.0, share);
     }
 }
 
-/// A divider's share after a drag of `moved` from `start` along a row or
-/// column `length` long: each side at least `min`, or half each when they
-/// can't both be.
-pub(crate) fn share_after(start: f32, moved: f32, length: f32, min: f32) -> f32 {
-    if length <= 0.0 {
-        return start;
-    }
-    fit_share(start + moved / length, length, min)
-}
-
-pub(crate) fn on_divider_drag_end(
-    ev: On<PointerDragEnd>,
-    dividers: Query<(), With<ViewDivider>>,
-    mut commands: Commands,
-) {
-    if dividers.contains(ev.entity) {
-        commands.entity(ev.entity).remove::<DividerDrag>();
-    }
-}
-
 /// A double-click resets the share (§3.4), as the shell's splitters do.
-pub(crate) fn on_divider_click(
-    ev: On<PointerClick>,
-    mut dividers: Query<(&ViewDivider, &mut DividerClicked, Has<DividerDrag>)>,
+pub(crate) fn on_divider_reset(
+    ev: On<SplitterReset>,
+    dividers: Query<&ViewDivider>,
     mut layout: ResMut<ViewLayout>,
 ) {
-    let Ok((d, mut last, dragged)) = dividers.get_mut(ev.entity) else {
-        return;
-    };
-    let after_drag = std::mem::replace(&mut last.0, dragged);
-    if ev.button == PointerButton::Primary && ev.count >= 2 && !dragged && !after_drag {
+    if let Ok(d) = dividers.get(ev.entity) {
         layout.reset_share(d.0);
     }
 }
 
 /// A divider's gap turns `accent` while it drags.
 pub(crate) fn divider_fills(
-    dividers: Query<(&ChildOf, Has<DividerDrag>), With<ViewDivider>>,
+    dividers: Query<(&ChildOf, Has<SplitterDrag>), With<ViewDivider>>,
     mut commands: Commands,
     fills: Query<Option<&Fill>, With<DividerGap>>,
 ) {
@@ -1042,6 +1020,7 @@ pub(crate) fn build(app: &mut App) {
                 keep_active,
                 build_grid,
                 follow_shares,
+                divider_ranges,
             )
                 .chain()
                 .in_set(crate::GzUiSystems::Behaviour),
@@ -1053,10 +1032,8 @@ pub(crate) fn build(app: &mut App) {
         )
         // After the widgets' looks, so the fade wins.
         .add_systems(Update, reveal_views.after(crate::GzUiSystems::Visuals))
-        .add_observer(on_divider_drag_start)
-        .add_observer(on_divider_drag)
-        .add_observer(on_divider_drag_end)
-        .add_observer(on_divider_click);
+        .add_observer(on_divider_moved)
+        .add_observer(on_divider_reset);
 }
 
 #[cfg(test)]

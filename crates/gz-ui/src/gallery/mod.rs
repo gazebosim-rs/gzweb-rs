@@ -51,13 +51,16 @@ impl Plugin for GalleryPlugin {
                     systems::toggle_theme_key,
                     systems::gallery_texts,
                     systems::focus_example,
+                    systems::sized_pane_ranges,
                 )
                     .in_set(GzUiSystems::Behaviour),
             )
             .add_systems(Last, systems::capture_gallery)
             .add_observer(systems::on_theme_button)
             .add_observer(systems::on_tree_row_expand)
-            .add_observer(systems::on_tree_row_visibility);
+            .add_observer(systems::on_tree_row_visibility)
+            .add_observer(systems::on_pane_resized)
+            .add_observer(systems::on_pane_reset);
     }
 }
 
@@ -227,22 +230,19 @@ fn right_column(c: &mut ChildSpawnerCommands, theme: &Theme, map: &InputMap) {
     .with_children(|bottom| {
         let tree = bottom
             .spawn(card_node(Node {
-                width: px(320),
+                width: px(systems::TREE_W),
                 overflow: Overflow::clip(),
                 ..column(0.0)
             }))
             .with_children(|t| widgets::scene_panel(t, theme))
             .id();
-        bottom.spawn(splitter(
-            theme,
-            Splitter {
-                axis: SplitAxis::Columns,
-                pane: tree,
-                sign: 1.0,
-                min: 240.0,
-                max: 420.0,
-            },
-            "Resize the scene panel",
+        bottom.spawn((
+            splitter(
+                theme,
+                Splitter::new(SplitAxis::Columns, 1.0),
+                "Resize the scene panel",
+            ),
+            systems::SizesPane(tree),
         ));
         bottom
             .spawn(Node {

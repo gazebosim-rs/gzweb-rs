@@ -1482,3 +1482,31 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   Single 2.56 ms High / 2.27 Low, Quad 5.55 / 3.84; dropping the
   environment light saves ~0.6 ms in Quad (refiltered every frame per
   camera), SSAO, bloom and TAA nothing measurable. 722 → 729 tests.
+
+## 2026-10-23: M6c one splitter (D-96)
+
+- **One splitter:** the §5.18 widget is controlled. Its owner keeps the
+  pane's size and range in the `Splitter` and applies `SplitterMoved`
+  (drags, arrow keys, Home, End) and `SplitterReset` (a primary
+  double-click without a drag). The side splitters, the slot splitter,
+  the view dividers and the gallery own one each; `ShellLayout::drag` is
+  now `width_range` and `resize`, and the three copies of the drag and
+  double-click code are gone.
+- **What changes for the user:** every splitter is a tab stop, moved by
+  the arrows, Home and End; the slot splitter's double-click resets the
+  split; a view divider's drag starts from the share as laid out; the
+  slot splitter leaves the tab order with one slot.
+- **Tests:** the widget asks and a test owner records (drags from their
+  start, at UI scale, keys, double-clicks, the control bundle); the side
+  splitters' and a divider's keys and ranges; the slot splitter's reset,
+  range and visibility; the gallery's pane; workspace 729 → 735 passing;
+  coverage 98.3% lines. check.sh passes. Not tried by hand.
+- **PR review fixes:** a press focuses a splitter (kept: the usual
+  behaviour), so its keys take plain presses only and Ctrl+→ steps the sim
+  again after a drag; a key steps from the size it last asked for (two in
+  a frame both count); a drag or key during start-up clears `startup` as
+  before; the slot splitter's own `Visibility` is gone (`hide_undisplayed`
+  already hides it), and the wrong note that collapsed panels stay in the
+  tab order is dropped; the side-key test reaches the floor, the divider
+  tests check the laid-out drag start and the taken key; §5.18 and §3.3.2
+  amended. 735 → 737 tests.

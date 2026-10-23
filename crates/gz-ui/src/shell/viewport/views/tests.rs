@@ -198,6 +198,53 @@ fn a_divider_drags_its_share_short_of_the_floor_and_a_double_click_resets_it() {
     assert_eq!(layout(&app).shares()[0], 0.6);
 }
 
+/// A divider is a tab stop holding its first view's length and range;
+/// the keys move its share, and the view never sees them.
+#[test]
+fn a_divider_moves_with_the_keys() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let row = AREA.1.x - 2.0;
+    let divider = with_divider(&mut app, 0);
+    let s = *app.world().get::<Splitter>(divider).unwrap();
+    assert!((s.size - 0.6 * row).abs() < 1e-3, "{}", s.size);
+    assert_eq!((s.min, s.max), (240.0, row - 240.0));
+    let step = crate::widgets::splitter::KEY_STEP;
+    focused_key(&mut app, divider, KeyCode::ArrowRight);
+    let share = layout(&app).shares()[0];
+    assert!((share - (0.6 + step / row)).abs() < 1e-4, "{share}");
+    focused_key(&mut app, divider, KeyCode::Home);
+    assert!((layout(&app).shares()[0] - 240.0 / row).abs() < 1e-4);
+    focused_key(&mut app, divider, KeyCode::End);
+    assert!((layout(&app).shares()[0] - (1.0 - 240.0 / row)).abs() < 1e-4);
+    // The divider takes the arrow: held, the shortcuts never see it.
+    key(&mut app, KeyCode::ArrowLeft, ButtonState::Pressed);
+    frames(&mut app, 2);
+    let keys = app.world().resource::<ButtonInput<KeyCode>>();
+    assert!(!keys.pressed(KeyCode::ArrowLeft));
+    key(&mut app, KeyCode::ArrowLeft, ButtonState::Released);
+    frames(&mut app, 1);
+}
+
+/// A drag starts from the share as laid out: one stored past what the
+/// row can give moves at once, not after the pointer has made up the
+/// difference.
+#[test]
+fn a_divider_drag_starts_from_the_share_as_laid_out() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let row = AREA.1.x - 2.0;
+    app.world_mut()
+        .resource_mut::<ViewLayout>()
+        .set_share(0, 0.95);
+    frames(&mut app, 2);
+    let laid_out = 1.0 - 240.0 / row;
+    let divider = with_divider(&mut app, 0);
+    let s = app.world().get::<Splitter>(divider).unwrap().size;
+    assert!((s - laid_out * row).abs() < 1e-3, "{s}");
+    drag_divider(&mut app, 0, -10.0);
+    let share = layout(&app).shares()[0];
+    assert!((share - (laid_out - 10.0 / row)).abs() < 1e-4, "{share}");
+}
+
 /// Puts the cursor at `at` (window logical pixels) and runs a frame.
 fn cursor(app: &mut App, at: Vec2) {
     let window = find::<Window>(app);
@@ -374,9 +421,9 @@ fn the_floor_collapses_the_panels_then_falls_back_to_single() {
 
 #[test]
 fn shares_clamp_or_split_evenly() {
-    assert_eq!(share_after(0.5, 100.0, 1000.0, 240.0), 0.6);
-    assert_eq!(share_after(0.5, -400.0, 1000.0, 240.0), 0.24);
-    assert_eq!(share_after(0.5, 10.0, 400.0, 240.0), 0.5);
+    assert_eq!(fit_share(0.6, 1000.0, 240.0), 0.6);
+    assert_eq!(fit_share(0.1, 1000.0, 240.0), 0.24);
+    assert_eq!(fit_share(0.525, 400.0, 240.0), 0.5);
     // Before layout: as it was.
     assert_eq!(fit_share(0.6, 0.0, 240.0), 0.6);
     assert_eq!(fit_share(0.6, 502.0, 240.0), 1.0 - 240.0 / 502.0);

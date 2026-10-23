@@ -1,34 +1,22 @@
-//! The side splitters (spec §2.1): a 6 px hit area centred on a side
-//! panel's border that drags its width within its limits and short of the
+//! The side splitters (spec §2.1): a 6 px [`Splitter`] centred on a side
+//! panel's border that sets its width within its limits and short of the
 //! viewport floor, resets it on a double-click, and turns the border
 //! `accent` while it drags.
 
-use bevy::picking::events::{PointerClick, PointerDrag, PointerDragEnd, PointerDragStart};
-use bevy::picking::hover::Hovered;
-use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
-use bevy::window::SystemCursorIcon;
 
 use super::commands::UiCommand;
 use super::layout::{ShellLayout, Side};
 use super::regions::Region;
 use super::ShellSystems;
 use crate::theme::{border, ColorRole, Stroke, Theme};
+use crate::widgets::splitter::SplitterDrag;
+use crate::widgets::{splitter_control, SplitAxis, Splitter, SplitterMoved, SplitterReset};
 
 /// A splitter between a side panel and the viewport area (§2.1): a 6 px
 /// hit area centred on the panel's border.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ShellSplitter(pub Side);
-
-/// A splitter drag in progress: the width it started from.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SplitDrag(pub f32);
-
-/// Whether a splitter's last click ended a drag: bevy_picking sends a click
-/// on every release, drags included, and counts on across them, so a drag
-/// followed by a quick grab would read as a double-click.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct LastClickDragged(pub bool);
 
 /// A side splitter: absolute, 6 px wide, centred on the panel's 1 px
 /// border (`right` for the sidebar, `left` for the inspector).
@@ -48,79 +36,59 @@ pub(crate) fn side_splitter(theme: &Theme, side: Side) -> impl Bundle {
         Side::Sidebar => node.right = offset,
         Side::Inspector => node.left = offset,
     }
+    // The sidebar is before its splitter, the inspector after.
+    let (sign, name) = match side {
+        Side::Sidebar => (1.0, "Resize sidebar"),
+        Side::Inspector => (-1.0, "Resize inspector"),
+    };
     (
         node,
         ShellSplitter(side),
-        LastClickDragged::default(),
-        Hovered::default(),
+        splitter_control(Splitter::new(SplitAxis::Columns, sign), name),
         GlobalZIndex(10),
-        bevy::picking::cursor::EntityCursor::System(SystemCursorIcon::ColResize),
-        crate::widgets::a11y(
-            accesskit::Role::Splitter,
-            match side {
-                Side::Sidebar => "Resize sidebar",
-                Side::Inspector => "Resize inspector",
-            },
-        ),
     )
 }
 
-pub(crate) fn on_splitter_drag_start(
-    ev: On<PointerDragStart>,
-    splitters: Query<&ShellSplitter>,
+/// Keeps each splitter's width and range the layout's.
+pub(crate) fn side_splitter_ranges(
     layout: Res<ShellLayout>,
-    mut commands: Commands,
+    mut splitters: Query<(&ShellSplitter, &mut Splitter)>,
 ) {
-    if let Ok(s) = splitters.get(ev.entity) {
-        commands
-            .entity(ev.entity)
-            .insert(SplitDrag(layout.width(s.0)));
+    for (side, mut s) in &mut splitters {
+        let (min, max) = layout.width_range(side.0);
+        let want = s.with_range(layout.width(side.0), min, max);
+        s.set_if_neq(want);
     }
 }
 
-/// The pointer moves in window pixels and widths are UI pixels: the drag
-/// divides by `UiScale` (DECISIONS.md D-41).
-pub(crate) fn on_splitter_drag(
-    ev: On<PointerDrag>,
-    scale: Res<UiScale>,
-    splitters: Query<(&ShellSplitter, &SplitDrag)>,
+/// A drag or a key sets the width (the drag is in UI pixels, D-41).
+pub(crate) fn on_side_resized(
+    ev: On<SplitterMoved>,
+    splitters: Query<&ShellSplitter>,
     mut layout: ResMut<ShellLayout>,
 ) {
-    if let Ok((s, drag)) = splitters.get(ev.entity) {
-        layout.drag(s.0, drag.0, ev.distance.x / scale.0);
+    if let Ok(side) = splitters.get(ev.entity) {
+        let (min, max) = layout.width_range(side.0);
+        if layout.startup || ev.size.clamp(min, max) != layout.width(side.0) {
+            layout.resize(side.0, ev.size);
+        }
     }
 }
 
-pub(crate) fn on_splitter_drag_end(
-    ev: On<PointerDragEnd>,
-    splitters: Query<(), With<ShellSplitter>>,
-    mut commands: Commands,
-) {
-    if splitters.contains(ev.entity) {
-        commands.entity(ev.entity).remove::<SplitDrag>();
-    }
-}
-
-/// A double-click with the primary button resets the width (§2.1): two
-/// clicks in a row, neither of them the end of a drag (a release after a
-/// drag is a click too, still [`SplitDrag`] then).
-pub(crate) fn on_splitter_click(
-    ev: On<PointerClick>,
-    mut splitters: Query<(&ShellSplitter, &mut LastClickDragged, Has<SplitDrag>)>,
+/// A double-click resets the width (§2.1).
+pub(crate) fn on_side_reset(
+    ev: On<SplitterReset>,
+    splitters: Query<&ShellSplitter>,
     mut out: MessageWriter<UiCommand>,
 ) {
-    let Ok((s, mut last, dragged)) = splitters.get_mut(ev.entity) else {
-        return;
-    };
-    let after_drag = std::mem::replace(&mut last.0, dragged);
-    if ev.button == PointerButton::Primary && ev.count >= 2 && !dragged && !after_drag {
-        out.write(UiCommand::ResetWidth(s.0));
+    if let Ok(side) = splitters.get(ev.entity) {
+        out.write(UiCommand::ResetWidth(side.0));
     }
 }
 
 /// The panel's border turns `accent` while its splitter drags (§2.1).
 pub(crate) fn splitter_strokes(
-    splitters: Query<(&ShellSplitter, Has<SplitDrag>)>,
+    splitters: Query<(&ShellSplitter, Has<SplitterDrag>)>,
     mut regions: Query<(&Region, &mut Stroke)>,
 ) {
     for (s, dragging) in &splitters {
@@ -142,9 +110,10 @@ pub(crate) fn splitter_strokes(
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_systems(Update, splitter_strokes.in_set(ShellSystems::Readouts))
-        .add_observer(on_splitter_drag_start)
-        .add_observer(on_splitter_drag)
-        .add_observer(on_splitter_drag_end)
-        .add_observer(on_splitter_click);
+    app.add_systems(
+        Update,
+        (side_splitter_ranges, splitter_strokes).in_set(ShellSystems::Readouts),
+    )
+    .add_observer(on_side_resized)
+    .add_observer(on_side_reset);
 }

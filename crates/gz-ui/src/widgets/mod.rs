@@ -63,7 +63,7 @@ pub use section::{section_header, SectionCount};
 pub use segmented::{button_group, segmented_group};
 pub use select::{select, Select, SelectChanged};
 pub use slider::{slider_row, SliderProps};
-pub use splitter::{splitter, SplitAxis, Splitter};
+pub use splitter::{splitter, splitter_control, SplitAxis, Splitter, SplitterMoved, SplitterReset};
 pub use text_field::{filter_field, text_field, TextSubmit};
 pub use toggle::toggle_row;
 pub use tooltip::{tooltip_card, Tooltip, TooltipSide};

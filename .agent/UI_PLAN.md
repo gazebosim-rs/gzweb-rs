@@ -322,16 +322,15 @@ quality policy, **M6c** one splitter.
 - **M6b notes:** per-view overlays on a render layer each, the rail's menu and badge per view,
   Apply to all views, wireframes as line meshes everywhere (D-93); Link cameras, Shared
   selection on (D-94); the inactive view's face marker and 100 ms hover reveal, every view at
-  full quality after measuring, the cascades following the active view, `gzweb --no-vsync`
+  full quality after measuring, the cascades spanning every showing view, `gzweb --no-vsync`
   (D-95).
+- **M6c notes:** one splitter, the §5.18 widget, controlled: its owner keeps the size and range
+  in it and applies `SplitterMoved` and `SplitterReset`; the side and slot splitters, the view
+  dividers and the gallery own one each, so all are tab stops with arrows, Home and End; the
+  slot splitter's double-click resets the split (D-96).
 - Layout presets, active/hovered view rules, inactive-view face marker, per-view `ViewState`,
   floor and fallback rules, the multi-view quality policy (§3 item 5).
-- One splitter (PR #30 second review, item 9): there are three today (`shell/splitter.rs`,
-  `shell/sidebar/slot_splitter.rs` and the §5.18 widget `widgets/splitter/`, used only by the
-  gallery). Only the widget has `TabIndex` and arrow/Home/End keys, and it writes its pane's
-  `Node` itself. Make it controlled (it emits a size or drag event; the owner applies it to
-  `ShellLayout`) and use it for the side and slot splitters and the view dividers. If M6
-  doesn't need it, M10 does (keyboard access, §10).
+- One splitter (PR #30 second review, item 9): done in M6c (D-96).
 
 ### M7 — Panels
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),

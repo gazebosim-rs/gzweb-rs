@@ -227,14 +227,7 @@ fn drags_hold_their_cursor() {
     use bevy::picking::pointer::{Location, PointerButton, PointerId};
     use bevy::window::{CursorIcon, PrimaryWindow, SystemCursorIcon};
     let mut app = ui_app(ThemeMode::Light);
-    let pane = app.world_mut().spawn(Node::default()).id();
-    let s = Splitter {
-        axis: SplitAxis::Rows,
-        pane,
-        sign: 1.0,
-        min: 0.0,
-        max: 100.0,
-    };
+    let s = Splitter::new(SplitAxis::Rows, 1.0).with_range(50.0, 0.0, 100.0);
     let bar = app
         .world_mut()
         .spawn(splitter(&Theme::default(), s, "Resize"))

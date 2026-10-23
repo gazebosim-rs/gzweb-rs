@@ -416,12 +416,15 @@ pub(crate) fn build(app: &mut App) {
             .chain()
             .in_set(ShellSystems::Slots),
     )
+    .add_systems(
+        Update,
+        slot_splitter::slot_splitter_ranges.in_set(ShellSystems::Readouts),
+    )
     .add_observer(on_slot_action)
     .add_observer(body::on_action_button)
     .add_observer(body::on_reconnect)
-    .add_observer(slot_splitter::on_slot_drag_start)
-    .add_observer(slot_splitter::on_slot_drag)
-    .add_observer(slot_splitter::on_slot_drag_end);
+    .add_observer(slot_splitter::on_slots_resized)
+    .add_observer(slot_splitter::on_slots_reset);
 }
 
 #[cfg(test)]

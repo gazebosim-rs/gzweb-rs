@@ -173,6 +173,33 @@ fn the_gallery_builds_and_switches_theme_at_runtime() {
     assert_all_resolved(&mut app);
 }
 
+/// The gallery owns its splitter: it keeps the scene panel's width and
+/// range in it, and applies what it asks for.
+#[test]
+fn the_gallery_splitter_sizes_the_scene_panel() {
+    use super::systems::{SizesPane, TREE_W};
+    use crate::widgets::{Splitter, SplitterMoved, SplitterReset};
+    let mut app = gallery(ThemeMode::Light);
+    let (bar, pane) = {
+        let w = app.world_mut();
+        let mut q = w.query::<(Entity, &SizesPane)>();
+        let (e, p) = q.single(w).unwrap();
+        (e, p.0)
+    };
+    let s = *app.world().get::<Splitter>(bar).unwrap();
+    assert_eq!((s.size, s.min, s.max), (TREE_W, 240.0, 420.0));
+    app.world_mut().trigger(SplitterMoved {
+        entity: bar,
+        size: 400.0,
+    });
+    frames(&mut app, 2);
+    assert_eq!(app.world().get::<Node>(pane).unwrap().width, px(400));
+    assert_eq!(app.world().get::<Splitter>(bar).unwrap().size, 400.0);
+    app.world_mut().trigger(SplitterReset { entity: bar });
+    frames(&mut app, 1);
+    assert_eq!(app.world().get::<Node>(pane).unwrap().width, px(TREE_W));
+}
+
 #[test]
 fn hex_formats_tokens() {
     let t = Theme::default();
