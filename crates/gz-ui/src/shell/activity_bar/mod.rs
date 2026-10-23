@@ -12,7 +12,7 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use super::regions::{region, Region};
-use super::{PanelStatus, ShellLayout, ShellSystems, UiCommand};
+use super::{PanelStatus, ShellSystems, ShownPanels, UiCommand};
 use crate::assets::icons::IconId;
 use crate::panels::{PanelId, PanelRegistry};
 use crate::theme::visuals::Active;
@@ -100,18 +100,19 @@ pub(crate) fn on_activity(
     }
 }
 
-/// Active state per §3.2's table: a button is active while its panel is
-/// in either slot, and pressed to AccessKit.
+/// Active state per §3.2's table: a button is active while a host holds
+/// its panel (a slot, the sidebar open or collapsed), and pressed to
+/// AccessKit.
 pub(crate) fn activity_active(
-    layout: Res<ShellLayout>,
+    hosts: Res<ShownPanels>,
     mut buttons: Query<(Entity, &ActivityFor, Has<Active>, &mut AccessibilityNode)>,
     mut commands: Commands,
 ) {
-    if !layout.is_changed() {
+    if !hosts.is_changed() {
         return;
     }
     for (e, a, active, mut access) in &mut buttons {
-        let want = layout.is_active(a.0);
+        let want = hosts.is_hosted(a.0);
         if want != active {
             if want {
                 commands.entity(e).insert(Active);

@@ -5,7 +5,8 @@
 //! before); its header counts the entities and has Expand all and
 //! Collapse all. Once ready, the body is a filter bar (filter field and
 //! the button that shows the type chips), the type chips (All, Models,
-//! Lights, Sensors, Joints), the tree and a footer.
+//! Lights, Sensors, Joints) and the tree; the footer, under every state,
+//! has New group, Hide others and Isolate.
 //!
 //! The panel contract (DECISIONS.md D-58, D-66): the tree's data is
 //! [`model::TreeModel`], rebuilt when entities come or go; what the user
@@ -57,6 +58,10 @@ pub struct SceneTreeStart {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct SceneTree;
 
+/// The Scene panel's footer content marker.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct SceneFooter;
+
 /// Registers the Scene panel: its view, count, header actions, tree.
 pub struct ScenePanelPlugin;
 
@@ -74,7 +79,8 @@ impl Plugin for ScenePanelPlugin {
                 .header_action(
                     HeaderAction::new(COLLAPSE_ALL, IconId::CollapseAll, "Collapse all").disabled(),
                 )
-                .content::<SceneTree>(),
+                .content::<SceneTree>()
+                .footer_content::<SceneFooter>(),
         )
         .init_resource::<model::TreeModel>()
         .init_resource::<model::TreeState>()
@@ -116,6 +122,7 @@ impl Plugin for ScenePanelPlugin {
         .add_observer(systems::on_expand)
         .add_observer(systems::on_visibility)
         .add_observer(systems::on_row_activate)
+        .add_observer(footer::build_footer)
         .add_observer(footer::on_footer)
         .add_observer(systems::on_chip)
         .add_observer(systems::on_filter_button)
