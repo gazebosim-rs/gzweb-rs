@@ -111,9 +111,11 @@ From `shortcuts.json`, viewport and sim scopes only:
    `/world/<w>/control`, light/visual config). Model editing (§6.6) is the largest of these; it
    comes last.
 5. **Multi-view cost.** Each view is a full `Camera3d` with our quality stack. Quad view at
-   Ultra means 4× TAA/SSAO/shadow cascades. **Measured in M6b** (DECISIONS.md D-95): the cost
-   is per view on the CPU, and cutting SSAO and bloom in inactive views changed nothing, so
-   every view keeps the full stack; measure again on a GPU-bound target.
+   Ultra means 4× TAA/SSAO/shadow cascades. **Measured in M6b** (DECISIONS.md D-95): an extra
+   view costs about 0.5 ms at Low and 1.0 at High (RTX 5090, 1440 × 900); the largest part of
+   High's is the environment light refiltered every frame per camera; SSAO, bloom and TAA
+   measure as nothing. Every view keeps the full stack; measure a GPU-bound target before
+   cutting.
 6. **Spec location.** `design/ui/` (DESIGN.md, DECISIONS.md, tokens.json, icons.json,
    shortcuts.json, theme.rs, brand assets, boards). Agents and CI read this one copy. Decisions
    we make go into its `DECISIONS.md`, as the spec asks.
@@ -379,6 +381,9 @@ quality policy, **M6c** one splitter.
   validation, write-back.
 
 ### M10 — Hardening
+- Filter a static environment map once (DECISIONS.md D-95): Bevy's
+  `GeneratedEnvironmentMapLight` refilters the studio or cubemap sky every frame for every view
+  camera; prefilter it once into an `EnvironmentMapLight` (the atmosphere's stays real-time).
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global

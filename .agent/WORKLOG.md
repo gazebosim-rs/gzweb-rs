@@ -1459,10 +1459,8 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Link cameras:** pans, zooms, fly, focus and home carry to the other
   views' pivots and reach; orbits and snaps don't. Shared selection stays
   on (disabled).
-- **Quality:** measured (RTX 5090, 1440 × 900, High: Single ~234 fps, Quad
-  ~95; Low 276 and 172; cutting SSAO and bloom in inactive views changed
-  nothing): every view keeps the full stack. The sun's cascades follow the
-  active view. `gzweb --no-vsync`.
+- **Quality:** every view keeps the full stack (see the review fixes for
+  the measurement). `gzweb --no-vsync`.
 - **Live check** (`--release`, a fresh patched Jetty `diff_drive` on 9011,
   `--ui full --layout two-columns --overlays frames,joints --screenshot`):
   both views draw frames, joints and the grid; the right view shows its W
@@ -1473,3 +1471,14 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   zoom, orbit, home; the checkbox), the active view's cascades, line-mesh
   wireframes on their layer; workspace 716 → 722 passing; coverage 98.3%
   lines. check.sh passes.
+- **PR review fixes:** Link cameras carry a wheel zoom's zoom about the
+  new pivot, land a running animation before carrying a pan or zoom, carry
+  pivots and reach for pans and flies, leave a focus every view got alone,
+  move a view's own animation with a carry, and unlink back to one view;
+  a hidden rail restores its widgets' opacities, closes its menus and
+  stops its cube camera; collisions are layered before visibility; the
+  cascades span every showing view. **Measured again** with Bevy's render
+  diagnostics (the window's frame rate is paced by the compositor):
+  Single 2.56 ms High / 2.27 Low, Quad 5.55 / 3.84; dropping the
+  environment light saves ~0.6 ms in Quad (refiltered every frame per
+  camera), SSAO, bloom and TAA nothing measurable. 722 → 729 tests.
