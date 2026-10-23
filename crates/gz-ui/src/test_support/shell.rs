@@ -136,6 +136,7 @@ fn view_camera(physical: UVec2, scale: f32, id: ViewId) -> impl Bundle {
         MainCamera,
         id,
         id.layers(),
+        gz_bevy::overlays::OverlaySet::default(),
     )
 }
 

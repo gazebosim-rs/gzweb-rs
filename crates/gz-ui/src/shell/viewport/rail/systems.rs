@@ -7,7 +7,7 @@ use bevy::a11y::AccessibilityNode;
 use bevy::prelude::*;
 use bevy::ui::{Checked, ComputedNode, InteractionDisabled};
 use bevy::ui_widgets::{Activate, MenuItem, ValueChange};
-use gz_bevy::overlays::Overlays;
+use gz_bevy::overlays::{OverlaySet, Overlays};
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::{ortho_height, CameraMode, DragAction, Selection, ViewCommand, ViewOp};
@@ -336,23 +336,41 @@ pub(crate) fn camera_state(
     }
 }
 
-/// The Overlays button's badge counts what is on (neutral `text_2`,
-/// hidden at none); the menu's checkboxes show it.
-#[allow(clippy::type_complexity)]
+/// The overlays shown in the view `ui` is in: its own set, else (no
+/// views keeping sets) what any view shows.
+pub(crate) fn view_overlays(
+    views: &ViewCameras,
+    sets: &Query<&OverlaySet>,
+    any: Option<&Overlays>,
+    ui: Entity,
+) -> Overlays {
+    views
+        .of(ui)
+        .and_then(|(camera, ..)| sets.get(camera).ok())
+        .map_or_else(|| any.copied().unwrap_or_default(), |s| s.0)
+}
+
+/// Each rail's Overlays badge counts what is on in its view (neutral
+/// `text_2`, hidden at none); its menu's checkboxes show it.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn overlay_states(
     overlays: Option<Res<Overlays>>,
-    mut badges: Query<(&mut Node, &Children), With<OverlaysBadge>>,
+    views: ViewCameras,
+    sets: Query<&OverlaySet>,
+    changed: Query<(), Changed<OverlaySet>>,
+    mut badges: Query<(Entity, &mut Node, &Children), With<OverlaysBadge>>,
     mut texts: Query<&mut Text>,
     items: Query<(Entity, &OverlayItem, Has<Checked>)>,
     added: Query<(), Added<OverlayItem>>,
     mut commands: Commands,
 ) {
-    let Some(overlays) = overlays else { return };
-    if !overlays.is_changed() && added.is_empty() {
+    let any = overlays.as_deref();
+    if !overlays.as_ref().is_some_and(|o| o.is_changed()) && changed.is_empty() && added.is_empty()
+    {
         return;
     }
-    let count = overlays.count();
-    for (mut node, children) in &mut badges {
+    for (e, mut node, children) in &mut badges {
+        let count = view_overlays(&views, &sets, any, e).count();
         set_shown(&mut node, count > 0);
         for &c in children {
             if let Ok(mut t) = texts.get_mut(c) {
@@ -361,6 +379,7 @@ pub(crate) fn overlay_states(
         }
     }
     for (e, item, checked) in &items {
-        mark::<Checked>(&mut commands, e, checked, overlays.is_on(item.0));
+        let on = view_overlays(&views, &sets, any, e).is_on(item.0);
+        mark::<Checked>(&mut commands, e, checked, on);
     }
 }

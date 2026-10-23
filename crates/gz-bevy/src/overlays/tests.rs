@@ -3,16 +3,15 @@
 //! wireframe fallback.
 
 use super::collisions::{collision_visual, CollisionOverlay, COLLISION_RGBA};
-use super::draw::{com_radius, equivalent_box, symmetric_eigen, OverlayGizmos};
+use super::draw::{com_radius, equivalent_box, symmetric_eigen, FrameGizmos};
 use super::extras::SdfExtras;
-use super::wireframe::{edge_lines, native_wireframes, WireLines, Wired};
+use super::wireframe::{edge_lines, WireLines, Wired};
 use super::*;
 use crate::connection::{GzCommand, GzServiceReply, GzStatus};
 use crate::material::GzMaterials;
 use crate::spawn::{GzEntity, GzIndex, GzLoads, GzWorldRoot};
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::pbr::wireframe::Wireframe;
 use gz_core::msgs;
 use gz_core::scene::{GeometryDesc, NodeKind, Pose, SceneDesc};
 use gz_core::sdf::Inertial;
@@ -195,12 +194,12 @@ fn commands_toggle_and_set_and_the_grid_follows_the_scene() {
         .write_message(OverlayCommand::toggle(Overlay::Frames));
     app.update();
     assert!(!overlays(&app).frames);
-    // The grid is GzGrid's, both ways.
+    // G turns the grid on; the scene's flag sets it again.
     app.world_mut()
         .write_message(OverlayCommand::toggle(Overlay::Grid));
     app.update();
-    assert!(app.world().resource::<GzGrid>().visible);
     assert!(overlays(&app).grid);
+    assert!(!app.world().resource::<GzGrid>().visible, "the scene's");
     app.world_mut().resource_mut::<GzGrid>().visible = false;
     app.update();
     assert!(!overlays(&app).grid);
@@ -455,7 +454,7 @@ fn gizmo_overlays_draw_without_panicking() {
     reply(&mut app, "/world/w/generate_world_sdf", SDF);
     app.update();
     let store = app.world().resource::<GizmoConfigStore>();
-    let (config, _) = store.config::<OverlayGizmos>();
+    let (config, _) = store.config::<FrameGizmos>();
     assert_eq!(config.depth_bias, -1.0);
 }
 
@@ -561,9 +560,8 @@ fn edge_lines_list_each_edge_once() {
 }
 
 #[test]
-fn without_line_polygons_wireframes_are_line_meshes() {
+fn wireframes_are_line_meshes_on_their_layer() {
     let mut app = app();
-    assert!(!native_wireframes(None));
     let (base, _) = robot(&mut app);
     let mesh = app
         .world_mut()
@@ -605,7 +603,17 @@ fn without_line_polygons_wireframes_are_line_meshes() {
         .unwrap();
     assert_eq!(m.depth_bias, 0.0);
     assert!(app.world().get::<Wired>(visual).is_some());
-    assert!(app.world().get::<Wireframe>(visual).is_none());
+    // Only the views showing it see it.
+    let world = app.world_mut();
+    let layers = world
+        .query_filtered::<&bevy::camera::visibility::RenderLayers, With<WireLines>>()
+        .single(world)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        layers,
+        bevy::camera::visibility::RenderLayers::layer(Overlay::Wireframe.layer())
+    );
     assert!(app.world().get::<Wired>(other).is_none());
     // A mesh that arrives while it's on gets one too, and shares the
     // cached lines.
@@ -621,4 +629,53 @@ fn without_line_polygons_wireframes_are_line_meshes() {
     app.update();
     assert!(lines(&mut app).is_empty());
     assert!(app.world().get::<Wired>(visual).is_none());
+}
+
+#[test]
+fn each_view_has_its_own_overlays_on_its_own_layers() {
+    use super::{view_layers, OverlaySet};
+    use crate::view::{ViewCamera, ViewId};
+    use bevy::camera::visibility::RenderLayers;
+    let mut app = app();
+    app.add_systems(Update, view_layers.after(apply_overlay_commands));
+    let view = |app: &mut App, id: u8| {
+        app.world_mut()
+            .spawn((
+                Camera::default(),
+                ViewCamera::new(Vec3::ZERO, crate::camera::perspective()),
+                ViewId(id),
+                ViewId(id).layers(),
+                OverlaySet::default(),
+            ))
+            .id()
+    };
+    let (a, b) = (view(&mut app, 0), view(&mut app, 1));
+    let set = |app: &App, e: Entity| app.world().get::<OverlaySet>(e).unwrap().0;
+    let layers = |app: &App, e: Entity| app.world().get::<RenderLayers>(e).unwrap().clone();
+    // One view's: the other's stays, and what any shows is drawn.
+    app.world_mut()
+        .write_message(OverlayCommand::set(Overlay::Joints, true).in_view(b));
+    app.update();
+    assert!(set(&app, b).joints && !set(&app, a).joints);
+    assert!(overlays(&app).joints);
+    assert_eq!(
+        layers(&app, b),
+        ViewId(1).layers().with(Overlay::Joints.layer())
+    );
+    assert_eq!(layers(&app, a), ViewId(0).layers());
+    // Every view's: over from what any shows (on somewhere: off all).
+    app.world_mut()
+        .write_message(OverlayCommand::toggle(Overlay::Joints));
+    app.update();
+    assert!(!set(&app, a).joints && !set(&app, b).joints && !overlays(&app).joints);
+    // The scene's grid flag turns every view's grid.
+    app.world_mut().resource_mut::<GzGrid>().visible = true;
+    app.update();
+    assert!(set(&app, a).grid && set(&app, b).grid);
+    // A view that isn't showing counts for nothing drawn.
+    app.world_mut()
+        .write_message(OverlayCommand::set(Overlay::Frames, true).in_view(b));
+    app.world_mut().get_mut::<Camera>(b).unwrap().is_active = false;
+    app.update();
+    assert!(set(&app, b).frames && !overlays(&app).frames);
 }

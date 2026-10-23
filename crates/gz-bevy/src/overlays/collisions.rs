@@ -134,7 +134,29 @@ pub fn spawn_collisions(
     }
 }
 
-/// Shows the collision meshes while the overlay is on.
+/// Puts the collision meshes on the collisions' layer, as they come (a
+/// mesh file instances late): only the views showing collisions see them.
+pub fn layer_collisions(
+    added: Query<Entity, Added<Mesh3d>>,
+    parents: Query<&ChildOf>,
+    roots: Query<(), With<CollisionOverlay>>,
+    mut commands: Commands,
+) {
+    for e in &added {
+        if std::iter::once(e)
+            .chain(parents.iter_ancestors(e))
+            .any(|a| roots.contains(a))
+        {
+            commands
+                .entity(e)
+                .insert(bevy::camera::visibility::RenderLayers::layer(
+                    super::Overlay::Collisions.layer(),
+                ));
+        }
+    }
+}
+
+/// Shows the collision meshes while any view shows them.
 pub fn show_collisions(
     overlays: Res<Overlays>,
     mut roots: Query<&mut Visibility, With<CollisionOverlay>>,

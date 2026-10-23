@@ -469,6 +469,7 @@ type ViewState = (
     Option<&'static ViewCamera>,
     Option<&'static ViewId>,
     Option<&'static ViewPlacement>,
+    Option<&'static crate::overlays::OverlaySet>,
 );
 
 /// Applies a changed [`GzEnvironment`]. The camera is respawned, keeping its
@@ -525,7 +526,7 @@ pub fn apply_environment(
         loads: &mut loads,
         pending: &mut pending,
     };
-    for (old, transform, projection, view, id, placement) in &cameras {
+    for (old, transform, projection, view, id, placement, overlays) in &cameras {
         commands.entity(old).despawn();
         // Keep the view: pose, projection, controller state, which view it
         // is and where it shows.
@@ -537,6 +538,7 @@ pub fn apply_environment(
                 view: view.cloned(),
                 id: id.copied(),
                 placement: placement.cloned(),
+                overlays: overlays.copied(),
             },
         );
     }
@@ -550,6 +552,7 @@ pub struct Placed {
     pub view: Option<ViewCamera>,
     pub id: Option<ViewId>,
     pub placement: Option<ViewPlacement>,
+    pub overlays: Option<crate::overlays::OverlaySet>,
 }
 
 /// What dresses a view camera for the environment.
@@ -581,6 +584,9 @@ impl Dress<'_> {
         }
         if let Some(placement) = state.placement {
             cam.insert(placement);
+        }
+        if let Some(overlays) = state.overlays {
+            cam.insert(overlays);
         }
         if let Some(fog) = &self.env.fog {
             cam.insert(distance_fog(fog));
@@ -621,7 +627,7 @@ impl Dress<'_> {
 /// starts as a copy of the first view, dressed for the environment, and
 /// placed nowhere until the shell places it. Views the layout drops keep
 /// their cameras (off), so they come back as they were.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn spawn_views(
     slots: Option<Res<ViewSlots>>,
     env: Res<GzEnvironment>,
@@ -631,7 +637,16 @@ pub fn spawn_views(
     mut loads: ResMut<GzLoads>,
     mut pending: ResMut<PendingSky>,
     mut studio: ResMut<StudioCubemap>,
-    cameras: Query<(&Transform, &Projection, Option<&ViewCamera>, &ViewId), With<MainCamera>>,
+    cameras: Query<
+        (
+            &Transform,
+            &Projection,
+            Option<&ViewCamera>,
+            &ViewId,
+            Option<&crate::overlays::OverlaySet>,
+        ),
+        With<MainCamera>,
+    >,
     mut commands: Commands,
 ) {
     let Some(slots) = slots else { return };
@@ -641,7 +656,7 @@ pub fn spawn_views(
         return;
     }
     let have: Vec<ViewId> = cameras.iter().map(|c| *c.3).collect();
-    let Some((t, p, view, _)) = cameras.iter().min_by_key(|c| *c.3) else {
+    let Some((t, p, view, _, overlays)) = cameras.iter().min_by_key(|c| *c.3) else {
         return;
     };
     let missing: Vec<ViewId> = (0..want)
@@ -671,6 +686,7 @@ pub fn spawn_views(
                 view: view.map(ViewCamera::copied),
                 id: Some(id),
                 placement: Some(ViewPlacement::default()),
+                overlays: overlays.copied(),
             },
         );
     }
@@ -865,8 +881,14 @@ pub fn cube_direction(face: usize, s: f32, t: f32) -> Vec3 {
 pub struct GridGizmos;
 
 /// Gazebo's default grid: 20 × 20 cells of 1 m on the ground plane.
-pub fn draw_grid(grid: Res<GzGrid>, mut gizmos: Gizmos<GridGizmos>) {
-    if !grid.visible {
+/// Drawn while the scene asks for it or any view shows it (each view sees
+/// it on its grid layer while it is on there).
+pub fn draw_grid(
+    grid: Res<GzGrid>,
+    overlays: Option<Res<crate::overlays::Overlays>>,
+    mut gizmos: Gizmos<GridGizmos>,
+) {
+    if !grid.visible && !overlays.is_some_and(|o| o.grid) {
         return;
     }
     gizmos.grid(

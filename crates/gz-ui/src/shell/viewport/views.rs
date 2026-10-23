@@ -937,10 +937,7 @@ pub(crate) fn apply_layout_commands(
     buttons: Res<ButtonInput<MouseButton>>,
     mut layout: ResMut<ViewLayout>,
     mut routing: ResMut<ViewRouting>,
-    mut cameras: Query<
-        (&mut ViewId, &mut bevy::camera::visibility::RenderLayers),
-        With<MainCamera>,
-    >,
+    mut cameras: Query<&mut ViewId, With<MainCamera>>,
 ) {
     for cmd in reader.read() {
         let key = routing.key_view().unwrap_or(ViewId(0));
@@ -970,14 +967,14 @@ pub(crate) fn apply_layout_commands(
                     continue;
                 }
                 let closed = view.unwrap_or(key).0.min(count - 1);
-                for (mut id, mut layers) in &mut cameras {
+                // Their layers follow (`overlays::view_layers`).
+                for mut id in &mut cameras {
                     let now = match id.0 {
                         n if n == closed => count - 1,
                         n if n > closed && n < count => n - 1,
                         _ => continue,
                     };
                     *id = ViewId(now);
-                    *layers = id.layers();
                 }
                 let p = layout.preset.without_one();
                 layout.set_preset(p);

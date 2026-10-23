@@ -1,19 +1,17 @@
 //! The Wireframe overlay: every visual's triangle edges, drawn over it.
 //!
-//! Bevy's `WireframePlugin` draws them with line polygons, which only
-//! native GPUs have (`POLYGON_MODE_LINE`; WebGPU and WebGL2 don't). Where
-//! the render device has them the visual meshes get [`Wireframe`];
-//! elsewhere (the browser) each gets a child line mesh built from its
-//! triangles ([`edge_lines`]), cached per mesh (DECISIONS.md D-62).
-//! Overlay geometry (collision shapes) is left alone.
+//! Each visual mesh gets a child line mesh built from its triangles
+//! ([`edge_lines`]), cached per mesh, on the wireframe's render layer, so
+//! only the views showing the overlay draw it (DECISIONS.md D-62, D-93).
+//! Not Bevy's `WireframePlugin`: it draws a mesh's wireframe in every view
+//! that sees the mesh, and needs line polygons, which the browser's GPUs
+//! don't have. Overlay geometry (collision shapes) is left alone.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
-use bevy::pbr::wireframe::{Wireframe, WireframeColor};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
-use bevy::render::renderer::RenderDevice;
-use bevy::render::settings::WgpuFeatures;
 
 use super::collisions::CollisionOverlay;
 use super::Overlays;
@@ -22,7 +20,7 @@ use crate::spawn::GzWorldRoot;
 /// The lines' colour: dark, as the edges of a lit surface read.
 pub const WIRE_COLOR: Color = Color::srgba(0.05, 0.05, 0.08, 0.85);
 
-/// A line mesh child drawing its parent's edges (the fallback).
+/// A line mesh child drawing its parent's edges.
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct WireLines;
 
@@ -30,22 +28,14 @@ pub struct WireLines;
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct Wired;
 
-/// The fallback's line meshes by source mesh, and its material.
+/// The line meshes by source mesh, and their material.
 #[derive(Resource, Default)]
 pub struct WireframeLines {
     lines: HashMap<AssetId<Mesh>, Handle<Mesh>>,
     material: Option<Handle<StandardMaterial>>,
 }
 
-/// Whether the GPU draws line polygons (Bevy's `WireframePlugin` loads).
-pub fn native_wireframes(device: Option<&RenderDevice>) -> bool {
-    device.is_some_and(|d| {
-        d.features()
-            .contains(WgpuFeatures::POLYGON_MODE_LINE | WgpuFeatures::IMMEDIATES)
-    })
-}
-
-/// What isn't a visual mesh: overlay geometry, the fallback's lines and
+/// What isn't a visual mesh: overlay geometry, the wireframe's lines and
 /// the selection outline's mask clones.
 type NotVisual = Or<(
     With<CollisionOverlay>,
@@ -54,7 +44,7 @@ type NotVisual = Or<(
 )>;
 
 /// The scene's visual meshes: under the world root, not part of an
-/// overlay or a fallback line mesh.
+/// overlay or a wireframe line mesh.
 fn is_visual(
     e: Entity,
     parents: &Query<&ChildOf>,
@@ -75,12 +65,11 @@ fn is_visual(
     false
 }
 
-/// Turns wireframes on and off with the overlay, and on for meshes that
-/// arrive while it is on (mesh files instance late).
+/// Turns wireframes on and off with the overlay (in any view), and on for
+/// meshes that arrive while it is on (mesh files instance late).
 #[allow(clippy::too_many_arguments)]
 pub fn apply_wireframe(
     overlays: Res<Overlays>,
-    device: Option<Res<RenderDevice>>,
     meshes: Query<(Entity, Has<Wired>), With<Mesh3d>>,
     added: Query<Entity, Added<Mesh3d>>,
     parents: Query<&ChildOf>,
@@ -89,20 +78,17 @@ pub fn apply_wireframe(
     lines: Query<Entity, With<WireLines>>,
     mut commands: Commands,
 ) {
-    let native = native_wireframes(device.as_deref());
     if overlays.is_changed() {
         if overlays.wireframe {
             for (e, wired) in &meshes {
                 if !wired && is_visual(e, &parents, &roots, &skip) {
-                    wire(&mut commands, e, native);
+                    commands.entity(e).insert(Wired);
                 }
             }
         } else {
             for (e, wired) in &meshes {
                 if wired {
-                    commands
-                        .entity(e)
-                        .remove::<(Wired, Wireframe, WireframeColor)>();
+                    commands.entity(e).remove::<Wired>();
                 }
             }
             for e in &lines {
@@ -112,24 +98,14 @@ pub fn apply_wireframe(
     } else if overlays.wireframe {
         for e in &added {
             if is_visual(e, &parents, &roots, &skip) {
-                wire(&mut commands, e, native);
+                commands.entity(e).insert(Wired);
             }
         }
     }
 }
 
-fn wire(commands: &mut Commands, e: Entity, native: bool) {
-    let mut c = commands.entity(e);
-    c.insert(Wired);
-    if native {
-        c.insert((Wireframe, WireframeColor { color: WIRE_COLOR }));
-    }
-}
-
-/// The fallback: a line mesh under each wired visual without line
-/// polygons, once its mesh has loaded.
+/// A line mesh under each wired visual, once its mesh has loaded.
 pub fn build_lines(
-    device: Option<Res<RenderDevice>>,
     wired: Query<(Entity, &Mesh3d, Option<&Children>), With<Wired>>,
     has_lines: Query<(), With<WireLines>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -137,9 +113,6 @@ pub fn build_lines(
     mut cache: ResMut<WireframeLines>,
     mut commands: Commands,
 ) {
-    if native_wireframes(device.as_deref()) {
-        return;
-    }
     for (e, mesh, children) in &wired {
         if children.is_some_and(|c| c.iter().any(|c| has_lines.contains(c))) {
             continue;
@@ -177,6 +150,7 @@ pub fn build_lines(
             MeshMaterial3d(material),
             Transform::IDENTITY,
             bevy::light::NotShadowCaster,
+            RenderLayers::layer(super::Overlay::Wireframe.layer()),
             ChildOf(e),
         ));
     }

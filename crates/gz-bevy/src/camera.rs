@@ -50,7 +50,11 @@ pub fn spawn_camera(mut commands: Commands, config: Res<GzConfig>, target: Res<G
     );
     if config.interactive() {
         let first = view::ViewId(0);
-        commands.entity(camera).insert((first, first.layers()));
+        commands.entity(camera).insert((
+            first,
+            first.layers(),
+            crate::overlays::OverlaySet::default(),
+        ));
     }
 }
 

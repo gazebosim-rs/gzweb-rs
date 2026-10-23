@@ -7,7 +7,6 @@ use super::input::{Platform, Scope};
 use super::*;
 use crate::camera::perspective as gz_perspective;
 use crate::connection::{GzCommand, GzStatus, SimStats};
-use crate::render::GzGrid;
 use crate::UiMode;
 use bevy::camera::visibility::SetViewVisibility;
 use bevy::camera::{RenderTarget, RenderTargetInfo};
@@ -1185,9 +1184,9 @@ fn ctrl_right_steps_a_paused_sim() {
 #[test]
 fn viewport_keys_drive_the_view_and_the_grid() {
     let mut r = rig(default_view());
-    assert!(!r.app.world().resource::<GzGrid>().visible);
+    assert!(!r.app.world().resource::<crate::overlays::Overlays>().grid);
     r.chord(&[KeyCode::KeyG]);
-    assert!(r.app.world().resource::<GzGrid>().visible);
+    assert!(r.app.world().resource::<crate::overlays::Overlays>().grid);
 
     r.chord(&[KeyCode::Digit5]);
     assert!(r.ortho().is_some());
@@ -1932,7 +1931,7 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
     let mut r = rig(default_view());
     routing(&mut r, false, false);
     r.chord(&[KeyCode::KeyG]);
-    assert!(!r.app.world().resource::<GzGrid>().visible);
+    assert!(!r.app.world().resource::<crate::overlays::Overlays>().grid);
     // Fly keys are the view's too.
     r.key(KeyCode::KeyW, ButtonState::Pressed);
     r.frames(3);
@@ -1945,7 +1944,7 @@ fn viewport_keys_need_the_view_but_global_keys_do_not() {
     assert_eq!(r.sent(), [GzCommand::Play]);
     routing(&mut r, false, true);
     r.chord(&[KeyCode::KeyG]);
-    assert!(r.app.world().resource::<GzGrid>().visible);
+    assert!(r.app.world().resource::<crate::overlays::Overlays>().grid);
     let all = [Scope::Global, Scope::Viewport, Scope::Minimal];
     let off = controls::ViewRouting {
         pointer: true,

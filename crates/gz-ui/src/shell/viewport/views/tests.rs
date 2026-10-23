@@ -617,3 +617,71 @@ fn an_inactive_view_shows_its_face_marker_until_hovered() {
     let n = nodes(&mut app);
     assert_eq!(look(&mut app, n[0].1), (true, true, false));
 }
+
+#[test]
+fn each_rail_turns_its_own_views_overlays_and_apply_to_all_copies_them() {
+    use crate::shell::viewport::rail::menus::{ApplyToAll, OverlayItem};
+    use bevy::ui::InteractionDisabled;
+    use gz_bevy::overlays::{Overlay, OverlaySet};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let in_view = |app: &mut App, e: Entity| {
+        let world = app.world();
+        let mut at = e;
+        while let Some(p) = world.get::<ChildOf>(at) {
+            at = p.parent();
+            if let Some(v) = n.iter().find(|v| v.1 == at) {
+                return Some(v.0);
+            }
+        }
+        None
+    };
+    let world = app.world_mut();
+    let items: Vec<(Entity, Overlay)> = world
+        .query::<(Entity, &OverlayItem)>()
+        .iter(world)
+        .map(|(e, i)| (e, i.0))
+        .collect();
+    let joints1 = items
+        .iter()
+        .find(|(e, o)| *o == Overlay::Joints && in_view(&mut app, *e) == Some(ViewId(1)))
+        .unwrap()
+        .0;
+    app.world_mut().trigger(Activate { entity: joints1 });
+    frames(&mut app, 3);
+    let set = |app: &mut App, id| {
+        let e = camera(app, id);
+        app.world().get::<OverlaySet>(e).unwrap().0
+    };
+    assert!(set(&mut app, 1).joints && !set(&mut app, 0).joints);
+    // Its view's checkbox is checked, the other's not.
+    let checked = |app: &mut App, e: Entity| app.world().get::<bevy::ui::Checked>(e).is_some();
+    let joints0 = items
+        .iter()
+        .find(|(e, o)| *o == Overlay::Joints && in_view(&mut app, *e) == Some(ViewId(0)))
+        .unwrap()
+        .0;
+    assert!(checked(&mut app, joints1) && !checked(&mut app, joints0));
+    // Apply to all views from view 1: view 0 shows joints too.
+    let world = app.world_mut();
+    let applies: Vec<Entity> = world
+        .query_filtered::<Entity, With<ApplyToAll>>()
+        .iter(world)
+        .collect();
+    let apply1 = *applies
+        .iter()
+        .find(|e| in_view(&mut app, **e) == Some(ViewId(1)))
+        .unwrap();
+    assert!(app.world().get::<InteractionDisabled>(apply1).is_none());
+    app.world_mut().trigger(Activate { entity: apply1 });
+    frames(&mut app, 3);
+    assert!(set(&mut app, 0).joints);
+    // One view: nothing to apply to.
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    let world = app.world_mut();
+    let disabled = world
+        .query_filtered::<Has<InteractionDisabled>, With<ApplyToAll>>()
+        .iter(world)
+        .all(|d| d);
+    assert!(disabled);
+}
