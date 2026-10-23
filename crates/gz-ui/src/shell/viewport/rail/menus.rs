@@ -195,14 +195,19 @@ pub(crate) fn on_link_cameras(
     }
 }
 
-/// Link cameras shows whether views are linked, and needs several.
+/// Link cameras shows whether views are linked, and needs several: back
+/// to one view, linking goes off (a later split starts unlinked).
 pub(crate) fn link_cameras_state(
     layout: Res<ViewLayout>,
-    linked: Option<Res<gz_bevy::view::LinkedViews>>,
+    linked: Option<ResMut<gz_bevy::view::LinkedViews>>,
     items: Query<(Entity, Has<InteractionDisabled>, Has<bevy::ui::Checked>), With<LinkCameras>>,
     mut commands: Commands,
 ) {
     let several = layout.ids().len() > 1;
+    let mut linked = linked;
+    if let Some(l) = linked.as_mut().filter(|l| l.0 && !several) {
+        l.0 = false;
+    }
     let on = linked.is_some_and(|l| l.0);
     for (e, disabled, checked) in &items {
         if several == disabled {

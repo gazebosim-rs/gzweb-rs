@@ -679,3 +679,41 @@ fn each_view_has_its_own_overlays_on_its_own_layers() {
     app.update();
     assert!(set(&app, b).frames && !overlays(&app).frames);
 }
+
+#[test]
+fn collision_meshes_and_overlay_gizmos_draw_on_their_layers() {
+    use bevy::camera::visibility::RenderLayers;
+    use bevy::ecs::system::RunSystemOnce;
+    let mut app = app();
+    app.world_mut()
+        .run_system_once(overlay_gizmo_layers)
+        .unwrap();
+    let store = app.world().resource::<GizmoConfigStore>();
+    assert_eq!(
+        store.config::<FrameGizmos>().0.render_layers,
+        RenderLayers::layer(Overlay::Frames.layer())
+    );
+    // A mesh under a collision root, however late it arrives.
+    let root = app
+        .world_mut()
+        .spawn((CollisionOverlay, Transform::default()))
+        .id();
+    let mesh = app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(Cuboid::default());
+    let part = app
+        .world_mut()
+        .spawn(Transform::default())
+        .insert(ChildOf(root))
+        .id();
+    let shape = app
+        .world_mut()
+        .spawn((Mesh3d(mesh), Transform::default(), ChildOf(part)))
+        .id();
+    app.update();
+    assert_eq!(
+        app.world().get::<RenderLayers>(shape),
+        Some(&RenderLayers::layer(Overlay::Collisions.layer()))
+    );
+}

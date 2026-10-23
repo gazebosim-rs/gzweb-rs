@@ -712,3 +712,79 @@ fn link_cameras_toggles_linking_with_several_views() {
     frames(&mut app, 2);
     assert!(!app.world().resource::<LinkedViews>().0);
 }
+
+#[test]
+fn a_hidden_rail_comes_back_with_its_widgets_looks_and_its_menus_closed() {
+    use crate::shell::viewport::view_cube::scene::CubeScene;
+    use crate::theme::Opacity;
+    use crate::widgets::fade::PreFade;
+    use bevy::ui_widgets::{MenuAction, MenuEvent};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        Duration::from_millis(60),
+    ));
+    frames(&mut app, 4);
+    let n = nodes(&mut app);
+    // Every entity under view 1's node.
+    let under = |app: &mut App, view: Entity| {
+        let world = app.world();
+        crate::test_support::descendants(world, view)
+    };
+    // Hidden: nothing under it keeps a fade's opacity, and its cube
+    // camera is off.
+    let world = app.world_mut();
+    let rail = world
+        .query_filtered::<(Entity, &ChildOf), With<crate::shell::viewport::rail::Rail>>()
+        .iter(world)
+        .find(|(_, p)| p.parent() == n[1].1)
+        .map(|(e, _)| e)
+        .unwrap();
+    let in_rail = under(&mut app, rail);
+    let held = in_rail
+        .iter()
+        .filter(|e| app.world().get::<PreFade>(**e).is_some())
+        .count();
+    assert_eq!(held, 0, "the marker keeps its fade, the rail doesn't");
+    let world = app.world_mut();
+    let scene = world
+        .query::<(&ChildOf, &CubeScene)>()
+        .iter(world)
+        .find(|(p, _)| p.parent() == n[1].1)
+        .map(|(_, s)| s.camera)
+        .unwrap();
+    assert!(!app.world().get::<Camera>(scene).unwrap().is_active);
+    // A widget's look changing meanwhile is what comes back.
+    let item = *in_rail
+        .iter()
+        .find(|e| app.world().get::<Opacity>(**e).is_some())
+        .unwrap();
+    app.world_mut().get_mut::<Opacity>(item).unwrap().0 = 0.4;
+    let right = n[1].2 .0 + n[1].2 .1 / 2.0;
+    cursor(&mut app, right);
+    frames(&mut app, 3);
+    assert_eq!(app.world().get::<Opacity>(item).unwrap().0, 0.4);
+    assert!(app.world().get::<Camera>(scene).unwrap().is_active);
+    // Going inactive closes its rail's menus.
+    #[derive(Resource, Default)]
+    struct Closed(Vec<Entity>);
+    app.init_resource::<Closed>();
+    app.add_observer(|ev: On<MenuEvent>, mut closed: ResMut<Closed>| {
+        if matches!(ev.event().action, MenuAction::CloseAll) {
+            closed.0.push(ev.event().source);
+        }
+    });
+    cursor(&mut app, n[0].2 .0 + Vec2::new(5.0, 300.0));
+    frames(&mut app, 3);
+    let closed = app.world().resource::<Closed>().0.clone();
+    assert!(!closed.is_empty());
+    assert!(closed.iter().all(|m| under(&mut app, n[1].1).contains(m)));
+}
+
+#[test]
+fn back_to_one_view_unlinks_the_cameras() {
+    use gz_bevy::view::LinkedViews;
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.world_mut().resource_mut::<LinkedViews>().0 = true;
+    command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
+    assert!(!app.world().resource::<LinkedViews>().0);
+}

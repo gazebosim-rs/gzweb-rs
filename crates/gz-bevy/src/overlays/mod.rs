@@ -2,7 +2,7 @@
 //! grid, collisions, inertia, centre of mass, joints, frames and
 //! wireframe, as the Gazebo GUI draws them (DECISIONS.md D-62).
 //!
-//! Each view has its own set ([`Overlays`] on its camera; spec §3.4,
+//! Each view has its own set ([`OverlaySet`] on its camera; spec §3.4,
 //! DECISIONS.md D-93); [`OverlayCommand`] changes a view's, or every
 //! view's, from the viewport keys (G, C, I, J; [`crate::view::controls`])
 //! and the full UI's Overlays menu alike. The [`Overlays`] resource is
@@ -354,7 +354,6 @@ impl Plugin for OverlayRenderPlugin {
                     extras::request_extras,
                     collisions::spawn_collisions,
                     collisions::show_collisions,
-                    collisions::layer_collisions,
                 )
                     .chain()
                     .after(crate::spawn::apply_scene),
@@ -362,6 +361,13 @@ impl Plugin for OverlayRenderPlugin {
             .add_systems(
                 Update,
                 (wireframe::apply_wireframe, wireframe::build_lines).chain(),
+            )
+            // Mesh files instance after Update: layered before the views
+            // check what they see, so they never show in every view.
+            .add_systems(
+                PostUpdate,
+                collisions::layer_collisions
+                    .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
             )
             .add_systems(
                 PostUpdate,

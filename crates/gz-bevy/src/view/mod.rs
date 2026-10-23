@@ -1171,8 +1171,21 @@ impl Link {
     }
 
     /// Moves a linked view: its pivot and camera by the shift, then its
-    /// reach by the scale about the pivot.
+    /// reach by the scale about the pivot. A view animating towards a pose
+    /// of its own (a snap) has that pose moved too, so the animation keeps
+    /// the carry; one animating as a linked move itself (a focus every
+    /// view got) is left to land where it was sent.
     fn carry(self, view: &mut ViewCamera, t: &mut Transform, p: &mut Projection) {
+        if let Some(anim) = view.animation.as_mut() {
+            if anim.link {
+                return;
+            }
+            for pose in [&mut anim.from, &mut anim.to] {
+                pose.pivot += self.shift;
+                pose.offset *= self.scale;
+                pose.ortho_height *= self.scale;
+            }
+        }
         t.translation += self.shift;
         view.pivot += self.shift;
         if (self.scale - 1.0).abs() > f32::EPSILON {
@@ -1186,6 +1199,15 @@ impl Link {
                 }
             }
         }
+    }
+}
+
+/// [`reach`] for a camera at `at` (orthographic `height`, if it is) about
+/// `pivot`.
+fn reach_from(at: Vec3, height: Option<f32>, half_tan: f32, pivot: Vec3) -> f32 {
+    match height {
+        Some(h) => h / (2.0 * half_tan),
+        None => (at - pivot).length(),
     }
 }
 
@@ -1228,25 +1250,37 @@ pub fn apply_view_commands(
                 continue;
             };
             let f = frame(camera);
-            let before = (t.translation, reach(&view, &t, &p));
+            let carried = matches!(
+                cmd.op,
+                ViewOp::Pan(_) | ViewOp::Fly { .. } | ViewOp::Zoom(_) | ViewOp::ZoomAt { .. }
+            );
+            // These land a running animation first (`apply`): measure from
+            // where it lands, so its jump isn't carried.
+            if linked && carried {
+                finish(&mut view, &mut t, &mut p);
+            }
+            let before = (view.pivot, t.translation, ortho_height(&p));
             apply(cmd.op, &mut view, &mut t, &mut p, &f, &mut scene);
             fit_clip(&mut view, &mut t, &mut p, &f);
             if !linked {
                 continue;
             }
-            let after = (t.translation, reach(&view, &t, &p));
             match cmd.op {
-                ViewOp::Pan(_) | ViewOp::Fly { .. } => links.push((
-                    cmd.view,
-                    Link {
-                        shift: after.0 - before.0,
-                        scale: 1.0,
-                    },
-                )),
-                ViewOp::Zoom(_) | ViewOp::ZoomAt { .. } => links.push((
-                    cmd.view,
-                    Link::between((Vec3::ZERO, Vec3::ZERO), (before.1, after.1)),
-                )),
+                ViewOp::Pan(_) | ViewOp::Fly { .. } => {
+                    let r0 = reach_from(before.1, before.2, view.half_tan(), before.0);
+                    links.push((
+                        cmd.view,
+                        Link::between((before.0, view.pivot), (r0, reach(&view, &t, &p))),
+                    ));
+                }
+                // A zoom about a point (the wheel's): the pivot moving to
+                // the point is no move of the view, so only the zoom
+                // carries, measured about the new pivot.
+                ViewOp::Zoom(_) | ViewOp::ZoomAt { .. } => {
+                    let r0 = reach_from(before.1, before.2, view.half_tan(), view.pivot);
+                    let r1 = reach(&view, &t, &p);
+                    links.push((cmd.view, Link::between((Vec3::ZERO, Vec3::ZERO), (r0, r1))));
+                }
                 ViewOp::Focus { .. } | ViewOp::Home => {
                     if let Some(a) = view.animation.as_mut() {
                         a.link = true;

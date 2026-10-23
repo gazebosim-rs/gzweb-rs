@@ -850,7 +850,7 @@ pub(crate) fn face_marker(theme: &Theme) -> impl Bundle {
 /// (§3.4 "Inactive view"), easing between the two. The cube and rail
 /// fade (the target chip with the rail) and go once hidden, so they take
 /// no pointer; the marker fades the other way, to 80%.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn reveal_views(
     time: Res<Time<Real>>,
     routing: Res<ViewRouting>,
@@ -864,6 +864,12 @@ pub(crate) fn reveal_views(
             With<FaceMarker>,
         )>,
     >,
+    (menus, parents, scenes, mut cameras): (
+        Query<Entity, With<crate::widgets::menu::Menu>>,
+        Query<&ChildOf>,
+        Query<&super::view_cube::scene::CubeScene>,
+        Query<&mut Camera>,
+    ),
     mut fades: FadeQueries,
     mut commands: Commands,
 ) {
@@ -882,15 +888,37 @@ pub(crate) fn reveal_views(
         if now == reveal.0 && !added.is_added() {
             continue;
         }
+        // Going inactive: its rail's menus close (one opened from the keys
+        // would outlive the rail).
+        if now < reveal.0 && reveal.0 >= 1.0 {
+            for menu in &menus {
+                if parents.iter_ancestors(menu).any(|a| children.contains(&a)) {
+                    commands.trigger(bevy::ui_widgets::MenuEvent {
+                        source: menu,
+                        action: bevy::ui_widgets::MenuAction::CloseAll,
+                    });
+                }
+            }
+        }
         reveal.0 = now;
         for &c in children {
+            // A hidden cube renders nothing.
+            if let Ok(scene) = scenes.get(c) {
+                if let Ok(mut camera) = cameras.get_mut(scene.camera) {
+                    if camera.is_active != (now > 0.0) {
+                        camera.is_active = now > 0.0;
+                    }
+                }
+            }
             let Ok((mut n, marker)) = controls.get_mut(c) else {
                 continue;
             };
+            // Hidden, the controls have their own opacities back, so a
+            // widget's look changing meanwhile is what it comes back with.
             let (shown, alpha) = if marker {
                 (now < 1.0, Some(MARKER_OPACITY * (1.0 - now)))
             } else {
-                (now > 0.0, (now < 1.0).then_some(now))
+                (now > 0.0, (now > 0.0 && now < 1.0).then_some(now))
             };
             crate::widgets::layout::set_shown(&mut n, shown);
             fade_tree(&mut commands, &mut fades, c, alpha);
