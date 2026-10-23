@@ -24,6 +24,7 @@
 //!   tree filtered or with every row open (DECISIONS.md D-70).
 //! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
 //!   full UI's viewport in that layout (DECISIONS.md D-90).
+//! - `--no-vsync` presents frames as fast as they render, to measure.
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
 //! plus `ui=full|minimal|gallery` (default minimal), `theme=`, `hud=0` and
@@ -52,6 +53,8 @@ struct Args {
     scene: Option<gz_ui::panels::SceneTreeStart>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
+    /// `--no-vsync`: frames as fast as they render (measuring).
+    no_vsync: bool,
 }
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
@@ -61,7 +64,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] \
-                     [--layout single|two-columns|two-rows|one-plus-two|quad]\n\
+                     [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
                      --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
@@ -174,6 +177,7 @@ fn parse_args(
     let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut timeout_ms = 60000.0;
     let mut layout = None;
+    let mut no_vsync = false;
 
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -234,6 +238,7 @@ fn parse_args(
             ),
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
+            "--no-vsync" => no_vsync = true,
             "--layout" => {
                 layout = Some(value()?.parse().map_err(|e| format!("--layout: {e}"))?);
             }
@@ -303,6 +308,7 @@ fn parse_args(
         start,
         scene,
         layout,
+        no_vsync,
     })))
 }
 
@@ -370,6 +376,7 @@ fn command() -> Result<Command, String> {
         window: None,
         start: None,
         scene: None,
+        no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
     })))
@@ -556,6 +563,13 @@ fn main() -> AppExit {
     app.add_plugins(GzWebPlugin {
         config: args.config,
     });
+    if args.no_vsync {
+        app.add_systems(Startup, |mut windows: Query<&mut Window>| {
+            for mut w in &mut windows {
+                w.present_mode = bevy::window::PresentMode::AutoNoVsync;
+            }
+        });
+    }
     if let Some(start) = args.start {
         app.insert_resource(start);
     }
@@ -819,6 +833,8 @@ mod tests {
             "--layout needs --ui full"
         );
         assert!(USAGE.contains("--layout"));
+        assert!(run_args(&["--no-vsync"], None).no_vsync);
+        assert!(!run_args(&[], None).no_vsync);
     }
 
     #[test]

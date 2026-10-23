@@ -339,11 +339,13 @@ pub fn ortho_cascades(near: f32, far: f32) -> CascadeShadowConfig {
 ///   matching perspective view's.
 ///
 /// Switching back restores the perspective effects, with TAA's history
-/// reset. The cascades are per light, so the first view decides them.
+/// reset. The cascades are per light, so one view decides them: the
+/// active one (the first while none is).
 #[allow(clippy::type_complexity)]
 pub fn projection_effects(
     config: Res<GzConfig>,
     env: Res<GzEnvironment>,
+    routing: Option<Res<crate::view::controls::ViewRouting>>,
     mut commands: Commands,
     cameras: Query<
         (
@@ -353,12 +355,19 @@ pub fn projection_effects(
             Option<&ViewCamera>,
             Has<OrthoEffects>,
             Option<&FogAdjust>,
+            Option<&ViewId>,
         ),
         With<MainCamera>,
     >,
     mut suns: Query<&mut CascadeShadowConfig>,
 ) {
-    for (i, (entity, projection, t, view, marked, fog)) in cameras.iter().enumerate() {
+    let active = routing.and_then(|r| r.active);
+    let lead = cameras
+        .iter()
+        .find(|c| active.is_some() && c.6.copied() == active)
+        .or_else(|| cameras.iter().min_by_key(|c| c.6.copied()))
+        .map(|c| c.0);
+    for (entity, projection, t, view, marked, fog, _) in &cameras {
         let ortho = match projection {
             Projection::Orthographic(o) => Some((o.near, o.far)),
             _ => None,
@@ -408,7 +417,7 @@ pub fn projection_effects(
                 camera.insert((adjusted_fog(base, adjust), adjust));
             }
         }
-        if i == 0 {
+        if Some(entity) == lead {
             let want = match ortho {
                 Some((near, far)) => {
                     // The view's far plane is the world's far side plus a
@@ -1186,6 +1195,41 @@ mod tests {
         );
         let mut q = app.world_mut().query::<&CascadeShadowConfig>();
         assert_eq!(q.single(app.world()).unwrap().bounds, sun_cascades().bounds);
+    }
+
+    #[test]
+    fn the_active_view_decides_the_suns_cascades() {
+        use crate::view::controls::ViewRouting;
+        let (mut app, first) = effects_app(Quality::High, None);
+        app.init_resource::<ViewRouting>();
+        app.world_mut().entity_mut(first).insert(ViewId(0));
+        // A second view, orthographic and active: its slab.
+        let config = GzConfig::default();
+        let second = app
+            .world_mut()
+            .run_system_once(move |mut commands: Commands| {
+                let view = ViewCamera::new(Vec3::ZERO, camera::perspective());
+                camera::spawn_main_camera(
+                    &mut commands,
+                    &config,
+                    crate::view::home_transform(),
+                    Some(view),
+                    CLEAR_COLOR,
+                )
+            })
+            .unwrap();
+        app.world_mut().entity_mut(second).insert(ViewId(1));
+        app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(1));
+        let (_, far) = go_ortho(&mut app, second, 60.0);
+        let bounds = |app: &mut App| {
+            let mut q = app.world_mut().query::<&CascadeShadowConfig>();
+            q.single(app.world()).unwrap().bounds.clone()
+        };
+        assert!((bounds(&mut app)[3] - far).abs() < 1e-3);
+        // The perspective view active again: the usual cascades.
+        app.world_mut().resource_mut::<ViewRouting>().active = Some(ViewId(0));
+        app.update();
+        assert_eq!(bounds(&mut app), sun_cascades().bounds);
     }
 
     #[test]

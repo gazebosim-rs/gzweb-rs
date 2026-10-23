@@ -1036,7 +1036,13 @@ banner), `connection` (phase), `format` (readouts).
   node's rect to its camera's `ViewPlacement`; `show_view_image` shows each
   camera's texture in its node (hidden while no world: the area's `bg`
   shows). `route_pointer` (PreUpdate after picking's hover) writes
-  `ViewRouting`, with the hovered and active views (D-32, D-91). The UI
+  `ViewRouting`, with the hovered and active views (D-32, D-91). A view
+  neither active nor hovered shows its face marker instead of its cube and
+  rail (`Reveal`, `reveal_views`, a 100 ms subtree fade, D-95). Each view
+  camera keeps its overlays (`overlays::OverlaySet`; the `Overlays`
+  resource is what any view shows) and sees each overlay's render layer
+  while it's on there (`overlays::view_layers`, D-93); `LinkedViews`
+  carries pans, zooms, focus and home to the other views (D-94). The UI
   camera is a `Camera2d` at order 1.
 - **Connection side** (`gz-bevy::connection`): `GzReconnect { url }`
   reconnects now (new URL: attempts reset; same: counted), clearing a
