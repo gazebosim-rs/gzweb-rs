@@ -863,6 +863,18 @@ pub(crate) fn reveal_views(
         } else {
             (reveal.0 - step).max(want)
         };
+        // A hidden cube renders nothing. Checked every frame: a cube's
+        // scene spawns through commands, so its camera can miss the frame
+        // the view's reveal reaches 0 (one long frame does it).
+        for &c in children {
+            if let Ok(scene) = scenes.get(c) {
+                if let Ok(mut camera) = cameras.get_mut(scene.camera) {
+                    if camera.is_active != (now > 0.0) {
+                        camera.is_active = now > 0.0;
+                    }
+                }
+            }
+        }
         if now == reveal.0 && !added.is_added() {
             continue;
         }
@@ -880,14 +892,6 @@ pub(crate) fn reveal_views(
         }
         reveal.0 = now;
         for &c in children {
-            // A hidden cube renders nothing.
-            if let Ok(scene) = scenes.get(c) {
-                if let Ok(mut camera) = cameras.get_mut(scene.camera) {
-                    if camera.is_active != (now > 0.0) {
-                        camera.is_active = now > 0.0;
-                    }
-                }
-            }
             let Ok((mut n, marker)) = controls.get_mut(c) else {
                 continue;
             };
