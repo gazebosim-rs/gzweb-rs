@@ -1,7 +1,9 @@
-//! Pointer and key routing (spec §3.4, §9.3; DECISIONS.md D-32): the
-//! camera gets the pointer only over the view's node and not over any UI
-//! node; the view keeps the keys after a press in it, and loses them to a
-//! press elsewhere or a widget taking keyboard focus. The view's own
+//! Pointer and key routing (spec §3.4, §9.3; DECISIONS.md D-32, D-91): a
+//! camera gets the pointer only over its view's node and not over any UI
+//! node; the views keep the keys after a press in one, and lose them to a
+//! press elsewhere or a widget taking keyboard focus. The view the pointer
+//! is over is the hovered one (its single-key shortcuts go there), and the
+//! one that got the last press is the active one. A view's own
 //! controls (the rail, the cube, the target chip) block the camera's
 //! pointer like any UI, but a press on them or keyboard focus in them keeps
 //! the view's keys (§3.4: the active view is the one that got the last
@@ -16,6 +18,7 @@ use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
 use gz_bevy::view::controls::ViewRouting;
+use gz_bevy::view::ViewId;
 
 use super::viewport::view::ViewNode;
 use crate::widgets::layout::node_rect;
@@ -31,11 +34,19 @@ impl Default for ViewFocus {
     }
 }
 
-/// Where the pointer is: over the view's node, and over a UI node.
+/// Where the pointer is: over a view's node, and over a UI node.
 #[derive(SystemParam)]
 pub(crate) struct PointerOver<'w, 's> {
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
-    views: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<ViewNode>>,
+    views: Query<
+        'w,
+        's,
+        (
+            &'static ViewNode,
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+        ),
+    >,
     nodes: Query<'w, 's, (), (With<ComputedNode>, Without<ViewNode>)>,
     view_nodes: Query<'w, 's, (), With<ViewNode>>,
     parents: Query<'w, 's, &'static ChildOf>,
@@ -43,17 +54,27 @@ pub(crate) struct PointerOver<'w, 's> {
 }
 
 impl PointerOver<'_, '_> {
-    /// Inside the view node's rect (whatever is on top).
-    fn in_view(&self) -> bool {
-        let cursor = self
+    /// The view the pointer is over: the one whose controls are under it
+    /// (a rail's menu may hang over the next view), else the one whose
+    /// node's rect it is in.
+    fn view(&self) -> Option<ViewId> {
+        let own = self.hits().find_map(|e| {
+            std::iter::once(e)
+                .chain(self.parents.iter_ancestors(e))
+                .find_map(|a| self.views.get(a).ok().map(|v| v.0 .0))
+        });
+        if own.is_some() {
+            return own;
+        }
+        let c = self
             .windows
             .single()
             .ok()
-            .and_then(|w| w.physical_cursor_position());
-        match (cursor, self.views.single()) {
-            (Some(c), Ok((node, t))) => node_rect(node, t).contains(c),
-            _ => false,
-        }
+            .and_then(|w| w.physical_cursor_position())?;
+        self.views
+            .iter()
+            .find(|(_, node, t)| node_rect(node, t).contains(c))
+            .map(|(v, ..)| v.0)
     }
 
     /// The UI nodes under the pointer (bevy_picking's hover map).
@@ -98,9 +119,15 @@ pub(crate) fn route_pointer(
     mut view_focus: ResMut<ViewFocus>,
     mut routing: ResMut<ViewRouting>,
 ) {
-    let pointer = over.in_view() && !over.over_ui();
+    let hovered = over.view();
+    let pointer = hovered.is_some() && !over.over_ui();
+    let mut active = routing.active;
     if buttons.get_just_pressed().next().is_some() {
         view_focus.0 = pointer || over.over_view_controls();
+        // A press in a view, its rail or cube included, makes it active.
+        if hovered.is_some() && (pointer || over.over_view_controls()) {
+            active = hovered;
+        }
     }
     // A widget that takes keyboard focus takes the keys too (the window
     // itself holds the focus at start), unless it is one of the view's.
@@ -112,6 +139,8 @@ pub(crate) fn route_pointer(
     routing.set_if_neq(ViewRouting {
         pointer,
         keys: pointer || view_focus.0,
+        hovered,
+        active: active.or(Some(ViewId(0))),
     });
 }
 

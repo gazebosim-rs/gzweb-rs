@@ -17,12 +17,13 @@ use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::{ortho_height, CameraMode, DragAction, Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
 
-use super::menus::{CameraItem, LayoutPreset, OverlayItem, NOT_YET};
+use super::menus::{CameraItem, OverlayItem, NOT_YET};
 use super::*;
 use crate::shell::regions::Region;
 use crate::shell::viewport::hud::{ReleaseTarget, TargetChip};
 use crate::shell::viewport::view::ViewNode;
 use crate::shell::viewport::view_cube::ViewCube;
+use crate::shell::viewport::views::LayoutPreset;
 use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::visuals::Active;
@@ -366,7 +367,7 @@ fn the_overlays_menu_and_the_overlays_follow_each_other() {
 }
 
 #[test]
-fn the_layout_popover_offers_single_and_shows_the_rest_disabled() {
+fn the_layout_popover_marks_the_current_preset() {
     let mut app = live(900);
     let world = app.world_mut();
     let presets: Vec<(LayoutPreset, Tooltip)> = world
@@ -376,12 +377,8 @@ fn the_layout_popover_offers_single_and_shows_the_rest_disabled() {
         .collect();
     assert_eq!(presets.len(), 5);
     for (p, t) in presets {
-        let want = if p == LayoutPreset::Single {
-            "Current layout"
-        } else {
-            NOT_YET
-        };
-        assert_eq!(t.detail.as_deref(), Some(want), "{p:?}");
+        let want = (p == LayoutPreset::Single).then_some("Current layout");
+        assert_eq!(t.detail.as_deref(), want, "{p:?}");
         assert_eq!(t.title, p.name());
         assert!(!p.panes().is_empty());
     }

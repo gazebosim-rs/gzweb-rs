@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use gz_bevy::view::Marquee;
 
 use crate::shell::regions::pass_through;
+use crate::shell::viewport::ViewCameras;
 use crate::theme::{border, ColorRole, Fill, Opacity, Stroke};
 use crate::widgets::layout::{display, overlay};
 
@@ -37,14 +38,21 @@ pub(crate) fn marquee() -> impl Bundle {
     )
 }
 
-/// The box follows the marquee (the view's logical pixels are the view
-/// node's).
-pub(crate) fn marquee_box(marquee: Res<Marquee>, mut boxes: Query<&mut Node, With<MarqueeBox>>) {
+/// The box follows the marquee in the view it is drawn in (the view's
+/// logical pixels are its node's).
+pub(crate) fn marquee_box(
+    marquee: Res<Marquee>,
+    views: ViewCameras,
+    mut boxes: Query<(Entity, &mut Node), With<MarqueeBox>>,
+) {
     if !marquee.is_changed() {
         return;
     }
-    for mut node in &mut boxes {
-        let rect = marquee.0.map(|m| Rect::from_corners(m.from, m.to));
+    for (e, mut node) in &mut boxes {
+        let rect = marquee
+            .0
+            .filter(|m| views.of(e).is_some_and(|v| v.0 == m.view))
+            .map(|m| Rect::from_corners(m.from, m.to));
         let want = display(rect.is_some());
         if node.display != want {
             node.display = want;

@@ -21,7 +21,9 @@ use gz_bevy::render::GzGrid;
 use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::controls::{ActiveScopes, ViewPlacementSystems};
 use gz_bevy::view::input::{InputMap, Platform, Scope};
-use gz_bevy::view::{apply_view_commands, apply_view_placement, ViewCamera, ViewCommand};
+use gz_bevy::view::{
+    apply_view_commands, apply_view_placement, ViewCamera, ViewCommand, ViewId, ViewSlots,
+};
 use gz_core::transport::Status;
 
 use super::{frames, ui_app_with};
@@ -108,7 +110,15 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         (size.0 as f32 * scale) as u32,
         (size.1 as f32 * scale) as u32,
     );
-    app.world_mut().spawn((
+    app.world_mut()
+        .spawn(view_camera(physical, scale, ViewId(0)));
+    app.add_systems(Update, spawn_test_views);
+    app
+}
+
+/// A 3D view camera as `gz-bevy` spawns one, without the render stack.
+fn view_camera(physical: UVec2, scale: f32, id: ViewId) -> impl Bundle {
+    (
         Camera3d::default(),
         Camera {
             computed: ComputedCameraValues {
@@ -124,8 +134,29 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         gz_bevy::view::home_transform(),
         ViewCamera::new(Vec3::ZERO, gz_bevy::camera::perspective()),
         MainCamera,
-    ));
-    app
+        id,
+        id.layers(),
+    )
+}
+
+/// `gz-bevy`'s `render::spawn_views` without the environment: a camera
+/// for each view the layout shows.
+fn spawn_test_views(
+    slots: Res<ViewSlots>,
+    cameras: Query<(&ViewId, &Camera), With<MainCamera>>,
+    mut commands: Commands,
+) {
+    let Some(info) = cameras
+        .iter()
+        .find_map(|(_, c)| c.computed.target_info.clone())
+    else {
+        return;
+    };
+    for id in (0..slots.0).map(ViewId) {
+        if !cameras.iter().any(|(v, _)| *v == id) {
+            commands.spawn(view_camera(info.physical_size, info.scale_factor, id));
+        }
+    }
 }
 
 pub(crate) fn find<C: Component>(app: &mut App) -> Entity {

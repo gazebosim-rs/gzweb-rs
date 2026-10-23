@@ -21,8 +21,8 @@
 //!   `WireframePlugin` where the GPU has line polygons, else (the browser)
 //!   line meshes built from the triangles ([`wireframe`]).
 //!
-//! In M3 there is one view, so the overlays are one set; split views (M6)
-//! make them per view.
+//! The overlays are one set for every view; M6b makes them per view (spec
+//! §3.4, DECISIONS.md D-92).
 
 pub mod collisions;
 pub mod draw;

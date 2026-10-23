@@ -1,5 +1,5 @@
 //! The view cube (spec §3.4, §5.17; board 03; DECISIONS.md D-61): a 56 px
-//! cube at the view's top right, turned as the view's camera is, that
+//! cube at each view's top right, turned as the view's camera is, that
 //! snaps the view to what is clicked on it.
 //!
 //! As §5.17 asks, it is a render-to-texture of a small cube mesh: a camera
@@ -62,6 +62,8 @@ pub(crate) fn view_cube(theme: &Theme) -> impl Bundle {
     let s = &theme.s;
     (
         ViewCube,
+        systems::CubeHover::default(),
+        systems::CubePointerAt::default(),
         Name::new("view cube"),
         Node {
             position_type: PositionType::Absolute,
@@ -79,14 +81,12 @@ pub(crate) fn view_cube(theme: &Theme) -> impl Bundle {
 pub(crate) const CUBE_RIGHT: f32 = 2.0;
 
 pub(crate) fn build(app: &mut App) {
-    app.init_resource::<systems::CubeHover>()
-        .init_resource::<systems::CubePointerAt>()
-        .init_resource::<systems::CubeDrag>()
+    app.init_resource::<systems::CubeDrag>()
         .add_systems(
-            Startup,
-            scene::spawn_cube_scene.run_if(resource_exists::<Assets<StandardMaterial>>),
+            Update,
+            (systems::spawn_parts, scene::spawn_cube_scenes).in_set(GzUiSystems::Behaviour),
         )
-        .add_systems(Update, systems::spawn_parts.in_set(GzUiSystems::Behaviour))
+        .add_observer(scene::on_cube_removed)
         // The cube turns, and its labels move, in the frame the view does:
         // the camera before transforms propagate, the labels before layout.
         .add_systems(

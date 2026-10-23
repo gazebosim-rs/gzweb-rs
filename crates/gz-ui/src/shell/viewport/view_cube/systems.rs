@@ -13,18 +13,18 @@ use gz_bevy::view::{ViewCommand, ViewOp};
 use super::pick::{self, CubeRegion};
 use super::{CubeImage, CubeLabel, CubeShadow, ViewCube};
 use crate::assets::fonts::text;
-use crate::shell::viewport::MainView;
+use crate::shell::viewport::ViewCameras;
 use crate::theme::{elevation, ColorRole, FontFamily, Theme, TypeStyle};
 use crate::widgets::layout::node_rect;
 
-/// The region under the pointer, lit up.
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The region under the pointer on a cube, lit up (on the cube's node).
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CubeHover(pub Option<CubeRegion>);
 
-/// Where the pointer is on the cube's image ([`cube_uv`]) while it is over
+/// Where the pointer is on a cube's image ([`cube_uv`]) while it is over
 /// it, so the hover follows the cube as the view turns under a still
-/// pointer.
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+/// pointer (on the cube's node).
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
 pub(crate) struct CubePointerAt(pub Option<Vec2>);
 
 /// How far the current drag on the cube has gone (logical pixels): a
@@ -57,7 +57,7 @@ pub(crate) fn cube_uv(at: Vec2, rect: Rect, scale: f32) -> Vec2 {
 pub(crate) struct CubePointer<'w, 's> {
     cubes: Query<'w, 's, (&'static ComputedNode, &'static UiGlobalTransform), With<ViewCube>>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
-    view: MainView<'w, 's>,
+    views: ViewCameras<'w, 's>,
 }
 
 impl CubePointer<'_, '_> {
@@ -65,7 +65,7 @@ impl CubePointer<'_, '_> {
     /// act on.
     fn region(&self, e: Entity, at: Vec2) -> Option<(Entity, Vec2, Option<CubeRegion>)> {
         let (node, t) = self.cubes.get(e).ok()?;
-        let (view, _, transform, _) = self.view.get()?;
+        let (view, _, transform, _) = self.views.of(e)?;
         let scale = self.windows.single().map_or(1.0, Window::scale_factor);
         let uv = cube_uv(at, node_rect(node, t), scale);
         Some((
@@ -80,23 +80,23 @@ impl CubePointer<'_, '_> {
 pub(crate) fn on_cube_move(
     ev: On<PointerMove>,
     pointer: CubePointer,
-    mut at: ResMut<CubePointerAt>,
-    mut hover: ResMut<CubeHover>,
+    mut cubes: Query<(&mut CubePointerAt, &mut CubeHover)>,
 ) {
-    if let Some((_, uv, region)) = pointer.region(ev.event_target(), ev.pointer.position) {
-        at.set_if_neq(CubePointerAt(Some(uv)));
-        hover.set_if_neq(CubeHover(region));
+    let cube = ev.event_target();
+    if let Some((_, uv, region)) = pointer.region(cube, ev.pointer.position) {
+        if let Ok((mut at, mut hover)) = cubes.get_mut(cube) {
+            at.set_if_neq(CubePointerAt(Some(uv)));
+            hover.set_if_neq(CubeHover(region));
+        }
     }
 }
 
-/// Leaving the cube lights nothing.
+/// Leaving a cube lights nothing on it.
 pub(crate) fn on_cube_out(
     ev: On<PointerOut>,
-    cubes: Query<(), With<ViewCube>>,
-    mut at: ResMut<CubePointerAt>,
-    mut hover: ResMut<CubeHover>,
+    mut cubes: Query<(&mut CubePointerAt, &mut CubeHover), With<ViewCube>>,
 ) {
-    if cubes.contains(ev.event_target()) {
+    if let Ok((mut at, mut hover)) = cubes.get_mut(ev.event_target()) {
         at.set_if_neq(CubePointerAt(None));
         hover.set_if_neq(CubeHover(None));
     }
@@ -104,11 +104,16 @@ pub(crate) fn on_cube_out(
 
 /// The hover follows the view as it turns (a key, a snap, a menu) under a
 /// pointer that stays put.
-pub(crate) fn follow_hover(at: Res<CubePointerAt>, view: MainView, mut hover: ResMut<CubeHover>) {
-    let (Some(uv), Some((_, _, t, _))) = (at.0, view.get()) else {
-        return;
-    };
-    hover.set_if_neq(CubeHover(pick::pick(pick::gz_rotation(t.rotation), uv)));
+pub(crate) fn follow_hover(
+    views: ViewCameras,
+    mut cubes: Query<(Entity, &CubePointerAt, &mut CubeHover)>,
+) {
+    for (cube, at, mut hover) in &mut cubes {
+        let (Some(uv), Some((_, _, t, _))) = (at.0, views.of(cube)) else {
+            continue;
+        };
+        hover.set_if_neq(CubeHover(pick::pick(pick::gz_rotation(t.rotation), uv)));
+    }
 }
 
 /// A press on the cube, and a drag from it, start from nothing (a drag
@@ -138,7 +143,7 @@ pub(crate) fn on_cube_drag_start(
 pub(crate) fn on_cube_drag(
     ev: On<PointerDrag>,
     cubes: Query<(), With<ViewCube>>,
-    view: MainView,
+    views: ViewCameras,
     mut drag: ResMut<CubeDrag>,
     mut out: MessageWriter<ViewCommand>,
 ) {
@@ -147,7 +152,7 @@ pub(crate) fn on_cube_drag(
     }
     drag.0 += ev.delta.length();
     if drag.0 > CLICK_SLOP {
-        if let Some((view, ..)) = view.get() {
+        if let Some((view, ..)) = views.of(ev.event_target()) {
             out.write(ViewCommand {
                 view,
                 op: ViewOp::Orbit(ev.delta),
@@ -233,18 +238,18 @@ pub(crate) fn spawn_parts(
 const LABEL_FACING: f32 = 0.3;
 
 /// Keeps each label on the middle of its face, shown while the face faces
-/// the camera.
+/// its view's camera.
 pub(crate) fn place_labels(
-    view: MainView,
+    views: ViewCameras,
     theme: Res<Theme>,
-    mut labels: Query<(&CubeLabel, &mut Node)>,
+    mut labels: Query<(Entity, &CubeLabel, &mut Node)>,
 ) {
-    let Some((_, _, t, _)) = view.get() else {
-        return;
-    };
-    let rot = pick::gz_rotation(t.rotation);
     let size = theme.s.view_cube;
-    for (label, mut node) in &mut labels {
+    for (e, label, mut node) in &mut labels {
+        let Some((_, _, t, _)) = views.of(e) else {
+            continue;
+        };
+        let rot = pick::gz_rotation(t.rotation);
         let (at, facing) = pick::label_at(rot, label.0.as_vec3(), size);
         let display = if facing > LABEL_FACING {
             Display::Flex

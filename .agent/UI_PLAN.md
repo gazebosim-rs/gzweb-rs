@@ -305,6 +305,17 @@ websocket server, DECISIONS.md D-76), **M5d** undo.
   resources).
 
 ### M6 — Split viewports
+In three PRs: **M6a** several views, **M6b** inactive views, per-view overlays and the
+quality policy, **M6c** one splitter.
+
+- **M6a notes:** each view a camera with a `ViewId`, its own placement, outline mask and render
+  layer, new ones copying the first and dressed for the environment (D-90); the pointer drives
+  the hovered view and keys the hovered, else the active one, the gizmo in the active view, the
+  accent frame on it (D-91); the five presets as a flex grid with share dividers (drag, reset,
+  accent), the Layout popover, Maximize ⇧Space, Close view ⌘W, splits ⌥⌘→/↓, the floor rule
+  for split layouts, `gzweb --layout` (D-92); a rail, cube, pills and outline per view. Left
+  for M6b: the inactive face marker and hover reveal, per-view overlays and Apply to all views,
+  Link cameras, Shared selection, and the quality policy with its measurements.
 - Layout presets, active/hovered view rules, inactive-view face marker, per-view `ViewState`,
   floor and fallback rules, the multi-view quality policy (§3 item 5).
 - One splitter (PR #30 second review, item 9): there are three today (`shell/splitter.rs`,

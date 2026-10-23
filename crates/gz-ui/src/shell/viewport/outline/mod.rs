@@ -1,5 +1,5 @@
-//! The selection outline over the view (spec §6.4, §9.3): a node on the
-//! view's node draws `selection_outline` around the silhouettes gz-bevy's
+//! The selection outline over each view (spec §6.4, §9.3): a node on the
+//! view's node draws `selection_outline` around the silhouettes the view's
 //! mask camera renders ([`gz_bevy::view::outline`]): 2px around the
 //! selection, 1px at 50% around the entity hovered in the Scene tree.
 
@@ -7,10 +7,12 @@ use bevy::asset::embedded_asset;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::{Shader, ShaderRef};
+use gz_bevy::camera::MainCamera;
 use gz_bevy::view::outline::OutlineMask;
-use gz_bevy::view::ViewPlacement;
+use gz_bevy::view::{ViewId, ViewPlacement};
 
 use crate::shell::regions::pass_through;
+use crate::shell::viewport::ViewCameras;
 use crate::theme::{ColorRole, Theme};
 use crate::widgets::layout::display;
 
@@ -79,15 +81,15 @@ pub(crate) fn outline() -> impl Bundle {
     )
 }
 
-/// The overlay shows while anything is outlined, over the outlined
-/// meshes' part of the view (with room for the outline; all of it until
-/// they have bounds), with the mask, the theme's colour and the widths at
-/// the window's scale.
+/// Each view's overlay shows while anything is outlined, over the
+/// outlined meshes' part of the view (with room for the outline; all of it
+/// until they have bounds), with the view's mask, the theme's colour and
+/// the widths at the window's scale.
 #[allow(clippy::type_complexity)]
 pub(crate) fn outline_overlay(
-    mask: Res<OutlineMask>,
     theme: Res<Theme>,
-    placement: Res<ViewPlacement>,
+    views: ViewCameras,
+    cameras: Query<(&ViewId, &ViewPlacement, &OutlineMask), With<MainCamera>>,
     materials: Option<ResMut<Assets<OutlineMaterial>>>,
     mut overlays: Query<
         (Entity, &mut Node, Option<&MaterialNode<OutlineMaterial>>),
@@ -98,34 +100,38 @@ pub(crate) fn outline_overlay(
     let Some(mut materials) = materials else {
         return;
     };
-    let size = placement.physical_size().unwrap_or(UVec2::ONE).as_vec2();
-    let scale = placement.scale.max(f32::EPSILON);
-    let view = placement
-        .rect
-        .map_or(Vec2::ONE, |r| r.size().max(Vec2::ONE));
-    let pad = SELECTED_WIDTH.max(HOVERED_WIDTH) + 2.0;
-    let area = mask
-        .rect
-        .map(|r| {
-            r.inflate(pad)
-                .intersect(Rect::from_corners(Vec2::ZERO, view))
-        })
-        .filter(|r| !r.is_empty())
-        .unwrap_or(Rect::from_corners(Vec2::ZERO, view));
     let colour = theme.color(ColorRole::SelectionOutline).to_linear();
-    let params = OutlineParams {
-        selected: colour.to_vec4(),
-        hovered: colour.with_alpha(colour.alpha * HOVERED_ALPHA).to_vec4(),
-        texel_widths: Vec4::new(
-            1.0 / size.x,
-            1.0 / size.y,
-            SELECTED_WIDTH * scale,
-            HOVERED_WIDTH * scale,
-        ),
-        rect: (area.min / view).extend(0.0).extend(0.0)
-            + Vec4::new(0.0, 0.0, area.width() / view.x, area.height() / view.y),
-    };
     for (e, mut node, material) in &mut overlays {
+        let id = views.id_of(e);
+        let Some((_, placement, mask)) = cameras.iter().find(|c| Some(*c.0) == id) else {
+            continue;
+        };
+        let size = placement.physical_size().unwrap_or(UVec2::ONE).as_vec2();
+        let scale = placement.scale.max(f32::EPSILON);
+        let view = placement
+            .rect
+            .map_or(Vec2::ONE, |r| r.size().max(Vec2::ONE));
+        let pad = SELECTED_WIDTH.max(HOVERED_WIDTH) + 2.0;
+        let area = mask
+            .rect
+            .map(|r| {
+                r.inflate(pad)
+                    .intersect(Rect::from_corners(Vec2::ZERO, view))
+            })
+            .filter(|r| !r.is_empty())
+            .unwrap_or(Rect::from_corners(Vec2::ZERO, view));
+        let params = OutlineParams {
+            selected: colour.to_vec4(),
+            hovered: colour.with_alpha(colour.alpha * HOVERED_ALPHA).to_vec4(),
+            texel_widths: Vec4::new(
+                1.0 / size.x,
+                1.0 / size.y,
+                SELECTED_WIDTH * scale,
+                HOVERED_WIDTH * scale,
+            ),
+            rect: (area.min / view).extend(0.0).extend(0.0)
+                + Vec4::new(0.0, 0.0, area.width() / view.x, area.height() / view.y),
+        };
         let want = display(mask.active && mask.image.is_some());
         if node.display != want {
             node.display = want;

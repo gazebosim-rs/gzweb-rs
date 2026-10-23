@@ -26,10 +26,32 @@ use crate::test_support::shell::*;
 use crate::test_support::{descendants, frames};
 use crate::theme::{ColorRole, Fill, Theme};
 
+/// The first view's placement.
+fn placement(app: &mut App) -> ViewPlacement {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(&ViewPlacement, &gz_bevy::view::ViewId), With<MainCamera>>()
+        .iter(world)
+        .find(|(_, id)| id.0 == 0)
+        .map(|(p, _)| p.clone())
+        .expect("placed")
+}
+
+/// The first view's outline mask.
+fn first_mask(app: &mut App) -> gz_bevy::view::outline::OutlineMask {
+    let world = app.world_mut();
+    world
+        .query_filtered::<&gz_bevy::view::outline::OutlineMask, With<MainCamera>>()
+        .iter(world)
+        .next()
+        .cloned()
+        .expect("a mask")
+}
+
 /// The placed view: its window rect (logical), texture size, and whether
 /// the main camera renders into that texture.
 fn placed(app: &mut App) -> (Rect, UVec2, bool) {
-    let placement = app.world().resource::<ViewPlacement>().clone();
+    let placement = placement(app);
     let handle = placement.image.clone().expect("a texture");
     let size = app
         .world()
@@ -58,7 +80,7 @@ fn the_3d_view_follows_the_view_node_at_any_scale() {
         assert!(on);
         // The node shows the texture.
         let view = find::<ViewNode>(&mut app);
-        let handle = app.world().resource::<ViewPlacement>().image.clone();
+        let handle = placement(&mut app).image.clone();
         assert_eq!(
             app.world().get::<ImageNode>(view).map(|i| i.image.clone()),
             handle
@@ -159,7 +181,7 @@ fn the_banner_turns_red_after_a_minute() {
     let bar = find::<DisconnectBanner>(&mut app);
     let dim = find::<DimOverlay>(&mut app);
     assert!(displayed(&app, card) && !displayed(&app, bar) && !displayed(&app, dim));
-    let view = find::<ViewNode>(&mut app);
+    let view = find::<super::views::ViewGrid>(&mut app);
     assert_eq!(
         app.world().get::<Visibility>(view),
         Some(&Visibility::Hidden)
@@ -498,7 +520,7 @@ fn the_marquee_box_follows_the_drag() {
 #[test]
 fn the_outline_overlay_shows_while_anything_is_outlined() {
     use super::outline::{OutlineMaterial, OutlineOverlay, SELECTED_WIDTH};
-    use gz_bevy::view::outline::OutlineMask;
+
     let mut app = shell_app((1440, 900), 2.0);
     // No renderer here: the material's assets alone.
     app.init_asset::<OutlineMaterial>();
@@ -506,9 +528,11 @@ fn the_outline_overlay_shows_while_anything_is_outlined() {
     frames(&mut app, 2);
     let overlay = find::<OutlineOverlay>(&mut app);
     assert!(!displayed(&app, overlay));
-    let mask = app.world().resource::<OutlineMask>().image.clone();
+    let mask = first_mask(&mut app).image;
     assert!(mask.is_some(), "the mask follows the view's placement");
-    app.world_mut().resource_mut::<OutlineMask>().active = true;
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::outline::Outlining>()
+        .0 = true;
     frames(&mut app, 2);
     assert!(displayed(&app, overlay));
     let handle = app
@@ -536,7 +560,7 @@ fn the_outline_overlay_shows_while_anything_is_outlined() {
 fn the_outline_overlay_covers_only_the_outlined_part_of_the_view() {
     use super::outline::{OutlineMaterial, OutlineOverlay};
     use bevy::camera::primitives::Aabb;
-    use gz_bevy::view::outline::{OutlineClone, OutlineMask};
+    use gz_bevy::view::outline::OutlineClone;
     let mut app = shell_app((1440, 900), 1.0);
     app.init_asset::<OutlineMaterial>();
     go_live(&mut app, false);
@@ -547,13 +571,11 @@ fn the_outline_overlay_covers_only_the_outlined_part_of_the_view() {
         Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
         GlobalTransform::default(),
     ));
-    app.world_mut().resource_mut::<OutlineMask>().active = true;
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::outline::Outlining>()
+        .0 = true;
     frames(&mut app, 3);
-    let want = app
-        .world()
-        .resource::<OutlineMask>()
-        .rect
-        .expect("the clone's screen rect");
+    let want = first_mask(&mut app).rect.expect("the clone's screen rect");
     let overlay = find::<OutlineOverlay>(&mut app);
     let node = find::<ViewNode>(&mut app);
     let (pos, size) = rect(&app, overlay);

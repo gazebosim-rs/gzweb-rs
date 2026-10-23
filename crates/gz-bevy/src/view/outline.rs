@@ -1,9 +1,9 @@
 //! The selection's and the hovered entity's silhouettes, for the full UI's
 //! outline (spec §6.4, §9.3): each of their meshes gets a clone on its own
 //! render layer in a flat colour (red for the selection, green for the
-//! hover), and a mask camera that follows the main view renders only
-//! those layers into [`OutlineMask`]'s texture. The UI draws the outline
-//! around the mask.
+//! hover), and in each view a mask camera that follows the view's renders
+//! only those layers into the view's [`OutlineMask`] texture. The UI draws
+//! the outline around the mask.
 //!
 //! The clones' layers have no lights, so the mask camera adds no shadow
 //! cascades (Bevy 0.20 skips directional lights whose layers miss a
@@ -33,10 +33,14 @@ pub const HOVERED_LAYER: usize = 29;
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Hovered(pub Option<Entity>);
 
-/// The mask texture, whether anything is outlined, and where on the view
-/// (logical pixels; `None`: anywhere), so the UI draws the outline over
-/// that much of the view only.
-#[derive(Resource, Debug, Clone, Default)]
+/// Whether anything is outlined (in every view).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Outlining(pub bool);
+
+/// A view's mask: its texture, whether anything is outlined, and where on
+/// the view (logical pixels; `None`: anywhere), so the UI draws the
+/// outline over that much of the view only. On the view's camera.
+#[derive(Component, Debug, Clone, Default, PartialEq)]
 pub struct OutlineMask {
     pub image: Option<Handle<Image>>,
     pub active: bool,
@@ -67,7 +71,7 @@ impl OutlineClone {
     }
 }
 
-/// The main view's mask camera (a child of it, so it has its pose).
+/// A view's mask camera (a child of its camera, so it has its pose).
 #[derive(Component, Debug, Clone, Copy, Default)]
 pub struct MaskCamera;
 
@@ -89,7 +93,7 @@ pub struct OutlinePlugin;
 impl Plugin for OutlinePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Hovered>()
-            .init_resource::<OutlineMask>()
+            .init_resource::<Outlining>()
             .add_systems(Update, sync_clones)
             .add_systems(
                 PostUpdate,
@@ -141,7 +145,7 @@ fn sync_clones(
     clones: Query<(Entity, &OutlineClone, &ChildOf)>,
     materials: Option<ResMut<Assets<StandardMaterial>>>,
     mut held: Local<Option<CloneMaterials>>,
-    mut mask: ResMut<OutlineMask>,
+    mut outlining: ResMut<Outlining>,
     mut commands: Commands,
 ) {
     if !selection.is_changed() && !hovered.is_changed() && added.is_empty() {
@@ -204,19 +208,23 @@ fn sync_clones(
             ChildOf(mesh),
         ));
     }
-    if mask.active != active {
-        mask.active = active;
+    if outlining.0 != active {
+        outlining.0 = active;
     }
 }
 
-/// Gives each main camera its mask camera (again after the environment
-/// respawns the view's camera).
+/// Gives each placed view its mask and mask camera (again after the
+/// environment respawns the view's camera).
+#[allow(clippy::type_complexity)]
 fn spawn_mask_camera(
-    views: Query<(Entity, Option<&Children>), With<MainCamera>>,
+    views: Query<(Entity, Option<&Children>, Has<OutlineMask>), With<ViewPlacement>>,
     masks: Query<(), With<MaskCamera>>,
     mut commands: Commands,
 ) {
-    for (view, children) in &views {
+    for (view, children, masked) in &views {
+        if !masked {
+            commands.entity(view).insert(OutlineMask::default());
+        }
         let has = children.is_some_and(|c| c.iter().any(|e| masks.contains(e)));
         if !has {
             commands.spawn((
@@ -232,6 +240,7 @@ fn spawn_mask_camera(
                 },
                 Msaa::Off,
                 Tonemapping::None,
+                bevy::core_pipeline::tonemapping::DebandDither::Disabled,
                 RenderLayers::from_layers(&[SELECTED_LAYER, HOVERED_LAYER]),
                 Transform::IDENTITY,
                 ChildOf(view),
@@ -240,46 +249,55 @@ fn spawn_mask_camera(
     }
 }
 
-/// Renders the mask at the main view's size and projection, into a
-/// texture of its own, while anything is outlined.
+/// Renders each view's mask at the view's size and projection, into a
+/// texture of its own, while anything is outlined and the view shows.
 #[allow(clippy::type_complexity)]
 fn place_mask(
-    placement: Res<ViewPlacement>,
+    outlining: Res<Outlining>,
     images: Option<ResMut<Assets<Image>>>,
-    views: Query<&Projection, (With<MainCamera>, Without<MaskCamera>)>,
+    mut views: Query<
+        (&Projection, &ViewPlacement, &mut OutlineMask),
+        (With<MainCamera>, Without<MaskCamera>),
+    >,
     mut masks: Query<(&mut Camera, &mut Projection, &mut RenderTarget, &ChildOf), With<MaskCamera>>,
-    mut mask: ResMut<OutlineMask>,
 ) {
-    let (Some(size), Some(mut images)) = (placement.physical_size(), images) else {
+    let Some(mut images) = images else {
         return;
     };
-    let scale = placement.scale.max(f32::EPSILON);
-    let handle = match mask.image.clone() {
-        Some(h) => {
-            if images.get(&h).is_some_and(|i| i.size() != size) {
-                if let Some(mut image) = images.get_mut(&h) {
-                    image.resize(bevy::render::render_resource::Extent3d {
-                        width: size.x,
-                        height: size.y,
-                        depth_or_array_layers: 1,
-                    });
-                }
-            }
-            h
-        }
-        None => {
-            let h = images.add(view_texture(size));
-            mask.image = Some(h.clone());
-            h
-        }
-    };
-    let active = mask.active;
     for (mut camera, mut projection, mut target, parent) in &mut masks {
+        let Ok((view, placement, mut mask)) = views.get_mut(parent.parent()) else {
+            continue;
+        };
+        let size = placement.physical_size();
+        let active = outlining.0 && size.is_some();
+        if mask.active != active {
+            mask.active = active;
+        }
         if camera.is_active != active {
             camera.is_active = active;
         }
-        let Ok(view) = views.get(parent.parent()) else {
+        let Some(size) = size else {
             continue;
+        };
+        let scale = placement.scale.max(f32::EPSILON);
+        let handle = match mask.image.clone() {
+            Some(h) => {
+                if images.get(&h).is_some_and(|i| i.size() != size) {
+                    if let Some(mut image) = images.get_mut(&h) {
+                        image.resize(bevy::render::render_resource::Extent3d {
+                            width: size.x,
+                            height: size.y,
+                            depth_or_array_layers: 1,
+                        });
+                    }
+                }
+                h
+            }
+            None => {
+                let h = images.add(view_texture(size));
+                mask.image = Some(h.clone());
+                h
+            }
         };
         let placed = matches!(&*target, RenderTarget::Image(t) if t.handle == handle && t.scale_factor == scale);
         if !placed {
@@ -316,41 +334,41 @@ fn place_mask(
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OutlineRectSystems;
 
-/// The screen rectangle the outlined meshes cover in the main view (their
+/// The screen rectangle the outlined meshes cover in each view (their
 /// bounds as last placed, through the camera as it is now), or `None`
 /// while one has no bounds yet.
 pub fn outline_rect(
-    placement: Res<ViewPlacement>,
-    views: Query<(&Transform, &Projection), With<MainCamera>>,
+    outlining: Res<Outlining>,
+    mut views: Query<(&Transform, &Projection, &ViewPlacement, &mut OutlineMask), With<MainCamera>>,
     clones: Query<(Option<&Aabb>, &GlobalTransform), With<OutlineClone>>,
-    mut mask: ResMut<OutlineMask>,
 ) {
-    let want = (|| {
-        if !mask.active {
-            return None;
-        }
-        let size = placement.rect?.size();
-        let (t, p) = views.iter().next()?;
-        let mut out: Option<Rect> = None;
-        for (aabb, global) in &clones {
-            let aabb = aabb?;
-            let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
-            let corners = std::array::from_fn(|i| {
-                let s = Vec3::new(
-                    if i & 1 == 0 { -1.0 } else { 1.0 },
-                    if i & 2 == 0 { -1.0 } else { 1.0 },
-                    if i & 4 == 0 { -1.0 } else { 1.0 },
-                );
-                global.transform_point(c + h * s)
-            });
-            if let Some(r) = super::select::screen_rect((t, p), size, corners) {
-                out = Some(out.map_or(r, |o| o.union(r)));
+    for (t, p, placement, mut mask) in &mut views {
+        let want = (|| {
+            if !outlining.0 {
+                return None;
             }
+            let size = placement.rect?.size();
+            let mut out: Option<Rect> = None;
+            for (aabb, global) in &clones {
+                let aabb = aabb?;
+                let (c, h) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+                let corners = std::array::from_fn(|i| {
+                    let s = Vec3::new(
+                        if i & 1 == 0 { -1.0 } else { 1.0 },
+                        if i & 2 == 0 { -1.0 } else { 1.0 },
+                        if i & 4 == 0 { -1.0 } else { 1.0 },
+                    );
+                    global.transform_point(c + h * s)
+                });
+                if let Some(r) = super::select::screen_rect((t, p), size, corners) {
+                    out = Some(out.map_or(r, |o| o.union(r)));
+                }
+            }
+            out
+        })();
+        if mask.rect != want {
+            mask.rect = want;
         }
-        out
-    })();
-    if mask.rect != want {
-        mask.rect = want;
     }
 }
 
@@ -366,7 +384,6 @@ mod tests {
             .init_asset::<StandardMaterial>()
             .init_asset::<Image>()
             .init_resource::<Selection>()
-            .init_resource::<ViewPlacement>()
             .configure_sets(PostUpdate, ViewPlacementSystems)
             .add_systems(PostUpdate, super::super::apply_view_placement)
             .add_plugins(OutlinePlugin);
@@ -406,7 +423,7 @@ mod tests {
         let (b, b_mesh, _) = model(&mut app);
         app.update();
         assert!(clones(&mut app).is_empty());
-        assert!(!app.world().resource::<OutlineMask>().active);
+        assert!(!app.world().resource::<Outlining>().0);
         // The model's own mesh, not its collision overlay's.
         app.world_mut().resource_mut::<Selection>().entities = vec![a];
         app.update();
@@ -414,7 +431,7 @@ mod tests {
             clones(&mut app),
             [(a_mesh, OutlineClone::Selected, SELECTED_LAYER)]
         );
-        assert!(app.world().resource::<OutlineMask>().active);
+        assert!(app.world().resource::<Outlining>().0);
         // A hovered model that is selected keeps its selection clone.
         app.world_mut().resource_mut::<Hovered>().0 = Some(a);
         app.update();
@@ -439,7 +456,7 @@ mod tests {
         app.world_mut().resource_mut::<Hovered>().0 = None;
         app.update();
         assert!(clones(&mut app).is_empty());
-        assert!(!app.world().resource::<OutlineMask>().active);
+        assert!(!app.world().resource::<Outlining>().0);
     }
 
     #[test]
@@ -464,13 +481,13 @@ mod tests {
                 MainCamera,
                 Camera3d::default(),
                 Projection::Orthographic(OrthographicProjection::default_3d()),
+                ViewPlacement {
+                    rect: Some(Rect::new(0.0, 0.0, 400.0, 300.0)),
+                    scale: 2.0,
+                    image: None,
+                },
             ))
             .id();
-        {
-            let mut placement = app.world_mut().resource_mut::<ViewPlacement>();
-            placement.rect = Some(Rect::new(0.0, 0.0, 400.0, 300.0));
-            placement.scale = 2.0;
-        }
         app.update();
         app.update();
         let world = app.world_mut();
@@ -483,7 +500,12 @@ mod tests {
         assert!(matches!(projection, Projection::Orthographic(_)));
         let info = camera.computed.target_info.as_ref().unwrap();
         assert_eq!(info.physical_size, UVec2::new(800, 600));
-        let mask = world.resource::<OutlineMask>().image.clone().unwrap();
+        let mask = world
+            .get::<OutlineMask>(view)
+            .unwrap()
+            .image
+            .clone()
+            .unwrap();
         assert!(
             matches!(target, RenderTarget::Image(t) if t.handle == mask && t.scale_factor == 2.0)
         );
@@ -498,7 +520,7 @@ mod tests {
         let light = app.world_mut().spawn(Transform::default()).id();
         app.world_mut().resource_mut::<Selection>().entities = vec![light];
         app.update();
-        assert!(!app.world().resource::<OutlineMask>().active);
+        assert!(!app.world().resource::<Outlining>().0);
         // A model and its own link selected: one clone per mesh.
         let (model, mesh, _) = model(&mut app);
         let link = app.world().get::<ChildOf>(mesh).unwrap().parent();
@@ -539,28 +561,32 @@ mod tests {
             PostUpdate,
             bevy::camera::visibility::calculate_bounds.before(OutlineRectSystems),
         );
-        app.world_mut().spawn((
-            MainCamera,
-            Camera3d::default(),
-            Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
-            Projection::Perspective(PerspectiveProjection::default()),
-        ));
-        {
-            let mut placement = app.world_mut().resource_mut::<ViewPlacement>();
-            placement.rect = Some(Rect::new(0.0, 0.0, 800.0, 600.0));
-            placement.scale = 1.0;
-        }
+        let view = app
+            .world_mut()
+            .spawn((
+                MainCamera,
+                Camera3d::default(),
+                Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
+                Projection::Perspective(PerspectiveProjection::default()),
+                ViewPlacement {
+                    rect: Some(Rect::new(0.0, 0.0, 800.0, 600.0)),
+                    scale: 1.0,
+                    image: None,
+                },
+            ))
+            .id();
         let (model, ..) = model(&mut app);
         app.world_mut().resource_mut::<Selection>().entities = vec![model];
         for _ in 0..3 {
             app.update();
         }
-        let r = app.world().resource::<OutlineMask>().rect.expect("bounds");
+        let rect = |app: &App| app.world().get::<OutlineMask>(view).unwrap().rect;
+        let r = rect(&app).expect("bounds");
         // A unit cube at the origin, 10 m away: a small square mid-view.
         assert!(r.contains(Vec2::new(400.0, 300.0)), "{r:?}");
         assert!(r.width() < 200.0 && r.width() > 10.0, "{r:?}");
         app.world_mut().resource_mut::<Selection>().entities.clear();
         app.update();
-        assert_eq!(app.world().resource::<OutlineMask>().rect, None);
+        assert_eq!(rect(&app), None);
     }
 }

@@ -8,10 +8,11 @@
 //! most [`SEND_SECS`] apart) and on release, and the sim's poses for the
 //! entities are [`Held`] meanwhile.
 
+use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use super::controls::{target, Views};
-use super::{viewport_ray, Selection};
+use super::controls::{target, ViewRouting, Views};
+use super::{viewport_ray, Selection, ViewId};
 use crate::connection::GzStatus;
 use crate::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use crate::spawn::{GzEntity, GzWorldRoot};
@@ -94,6 +95,10 @@ pub struct GizmoState {
     pub readout: Option<(Vec2, String)>,
     /// This frame's Esc cancelled a drag.
     pub escaped: bool,
+    /// The view the gizmo was last drawn in: only there can a press grab
+    /// it (a press that makes another view active doesn't, the gizmo
+    /// wasn't on it).
+    pub shown_in: Option<ViewId>,
 }
 
 impl GizmoState {
@@ -108,11 +113,18 @@ impl GizmoState {
     pub fn takes_escape(&self) -> bool {
         self.captures() || self.escaped
     }
+
+    /// The view a drag is in.
+    pub fn view(&self) -> Option<ViewId> {
+        self.drag.as_ref().and_then(|d| d.view)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct GizmoDrag {
     pub handle: Handle,
+    /// The view it is in, which it keeps.
+    view: Option<ViewId>,
     /// Where the press went down.
     press: Vec2,
     /// The gizmo's centre and Gazebo's axes in the world when it began.
@@ -142,7 +154,7 @@ impl Plugin for GizmoPlugin {
             .add_systems(Startup, setup_gizmos)
             .add_systems(
                 Update,
-                (gizmo_input, draw_gizmo)
+                (gizmo_input, gizmo_layer, draw_gizmo)
                     .chain()
                     .before(super::controls::mouse_input),
             );
@@ -154,6 +166,32 @@ fn setup_gizmos(mut store: ResMut<GizmoConfigStore>) {
     let (config, _) = store.config_mut::<TransformGizmos>();
     config.depth_bias = -1.0;
     config.line.width = 3.0;
+}
+
+/// The gizmo shows in the view it applies to only (the active one, or
+/// its drag's), sized for that view: on that view's own layer.
+fn gizmo_layer(
+    routing: Res<ViewRouting>,
+    mut state: ResMut<GizmoState>,
+    views: Views,
+    store: Option<ResMut<GizmoConfigStore>>,
+) {
+    let Some(mut store) = store else { return };
+    let want = state.drag.as_ref().map_or(routing.active, |d| d.view);
+    if state.shown_in != want {
+        state.shown_in = want;
+    }
+    let id = want.or_else(|| {
+        views
+            .iter()
+            .filter(|v| v.2.is_active)
+            .filter_map(|v| v.4.copied())
+            .min()
+    });
+    let layers = id.map_or_else(RenderLayers::default, |id| RenderLayers::layer(id.layer()));
+    if store.config::<TransformGizmos>().0.render_layers != layers {
+        store.config_mut::<TransformGizmos>().0.render_layers = layers;
+    }
 }
 
 /// The selection's entities the tools move ([`movable`]).
@@ -478,7 +516,7 @@ pub fn gizmo_input(
     windows: Query<&Window>,
     views: Views,
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
-    routing: Res<super::controls::ViewRouting>,
+    routing: Res<ViewRouting>,
     (buttons, keys): (Res<ButtonInput<MouseButton>>, Res<ButtonInput<KeyCode>>),
     time: Res<Time<Real>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
@@ -493,7 +531,9 @@ pub fn gizmo_input(
         state.escaped = false;
     }
     let active = *tool != TransformTool::None && edits_allowed(status.as_deref());
-    let Some(target) = target(&windows, &views).filter(|_| active) else {
+    // In the active view (spec §3.4), and a drag in its own.
+    let view = state.drag.as_ref().map_or(routing.active, |d| d.view);
+    let Some(target) = target(&windows, &views, view).filter(|_| active) else {
         if let Some(drag) = take_drag(&mut state) {
             finish(&drag, &mut nodes.p1(), &mut held, &mut out, now, true);
         }
@@ -595,7 +635,11 @@ pub fn gizmo_input(
         .first()
         .and_then(|e| center_of(*e, &nodes.p0(), &roots));
     let hovered = match (center, cursor) {
-        (Some(c), Some(at)) if routing.pointer => pick(*tool, at, (ct, cp, size), c, &axes),
+        (Some(c), Some(at))
+            if routing.pointer && over(&routing, view) && state.shown_in == view =>
+        {
+            pick(*tool, at, (ct, cp, size), c, &axes)
+        }
         _ => None,
     };
     if state.hovered != hovered {
@@ -614,6 +658,7 @@ pub fn gizmo_input(
         }
         state.drag = Some(GizmoDrag {
             handle,
+            view,
             press: at,
             center,
             axes,
@@ -622,6 +667,12 @@ pub fn gizmo_input(
             sent_at: f64::NEG_INFINITY,
         });
     }
+}
+
+/// Whether the pointer is over `view` (the minimal mode's one view names
+/// none).
+fn over(routing: &ViewRouting, view: Option<ViewId>) -> bool {
+    routing.hovered.is_none() || routing.hovered == view
 }
 
 /// The drag, if any, taken out; without one the state isn't touched (so
@@ -697,12 +748,14 @@ fn draw_gizmo(
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     nodes: Query<(&GzEntity, &ChildOf, &Transform, &GlobalTransform)>,
     planes: Query<(), With<HasPlane>>,
+    routing: Res<ViewRouting>,
     mut gizmos: Gizmos<TransformGizmos>,
 ) {
     if *tool == TransformTool::None || !edits_allowed(status.as_deref()) {
         return;
     }
-    let Some(target) = target(&windows, &views) else {
+    let view = state.drag.as_ref().map_or(routing.active, |d| d.view);
+    let Some(target) = target(&windows, &views, view) else {
         return;
     };
     let Ok((ct, cp)) = cameras.get(target.view) else {

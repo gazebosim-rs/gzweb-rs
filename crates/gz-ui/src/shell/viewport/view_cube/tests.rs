@@ -274,6 +274,18 @@ fn record(mut reader: MessageReader<ViewCommand>, mut ops: ResMut<Ops>) {
     ops.0.extend(reader.read().map(|c| c.op));
 }
 
+/// The (first) cube's scene.
+fn cube_scene(app: &mut App) -> CubeScene {
+    let cube = find::<ViewCube>(app);
+    app.world().get::<CubeScene>(cube).expect("a scene").clone()
+}
+
+/// What the (first) cube lights up.
+fn cube_hover(app: &mut App) -> Option<CubeRegion> {
+    let cube = find::<ViewCube>(app);
+    app.world().get::<CubeHover>(cube).unwrap().0
+}
+
 fn cube_app(scale: f32) -> App {
     let mut app = if scale == 1.0 {
         live_view(900)
@@ -370,7 +382,7 @@ fn the_cube_picks_at_any_scale_factor() {
     click_cube(&mut app, Vec2::new(0.0, -0.4));
     assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Back)]);
     // Its texture is the node's physical size.
-    let scene = app.world().resource::<CubeScene>().clone();
+    let scene = cube_scene(&mut app);
     let size = app
         .world()
         .resource::<Assets<Image>>()
@@ -399,10 +411,7 @@ fn hovering_lights_the_region_and_dragging_orbits() {
         delta: Vec2::ONE,
     });
     frames(&mut app, 2);
-    assert_eq!(
-        app.world().resource::<CubeHover>().0,
-        Some(CubeRegion(IVec3::Z))
-    );
+    assert_eq!(cube_hover(&mut app), Some(CubeRegion(IVec3::Z)));
     // The top's middle patch is lit.
     let accent = app.world().resource::<Theme>().color(ColorRole::AccentRing);
     let world = app.world_mut();
@@ -428,7 +437,7 @@ fn hovering_lights_the_region_and_dragging_orbits() {
         hit: hit(),
     });
     frames(&mut app, 1);
-    assert_eq!(app.world().resource::<CubeHover>().0, None);
+    assert_eq!(cube_hover(&mut app), None);
     // A drag orbits, and the click that ends it picks nothing.
     app.world_mut().trigger(PointerDragStart {
         entity,
@@ -461,7 +470,7 @@ fn hovering_lights_the_region_and_dragging_orbits() {
 #[test]
 fn the_cube_turns_with_the_view_and_labels_its_facing_faces() {
     let mut app = cube_app(1.0);
-    let scene = app.world().resource::<CubeScene>().clone();
+    let scene = cube_scene(&mut app);
     let world = app.world_mut();
     let main = world
         .query_filtered::<&Transform, With<MainCamera>>()
@@ -520,7 +529,7 @@ fn the_cube_turns_with_the_view_and_labels_its_facing_faces() {
 #[test]
 fn the_cube_casts_its_own_shadow_a_pixel_down_in_either_theme() {
     let mut app = cube_app(1.0);
-    let scene = app.world().resource::<CubeScene>().clone();
+    let scene = cube_scene(&mut app);
     let (cube, image, shadow) = (
         find::<ViewCube>(&mut app),
         find::<CubeImage>(&mut app),
@@ -579,7 +588,7 @@ fn the_cube_casts_its_own_shadow_a_pixel_down_in_either_theme() {
 #[test]
 fn the_cube_turns_in_the_frame_the_view_does() {
     let mut app = cube_app(1.0);
-    let camera = app.world().resource::<CubeScene>().camera;
+    let camera = cube_scene(&mut app).camera;
     for _ in 0..5 {
         send(&mut app, ViewOp::Orbit(Vec2::new(15.0, 3.0)));
         let world = app.world_mut();
@@ -608,23 +617,21 @@ fn the_hover_follows_the_view_under_a_still_pointer() {
         delta: Vec2::ONE,
     });
     frames(&mut app, 1);
-    assert_eq!(
-        app.world().resource::<CubeHover>().0,
-        pick(home_rotation(), Vec2::ZERO)
-    );
+    assert_eq!(cube_hover(&mut app), pick(home_rotation(), Vec2::ZERO));
     send(&mut app, ViewOp::Snap(SnapView::Top));
     frames(&mut app, 30);
     let want = pick(top_rotation(), Vec2::ZERO);
     assert_ne!(want, pick(home_rotation(), Vec2::ZERO));
-    assert_eq!(app.world().resource::<CubeHover>().0, want);
+    assert_eq!(cube_hover(&mut app), want);
     app.world_mut().trigger(PointerOut {
         entity,
         pointer: pointer_at(p),
         hit: hit(),
     });
     frames(&mut app, 1);
-    assert_eq!(app.world().resource::<CubeHover>().0, None);
-    assert_eq!(app.world().resource::<CubePointerAt>().0, None);
+    assert_eq!(cube_hover(&mut app), None);
+    let cube = find::<ViewCube>(&mut app);
+    assert_eq!(app.world().get::<CubePointerAt>(cube).unwrap().0, None);
 }
 
 /// A drag that starts on the cube and is released off it (no click on the
