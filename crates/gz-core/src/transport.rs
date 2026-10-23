@@ -346,6 +346,12 @@ impl Transport {
         self.send("throttle", topic, "na", rate.to_string().as_bytes())
     }
 
+    /// Asks for every topic and its message type again
+    /// (`Event::TopicsTypes`); the handshake asks once.
+    pub fn request_topics_types(&mut self) -> Result<(), SendError> {
+        self.send("topics-types", "", "", b"")
+    }
+
     /// Asks for the list of topic names (`Event::Topics`).
     pub fn request_topics(&mut self) -> Result<(), SendError> {
         self.send("topics", "", "", b"")
@@ -459,7 +465,8 @@ impl Transport {
                         .into_iter()
                         .map(|p| (p.topic, p.msg_type))
                         .collect();
-                    self.topic_types.extend(pairs.iter().cloned());
+                    // The whole list: topics no longer in it have ended.
+                    self.topic_types = pairs.iter().cloned().collect();
                     self.events.push_back(Event::TopicsTypes(pairs));
                 }
                 Err(e) => self.malformed("topics-types", e),
@@ -921,6 +928,31 @@ mod tests {
                 Event::Topics(vec!["/clock".into(), "/stats".into()]),
             ]
         );
+    }
+
+    /// Asking again sends `topics-types`; the reply replaces the list, so
+    /// a topic that has ended loses its type.
+    #[test]
+    fn a_refreshed_topic_list_replaces_the_last() {
+        let mut t = connected();
+        let list = |topics: &[&str]| msgs::Publishers {
+            publisher: topics
+                .iter()
+                .map(|topic| msgs::Publish {
+                    topic: topic.to_string(),
+                    msg_type: "gz.msgs.Clock".into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let reply = |p: msgs::Publishers| build("pub", "topics-types", "", &p.encode_to_vec());
+        t.on_message(&reply(list(&["/a", "/b"])));
+        t.request_topics_types().unwrap();
+        assert_eq!(drain_out(&mut t), ["topics-types,,,"]);
+        t.on_message(&reply(list(&["/b"])));
+        assert_eq!(t.topic_type("/a"), None);
+        assert_eq!(t.topic_type("/b"), Some("gz.msgs.Clock"));
     }
 
     #[test]

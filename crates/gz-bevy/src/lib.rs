@@ -24,6 +24,7 @@ pub mod snapshot;
 pub mod spawn;
 pub mod stl;
 pub mod submesh;
+pub mod topics;
 pub mod undo;
 pub mod view;
 
@@ -153,6 +154,7 @@ impl Plugin for GzWebPlugin {
             .init_asset_loader::<mesh_file::SceneFileLoader>()
             .init_asset_loader::<stl::StlLoader>()
             .add_plugins(heightmap::TerrainMaterialPlugin)
+            .add_plugins(topics::TopicsPlugin)
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),

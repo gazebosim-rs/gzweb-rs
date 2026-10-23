@@ -3139,6 +3139,7 @@ version = "0.1.0"
 dependencies = [
  "gz-proto",
  "prost",
+ "prost-reflect",
  "rcgen",
  "roxmltree 0.21.1",
  "rustls",

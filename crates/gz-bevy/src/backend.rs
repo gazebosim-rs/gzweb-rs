@@ -51,6 +51,12 @@ pub struct BackendIo<'a> {
     pub publishes: Vec<GzPublish>,
     /// Service replies for the app, written out after the frame's flush.
     pub replies: Vec<GzServiceReply>,
+    /// The server's topics and their types, when a list arrived this
+    /// frame ([`GzTopics`](crate::topics::GzTopics)).
+    pub topics: Option<Vec<(String, String)>>,
+    /// The topic of each message received this frame, the client's own
+    /// world topics included ([`GzTraffic`](crate::topics::GzTraffic)).
+    pub arrivals: Vec<String>,
 }
 
 /// A way to reach a simulation (spec §9.4: `connect`, `subscribe`,
@@ -70,6 +76,9 @@ pub trait SimBackend {
     fn unsubscribe(&mut self, topic: &str) -> Result<(), SendError>;
     /// Limits a subscribed topic to `rate` messages per second.
     fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError>;
+    /// Asks for the server's topics again; they come back in
+    /// [`BackendIo::topics`].
+    fn list_topics(&mut self) -> Result<(), SendError>;
     /// Publishes a serialized `msg_type` on `topic`.
     fn publish(&mut self, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError>;
     /// Calls `service` with a serialized `msg_type` request; the reply
@@ -92,6 +101,7 @@ mod tests {
 
     use super::*;
     use crate::connection::{pump, GzCommand, GzReconnect};
+    use crate::topics::{GzTopics, GzTraffic};
 
     /// Records the calls it gets; its flush delivers one topic message and
     /// one reply.
@@ -120,6 +130,9 @@ mod tests {
         fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError> {
             self.log(format!("throttle {topic} {rate}"))
         }
+        fn list_topics(&mut self) -> Result<(), SendError> {
+            self.log("topics".into())
+        }
         fn publish(&mut self, topic: &str, msg_type: &str, _: &[u8]) -> Result<(), SendError> {
             self.log(format!("pub {topic} {msg_type}"))?;
             Err(SendError::Unsendable("no"))
@@ -143,6 +156,8 @@ mod tests {
                     msg_type: "gz.msgs.Boolean".into(),
                     payload: vec![],
                 });
+                io.topics = Some(vec![("/t".into(), "gz.msgs.Empty".into())]);
+                io.arrivals.push("/t".into());
             }
         }
     }
@@ -163,6 +178,8 @@ mod tests {
         world.init_resource::<Messages<GzReconnect>>();
         world.init_resource::<Messages<GzPublish>>();
         world.init_resource::<Messages<GzServiceReply>>();
+        world.init_resource::<GzTopics>();
+        world.init_resource::<GzTraffic>();
         world.write_message(GzReconnect {
             url: Some("ws://other".into()),
         });
@@ -185,6 +202,7 @@ mod tests {
                 msg_type: "gz.msgs.EntityFactory".into(),
                 payload: vec![],
             },
+            GzCommand::RefreshTopics,
         ] {
             world.write_message(cmd);
         }
@@ -204,6 +222,7 @@ mod tests {
                 "throttle /a 5",
                 "pub /cmd_vel gz.msgs.Twist",
                 "req /world/w/create",
+                "topics",
                 "flush",
             ]
         );
@@ -214,6 +233,8 @@ mod tests {
             .collect();
         assert_eq!(published, ["/t"]);
         assert_eq!(world.resource::<Messages<GzServiceReply>>().len(), 1);
+        assert_eq!(world.resource::<GzTopics>().list[0].name, "/t");
+        assert_eq!(world.resource::<GzTraffic>().topics["/t"].total, 1);
         // Nothing new: the status isn't marked changed.
         world.clear_trackers();
         world.run_system_once(pump).unwrap();

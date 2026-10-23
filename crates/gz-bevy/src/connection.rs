@@ -6,6 +6,8 @@
 //! bytes → [`Transport`] → those resources, with reconnecting (with
 //! backoff, unless the key or URL was rejected).
 
+use std::collections::HashSet;
+
 use bevy::prelude::*;
 use gz_core::control;
 use gz_core::msgs;
@@ -18,6 +20,7 @@ use prost::Message as _;
 use crate::assets::WsAssetStore;
 use crate::backend::{Backend, BackendIo, SimBackend, WorldControl};
 use crate::driver::{self, Driver, DriverEvent};
+use crate::topics::{GzTopics, GzTraffic};
 use crate::GzConfig;
 
 /// Opens a new driver to a server URL.
@@ -42,6 +45,12 @@ pub struct WebsocketBackend {
     last_step: Option<f64>,
     /// The `ws://` asset source's requests and replies.
     store: WsAssetStore,
+    /// The world topics the client subscribed for itself on this
+    /// connection ([`subscribe`]).
+    own: HashSet<String>,
+    /// Those of them the app subscribed too: their messages also go out
+    /// as [`GzPublish`] (DECISIONS.md D-97).
+    taps: HashSet<String>,
 }
 
 /// Simulation state from `/world/<world>/stats` (interactive mode only).
@@ -128,6 +137,8 @@ pub enum GzCommand {
         msg_type: String,
         payload: Vec<u8>,
     },
+    /// Ask for the server's topics again ([`GzTopics`]).
+    RefreshTopics,
 }
 
 /// Iterations one step request takes: the top bar's Step button and the
@@ -246,6 +257,8 @@ pub fn pump(
     mut replies: MessageWriter<GzServiceReply>,
     mut status: ResMut<GzStatus>,
     mut inbox: ResMut<GzInbox>,
+    topics: Option<ResMut<GzTopics>>,
+    traffic: Option<ResMut<GzTraffic>>,
 ) {
     let Some(mut backend) = backend else { return };
     let backend = &mut *backend.bypass_change_detection().0;
@@ -256,6 +269,8 @@ pub fn pump(
         inbox: inbox.reborrow(),
         publishes: Vec::new(),
         replies: Vec::new(),
+        topics: None,
+        arrivals: Vec::new(),
     };
     for r in reconnects.read() {
         backend.connect(r.url.as_deref(), &mut io);
@@ -269,6 +284,14 @@ pub fn pump(
     backend.flush(&mut io);
     publishes.write_batch(io.publishes);
     replies.write_batch(io.replies);
+    if let (Some(list), Some(mut topics)) = (io.topics, topics) {
+        topics.set(list);
+    }
+    if let Some(mut traffic) = traffic.filter(|_| !io.arrivals.is_empty()) {
+        for topic in &io.arrivals {
+            traffic.arrived(topic, io.now);
+        }
+    }
 }
 
 /// Sends `cmd` through `backend`.
@@ -292,6 +315,7 @@ fn send_command(backend: &mut dyn SimBackend, cmd: &GzCommand) -> Result<(), Sen
             msg_type,
             payload,
         } => backend.request(service, msg_type, payload),
+        GzCommand::RefreshTopics => backend.list_topics(),
     }
 }
 
@@ -306,6 +330,8 @@ impl WebsocketBackend {
             opened_at: None,
             last_step: None,
             store,
+            own: HashSet::new(),
+            taps: HashSet::new(),
         }
     }
 
@@ -319,6 +345,8 @@ impl WebsocketBackend {
             error!("websocket closed: {e}");
         }
         self.transport.on_close(err);
+        self.own.clear();
+        self.taps.clear();
         self.store.fail_all("connection closed");
         io.status.sim = None;
         io.status.attempting = false;
@@ -337,7 +365,7 @@ impl WebsocketBackend {
                 info!("gz status: {s:?}");
                 if s == Status::Ready {
                     io.status.attempts = 0;
-                    subscribe(&mut self.transport, world, io.config.interactive());
+                    self.own = subscribe(&mut self.transport, world, io.config.interactive());
                     if io.config.interactive() {
                         if let Err(e) = self.transport.probe_binary_requests() {
                             warn!("edit probe: {e}");
@@ -356,7 +384,7 @@ impl WebsocketBackend {
                 info!("worlds: {worlds:?}");
                 io.status.world = worlds.first().cloned();
             }
-            Event::TopicsTypes(_) => {}
+            Event::TopicsTypes(pairs) => io.topics = Some(pairs),
             Event::Topics(topics) => info!("topics: {topics:?}"),
             Event::Scene(scene) => {
                 info!(
@@ -421,6 +449,14 @@ impl WebsocketBackend {
         io: &mut BackendIo,
     ) {
         let now = io.now;
+        io.arrivals.push(topic.clone());
+        if self.taps.contains(&topic) {
+            io.publishes.push(GzPublish {
+                topic: topic.clone(),
+                msg_type: msg_type.clone(),
+                payload: payload.clone(),
+            });
+        }
         match WorldTopic::of(&topic, world) {
             Some(WorldTopic::Poses) => match msgs::PoseV::decode(payload.as_slice()) {
                 Ok(v) => io.inbox.poses.extend(v.pose),
@@ -541,16 +577,35 @@ impl SimBackend for WebsocketBackend {
         self.store.expire(now, crate::assets::WS_ASSET_TIMEOUT);
     }
 
+    /// A world topic the client already takes is tapped, not subscribed
+    /// again (DECISIONS.md D-97).
     fn subscribe(&mut self, topic: &str) -> Result<(), SendError> {
+        if self.own.contains(topic) {
+            self.taps.insert(topic.to_string());
+            return Ok(());
+        }
         self.transport.subscribe(topic)
     }
 
+    /// Releasing a tapped world topic leaves the client's subscription.
     fn unsubscribe(&mut self, topic: &str) -> Result<(), SendError> {
+        if self.own.contains(topic) {
+            self.taps.remove(topic);
+            return Ok(());
+        }
         self.transport.unsubscribe(topic)
     }
 
+    /// The client's own world topics keep the rate it set.
     fn throttle(&mut self, topic: &str, rate: u32) -> Result<(), SendError> {
+        if self.own.contains(topic) {
+            return Ok(());
+        }
         self.transport.throttle(topic, rate)
+    }
+
+    fn list_topics(&mut self) -> Result<(), SendError> {
+        self.transport.request_topics_types()
     }
 
     /// No released Gazebo websocket server (gz-launch or Jetty) takes
@@ -644,7 +699,7 @@ fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
 /// `scene/deletion` (gzweb has neither, so the capture modes keep its
 /// protocol for the parity check). Unlike gzweb, the world name is
 /// sanitized as gz-sim does ([`world_topic`]).
-fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
+fn subscribe(t: &mut Transport, world: &str, interactive: bool) -> HashSet<String> {
     let mut topics = vec![
         world_topic(world, WorldTopic::Poses.leaf()),
         world_topic(world, WorldTopic::SceneInfo.leaf()),
@@ -662,6 +717,7 @@ fn subscribe(t: &mut Transport, world: &str, interactive: bool) {
     if interactive {
         let _ = t.throttle(&stats, STATS_RATE);
     }
+    topics.into_iter().collect()
 }
 
 /// A paused world's step when it hasn't reported one on this connection:
@@ -751,6 +807,8 @@ mod tests {
             world.init_resource::<Messages<GzPublish>>();
             world.init_resource::<Messages<GzServiceReply>>();
             world.insert_resource(GzStatus::new("ws://test"));
+            world.init_resource::<GzTopics>();
+            world.init_resource::<GzTraffic>();
             Harness { world, drivers }
         }
 
@@ -1149,6 +1207,51 @@ mod tests {
             Some(WorldTopic::SceneInfo)
         );
         assert_eq!(WorldTopic::of("/world/a b/scene/info", "a b"), None);
+    }
+
+    /// The app subscribing a world topic the client takes itself taps it:
+    /// nothing is sent, its messages come out as GzPublish too, and
+    /// letting go leaves the client's own subscription and rate. Every
+    /// message counts toward its topic's traffic; a refresh asks for the
+    /// topic list again, and the reply replaces it.
+    #[test]
+    fn a_world_topic_the_client_takes_is_tapped() {
+        let mut h = Harness::new();
+        h.ready();
+        let poses = "/world/w/dynamic_pose/info".to_string();
+        assert!(h.command(GzCommand::Subscribe(poses.clone())).is_empty());
+        assert!(h.command(GzCommand::Throttle(poses.clone(), 2)).is_empty());
+        let pose_v = msgs::PoseV {
+            pose: vec![msgs::Pose::default()],
+            ..Default::default()
+        }
+        .encode_to_vec();
+        h.msg(publish(&poses, "gz.msgs.Pose_V", &pose_v));
+        let tapped: Vec<String> = h.take::<GzPublish>().into_iter().map(|p| p.topic).collect();
+        assert_eq!(tapped, std::slice::from_ref(&poses));
+        assert_eq!(h.world.resource::<GzInbox>().poses.len(), 1);
+        assert!(h.command(GzCommand::Unsubscribe(poses.clone())).is_empty());
+        h.msg(publish(&poses, "gz.msgs.Pose_V", &pose_v));
+        assert!(h.take::<GzPublish>().is_empty());
+        assert_eq!(h.world.resource::<GzInbox>().poses.len(), 2);
+        assert_eq!(h.world.resource::<GzTraffic>().topics[&poses].total, 2);
+
+        assert_eq!(h.command(GzCommand::RefreshTopics), ["topics-types,,,"]);
+        let list = msgs::Publishers {
+            publisher: vec![msgs::Publish {
+                topic: "/clock".into(),
+                msg_type: "gz.msgs.Clock".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        h.msg(publish(
+            "topics-types",
+            "gz.msgs.Publishers",
+            &list.encode_to_vec(),
+        ));
+        let topics = h.world.resource::<GzTopics>();
+        assert_eq!(topics.get("/clock").unwrap().msg_type, "gz.msgs.Clock");
     }
 
     #[test]
