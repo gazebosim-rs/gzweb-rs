@@ -172,7 +172,7 @@ Charts MUST follow: 2px lines, `line_soft` gridlines, `line` baseline, axis labe
 
 The sidebar hosts a **primary** slot and an optional **secondary** slot stacked below it, separated by a 6px row splitter (§5.18) with a 32×2 grip in `cube_edge`. Rules:
 
-- Secondary opens when a flow needs a second panel (Topics "Plot field", Sensors "Open in Teleop", Shift+click on an activity button, or the panel header's "Move to second slot" button). Default split 55/45; min slot height 180; the ratio persists per workspace.
+- Secondary opens when a flow needs a second panel (Topics "Plot field", Sensors "Open in Teleop", Shift+click on an activity button, or the panel header's "Move to second slot" button). Default split 55/45 (a double-click on the splitter restores it); min slot height 180; the ratio persists per workspace.
 - Every panel header gains, at its right: move-to-other-slot, swap (when two slots), pop out, and close-slot (secondary only). Closing the secondary returns the sidebar to one slot.
 - A panel can be in one slot only. Opening a panel already in the other slot swaps it there.
 - Pop-out (§7.11) remains the escape hatch for a third panel or for placing a panel over the scene.
@@ -393,7 +393,7 @@ A Menu-styled container with arbitrary content (Snap, Layout presets). Same open
 See §3.4. Implement as a render-to-texture of a small cube mesh using a dedicated camera whose rotation mirrors the view's camera; display in a UI `ImageNode`; use picking on the texture to find face/edge/corner hits.
 
 ### 5.18 Splitter
-6px hit area, col-resize / row-resize cursor, `accent` line while dragging.
+6px hit area, col-resize / row-resize cursor, `accent` line while dragging. A double-click restores the default size. It is a tab stop (a press focuses it too): the arrow keys along its axis move it 8px, Home and End to its limits; chords (Ctrl/⌘/Alt+arrow) stay with the shortcuts.
 
 ---
 

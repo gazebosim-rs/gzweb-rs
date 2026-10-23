@@ -141,17 +141,12 @@ fn the_row_splitter_resizes_the_slots_within_their_minimum() {
     let s = *app.world().get::<crate::widgets::Splitter>(bar).unwrap();
     assert_eq!((s.min, s.max), (MIN_SLOT_H, 828.0 - 6.0 - MIN_SLOT_H));
     assert!((s.size - 0.55 * (828.0 - 6.0)).abs() < 1e-3, "{}", s.size);
-    // With one slot it is out of the tab order.
-    assert_eq!(
-        app.world().get::<Visibility>(bar),
-        Some(&Visibility::Inherited)
-    );
+    // With one slot it is out of the tab order (hidden as undisplayed).
+    let shown = |app: &App| app.world().get::<InheritedVisibility>(bar).unwrap().get();
+    assert!(shown(&app));
     app.world_mut().write_message(UiCommand::CloseSecondary);
     frames(&mut app, 2);
-    assert_eq!(
-        app.world().get::<Visibility>(bar),
-        Some(&Visibility::Hidden)
-    );
+    assert!(!shown(&app));
 }
 
 fn bodies(app: &mut App) -> Vec<(Entity, PanelId)> {

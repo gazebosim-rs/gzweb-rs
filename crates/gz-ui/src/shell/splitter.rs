@@ -69,7 +69,7 @@ pub(crate) fn on_side_resized(
 ) {
     if let Ok(side) = splitters.get(ev.entity) {
         let (min, max) = layout.width_range(side.0);
-        if ev.size.clamp(min, max) != layout.width(side.0) {
+        if layout.startup || ev.size.clamp(min, max) != layout.width(side.0) {
             layout.resize(side.0, ev.size);
         }
     }

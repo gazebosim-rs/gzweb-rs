@@ -30,8 +30,6 @@ pub(super) fn slot_splitter(theme: &Theme) -> impl Bundle {
             display: Display::None,
             ..default()
         },
-        // Hidden too while there is one slot: out of the tab order.
-        Visibility::Hidden,
         crate::theme::Stroke(ColorRole::Line),
         splitter_control(Splitter::new(SplitAxis::Rows, 1.0), "Resize slots"),
         children![(

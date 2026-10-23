@@ -215,16 +215,26 @@ pub(crate) fn on_splitter_drag(
 }
 
 /// Arrow keys along the axis move the splitter; Home and End go to the
-/// pane's min and max.
+/// pane's min and max. Plain keys only, so a chord (Ctrl/Cmd/Alt+→, the
+/// sim step) is left to the shortcuts.
 pub(crate) fn on_splitter_key(
     mut ev: On<FocusedInput<KeyboardInput>>,
-    splitters: Query<&Splitter>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut splitters: Query<&mut Splitter>,
     mut commands: Commands,
 ) {
-    if ev.input.state != ButtonState::Pressed || ev.event_target() != ev.focused_entity {
+    let chord = keys.any_pressed([
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ]);
+    if ev.input.state != ButtonState::Pressed || chord || ev.event_target() != ev.focused_entity {
         return;
     }
-    let Ok(s) = splitters.get(ev.focused_entity) else {
+    let Ok(mut s) = splitters.get_mut(ev.focused_entity) else {
         return;
     };
     let along = |d: f32| match s.axis {
@@ -243,6 +253,9 @@ pub(crate) fn on_splitter_key(
         _ => return,
     };
     ev.propagate(false);
+    // The next key steps from here, even before the owner's update (two
+    // presses in one frame); the owner writes back what it applied.
+    s.size = size;
     let entity = ev.focused_entity;
     commands.trigger(SplitterMoved { entity, size });
 }

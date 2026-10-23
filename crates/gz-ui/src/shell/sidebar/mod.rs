@@ -360,19 +360,12 @@ fn slot_buttons(
     }
 }
 
-type SlotSplitters<'w, 's> = Query<
-    'w,
-    's,
-    (&'static mut Node, &'static mut Visibility),
-    (With<SlotSplitter>, Without<SlotView>),
->;
-
 /// Writes the slot split into the slots: one slot takes the sidebar; with
 /// two, the primary takes `split` of it and the row splitter shows.
 pub(crate) fn apply_slots(
     layout: Res<ShellLayout>,
     mut slots: Query<(&SlotView, &mut Node)>,
-    mut splitters: SlotSplitters,
+    mut splitters: Query<&mut Node, (With<SlotSplitter>, Without<SlotView>)>,
 ) {
     if !layout.is_changed() {
         return;
@@ -388,13 +381,8 @@ pub(crate) fn apply_slots(
         node.flex_grow = grow;
         node.display = display;
     }
-    for (mut node, mut visibility) in &mut splitters {
+    for mut node in &mut splitters {
         node.display = layout::display(two);
-        visibility.set_if_neq(if two {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
     }
 }
 

@@ -214,19 +214,52 @@ fn splitters_move_with_the_keyboard() {
         frames(app, 2);
         asked(app)
     };
-    // The pane is after the splitter: Left widens it.
+    // The pane is after the splitter: Left widens it. Nothing applies
+    // what it asks, and the next key steps from it all the same.
     assert_eq!(press(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft), [308.0]);
     assert_eq!(
         press(&mut app, KeyCode::ArrowRight, Key::ArrowRight),
-        [292.0]
+        [300.0]
     );
     // Off-axis keys ask nothing.
     assert!(press(&mut app, KeyCode::ArrowUp, Key::ArrowUp).is_empty());
     assert_eq!(press(&mut app, KeyCode::Home, Key::Home), [250.0]);
     assert_eq!(press(&mut app, KeyCode::End, Key::End), [400.0]);
     // Keys step from the size the owner keeps.
-    app.world_mut().get_mut::<Splitter>(bar).unwrap().size = 396.0;
-    assert_eq!(press(&mut app, KeyCode::ArrowLeft, Key::ArrowLeft), [400.0]);
+    app.world_mut().get_mut::<Splitter>(bar).unwrap().size = 300.0;
+    // Two presses in one frame step twice.
+    for _ in 0..2 {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::ArrowRight,
+            logical_key: Key::ArrowRight,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: true,
+            window,
+        });
+    }
+    frames(&mut app, 2);
+    assert_eq!(asked(&mut app), [292.0, 284.0]);
+    // A chord is the shortcuts' (Ctrl+→ steps the sim).
+    let ctrl = |app: &mut App, state| {
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::ControlLeft,
+            logical_key: Key::Control,
+            state,
+            text: None,
+            repeat: false,
+            window,
+        });
+    };
+    ctrl(&mut app, ButtonState::Pressed);
+    frames(&mut app, 1);
+    assert!(press(&mut app, KeyCode::ArrowRight, Key::ArrowRight).is_empty());
+    ctrl(&mut app, ButtonState::Released);
+    frames(&mut app, 1);
+    assert_eq!(
+        press(&mut app, KeyCode::ArrowRight, Key::ArrowRight),
+        [276.0]
+    );
 }
 
 /// A primary double-click asks for a reset, unless a click of it ended a

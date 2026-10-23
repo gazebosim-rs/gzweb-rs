@@ -386,8 +386,7 @@ quality policy, **M6c** one splitter.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
-  Space chord, is resolved: D-58a). A collapsed panel's widgets (its splitter among them) are
-  `Display::None` but still in the tab order: hide them too (D-96).
+  Space chord, is resolved: D-58a).
 - Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing

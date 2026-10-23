@@ -688,6 +688,16 @@ fn a_splitter_resets_only_on_a_primary_double_click_without_a_drag() {
     assert_eq!(layout(&app).sidebar_w, 300.0);
 }
 
+fn side_splitter(app: &mut App, side: Side) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &ShellSplitter)>()
+        .iter(world)
+        .find(|(_, s)| s.0 == side)
+        .unwrap()
+        .0
+}
+
 /// The side splitters are tab stops: the arrows move them by a step (the
 /// inspector's is after its splitter: Left widens it), Home and End to
 /// the side's limits, End short of the floor.
@@ -695,16 +705,10 @@ fn a_splitter_resets_only_on_a_primary_double_click_without_a_drag() {
 fn the_side_splitters_move_with_the_keys() {
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 3);
-    let world = app.world_mut();
-    let bar = |world: &mut World, side| {
-        world
-            .query::<(Entity, &ShellSplitter)>()
-            .iter(world)
-            .find(|(_, s)| s.0 == side)
-            .unwrap()
-            .0
-    };
-    let (sidebar, inspector) = (bar(world, Side::Sidebar), bar(world, Side::Inspector));
+    let (sidebar, inspector) = (
+        side_splitter(&mut app, Side::Sidebar),
+        side_splitter(&mut app, Side::Inspector),
+    );
     let step = crate::widgets::splitter::KEY_STEP;
     let start = layout(&app);
     focused_key(&mut app, inspector, KeyCode::ArrowLeft);
@@ -715,16 +719,57 @@ fn the_side_splitters_move_with_the_keys() {
     assert_eq!(layout(&app).sidebar_w, start.sidebar_w + step);
     focused_key(&mut app, sidebar, KeyCode::Home);
     assert_eq!(layout(&app).sidebar_w, 240.0);
+    // At 1000 px both panels fit, and the floor, not the sidebar's 480,
+    // stops End: 1000 − 56 − 300 − 240 = 404.
+    let window = find::<Window>(&mut app);
+    app.world_mut()
+        .get_mut::<Window>(window)
+        .unwrap()
+        .resolution
+        .set(1000.0, 900.0);
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert!(l.sidebar_open && l.inspector_open);
     focused_key(&mut app, sidebar, KeyCode::End);
     let l = layout(&app);
-    assert_eq!(l.sidebar_w, l.width_range(Side::Sidebar).1);
-    assert!(l.viewport_w() >= l.floor_w);
+    assert_eq!(l.sidebar_w, 1000.0 - 56.0 - l.inspector_w - 240.0);
+    assert_eq!(l.viewport_w(), l.floor_w);
     // The splitter holds the layout's width and range.
     let s = *app
         .world()
         .get::<crate::widgets::Splitter>(sidebar)
         .unwrap();
     assert_eq!((s.size, s.min, s.max), (l.sidebar_w, 240.0, l.sidebar_w));
+}
+
+/// A splitter a press focused keeps its arrows, but not their chords:
+/// Ctrl+→ still steps the paused sim (the PR #45 review's finding).
+#[test]
+fn a_focused_splitter_leaves_ctrl_arrow_to_the_sim_step() {
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    sent(&mut app);
+    let bar = side_splitter(&mut app, Side::Sidebar);
+    // A press focuses it, as it does any tab stop.
+    click(&mut app, bar);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(bar));
+    let w = layout(&app).sidebar_w;
+    chord(&mut app, &[KeyCode::ControlLeft, KeyCode::ArrowRight]);
+    frames(&mut app, 1);
+    assert_eq!(sent(&mut app), [GzCommand::Step(1)]);
+    assert_eq!(layout(&app).sidebar_w, w);
+    // The plain arrow is the splitter's.
+    chord(&mut app, &[KeyCode::ArrowRight]);
+    frames(&mut app, 1);
+    assert!(sent(&mut app).is_empty());
+    assert_eq!(
+        layout(&app).sidebar_w,
+        w + crate::widgets::splitter::KEY_STEP
+    );
 }
 
 /// The start-up collapse rules apply to the window's first real size

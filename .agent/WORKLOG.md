@@ -1501,3 +1501,12 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   splitters' and a divider's keys and ranges; the slot splitter's reset,
   range and visibility; the gallery's pane; workspace 729 → 735 passing;
   coverage 98.3% lines. check.sh passes. Not tried by hand.
+- **PR review fixes:** a press focuses a splitter (kept: the usual
+  behaviour), so its keys take plain presses only and Ctrl+→ steps the sim
+  again after a drag; a key steps from the size it last asked for (two in
+  a frame both count); a drag or key during start-up clears `startup` as
+  before; the slot splitter's own `Visibility` is gone (`hide_undisplayed`
+  already hides it), and the wrong note that collapsed panels stay in the
+  tab order is dropped; the side-key test reaches the floor, the divider
+  tests check the laid-out drag start and the taken key; §5.18 and §3.3.2
+  amended. 735 → 737 tests.
