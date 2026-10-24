@@ -71,7 +71,7 @@ impl Tool {
         }
     }
 
-    fn icon(self) -> IconId {
+    pub(crate) fn icon(self) -> IconId {
         match self {
             Tool::Navigate => IconId::Navigate,
             Tool::BoxSelect => IconId::BoxSelect,

@@ -1,6 +1,6 @@
 //! The search / command bar trigger (spec §3.1): a field-looking button
 //! with the search icon, the placeholder and the ⌘K key cap. It opens the
-//! command palette in M8. Narrow windows squeeze it first.
+//! command palette (§7.7, D-107). Narrow windows squeeze it first.
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
@@ -18,7 +18,7 @@ use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::text::set_text;
 use crate::widgets::{clickable, rounded};
 
-/// The search / command bar trigger (opens ⌘K in M8).
+/// The search / command bar trigger (opens the command palette).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct SearchTrigger;
 
