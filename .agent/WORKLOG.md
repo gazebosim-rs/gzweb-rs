@@ -1789,3 +1789,19 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   limit (D-105).
 - **Rows:** every held line keeps a row, shown or hidden by the chip and
   filter, so typing in the filter no longer rebuilds them.
+
+## 2026-10-24: M8a command palette (D-107)
+
+- **Palette:** ⌘K or the top bar's search; a 44px field; results under
+  Commands, Entities, Topics, Panels and Settings, fuzzy-ranked, with
+  the Gazebo GUI plugins' names as keywords; ↑/↓, Enter, click, Esc and
+  a press outside; unavailable commands dimmed with their reason; the
+  results follow the world while open. `gzweb --palette QUERY`.
+- **Running:** a `shortcuts.json` command is a `RunBinding`, which
+  `shortcut_keys` and gz-bevy's `key_input` read beside their keys;
+  shown panels' actions trigger `PanelActionActivated`; an entity is
+  selected and focused; a topic echoes in Topics. `sim.reset`,
+  `ui.command_palette` and the `ui.theme_*` bindings now do something.
+- **Live check** (debug build, :9013 `diff_drive`): the palette open
+  empty, and on "veh" listing `vehicle_blue`, `vehicle_green` and their
+  topics. Typing and running by hand not tried.
