@@ -1825,3 +1825,21 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   stats message.
 - **More commands:** the overlays without keys; the layout commands
   work offline; Play says it waits for the clock; more Gazebo names.
+
+## 2026-10-24: M8b World menu and Snap popover (D-108)
+
+- **World menu:** header (file, "unsaved changes · last saved", "saved"),
+  the §7.1 items; what the server can't do says so; Undo and Redo by
+  name; Connect to server… shows the connect card over the world, with
+  Cancel.
+- **Save:** `gz_bevy::world_save` asks `generate_world_sdf` and saves
+  `<world>.sdf` (download in the browser), each top-level model at its
+  authored pose (`gz_core::world_file`: last placed on the undo stack,
+  else as loaded); marks the world saved. Save as… and Export open a
+  dialog with "Use current poses". Export screenshot saves a PNG.
+  `StatusNote` shows "Saved …" for 3 s.
+- **Snap popover:** translate and rotate steps; scale reserved; World.
+- **Flags:** `gzweb --menu world|snap`.
+- **Live check** (debug build, :9013 `diff_drive`): both menus open on
+  the live world. Saving by hand not tried (tested against a reply).
+- **Tests:** workspace 847 → 856 passing.

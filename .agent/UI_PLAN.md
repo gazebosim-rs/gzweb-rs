@@ -392,15 +392,20 @@ pop-out windows.
   so their data lives in always-on resources and only the view is gated.
 
 ### M8 — Menus, command palette, workspaces, persistence
-In three PRs: **M8a** the command palette and its commands, **M8b** the World menu, the
-entity context menu and the Snap popover, **M8c** the message tray, workspaces, the switcher
-and persistence.
+In four PRs: **M8a** the command palette and its commands, **M8b** the World menu and the
+Snap popover, **M8c** the entity context menu (with Align), **M8d** the message tray,
+workspaces, the switcher and persistence.
 
 - **M8a notes:** the command palette (D-107): `shortcuts.json` commands that run as their key
   would (`RunBinding`, read by `shortcut_keys` and gz-bevy's `key_input`), the shown panels'
   actions, entities, topics, panels to open or pop out, the themes; fuzzy ranking with the
   Gazebo plugin names as keywords; `sim.reset`, `ui.command_palette` and the themes wired.
-  Left: file, edit and workspace commands (M8b, M8c).
+  Left: file, edit and workspace commands (M8b, M8d).
+- **M8b notes:** the World menu (D-108): its header and state, Save of the authored world via
+  `generate_world_sdf` (`gz_bevy::world_save`, `gz_core::world_file`), Save as… and Export
+  with "Use current poses", Export screenshot, Connect to server… over the world, Undo and
+  Redo by name, the status bar's "Saved …" note; the Snap popover. Left: New, Open, Revert and
+  Import (no server support), video, Local snap space.
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.

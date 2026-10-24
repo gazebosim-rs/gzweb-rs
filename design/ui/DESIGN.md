@@ -463,7 +463,7 @@ Tab order: top bar → activity bar → sidebar → viewport (receives keys) →
 ## 7. Menus and popovers
 
 ### 7.1 World menu (from the world name)
-Header: file name (13/600) and state line mono 11 (`warn_text` "unsaved changes · last saved 12:01", or `text_3` "saved"). Then: New world ⌘N · Open world… ⌘O · Open recent › · separator · Save ⌘S · Save as… ⇧⌘S · Revert to saved (`revert` icon) · separator · Undo ⌘Z · Redo ⇧⌘Z (labels name the action: "Undo move amr_01") · separator · Import SDF / URDF / mesh… ⌘I · Export world as SDF… · Export screenshot / video… · separator · Connect to server… (current address as hint).
+Header: file name (13/600) and state line mono 11 (`warn_text` "unsaved changes · last saved 12:01", or `text_3` "saved"). Then: New world ⌘N · Open world… ⌘O · Open recent › · separator · Save ⌘S · Save as… ⇧⌘S · Revert to saved (`revert` icon) · separator · Undo ⌘Z · Redo ⇧⌘Z (labels name the action: "Undo move amr_01") · separator · Import SDF / URDF / mesh… ⌘I · Export world as SDF… · Export screenshot / video… · separator · Connect to server… (current address as hint). As built (D-108): the websocket server can't load a world (New, Open, Open recent, Revert unavailable); Save downloads or writes `<world>.sdf` from `generate_world_sdf` with the authored poses; Import and video wait.
 
 **Dirty state.** The world is dirty when an authored property changes: an entity is spawned, deleted, renamed, re-parented, moved by a tool or the inspector, a toggle/field/plugin/light/sensor parameter changes, or an entity is hidden. Physics moving a dynamic body does not dirty the world. Camera, overlays, panel layout and workspaces never dirty it. Save writes the authored world: for dynamic entities that is the pose they had when last placed by the user (or loaded), not the live physics pose. Save as… offers "Use current poses" as a checkbox for users who want to bake a simulated state. The unsaved dot and the menu header follow this flag.
 
@@ -482,7 +482,7 @@ Row of five layout preset thumbnails (52×36, radius 6, active = `accent_soft` w
 560 wide, opens upward from the chip. Header: "System messages", counts, Open console ›, Clear. Rows: 8px level dot, message, time mono 11.
 
 ### 7.6 Snap popover
-Translate step (m), rotate step (deg), scale step (reserved), space: World / Local.
+Translate step (m), rotate step (deg), scale step (reserved), space: World / Local. As built (D-108): World only until the gizmo has local axes.
 
 ### 7.7 Command palette (⌘K)
 Centered, 560 wide, top offset 15% of window. Search input 44 tall. Results grouped: Commands, Entities, Topics, Panels, Settings. Each result: icon, name, path/hint in `text_3`, shortcut at right. Every action in this spec MUST be reachable here, including every Gazebo GUI plugin by name. As built (D-107): a command runs as its key would; an unavailable one is dimmed with its reason; the shown panels' actions are commands; the World menu's and the workspaces' commands join with M8b and M8c.
