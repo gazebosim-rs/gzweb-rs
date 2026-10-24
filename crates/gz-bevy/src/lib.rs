@@ -12,6 +12,7 @@ pub mod collada;
 pub mod connection;
 pub mod driver;
 pub mod edit;
+pub mod fuel;
 pub mod heightmap;
 pub mod hud;
 pub mod joint_state;

@@ -349,11 +349,11 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Why a fetch failed.
 #[derive(Debug)]
-struct FetchError {
-    message: String,
+pub(crate) struct FetchError {
+    pub(crate) message: String,
     /// The host couldn't be reached or didn't answer in time (not an error
     /// status).
-    unreachable: bool,
+    pub(crate) unreachable: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -372,7 +372,7 @@ impl From<ureq::Error> for FetchError {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+pub(crate) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
     fetch_within(url, FETCH_TIMEOUT)
 }
 
@@ -396,7 +396,7 @@ fn fetch_within(url: &str, total: Duration) -> Result<Vec<u8>, FetchError> {
 /// `fetch`, aborted after [`FETCH_TIMEOUT`] (the browser has no timeout of
 /// its own for a stalled body).
 #[cfg(target_arch = "wasm32")]
-async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+pub(crate) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
     // `fetch` rejects (a network error or the abort) only when the host
     // can't be reached or the timeout fires.
     fetch_js(url)
