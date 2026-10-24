@@ -17,6 +17,8 @@
 //! - [`uri`]: resource URI resolution (Fuel, `file://`, `model://`).
 //! - [`snapshot`]: the parity-test snapshot format.
 //! - [`topic`]: gz-transport topic-name sanitization and world topics.
+//! - [`world_file`]: a world's SDFormat to save, its models at their
+//!   authored poses.
 
 pub mod cli;
 pub mod control;
@@ -35,5 +37,6 @@ pub mod teleop;
 pub mod topic;
 pub mod transport;
 pub mod uri;
+pub mod world_file;
 
 pub use gz_proto::msgs;
