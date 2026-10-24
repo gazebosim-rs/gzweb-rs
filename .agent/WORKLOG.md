@@ -1741,3 +1741,29 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Tests:** focus routing, X from another panel, a resting stick, a
   reconnect through Disconnected (and to another world), Teleop's joint
   states and the single refresh.
+
+## 2026-10-24: M7e Console and pop-out windows (D-105, D-106)
+
+- **Console:** the client's own log, newest first (`SystemMessages`
+  now keeps our info and debug events, numbered, with the local time),
+  the filter and level chips, Clear and Pause in the header, the badge
+  for problems not seen yet, and a command line in the footer:
+  `gz_core::cli` reads `gz topic` (-l, -i, -e, -p) and `gz service -s`;
+  `gz_core::echo::encode_text` turns text format into a message;
+  replies show as text, with "service not found" and timeouts. `topic
+  -e` opens Topics beside the Console (`TopicsStart::beside`).
+  `gzweb --console`.
+- **Pop-outs:** `ShellLayout::popouts` (back to front) with pop out,
+  Dock, Close, raise, move and resize, kept in the viewport area; a
+  window is one more `PanelHost`, so the sidebar's host rebuild fills
+  it; its header gets a grip, Dock and Close; edges and corners resize;
+  a press raises. Pop out on every slot header and Plot's footer;
+  Sensors' disabled header pop-out is gone. A popped-out panel's
+  activity button shows a hollow ring. `gzweb --pop-out PANEL,…`.
+- **Live check** (debug build, :9013 `diff_drive`): the Console with the
+  connection's lines; Plot (charting `vehicle_blue`'s x) and the
+  Console popped out over the view, with the rings on their buttons.
+  The command line and the window drags are tested, not tried by hand.
+- **Base:** this branch builds on M7d's. #47 to #49 merged into the
+  branches beneath them, not main, which has only M7a (#46).
+- **Tests:** workspace 829 → 840 passing.
