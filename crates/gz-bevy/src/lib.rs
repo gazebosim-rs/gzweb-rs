@@ -21,6 +21,7 @@ pub mod messages;
 pub mod obj;
 pub mod overlays;
 pub mod render;
+pub mod save;
 pub mod snapshot;
 pub mod spawn;
 pub mod stl;
