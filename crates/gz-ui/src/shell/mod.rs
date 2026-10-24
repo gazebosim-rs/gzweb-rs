@@ -118,6 +118,7 @@ impl Plugin for ShellPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiCommand>()
             .add_message::<gz_bevy::view::controls::RunBinding>()
+            .add_message::<gz_bevy::overlays::OverlayCommand>()
             .add_message::<GzCommand>()
             .add_message::<GzReconnect>()
             .init_resource::<PanelRegistry>()

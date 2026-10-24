@@ -1,6 +1,7 @@
 //! The command palette's systems (DECISIONS.md D-107): what it lists, how
 //! it opens and closes, the query, the keys, and running a result.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
@@ -12,6 +13,7 @@ use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::edit::edits_allowed;
+use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::topics::GzTopics;
 use gz_bevy::undo::UndoStack;
@@ -123,7 +125,14 @@ pub(crate) struct Sources<'w, 's> {
     entities: Query<'w, 's, (Entity, &'static GzEntity)>,
     new_entities: Query<'w, 's, (), Added<GzEntity>>,
     gone: RemovedComponents<'w, 's, GzEntity>,
+    /// What the items read of the connection's status, last look.
+    seen_gz: Local<'s, Option<GzKey>>,
 }
+
+/// What the items read of [`GzStatus`]: whether the sim is there and
+/// paused, and what the server takes. (The stats change every message;
+/// these rarely.)
+type GzKey = (Option<bool>, Option<bool>, Option<bool>);
 
 impl Sources<'_, '_> {
     /// What the items come from changed since the last look: the
@@ -131,8 +140,13 @@ impl Sources<'_, '_> {
     /// panels' state or the layout.
     fn changed(&mut self) -> bool {
         let gone = self.gone.read().count() > 0;
-        gone || self.phase.is_changed()
-            || self.gz.as_ref().is_some_and(Res::is_changed)
+        let gz = self
+            .gz
+            .as_deref()
+            .map(|s| (s.sim.as_ref().map(|x| x.paused), s.edits, s.publishes));
+        let gz_changed = std::mem::replace(&mut *self.seen_gz, gz) != gz;
+        gone || gz_changed
+            || self.phase.is_changed()
             || self.topics.as_ref().is_some_and(Res::is_changed)
             || self.undo.as_ref().is_some_and(Res::is_changed)
             || self.status.is_changed()
@@ -152,11 +166,12 @@ impl Sources<'_, '_> {
             _ => None,
         };
         if let Some(t) = transport {
-            return (!t.enabled(self.phase.0, sim)).then_some(if live {
-                "Not while running"
-            } else {
-                "Not connected"
-            });
+            let why = match (live, sim) {
+                (false, _) => "Not connected",
+                (true, None) => "Waiting for the world's clock",
+                (true, Some(_)) => "Not while running",
+            };
+            return (!t.enabled(self.phase.0, sim)).then_some(why);
         }
         let undo = self.undo.as_deref();
         match id {
@@ -169,6 +184,8 @@ impl Sources<'_, '_> {
             "tool.translate" | "tool.rotate" if !edits_allowed(self.gz.as_deref()) => {
                 Some("This server doesn't take edits")
             }
+            // The view layout works offline; looking at the world doesn't.
+            "view.maximize" | "view.split_right" | "view.split_down" | "view.close" => None,
             id if !live && (id.starts_with("view.") || id.starts_with("overlay.")) => {
                 Some("Not connected")
             }
@@ -212,6 +229,19 @@ impl Sources<'_, '_> {
         let shortcut = |b: Option<&str>| {
             b.and_then(|b| self.map.as_deref().and_then(|m| shortcut_label(m, b)))
         };
+        // The overlays without a key (§7.3).
+        for o in [Overlay::CenterOfMass, Overlay::Frames, Overlay::Wireframe] {
+            out.push(Item {
+                group: Group::Commands,
+                icon: IconId::Overlays,
+                name: format!("Toggle {}", o.label().to_lowercase()),
+                hint: String::new(),
+                shortcut: None,
+                keywords: gazebo_names("overlays").to_vec(),
+                run: Run::Overlay(o),
+                disabled: (self.phase.0 != Phase::Live).then_some("Not connected"),
+            });
+        }
         // The shown panels' own actions.
         for def in self.panels.iter().filter(|d| self.hosts.is_shown(d.id)) {
             for a in &def.header_actions {
@@ -401,6 +431,44 @@ pub(crate) fn focus_field(
     }
 }
 
+/// While the palette is open its field keeps the keys: a press on its
+/// card that runs nothing (a label, a dimmed row, the padding) or on its
+/// rows hands them back, so typed keys never reach the world behind it.
+pub(crate) fn keep_focus(
+    open: Res<PaletteOpen>,
+    fields: Query<(Entity, &ChildOf), With<TextFieldInput>>,
+    roots: Query<(), With<PaletteField>>,
+    mut focus: ResMut<InputFocus>,
+) {
+    if !open.0 {
+        return;
+    }
+    let field = fields
+        .iter()
+        .find(|(_, p)| roots.contains(p.parent()))
+        .map(|(e, _)| e);
+    if let Some(field) = field.filter(|f| focus.get() != Some(*f)) {
+        focus.set(field, FocusCause::Navigated);
+    }
+}
+
+/// After ↑ or ↓, the caret goes back to the end of the query.
+pub(crate) fn caret_to_end(
+    mut state: ResMut<PaletteState>,
+    mut inputs: Query<(&ChildOf, &mut EditableText), With<TextFieldInput>>,
+    fields: Query<(), With<PaletteField>>,
+) {
+    if !state.caret_end {
+        return;
+    }
+    state.caret_end = false;
+    for (parent, mut text) in &mut inputs {
+        if fields.contains(parent.parent()) {
+            text.queue_edit(bevy::text::TextEdit::TextEnd(false));
+        }
+    }
+}
+
 /// The field's text is the query.
 pub(crate) fn query_text(
     inputs: Query<(&EditableText, &ChildOf), Changed<EditableText>>,
@@ -443,11 +511,7 @@ pub(crate) fn refresh_results(
         .selected
         .and_then(|i| state.results.get(i))
         .filter(|_| state.moved)
-        .and_then(|was| {
-            results
-                .iter()
-                .position(|r| r.name == was.name && r.group == was.group)
-        })
+        .and_then(|was| results.iter().position(|r| r.run == was.run))
         .filter(|i| results[*i].disabled.is_none());
     state.selected = kept.or_else(|| step(&results, None, 1));
     state.results = results;
@@ -460,7 +524,8 @@ pub(crate) fn sync_rows(
     theme: Res<Theme>,
     mut state: ResMut<PaletteState>,
     lists: Query<Entity, With<PaletteRows>>,
-    rows: Query<(Entity, &PaletteRow, Has<Active>)>,
+    mut rows: Query<(Entity, &PaletteRow, Has<Active>, &mut AccessibilityNode)>,
+    mut scrolls: Query<&mut ScrollPosition, With<PaletteRows>>,
     mut commands: Commands,
 ) {
     let Ok(list) = lists.single() else {
@@ -468,6 +533,13 @@ pub(crate) fn sync_rows(
     };
     if !state.built {
         state.built = true;
+        // New results start at the top ([`reveal_selected`] then brings a
+        // chosen row further down into view).
+        for mut scroll in &mut scrolls {
+            if scroll.y != 0.0 {
+                scroll.y = 0.0;
+            }
+        }
         commands.entity(list).despawn_children();
         let t = theme.clone();
         let results = state.results.clone();
@@ -493,7 +565,7 @@ pub(crate) fn sync_rows(
         });
         return;
     }
-    for (e, row, active) in &rows {
+    for (e, row, active, mut access) in &mut rows {
         let want = state.selected == Some(row.0);
         if want != active {
             if want {
@@ -502,25 +574,37 @@ pub(crate) fn sync_rows(
                 commands.entity(e).remove::<Active>();
             }
         }
+        // The chosen result, to a screen reader (focus stays in the field).
+        if access.is_selected() != Some(want) {
+            access.set_selected(want);
+        }
     }
 }
 
-/// Keeps the chosen row in the list's view.
+/// Keeps the chosen row in the list's view, once the rows are laid out
+/// (rows built this frame have no size yet: it tries again).
 pub(crate) fn reveal_selected(
     state: Res<PaletteState>,
     mut lists: Query<(&mut ScrollPosition, &ComputedNode), With<PaletteRows>>,
     rows: Query<(&PaletteRow, &ComputedNode, &UiGlobalTransform)>,
     list_at: Query<&UiGlobalTransform, With<PaletteRows>>,
+    mut pending: Local<bool>,
 ) {
-    if !state.is_changed() {
+    if !state.is_changed() && !*pending {
         return;
     }
+    *pending = true;
     let (Ok((mut scroll, list)), Ok(at)) = (lists.single_mut(), list_at.single()) else {
         return;
     };
     let Some((_, node, row_at)) = rows.iter().find(|(r, ..)| Some(r.0) == state.selected) else {
+        *pending = state.selected.is_some() && !state.results.is_empty();
         return;
     };
+    if node.size().y == 0.0 || list.size().y == 0.0 {
+        return;
+    }
+    *pending = false;
     let scale = list.inverse_scale_factor();
     let half = list.size().y * scale / 2.0;
     let row_y = (row_at.translation.y - at.translation.y) * scale;
@@ -562,6 +646,8 @@ pub(crate) fn on_field_key(
         _ => return,
     };
     ev.propagate(false);
+    // The field's own arrow handling moves its caret: back to the end.
+    state.caret_end = true;
     let next = step(&state.results, state.selected, by);
     if state.selected != next {
         state.selected = next;
@@ -574,19 +660,21 @@ pub(crate) fn on_field_key(
 pub(crate) struct Runner<'w, 's> {
     ui: MessageWriter<'w, UiCommand>,
     bindings: MessageWriter<'w, RunBinding>,
+    overlays: MessageWriter<'w, OverlayCommand>,
     selection: ResMut<'w, Selection>,
     buttons: Query<'w, 's, (Entity, &'static ActionButton)>,
     commands: Commands<'w, 's>,
 }
 
 impl Runner<'_, '_> {
-    /// Runs `item` (an unavailable one does nothing) and closes the
-    /// palette.
+    /// Runs `item` and closes the palette (an unavailable one, or none,
+    /// does nothing).
     fn run(&mut self, item: Option<&Item>) {
-        self.ui.write(UiCommand::ClosePalette);
+        // Nothing to run (no results, or only unavailable ones): it stays.
         let Some(item) = item.filter(|i| i.disabled.is_none()) else {
             return;
         };
+        self.ui.write(UiCommand::ClosePalette);
         match &item.run {
             Run::Binding(id) => {
                 self.bindings.write(RunBinding(id.clone()));
@@ -612,6 +700,9 @@ impl Runner<'_, '_> {
                     parts: vec![],
                 };
                 self.bindings.write(RunBinding("view.focus".into()));
+            }
+            Run::Overlay(o) => {
+                self.overlays.write(OverlayCommand::toggle(*o));
             }
             Run::Echo(topic) => {
                 self.commands.insert_resource(TopicsStart {

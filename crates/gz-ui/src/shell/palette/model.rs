@@ -4,6 +4,8 @@
 
 use bevy::prelude::*;
 
+use gz_bevy::overlays::Overlay;
+
 use crate::assets::icons::IconId;
 use crate::panels::{ActionId, PanelId};
 use crate::shell::UiCommand;
@@ -55,6 +57,8 @@ pub(crate) enum Run {
     Select(Entity),
     /// Echo a topic in Topics.
     Echo(String),
+    /// Turn an overlay on or off in every view (those without a key).
+    Overlay(Overlay),
 }
 
 /// One result.
@@ -91,7 +95,16 @@ pub(crate) fn gazebo_names(id: &str) -> &'static [&'static str] {
         "tool.navigate" | "tool.box_select" | "tool.translate" | "tool.rotate" => {
             &["TransformControl"]
         }
-        "ui.inspector" => &["ComponentInspector", "ComponentInspectorEditor"],
+        "ui.inspector" => &[
+            "ComponentInspector",
+            "ComponentInspectorEditor",
+            "WorldStats",
+            "SphericalCoordinates",
+            "EnvironmentLoader",
+            "GlobalIlluminationVct",
+            "GlobalIlluminationCivct",
+        ],
+        "overlays" => &["VisualizationCapabilities"],
         "scene" => &["EntityTree"],
         "assets" => &["Shapes", "Lights", "ResourceSpawner", "Fuel"],
         "topics" => &["TopicViewer", "TopicEcho", "Publisher"],

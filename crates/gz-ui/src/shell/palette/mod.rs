@@ -43,6 +43,8 @@ pub(crate) struct PaletteState {
     /// ↑ or ↓ chose the result: a refresh keeps it (else the first
     /// available is chosen again).
     moved: bool,
+    /// ↑ or ↓ moved the field's caret too: it goes back to the end.
+    caret_end: bool,
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -59,6 +61,8 @@ pub(crate) fn build(app: &mut App) {
             (
                 systems::apply_start,
                 systems::focus_field,
+                systems::keep_focus,
+                systems::caret_to_end,
                 systems::query_text,
                 systems::refresh_results,
                 systems::sync_rows,

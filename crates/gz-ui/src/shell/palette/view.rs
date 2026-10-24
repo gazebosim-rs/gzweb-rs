@@ -5,7 +5,7 @@
 //! `accent_soft` like a menu's current item; an unavailable one is dimmed.
 
 use accesskit::Role;
-use bevy::a11y::AccessibilityNode;
+use bevy::input_focus::tab_navigation::TabGroup;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, ScrollArea};
 
@@ -14,6 +14,7 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
 use crate::theme::visuals::{Content, OwnInk, Visuals};
 use crate::theme::{border, elevation, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
+use crate::widgets::focus::TakesEscape;
 use crate::widgets::layout::{column, flex_spacer, row};
 use crate::widgets::menu::menu_group_label;
 use crate::widgets::text_field::search_field;
@@ -64,6 +65,7 @@ pub(crate) fn palette() -> impl Bundle {
             ..column(0.0)
         },
         GlobalZIndex(950),
+        TakesEscape,
         children![
             (
                 PaletteBackdrop,
@@ -90,6 +92,8 @@ pub(crate) fn palette() -> impl Bundle {
                 shadow,
                 tint,
                 a11y(Role::Dialog, "Command palette"),
+                // Tab stays in the palette.
+                TabGroup::modal(),
                 children![
                     (
                         Node {
@@ -108,7 +112,7 @@ pub(crate) fn palette() -> impl Bundle {
                         PaletteRows,
                         ScrollArea,
                         ScrollPosition::default(),
-                        AccessibilityNode(accesskit::Node::new(Role::ListBox)),
+                        a11y(Role::ListBox, "Results"),
                         Node {
                             max_height: Val::Vh(RESULTS_VH),
                             overflow: Overflow::scroll_y(),

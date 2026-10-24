@@ -1,6 +1,7 @@
 //! The command palette: ranking, and the palette through the shell.
 
-use bevy::input::keyboard::KeyCode;
+use bevy::input::keyboard::{Key, KeyCode, KeyboardInput};
+use bevy::input::ButtonState;
 use bevy::picking::events::PointerPress;
 use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
@@ -230,12 +231,16 @@ fn rows_choose_click_and_close() {
     };
     app.world_mut().trigger(Activate { entity: row });
     frames(&mut app, 2);
-    assert!(!is_open(&mut app));
+    assert!(is_open(&mut app), "an unavailable result runs nothing");
     assert!(!sent(&mut app)
         .iter()
         .any(|c| matches!(c, gz_bevy::connection::GzCommand::Step(_))));
-
-    open(&mut app);
+    // Nothing matches: Enter does nothing either.
+    type_query(&mut app, "zzqqx");
+    assert!(results(&app).is_empty());
+    enter(&mut app);
+    assert!(is_open(&mut app));
+    type_query(&mut app, "");
     let first = app.world().resource::<PaletteState>().selected;
     let input = field_input(&mut app);
     focused_key(&mut app, input, KeyCode::ArrowDown);
@@ -339,4 +344,101 @@ fn entities_topics_and_panel_actions() {
     enter(&mut app);
     frames(&mut app, 2);
     assert_eq!(layout(&app).primary, Some(TOPICS));
+}
+
+/// An arrow key as a keyboard sends it (its logical key too, which the
+/// text input reads), in focused `e`.
+fn arrow(app: &mut App, e: Entity, key_code: KeyCode, key: Key) {
+    let window = find::<Window>(app);
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(e, bevy::input_focus::FocusCause::Navigated);
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code,
+            logical_key: key.clone(),
+            state,
+            text: None,
+            repeat: false,
+            window,
+        });
+        app.update();
+    }
+    app.update();
+}
+
+/// Tab and a press that runs nothing leave the keys in the field; ↑ and
+/// ↓ leave the caret at the end of the query; a re-rank scrolls back to
+/// the top; a ↑/↓ choice survives a refresh by what it runs, not its name.
+#[test]
+fn the_field_keeps_the_keys_and_the_choice() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let world = app.world_mut();
+    let root = world
+        .spawn((Transform::default(), Visibility::default(), GzWorldRoot))
+        .id();
+    world.resource_mut::<GzIndex>().root = Some(root);
+    let link = |world: &mut World, model: &str| {
+        world
+            .spawn((
+                GzEntity {
+                    name: "left_wheel".into(),
+                    id: 0,
+                    kind: NodeKind::Link,
+                    path: format!("{model}/left_wheel"),
+                },
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .id()
+    };
+    link(world, "blue");
+    let green = link(world, "green");
+    go_live(&mut app, false);
+    open(&mut app);
+    let input = field_input(&mut app);
+
+    focused_key(&mut app, input, KeyCode::Tab);
+    frames(&mut app, 2);
+    assert_eq!(focused(&app), Some(input), "Tab stays in the palette");
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(input), "a press elsewhere in it");
+
+    type_query(&mut app, "left_wh");
+    arrow(&mut app, input, KeyCode::ArrowDown, Key::ArrowDown);
+    let caret = app
+        .world()
+        .get::<EditableText>(input)
+        .unwrap()
+        .editor
+        .raw_selection()
+        .focus()
+        .index();
+    assert_eq!(caret, "left_wh".len(), "the caret stays at the end");
+    let s = app.world().resource::<PaletteState>().clone();
+    let chosen = &s.results[s.selected.unwrap()];
+    assert_eq!(chosen.run, Run::Select(green), "{:?}", s.results);
+    // A model loading re-ranks; the choice stays on green's wheel.
+    app.world_mut().spawn((
+        GzEntity {
+            name: "left_wheel_2".into(),
+            id: 9,
+            kind: NodeKind::Link,
+            path: "red/left_wheel_2".into(),
+        },
+        Transform::default(),
+        Visibility::default(),
+        ChildOf(root),
+    ));
+    frames(&mut app, 2);
+    let s = app.world().resource::<PaletteState>().clone();
+    assert_eq!(s.results[s.selected.unwrap()].run, Run::Select(green));
+    // The overlays without keys are commands too.
+    type_query(&mut app, "wireframe");
+    assert_eq!(results(&app)[0], "Toggle wireframe");
 }
