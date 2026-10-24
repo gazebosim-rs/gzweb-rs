@@ -7,6 +7,7 @@
 //! - [`fuel`]: Gazebo Fuel's model search (the Assets panel).
 //! - [`insert`]: shapes, lights and models to insert, as SDFormat.
 //! - [`sensor`]: lidar scans and camera frames, for the Sensors panel.
+//! - [`teleop`]: the Teleop panel's velocity and joint commands.
 //! - [`transport`]: sans-IO client state machine for the gz websocket protocol.
 //! - `net` (feature `native`): blocking `ws://`/`wss://` connect.
 //! - [`scene`]: gzweb's rules for turning a `gz.msgs.Scene` into a node tree.
@@ -28,6 +29,7 @@ pub mod scene;
 pub mod sdf;
 pub mod sensor;
 pub mod snapshot;
+pub mod teleop;
 pub mod topic;
 pub mod transport;
 pub mod uri;

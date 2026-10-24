@@ -465,3 +465,48 @@ fn flags_read_in_any_case_and_a_default_topic_is_none() {
     assert!(!l.flags.gravity);
     assert_eq!(l.sensors[0].topic, None);
 }
+
+/// A model's drive takes Twists on its `<topic>` (rooted) or
+/// `/model/<name>/cmd_vel`; each JointPositionController joint on its
+/// `<topic>` or the default with its joint index.
+#[test]
+fn drives_and_joint_controllers_have_their_topics() {
+    let xml = r#"<sdf version="1.10"><world name="w">
+      <model name="amr">
+        <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
+        <plugin filename="gz-sim-joint-position-controller-system"
+                name="gz::sim::systems::JointPositionController">
+          <joint_name>lift</joint_name>
+        </plugin>
+        <plugin filename="gz-sim-joint-position-controller-system" name="x">
+          <joint_name>arm</joint_name><topic>arm_cmd</topic>
+        </plugin>
+        <plugin filename="gz-sim-joint-position-controller-system" name="y">
+          <joint_name>wrist</joint_name><joint_index>1</joint_index>
+        </plugin>
+      </model>
+      <model name="car">
+        <plugin filename="gz-sim-ackermann-steering-system" name="a"><topic>drive</topic></plugin>
+      </model>
+      <model name="crate"/>
+    </world></sdf>"#;
+    let w = WorldExtras::parse(xml).unwrap();
+    let amr = &w.models["amr"];
+    assert_eq!(amr.drive_topic.as_deref(), Some("/model/amr/cmd_vel"));
+    assert_eq!(
+        amr.joint_controllers,
+        [
+            (
+                "lift".to_string(),
+                "/model/amr/joint/lift/0/cmd_pos".to_string()
+            ),
+            ("arm".to_string(), "/arm_cmd".to_string()),
+            (
+                "wrist".to_string(),
+                "/model/amr/joint/wrist/1/cmd_pos".to_string()
+            ),
+        ]
+    );
+    assert_eq!(w.models["car"].drive_topic.as_deref(), Some("/drive"));
+    assert_eq!(w.models["crate"].drive_topic, None);
+}

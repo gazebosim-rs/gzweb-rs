@@ -144,3 +144,70 @@ fn an_end_that_isnt_in_the_scene_cant_be_selected() {
         .count();
     assert_eq!(disabled, 1, "Select child");
 }
+
+/// A joint with a JointPositionController has a command slider on a
+/// server that publishes, which publishes its position; not otherwise.
+#[test]
+fn a_controlled_joint_takes_a_command() {
+    use gz_bevy::connection::{GzCommand, GzStatus};
+    use prost::Message as _;
+    let open = |publishes: Option<bool>| {
+        let mut app = shell_app((1440, 900), 1.0);
+        frames(&mut app, 2);
+        let s = fixture::scene(&mut app);
+        app.world_mut().resource_mut::<GzStatus>().publishes = publishes;
+        app.world_mut().resource_mut::<Selection>().parts = vec![Part {
+            kind: PartKind::Joint,
+            owner: s.cart,
+            name: "slide".into(),
+        }];
+        frames(&mut app, 3);
+        app
+    };
+    let mut app = open(None);
+    let world = app.world_mut();
+    assert!(world
+        .query::<&super::JointCommand>()
+        .iter(world)
+        .next()
+        .is_none());
+    let mut app = open(Some(true));
+    let (row, topic) = {
+        let world = app.world_mut();
+        let (e, c) = world
+            .query::<(Entity, &super::JointCommand)>()
+            .single(world)
+            .unwrap();
+        (e, c.0.clone())
+    };
+    assert_eq!(topic, "/model/cart/joint/slide/0/cmd_pos");
+    let slider = {
+        let world = app.world_mut();
+        let kids = world.get::<Children>(row).unwrap().to_vec();
+        kids.into_iter()
+            .find(|c| world.get::<bevy::ui_widgets::Slider>(*c).is_some())
+            .unwrap()
+    };
+    sent(&mut app);
+    app.world_mut().trigger(bevy::ui_widgets::ValueChange {
+        source: slider,
+        value: 0.3f32,
+        is_final: true,
+    });
+    frames(&mut app, 1);
+    let positions: Vec<f64> = sent(&mut app)
+        .into_iter()
+        .filter_map(|c| match c {
+            GzCommand::Publish {
+                topic: t, payload, ..
+            } if t == topic => Some(
+                gz_core::msgs::Double::decode(payload.as_slice())
+                    .unwrap()
+                    .data,
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(positions.len(), 1);
+    assert!((positions[0] - 0.3).abs() < 1e-6);
+}

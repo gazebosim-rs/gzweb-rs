@@ -1,7 +1,10 @@
 //! The Joint inspector (spec §3.5): the JOINT tag and the joint's name, its
 //! path, Select parent, Select child and Show axis, the live position,
 //! velocity and effort (from the model's joint states, when the world
-//! publishes them), and its definition from the world's SDFormat.
+//! publishes them), a command slider for a joint with a
+//! JointPositionController on a server that takes publications
+//! (DECISIONS.md D-88, D-104), and its definition from the world's
+//! SDFormat.
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
@@ -19,6 +22,7 @@ use crate::format;
 use crate::shell::{world_name, ShellSystems};
 use crate::theme::Theme;
 use crate::widgets::text::set_text;
+use crate::widgets::{slider_row, SliderProps};
 
 /// The Joint inspector's id.
 pub const JOINT: InspectorId = InspectorId::new("joint");
@@ -34,6 +38,10 @@ pub(crate) struct JointValue {
     pub(crate) rotates: bool,
 }
 
+/// The command slider's row: the topic it publishes positions on.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct JointCommand(pub(crate) String);
+
 /// Registers the Joint inspector, the joint-state subscription it uses and
 /// its live values.
 pub struct JointInspectorPlugin;
@@ -46,7 +54,8 @@ impl Plugin for JointInspectorPlugin {
                 Update,
                 (want_joint_states, joint_values).in_set(ShellSystems::Readouts),
             )
-            .add_observer(build_joint);
+            .add_observer(build_joint)
+            .add_observer(on_command);
     }
 }
 
@@ -124,6 +133,21 @@ fn build_joint(
     let rotates = joint
         .as_ref()
         .is_none_or(|j| j.kind.rotates() || j.kind == gz_core::sdf::JointKind::Ball);
+    // Its JointPositionController's topic, where the server publishes.
+    let publishes = status.as_deref().and_then(|s| s.publishes) == Some(true);
+    let controller = sdf
+        .as_deref()
+        .and_then(|s| s.extras.as_ref())
+        .and_then(|w| w.model(&path))
+        .and_then(|m| m.joint_controllers.iter().find(|(j, _)| *j == part.name))
+        .map(|(_, topic)| topic.clone())
+        .filter(|_| publishes);
+    let range = joint
+        .as_ref()
+        .and_then(|j| j.limits.first())
+        .map(|l| (l.lower, l.upper))
+        .filter(|(lo, hi)| lo.is_finite() && hi.is_finite() && hi - lo < 1e6 && hi > lo)
+        .unwrap_or((-std::f64::consts::PI, std::f64::consts::PI));
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -153,6 +177,16 @@ fn build_joint(
                 &["Position", "Velocity", "Effort"],
                 |index| JointValue { index, rotates },
             );
+            if let Some(topic) = controller {
+                #[allow(clippy::cast_possible_truncation)]
+                let (lo, hi) = (range.0 as f32, range.1 as f32);
+                let props = SliderProps::new("Command", lo, hi, 0.0f32.clamp(lo, hi));
+                b.spawn(Node {
+                    padding: UiRect::horizontal(px(crate::theme::SPACE[5])),
+                    ..default()
+                })
+                .with_child((slider_row(&t, props), JointCommand(topic)));
+            }
             let Some(j) = joint else {
                 definition_group(b, "Definition", vec![("—".into(), String::new())]);
                 links(b, &["Plot position/velocity", "All components"]);
@@ -240,3 +274,24 @@ fn joint_values(
 
 #[cfg(test)]
 mod tests;
+
+/// The command slider publishes the joint's position command.
+fn on_command(
+    ev: On<bevy::ui_widgets::ValueChange<f32>>,
+    parents: Query<&ChildOf>,
+    rows: Query<&JointCommand>,
+    mut out: MessageWriter<gz_bevy::connection::GzCommand>,
+) {
+    let Some(row) = parents
+        .get(ev.source)
+        .ok()
+        .and_then(|p| rows.get(p.parent()).ok())
+    else {
+        return;
+    };
+    out.write(gz_bevy::connection::GzCommand::Publish {
+        topic: row.0.clone(),
+        msg_type: "gz.msgs.Double".into(),
+        payload: gz_core::teleop::double(f64::from(ev.value)),
+    });
+}

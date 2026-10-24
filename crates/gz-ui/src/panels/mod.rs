@@ -69,7 +69,7 @@ pub use console::{ConsolePanelPlugin, ConsoleUnread, CONSOLE};
 pub use plot::{PlotCharts, PlotPanelPlugin, PlotPick, PlotStart, PLOT};
 pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
 pub use sensors::{SensorsPanelPlugin, SensorsStart, ViewSensor, SENSORS};
-pub use teleop::{TeleopPanelPlugin, TELEOP};
+pub use teleop::{TeleopPanelPlugin, TeleopStart, TELEOP};
 pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
 
 ui_id! {
