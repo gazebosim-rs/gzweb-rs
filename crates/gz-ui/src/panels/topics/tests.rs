@@ -447,6 +447,7 @@ fn a_start_echo_opens_the_panel_and_waits_for_the_topic() {
     let mut app = shell_app((1440, 900), 1.0);
     app.insert_resource(super::TopicsStart {
         echo: "/stats".into(),
+        beside: false,
     });
     frames(&mut app, 2);
     let layout = app.world().resource::<crate::shell::ShellLayout>();

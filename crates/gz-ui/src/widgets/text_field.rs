@@ -9,7 +9,7 @@ use bevy::input::ButtonState;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::input_focus::FocusedInput;
 use bevy::prelude::*;
-use bevy::text::{EditableText, LineBreak};
+use bevy::text::{EditableText, LineBreak, TextEdit};
 use bevy::ui_widgets::TextInput;
 use bevy::window::SystemCursorIcon;
 
@@ -59,6 +59,22 @@ pub fn filter_field(
         TypeStyle::BODY,
         name.into(),
         value.into(),
+        Some(placeholder.into()),
+    )
+}
+
+/// A command line (§3.3: the Console's footer input, mono 12): as tall as
+/// a panel's filter, with `placeholder` in `text_3` while it's empty.
+pub(crate) fn command_field(
+    theme: &Theme,
+    name: impl Into<String>,
+    placeholder: impl Into<String>,
+) -> impl Bundle {
+    field(
+        theme.s.input_h_compact,
+        FIELD_TYPE,
+        name.into(),
+        String::new(),
         Some(placeholder.into()),
     )
 }
@@ -125,6 +141,14 @@ fn field(
             ));
         })),
     )
+}
+
+/// Replaces a field's text, the caret at its end.
+pub(crate) fn set_field_text(editable: &mut EditableText, s: &str) {
+    if editable.value() != s {
+        editable.editor.set_text(s);
+        editable.queue_edit(TextEdit::TextEnd(false));
+    }
 }
 
 /// A field's text, edited.

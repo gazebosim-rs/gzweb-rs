@@ -247,6 +247,7 @@ fn on_topic_action(
     match buttons.get(ev.entity) {
         Ok(TopicAction::Echo(topic)) => commands.insert_resource(TopicsStart {
             echo: topic.clone(),
+            beside: false,
         }),
         Ok(TopicAction::Plot(topic)) => {
             picks.write(PlotPick(topic.clone()));

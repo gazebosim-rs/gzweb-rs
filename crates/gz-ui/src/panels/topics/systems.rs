@@ -93,9 +93,14 @@ pub(crate) fn apply_start(
         return;
     };
     if start.is_added() {
+        let slot = if start.beside {
+            Slot::Secondary
+        } else {
+            Slot::Primary
+        };
         ui.write(UiCommand::OpenPanel {
             panel: TOPICS,
-            slot: Slot::Primary,
+            slot,
         });
     }
     if topics.get(&start.echo).is_some() {
