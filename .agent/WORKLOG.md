@@ -1767,3 +1767,25 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Base:** this branch builds on M7d's. #47 to #49 merged into the
   branches beneath them, not main, which has only M7a (#46).
 - **Tests:** workspace 829 → 840 passing.
+
+## 2026-10-24: PR #51 review fixes
+
+- **Dock** keeps the panel that moved up into the primary: it moves back
+  down.
+- **`topic -e`** opens Topics in the slot the Console isn't in
+  (`TopicsStart::beside` is the asking panel).
+- **Window drags** that start on a header button don't move the window
+  (it carried the button along and clicked it: Close closed).
+- **Raise** reads bevy_picking's press messages, so a press on a button,
+  chip or field in a lower window raises it.
+- **↑ / ↓** set the recalled line after the text input's own arrow
+  handling, so the caret ends the line.
+- **Pause** holds the log back, not the command line's answers.
+- **Status chip:** the latest problem is kept apart from the 500-line
+  list (info lines pushed it out); the Console's unread count comes
+  from the log's totals.
+- **Late replies:** within 30 s of a timeout, a call's reply is dropped,
+  not taken for the next call; matching by service stays a documented
+  limit (D-105).
+- **Rows:** every held line keeps a row, shown or hidden by the chip and
+  filter, so typing in the filter no longer rebuilds them.
