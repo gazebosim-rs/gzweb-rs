@@ -34,6 +34,7 @@ use crate::shell::sidebar::body::ActionButton;
 use crate::shell::top_bar::search::SearchTrigger;
 use crate::shell::top_bar::tools::Tool;
 use crate::shell::top_bar::transport::Transport;
+use crate::shell::top_bar::world_menu::WorldCommand;
 use crate::shell::{CurrentPhase, PanelStatus, Phase, ShellLayout, ShownPanels, Slot, UiCommand};
 use crate::theme::visuals::Active;
 use crate::theme::Theme;
@@ -45,6 +46,8 @@ use crate::widgets::TextSubmit;
 /// those a key or a click can do now. (Held keys, the gizmo's axis
 /// constraints, Teleop's keys and what M8b and M8c bring wait.)
 const COMMANDS: &[&str] = &[
+    "file.save",
+    "file.save_as",
     "sim.play_pause",
     "sim.step",
     "sim.reset",
@@ -83,6 +86,7 @@ const SETTINGS: &[&str] = &["ui.theme_light", "ui.theme_dark", "ui.theme_system"
 /// A command's icon.
 fn command_icon(id: &str) -> IconId {
     match id {
+        "file.save" | "file.save_as" => IconId::Save,
         "sim.play_pause" => IconId::Play,
         "sim.step" => IconId::Step,
         "sim.reset" => IconId::Reset,
@@ -181,6 +185,7 @@ impl Sources<'_, '_> {
             "edit.redo" if undo.and_then(UndoStack::redo_label).is_none() => {
                 Some("Nothing to redo")
             }
+            "file.save" | "file.save_as" if !live => Some("Not connected"),
             "tool.translate" | "tool.rotate" if !edits_allowed(self.gz.as_deref()) => {
                 Some("This server doesn't take edits")
             }
@@ -229,6 +234,42 @@ impl Sources<'_, '_> {
         let shortcut = |b: Option<&str>| {
             b.and_then(|b| self.map.as_deref().and_then(|m| shortcut_label(m, b)))
         };
+        // The World menu's commands without a key (§7.1).
+        for (name, icon, cmd, needs_world) in [
+            (
+                "Export world as SDF…",
+                IconId::Export,
+                WorldCommand::ExportSdf,
+                true,
+            ),
+            (
+                "Export screenshot",
+                IconId::Export,
+                WorldCommand::ExportScreenshot,
+                true,
+            ),
+            (
+                "Connect to server…",
+                IconId::Server,
+                WorldCommand::Connect,
+                false,
+            ),
+        ] {
+            out.push(Item {
+                group: Group::Commands,
+                icon,
+                name: name.trim_end_matches('…').to_string(),
+                hint: String::new(),
+                shortcut: None,
+                keywords: if cmd == WorldCommand::ExportScreenshot {
+                    vec!["Screenshot", "VideoRecorder"]
+                } else {
+                    vec![]
+                },
+                run: Run::Ui(UiCommand::World(cmd)),
+                disabled: (needs_world && self.phase.0 != Phase::Live).then_some("Not connected"),
+            });
+        }
         // The overlays without a key (§7.3).
         for o in [Overlay::CenterOfMass, Overlay::Frames, Overlay::Wireframe] {
             out.push(Item {

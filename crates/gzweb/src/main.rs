@@ -33,6 +33,8 @@
 //!   (DECISIONS.md D-105).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
+//! - `--menu world|snap` opens the World menu or the Snap popover once the
+//!   world is live (DECISIONS.md D-108).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
@@ -87,6 +89,8 @@ struct Args {
     pop_out: Vec<String>,
     /// `--palette`.
     palette: Option<String>,
+    /// `--menu`.
+    menu: Option<String>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -101,7 +105,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -221,6 +225,7 @@ fn parse_args(
     let mut console = false;
     let mut pop_out = vec![];
     let mut palette = None;
+    let mut menu = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -293,6 +298,13 @@ fn parse_args(
             "--teleop" => teleop = true,
             "--console" => console = true,
             "--palette" => palette = Some(value()?),
+            "--menu" => {
+                let m = value()?;
+                if !["world", "snap"].contains(&m.as_str()) {
+                    return Err(format!("--menu: no menu '{m}' (world, snap)"));
+                }
+                menu = Some(m);
+            }
             "--pop-out" => {
                 pop_out = value()?
                     .split(',')
@@ -379,6 +391,9 @@ fn parse_args(
     if palette.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--palette needs --ui full".into());
     }
+    if menu.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--menu needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -426,6 +441,7 @@ fn parse_args(
         console,
         pop_out,
         palette,
+        menu,
         layout,
         no_vsync,
     })))
@@ -503,6 +519,7 @@ fn command() -> Result<Command, String> {
         console: false,
         pop_out: vec![],
         palette: None,
+        menu: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -731,6 +748,9 @@ fn main() -> AppExit {
         }
         if let Some(query) = args.palette {
             app.insert_resource(gz_ui::shell::StartPalette(query));
+        }
+        if let Some(menu) = args.menu {
+            app.insert_resource(gz_ui::shell::StartMenu(menu));
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -1022,6 +1042,13 @@ mod tests {
             parse(&["--palette", "grid", "--ui", "minimal"], None).unwrap_err(),
             "--palette needs --ui full"
         );
+        assert_eq!(
+            run_args(&["--menu", "snap"], None).menu.as_deref(),
+            Some("snap")
+        );
+        assert!(parse(&["--menu", "edit"], None)
+            .unwrap_err()
+            .starts_with("--menu: no menu"));
         assert_eq!(
             parse(&["--console", "--ui", "minimal"], None).unwrap_err(),
             "--console needs --ui full"

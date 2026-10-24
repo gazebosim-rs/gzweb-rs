@@ -1,22 +1,31 @@
 //! The top bar's tools (spec §3.1, §6.1): Navigate, Box select, Translate
-//! and Rotate as a radio group of bar buttons, and the Snap text button.
-//! Only the selection shows until M5.
+//! and Rotate as a radio group of bar buttons, and the Snap popover
+//! (§7.6; DECISIONS.md D-108): the translate step (m) and the rotate step
+//! (°) that Shift snaps the gizmo to; the scale step is reserved and the
+//! gizmo moves along the world's axes, so Local waits.
 
+use bevy::a11y::AccessibilityNode;
 use bevy::prelude::*;
 use bevy::ui::Checked;
 use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::{Button as Headless, ValueChange};
+use bevy::ui_widgets::ValueChange;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::edit::edits_allowed;
-use gz_bevy::view::gizmo::TransformTool;
+use gz_bevy::view::gizmo::{Snap, TransformTool};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::BoxSelectTool;
 
+use crate::assets::fonts::text;
 use crate::assets::icons::IconId;
 use crate::shell::commands::UiCommand;
-use crate::theme::Theme;
+use crate::theme::{ColorRole, Theme, TypeStyle, SPACE};
 use crate::widgets::button::{text_button_parts, TextButtonProps};
-use crate::widgets::{bar_tool_button, button_group, Tooltip};
+use crate::widgets::layout::row;
+use crate::widgets::menu::{menu, menu_group_label, MenuSide};
+use crate::widgets::text::set_text;
+use crate::widgets::{
+    bar_tool_button, button_group, number_field, AxisTag, NumberCommit, NumberField, Tooltip, Unit,
+};
 
 /// The top-bar tools (spec §6.1). Translate and Rotate edit, so they need
 /// a server that takes edits (DECISIONS.md D-76).
@@ -100,13 +109,178 @@ pub(super) fn spawn_tools(b: &mut ChildSpawner, t: &Theme, map: &InputMap) {
                     ToolChoice(tool),
                 ));
             }
-            g.spawn((
-                text_button_parts(t, TextButtonProps::new("Snap 0.25").mono().chevron()),
-                Headless,
-                Tooltip::new("Snap"),
-            ));
         })
         .observe(on_tool_change);
+    b.spawn(snap_menu(t, &Snap::default()));
+}
+
+/// The Snap popover's trigger ("Snap 0.25").
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct SnapTrigger;
+
+/// The Snap popover's fields.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SnapField {
+    /// The translate step, m.
+    Length,
+    /// The rotate step, °.
+    Angle,
+}
+
+/// "Snap 0.25": the translate step, as short as it reads.
+pub(crate) fn snap_label(snap: &Snap) -> String {
+    let s = format!("{:.3}", snap.length);
+    let s = s.trim_end_matches('0').trim_end_matches('.');
+    format!("Snap {s}")
+}
+
+/// A labelled row of the popover.
+fn snap_row(p: &mut ChildSpawner, label: &str, field: impl Bundle) {
+    p.spawn(Node {
+        align_items: AlignItems::Center,
+        padding: UiRect::axes(px(SPACE[5]), px(SPACE[2])),
+        ..row(SPACE[5])
+    })
+    .with_children(|r| {
+        r.spawn((
+            text(TypeStyle::SMALL, ColorRole::Text2, label.to_string()),
+            Node {
+                width: px(SNAP_LABEL_W),
+                flex_shrink: 0.0,
+                ..default()
+            },
+        ));
+        r.spawn(Node {
+            flex_grow: 1.0,
+            min_width: px(0),
+            ..default()
+        })
+        .with_child(field);
+    });
+}
+
+/// The labels' column width.
+const SNAP_LABEL_W: f32 = 96.0;
+/// The popover's content width: room for a field that reads "0.125 m".
+const SNAP_W: f32 = 260.0;
+
+/// The Snap popover (§7.6).
+fn snap_menu(theme: &Theme, snap: &Snap) -> impl Bundle {
+    let t = theme.clone();
+    let snap = *snap;
+    menu(
+        theme,
+        MenuSide::Below,
+        (
+            text_button_parts(
+                theme,
+                TextButtonProps::new(snap_label(&snap)).mono().chevron(),
+            ),
+            Tooltip::new("Snap").detail("Shift snaps a gizmo drag to these steps"),
+            SnapTrigger,
+        ),
+        move |p: &mut ChildSpawner| {
+            p.spawn(Node {
+                width: px(SNAP_W),
+                ..default()
+            });
+            p.spawn(menu_group_label("Snap"));
+            let length = NumberField::new(f64::from(snap.length))
+                .unit(Unit::Length)
+                .precision(3, 0.05)
+                .range(0.001, 1000.0)
+                .named("Translate step");
+            snap_row(
+                p,
+                "Translate step",
+                (
+                    number_field(&t, AxisTag::Label(String::new()), length, true),
+                    SnapField::Length,
+                ),
+            );
+            let angle = NumberField::new(f64::from(snap.angle.to_degrees()))
+                .unit(Unit::Angle)
+                .precision(1, 5.0)
+                .range(0.1, 180.0)
+                .named("Rotate step");
+            snap_row(
+                p,
+                "Rotate step",
+                (
+                    number_field(&t, AxisTag::Label(String::new()), angle, true),
+                    SnapField::Angle,
+                ),
+            );
+            snap_row(
+                p,
+                "Scale step",
+                (
+                    text(TypeStyle::SMALL, ColorRole::Text3, "Reserved"),
+                    Tooltip::new("Scale step").detail("Reserved: there's no scale tool yet"),
+                ),
+            );
+            snap_row(
+                p,
+                "Space",
+                (
+                    text(TypeStyle::SMALL, ColorRole::Text, "World"),
+                    Tooltip::new("Space: World")
+                        .detail("Local waits: the gizmo moves along the world's axes"),
+                ),
+            );
+        },
+    )
+}
+
+/// A field sets its step (a degree field in radians underneath).
+pub(crate) fn on_snap_field(
+    ev: On<NumberCommit>,
+    fields: Query<&SnapField>,
+    snap: Option<ResMut<Snap>>,
+) {
+    let (Ok(field), Some(mut snap)) = (fields.get(ev.entity), snap) else {
+        return;
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let v = ev.value as f32;
+    let mut next = *snap;
+    match field {
+        SnapField::Length => next.length = v.max(0.001),
+        SnapField::Angle => next.angle = v.clamp(0.1, 180.0).to_radians(),
+    }
+    snap.set_if_neq(next);
+}
+
+/// The trigger reads the translate step, and the fields the steps.
+pub(crate) fn snap_states(
+    snap: Option<Res<Snap>>,
+    mut triggers: Query<(&Children, &mut AccessibilityNode), With<SnapTrigger>>,
+    mut labels: Query<&mut Text>,
+    mut fields: Query<(&SnapField, &mut NumberField)>,
+) {
+    let Some(snap) = snap.filter(|s| s.is_changed()) else {
+        return;
+    };
+    let label = snap_label(&snap);
+    for (children, mut access) in &mut triggers {
+        for &c in children {
+            if let Ok(mut t) = labels.get_mut(c) {
+                set_text(&mut t, &label);
+            }
+        }
+        if access.label() != Some(label.as_str()) {
+            access.set_label(label.as_str());
+        }
+    }
+    for (which, mut field) in &mut fields {
+        let want = match which {
+            SnapField::Length => f64::from(snap.length),
+            SnapField::Angle => f64::from(snap.angle.to_degrees()),
+        };
+        if (field.value - want).abs() > 1e-6 {
+            field.value = want;
+        }
+    }
 }
 
 /// A tool button click selects the tool.

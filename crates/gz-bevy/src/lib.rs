@@ -30,6 +30,7 @@ pub mod submesh;
 pub mod topics;
 pub mod undo;
 pub mod view;
+pub mod world_save;
 
 use bevy::prelude::*;
 

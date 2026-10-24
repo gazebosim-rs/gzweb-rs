@@ -211,17 +211,19 @@ pub(crate) fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusIt
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.init_resource::<CursorReadout>().add_systems(
-        Update,
-        (
-            // The cursor's ground point first, so its text is this frame's.
-            (readouts::cursor_readout, readouts::status_texts).chain(),
-            readouts::connection_dot,
-            readouts::message_chip,
-            narrow_rules,
-        )
-            .in_set(ShellSystems::Readouts),
-    );
+    app.init_resource::<CursorReadout>()
+        .init_resource::<readouts::StatusNote>()
+        .add_systems(
+            Update,
+            (
+                // The cursor's ground point first, so its text is this frame's.
+                (readouts::cursor_readout, readouts::status_texts).chain(),
+                readouts::connection_dot,
+                readouts::message_chip,
+                narrow_rules,
+            )
+                .in_set(ShellSystems::Readouts),
+        );
 }
 
 #[cfg(test)]

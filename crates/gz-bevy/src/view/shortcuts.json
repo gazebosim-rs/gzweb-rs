@@ -408,6 +408,7 @@
     "prevent_default_when_canvas_focused": [
       "mod+K",
       "mod+S",
+      "mod+shift+S",
       "mod+O",
       "mod+F",
       "mod+P",

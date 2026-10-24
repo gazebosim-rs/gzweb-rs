@@ -50,6 +50,7 @@ pub use palette::StartPalette;
 pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
 pub use popout::StartPopOuts;
 pub use top_bar::tools::Tool;
+pub use top_bar::StartMenu;
 pub use viewport::views::{LayoutPreset, StartLayout};
 
 use crate::inspectors::{InspectorPlugins, InspectorRegistry};

@@ -47,6 +47,9 @@ pub(crate) struct ConnectionView {
     /// The user asked for the connect card while lost ("Connect to another
     /// server…").
     pub card_requested: bool,
+    /// The user asked for the connect card from the World menu ("Connect
+    /// to server…"), world or no world: until Cancel or a connect.
+    pub switching: bool,
 }
 
 impl ConnectionView {
