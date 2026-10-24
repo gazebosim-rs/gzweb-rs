@@ -352,8 +352,8 @@ pop-out windows.
   field), Export CSV, `gzweb --plot`. Left: Pop out (M7e); the inspector's Plot actions (joint
   position and velocity, a sensor's output) with M7d's joints.
 - **M7d notes (Sensors):** the Sensors panel (D-103): the selected model's sensors, their
-  topics from the SDFormat and the server's list, the chosen one's camera frames (decoded off
-  the main thread), lidar scan from above or message as text, only while shown; stale and
+  topics from the SDFormat and the server's list, the chosen one's camera frames (decoded on the
+  task pool, off the main thread natively), lidar scan from above or message as text, only while shown; stale and
   waiting states; the Sensor inspector's Echo topic and Plot.
 - **M7d notes (Teleop):** the websocket server's `pub_in` patch and the client's probe for it
   (`GzStatus::publishes`), the Teleop panel (D-104): drives and joint controllers from the

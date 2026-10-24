@@ -1686,3 +1686,35 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   by hand.
 - **Tests:** workspace 808 → 820 passing; coverage 98.0% lines. check.sh
   passes.
+
+## 2026-10-24: PR #49 review fixes
+
+- **Teleop stops:** X, Stop, a new mode or target, hiding or a dropped
+  world disarm, and nothing arms again until the pad and the stick let
+  go (a held stick re-armed through X and Stop). The robot driven last
+  gets a zero whenever the drive leaves it, a new target included; after
+  a drop the zero waits until the server takes publications again (for
+  the same world).
+- **Keys:** a command chord (Ctrl, Alt, ⌘) doesn't drive, and the keys
+  drive from the views or the panel only (`TeleopKeys`: a press or
+  focus in the panel), not from another panel's list.
+- **Analog:** the stick's command goes out early only once it moves 2%
+  of a limit; "Driving: …" reads the command going out; Stop zeroes the
+  slider thumbs.
+- **Joints:** JointPositionController topics as gz-sim names them (the
+  first joint, `<sub_topic>`, Actuators left out); command sliders sit at
+  the joint's live position until moved; the Joint inspector builds its
+  slider once the probe answers.
+- **Sensors:** the topic list is asked for every 2 s while Sensors or
+  Teleop shows; a topic whose type becomes known starts the preview
+  again and subscribes again (a camera's `image`); the list no longer
+  rebuilds on each stats tick.
+- **Server patch:** publishers are kept per client, at most 64, and
+  dropped with the last client that used them; a client that goes gets
+  an empty Twist on each Twist topic it published on. Live check on the
+  rebuilt `gz-websocket-jetty-pub` (diff_drive, :9013): a scratch client
+  drove `vehicle_blue` at 0.5 m/s and left without a zero; the vehicle
+  stopped (x held at 2.374). The earlier container had aborted in ODE
+  hours after a scratch client left it driving.
+- **Merged** M7c's CI fixes (clipboard-win 5.4.3).
+- **Tests:** workspace 820 → 825 passing.
