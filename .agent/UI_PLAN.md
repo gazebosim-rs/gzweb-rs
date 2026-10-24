@@ -342,9 +342,9 @@ pop-out windows.
   (D-97); `PanelHost` and `ShownPanels`, a shell-drawn footer under every state, actions
   that say why they're unavailable, the Scene footer on it (D-98); the Topics panel: filter,
   chips, the list with rates, the echo in text format while shown, "Topic ended", Copy,
-  `gzweb --echo` (D-99). Left: Plot field (M7b); Publish and Services until a server takes
-  publications and lists services; the native clipboard (Bevy's `system_clipboard`, which
-  needs BSL-1.0 allowed in `deny.toml`).
+  `gzweb --echo` (D-99), on the system clipboard natively too (`system_clipboard`; BSL-1.0
+  allowed in `deny.toml`). Left: Plot field (M7b); Publish and Services until a server takes
+  publications and lists services.
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).

@@ -1529,6 +1529,9 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Topics (D-99):** filter, chips, the list with rates, the echo while
   shown ("Waiting for first message…", "Topic ended"), Copy, Publish and
   Services unavailable with a reason, `gzweb --echo`.
+- **Native clipboard:** gzweb turns on Bevy's `system_clipboard`, so
+  Copy (and the text fields) reach the system clipboard natively too;
+  `deny.toml` allows BSL-1.0 for the two Windows-only crates under it.
 - **Flaky test fixed:** a hidden view's cube camera could stay on when
   its scene spawned in the frame the reveal reached 0 (one long frame);
   the camera is now checked every frame. It failed about one run in four
