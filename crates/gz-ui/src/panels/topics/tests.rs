@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use bevy::clipboard::Clipboard;
+use crate::widgets::clipboard::CopyText;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -286,7 +286,6 @@ fn the_list_filters_by_name_and_kind() {
 #[test]
 fn a_row_echoes_its_topic_while_the_panel_shows() {
     let mut app = live_topics();
-    app.init_resource::<Clipboard>();
     sent(&mut app);
     let stats = "/stats".to_string();
     let r = row(&mut app, &stats);
@@ -333,8 +332,12 @@ fn a_row_echoes_its_topic_while_the_panel_shows() {
     };
     app.world_mut().trigger(Activate { entity: copy });
     frames(&mut app, 1);
-    let mut read = app.world_mut().resource_mut::<Clipboard>().fetch_text();
-    assert_eq!(read.poll_result().unwrap().unwrap(), "iterations: 42");
+    let copied: Vec<CopyText> = app
+        .world_mut()
+        .resource_mut::<Messages<CopyText>>()
+        .drain()
+        .collect();
+    assert_eq!(copied, [CopyText("iterations: 42".into())]);
 
     app.world_mut().write_message(UiCommand::ToggleSidebar);
     frames(&mut app, 2);
@@ -501,7 +504,6 @@ fn labels_and_long_messages() {
 #[test]
 fn copy_copies_the_whole_message() {
     let mut app = live_topics();
-    app.init_resource::<Clipboard>();
     set_topics(&mut app, &[("/poses", "gz.msgs.Pose_V")]);
     let r = row(&mut app, "/poses");
     app.world_mut().trigger(Activate { entity: r });
@@ -537,8 +539,13 @@ fn copy_copies_the_whole_message() {
     };
     app.world_mut().trigger(Activate { entity: copy });
     frames(&mut app, 1);
-    let mut read = app.world_mut().resource_mut::<Clipboard>().fetch_text();
-    let copied = read.poll_result().unwrap().unwrap();
+    let copied = app
+        .world_mut()
+        .resource_mut::<Messages<CopyText>>()
+        .drain()
+        .next()
+        .unwrap()
+        .0;
     assert!(
         copied.lines().count() > ECHO_LINES,
         "{}",
