@@ -5,26 +5,31 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::gamepad::{Gamepad, GamepadAxis};
+use bevy::input_focus::InputFocus;
+use bevy::picking::hover::HoverMap;
+use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
 use bevy::ui::{Checked, Pressed};
-use bevy::ui_widgets::ValueChange;
+use bevy::ui_widgets::{SliderValue, ValueChange};
 use gz_bevy::connection::{GzCommand, GzStatus};
+use gz_bevy::joint_state::{JointStateWanted, JointStates};
 use gz_bevy::overlays::extras::{want_sdf as want, SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::topics::GzTopics;
 use gz_bevy::view::controls::ViewRouting;
+use gz_bevy::view::input::KeyMods;
 use gz_bevy::view::{DriveArmed, Selection};
 use gz_core::teleop::{double, twist};
 
 use super::model::{
-    speed_label, stick, topic_model, DriveMode, DriveTarget, Held, JointTarget, TeleopState,
+    moved, speed_label, stick, topic_model, DriveMode, DriveTarget, Held, JointTarget, TeleopState,
     PUBLISH_HZ,
 };
 use super::view::{
     spawn_joints, spawn_sliders, spawn_target, DriveSliders, GamepadStatus, JointsSection,
     LimitField, ModeChoice, ModePane, PadKey, TargetRow, TargetSelect, TeleopSlider,
 };
-use super::{TeleopStart, APPLY_FORCE, STOP, TELEOP};
+use super::{TeleopBody, TeleopStart, APPLY_FORCE, STOP, TELEOP};
 use crate::panels::{PanelActionActivated, PanelView};
 use crate::shell::{
     CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
@@ -123,9 +128,12 @@ pub(super) fn collect_targets(
             let Some(topic) = &m.drive_topic else {
                 continue;
             };
+            // A plugin's joints share a topic: one slider moves them.
+            let mut seen = std::collections::HashSet::new();
             let joints = m
                 .joint_controllers
                 .iter()
+                .filter(|(_, topic)| seen.insert(topic))
                 .map(|(joint, topic)| {
                     let (lower, upper) = limits(path, joint);
                     JointTarget {
@@ -235,27 +243,63 @@ pub(super) fn teleop_status(
     panel.set_action_enabled(TELEOP, APPLY_FORCE, false);
 }
 
+/// The panel has the drive keys: the last press, or keyboard focus, was
+/// in it (a press or focus elsewhere, the Scene tree's, takes them).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TeleopKeys(pub bool);
+
+/// Who has the drive keys: a press, or keyboard focus, in the panel or
+/// elsewhere.
+pub(super) fn route_keys(
+    buttons: Res<ButtonInput<MouseButton>>,
+    hover: Option<Res<HoverMap>>,
+    focus: Option<Res<InputFocus>>,
+    bodies: Query<(), With<TeleopBody>>,
+    parents: Query<&ChildOf>,
+    mut keys: ResMut<TeleopKeys>,
+) {
+    let in_panel = |e: Entity| {
+        std::iter::once(e)
+            .chain(parents.iter_ancestors(e))
+            .any(|a| bodies.contains(a))
+    };
+    if buttons.get_just_pressed().next().is_some() {
+        let over = hover
+            .as_ref()
+            .and_then(|h| h.get(&PointerId::Mouse))
+            .is_some_and(|hits| hits.keys().any(|e| in_panel(*e)));
+        keys.set_if_neq(TeleopKeys(over));
+    }
+    if let Some(e) = focus.filter(|f| f.is_changed()).and_then(|f| f.get()) {
+        keys.set_if_neq(TeleopKeys(in_panel(e)));
+    }
+}
+
 /// What drives: the keys, the pad, a gamepad.
 #[derive(SystemParam)]
 pub(super) struct DriveInput<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
     typing: Option<Res<'w, TextFocus>>,
     routing: Res<'w, ViewRouting>,
+    panel_keys: Res<'w, TeleopKeys>,
     hosts: Res<'w, ShownPanels>,
     pads: Query<'w, 's, (&'static PadKey, Has<Pressed>)>,
     gamepads: Query<'w, 's, &'static Gamepad>,
 }
 
 impl DriveInput<'_, '_> {
-    /// The keys may drive: not while typing; over a view, or with the
-    /// panel showing.
+    /// The keys may drive: not while typing; from the views or the panel
+    /// (shortcuts.json), not from another panel's list.
     fn keys_live(&self) -> bool {
-        !self.typing.as_ref().is_some_and(|t| t.0)
-            && (self.routing.keys || self.hosts.is_shown(TELEOP))
+        !self.typing.as_ref().is_some_and(|t| t.0) && (self.routing.keys || self.panel_keys.0)
     }
 
-    /// The drive keys held (W A S D and the arrows).
+    /// The drive keys held (W A S D and the arrows). With Ctrl, Alt or ⌘
+    /// down a command chord is being typed (⌘S saves), so nothing is.
     fn keys_held(&self) -> Held {
+        if KeyMods::held(&self.keys).command() {
+            return Held::default();
+        }
         let any = |k: [KeyCode; 2]| self.keys.any_pressed(k);
         Held {
             forward: any([KeyCode::KeyW, KeyCode::ArrowUp]),
@@ -290,10 +334,34 @@ impl DriveInput<'_, '_> {
     }
 }
 
+/// The command going out while armed (the gamepad's state reads it).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct Driving(pub Option<(f64, f64)>);
+
+/// What [`drive`] keeps between frames.
+#[derive(Default)]
+pub(super) struct DriveMemory {
+    /// The last command sent, and when.
+    last: Option<(String, (f64, f64))>,
+    sent_at: f64,
+    was_armed: bool,
+    /// The mode and target seen last.
+    seen: Option<(DriveMode, Option<String>)>,
+    /// Since a disarm, a new mode or a new target: nothing arms until the
+    /// pad and the stick let go.
+    latched: bool,
+    /// Zero commands not yet sent (the server stopped taking them), with
+    /// the world they are for.
+    zeros: Vec<(String, Option<String>)>,
+}
+
 /// The command, and arming: in Keyboard mode the pad arms, and once armed
 /// the drive keys drive too; a slider arms in Sliders mode; the stick in
-/// Gamepad mode. X, Stop, a hidden panel or a world that can't take it
-/// disarms (with a last zero command). While armed, the command goes out
+/// Gamepad mode. X, Stop, a hidden panel, a new mode or target, or a world
+/// that can't take it disarms, and nothing arms again until the input lets
+/// go. The robot driven last gets a zero command when the drive leaves it,
+/// once the server takes it (after a reconnect, if the connection
+/// dropped). While armed, the command goes out on each change and
 /// [`PUBLISH_HZ`] times a second.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drive(
@@ -303,23 +371,34 @@ pub(super) fn drive(
     status: Option<Res<GzStatus>>,
     mut state: ResMut<TeleopState>,
     mut armed: ResMut<DriveArmed>,
+    mut driving: ResMut<Driving>,
     mut out: MessageWriter<GzCommand>,
-    mut sent_at: Local<f64>,
-    mut last: Local<Option<(String, (f64, f64))>>,
+    mut mem: Local<DriveMemory>,
 ) {
     let now = time.elapsed_secs_f64();
-    let can = phase.0 == Phase::Live
-        && status.as_deref().and_then(|s| s.publishes) == Some(true)
-        && input.hosts.is_shown(TELEOP)
-        && state.target.is_some();
+    let publishes =
+        phase.0 == Phase::Live && status.as_deref().and_then(|s| s.publishes) == Some(true);
+    let world = status.as_deref().and_then(|s| s.world.clone());
+    let can = publishes && input.hosts.is_shown(TELEOP) && state.target.is_some();
     let stop = state.armed && input.keys_live() && input.keys.just_pressed(KeyCode::KeyX);
-    if state.armed && (!can || stop) {
+    let seen = (state.mode, state.target.clone());
+    let new_drive = mem.seen.as_ref() != Some(&seen);
+    if state.armed && (!can || stop || new_drive) {
         state.armed = false;
     }
+    if (mem.was_armed && !state.armed) || new_drive {
+        mem.latched = true;
+    }
+    mem.seen = Some(seen);
     let pad = input.pad_held();
+    let stick = input.stick().unwrap_or((0.0, 0.0));
+    if mem.latched && !pad.any() && stick == (0.0, 0.0) {
+        mem.latched = false;
+    }
+    let may_arm = can && !state.armed && !mem.latched;
     let command = match state.mode {
         DriveMode::Keyboard => {
-            if pad.any() && can && !state.armed {
+            if pad.any() && may_arm {
                 state.armed = true;
             }
             let keys = if state.armed && input.keys_live() {
@@ -337,42 +416,50 @@ pub(super) fn drive(
         }
         DriveMode::Sliders => (state.lin, state.ang),
         DriveMode::Gamepad => {
-            let (lin, ang) = input.stick().unwrap_or((0.0, 0.0));
-            let cmd = (lin * state.max_lin, ang * state.max_ang);
-            if (lin, ang) != (0.0, 0.0) && can && !state.armed {
+            if stick != (0.0, 0.0) && may_arm {
                 state.armed = true;
             }
-            cmd
+            (stick.0 * state.max_lin, stick.1 * state.max_ang)
         }
     };
-    armed.set_if_neq(DriveArmed(state.armed));
+    // The drive left the robot it drove: it stops.
     let target = state.target.clone();
-    match (&*last, state.armed, target) {
-        // Disarmed: a last zero, once.
-        (Some((topic, _)), false, _) => {
+    let armed_on = |t: &String| state.armed && target.as_ref() == Some(t);
+    if let Some((topic, _)) = mem.last.take_if(|(t, _)| !armed_on(t)) {
+        if !mem.zeros.iter().any(|(t, _)| *t == topic) {
+            mem.zeros.push((topic, world.clone()));
+        }
+    }
+    if publishes {
+        for (topic, w) in std::mem::take(&mut mem.zeros) {
+            if w == world {
+                out.write(GzCommand::Publish {
+                    topic,
+                    msg_type: "gz.msgs.Twist".into(),
+                    payload: twist(0.0, 0.0),
+                });
+            }
+        }
+    }
+    if let (true, Some(topic)) = (state.armed, target) {
+        let max = (state.max_lin, state.max_ang);
+        let fresh = mem
+            .last
+            .as_ref()
+            .is_none_or(|(_, c)| moved(*c, command, max));
+        if fresh || now - mem.sent_at >= 1.0 / PUBLISH_HZ {
             out.write(GzCommand::Publish {
                 topic: topic.clone(),
                 msg_type: "gz.msgs.Twist".into(),
-                payload: twist(0.0, 0.0),
+                payload: twist(command.0, command.1),
             });
-            *last = None;
+            mem.sent_at = now;
+            mem.last = Some((topic, command));
         }
-        (_, true, Some(topic)) => {
-            let fresh = last
-                .as_ref()
-                .is_none_or(|(t, c)| *t != topic || *c != command);
-            if fresh || now - *sent_at >= 1.0 / PUBLISH_HZ {
-                out.write(GzCommand::Publish {
-                    topic: topic.clone(),
-                    msg_type: "gz.msgs.Twist".into(),
-                    payload: twist(command.0, command.1),
-                });
-                *sent_at = now;
-                *last = Some((topic, command));
-            }
-        }
-        _ => {}
     }
+    mem.was_armed = state.armed;
+    armed.set_if_neq(DriveArmed(state.armed));
+    driving.set_if_neq(Driving(state.armed.then_some(command)));
 }
 
 /// The target row, rebuilt when the targets or the choice change.
@@ -447,11 +534,63 @@ pub(super) fn sync_sliders(
     }
 }
 
+/// The joints' live positions, where the joint states held are the
+/// target's model's.
+#[derive(SystemParam)]
+pub(super) struct LivePositions<'w> {
+    states: Option<Res<'w, JointStates>>,
+    wanted: Option<Res<'w, JointStateWanted>>,
+}
+
+impl LivePositions<'_> {
+    fn of(&self, model: &str, joint: &str) -> Option<f64> {
+        let wanted = self.wanted.as_deref()?.model.as_deref()?;
+        let states = self.states.as_deref()?;
+        (wanted == model)
+            .then(|| states.joints.get(joint))
+            .flatten()
+            .map(|s| s.position)
+    }
+}
+
+/// The sliders show what goes out: the drive's command (Stop zeroes it),
+/// and a joint's last command, else its position, so taking the thumb
+/// doesn't jump it.
+pub(super) fn follow_sliders(
+    state: Res<TeleopState>,
+    targets: Res<Targets>,
+    live: LivePositions,
+    rows: Query<&TeleopSlider>,
+    sliders: Query<(Entity, &ChildOf, &SliderValue)>,
+    mut commands: Commands,
+) {
+    let target = state.target.as_deref().and_then(|t| targets.get(t));
+    for (e, row, value) in &sliders {
+        let Ok(slider) = rows.get(row.parent()) else {
+            continue;
+        };
+        let want = match slider {
+            TeleopSlider::Linear => Some(state.lin),
+            TeleopSlider::Angular => Some(state.ang),
+            TeleopSlider::Joint(topic) => state.joints.get(topic).copied().or_else(|| {
+                let t = target?;
+                let j = t.joints.iter().find(|j| j.topic == *topic)?;
+                live.of(&t.model, &j.joint)
+            }),
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        if let Some(v) = want.map(|v| v as f32).filter(|v| *v != value.0) {
+            commands.entity(e).insert(SliderValue(v));
+        }
+    }
+}
+
 /// The chosen mode's tab is checked and its pane shows; the pad's keys
 /// show pressed while they drive; the gamepad's state.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn mode_states(
     state: Res<TeleopState>,
+    driving: Res<Driving>,
     input: DriveInput,
     tabs: Query<(Entity, &ModeChoice, Has<Checked>)>,
     mut panes: Query<(&ModePane, &mut Node)>,
@@ -493,14 +632,14 @@ pub(super) fn mode_states(
             }
         }
     }
-    let say = match input.gamepads.iter().next() {
-        Some(_) if state.armed && state.mode == DriveMode::Gamepad => format!(
+    let say = match (input.gamepads.iter().next(), driving.0) {
+        (Some(_), Some((lin, ang))) if state.mode == DriveMode::Gamepad => format!(
             "Driving: {} · {}",
-            speed_label(state.lin, "m/s"),
-            speed_label(state.ang, "rad/s")
+            speed_label(lin, "m/s"),
+            speed_label(ang, "rad/s")
         ),
-        Some(_) => "Gamepad connected".to_string(),
-        None => "No gamepad connected".to_string(),
+        (Some(_), _) => "Gamepad connected".to_string(),
+        (None, _) => "No gamepad connected".to_string(),
     };
     for mut t in &mut gamepad {
         set_text(&mut t, &say);

@@ -648,9 +648,6 @@ impl SimBackend for WebsocketBackend {
         self.transport.request_topics_types()
     }
 
-    /// No released Gazebo websocket server (gz-launch or Jetty) takes
-    /// publications (gzweb's `pub_in` op is ignored), so this is refused
-    /// rather than sent into the void.
     /// Publishes through a server that takes publications (D-104); a
     /// stock server's would be dropped, so it isn't sent.
     fn publish(&mut self, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {

@@ -56,6 +56,8 @@ impl Plugin for TeleopPanelPlugin {
         .init_resource::<model::TeleopState>()
         .init_resource::<systems::Targets>()
         .init_resource::<systems::Built>()
+        .init_resource::<systems::TeleopKeys>()
+        .init_resource::<systems::Driving>()
         .init_resource::<gz_bevy::view::DriveArmed>()
         .add_systems(
             Update,
@@ -65,13 +67,16 @@ impl Plugin for TeleopPanelPlugin {
                     systems::want_sdf,
                     systems::collect_targets,
                     systems::choose_target,
+                    systems::route_keys,
                     systems::drive,
                     systems::teleop_status,
                 )
                     .chain(),
                 (
+                    super::topics::refresh_topics,
                     systems::sync_target,
                     systems::sync_sliders,
+                    systems::follow_sliders,
                     systems::mode_states,
                 )
                     .chain()

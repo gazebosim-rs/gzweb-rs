@@ -10,6 +10,10 @@ pub(crate) const PUBLISH_HZ: f64 = 10.0;
 /// A gamepad stick's dead zone.
 pub(crate) const DEADZONE: f32 = 0.12;
 
+/// How far, as a share of the limit, an analog command moves before it
+/// goes out ahead of the next [`PUBLISH_HZ`] tick.
+pub(crate) const NUDGE: f64 = 0.02;
+
 /// The ways to drive (§3.3), one at a time.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) enum DriveMode {
@@ -77,7 +81,7 @@ pub(crate) struct TeleopState {
     pub target: Option<String>,
     pub max_lin: f64,
     pub max_ang: f64,
-    /// The sliders' command (and the gamepad's, last read).
+    /// The sliders' command.
     pub lin: f64,
     pub ang: f64,
     /// Publishing (§3.3: "armed"): the drive keys, X and the gamepad are
@@ -135,7 +139,19 @@ pub(crate) fn stick(v: f32) -> f64 {
     }
 }
 
+/// The command moved from `last` enough to go out now: to a stop, or by
+/// more than [`NUDGE`] of a limit, so a gamepad's stick, which reads a
+/// little differently each frame, doesn't publish every frame.
+pub(crate) fn moved(last: (f64, f64), now: (f64, f64), max: (f64, f64)) -> bool {
+    now != last
+        && (now == (0.0, 0.0)
+            || (now.0 - last.0).abs() > NUDGE * max.0
+            || (now.1 - last.1).abs() > NUDGE * max.1)
+}
+
 /// A speed as the sliders read it ("0.35 m/s").
 pub(crate) fn speed_label(v: f64, unit: &str) -> String {
+    // Not "-0.00".
+    let v = if v.abs() < 0.005 { 0.0 } else { v };
     format!("{v:.2} {unit}")
 }

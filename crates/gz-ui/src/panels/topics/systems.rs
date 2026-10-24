@@ -104,9 +104,10 @@ pub(crate) fn apply_start(
     }
 }
 
-/// Asks for the topic list every [`REFRESH_SECS`] while the panel shows
-/// and the world is live, so topics that start or end show.
-pub(super) fn refresh_topics(
+/// Asks for the topic list every [`REFRESH_SECS`] while the world is
+/// live, so topics that start or end show; each panel that reads the list
+/// (Topics, Sensors, Teleop) runs it while it shows.
+pub(crate) fn refresh_topics(
     time: Res<Time<Real>>,
     phase: Res<CurrentPhase>,
     mut last: Local<Option<f64>>,

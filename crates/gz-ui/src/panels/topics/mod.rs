@@ -22,6 +22,8 @@
 
 mod model;
 mod systems;
+
+pub(super) use systems::refresh_topics;
 mod view;
 
 /// A message cut to show (the Sensors panel's text preview too).
@@ -123,7 +125,7 @@ impl Plugin for TopicsPanelPlugin {
                 )
                     .chain(),
                 (
-                    systems::refresh_topics,
+                    refresh_topics,
                     systems::filter_text,
                     systems::keep_scroll,
                     systems::sync_rows,

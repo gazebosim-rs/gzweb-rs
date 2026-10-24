@@ -2,11 +2,14 @@
 
 use std::time::Duration;
 
+use bevy::input::gamepad::{Gamepad, GamepadAxis};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui::Pressed;
-use bevy::ui_widgets::ValueChange;
+use bevy::ui_widgets::{SliderValue, ValueChange};
 use gz_bevy::connection::{GzCommand, GzStatus};
+use gz_bevy::joint_state::{JointState, JointStateWanted, JointStates};
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzWorldRoot};
 use gz_bevy::topics::GzTopics;
@@ -16,10 +19,11 @@ use gz_core::scene::NodeKind;
 use prost::Message as _;
 
 use super::model::*;
-use super::systems::{Targets, NO_PUBLISH, SELECT};
-use super::view::{LimitField, PadKey, TeleopSlider};
+use super::systems::{Targets, TeleopKeys, NO_PUBLISH, SELECT};
+use super::view::{GamepadStatus, LimitField, PadKey, TeleopSlider};
 use super::{STOP, TELEOP};
 use crate::panels::{PanelActionActivated, PanelView};
+use crate::shell::routing::ViewFocus;
 use crate::shell::sidebar::body::BodyView;
 use crate::shell::{PanelStatus, Slot, UiCommand};
 use crate::test_support::frames;
@@ -58,6 +62,12 @@ fn commands_from_keys_and_sticks() {
     assert_eq!(topic_model("/model/amr/cmd_vel"), Some("amr"));
     assert_eq!(topic_model("/cmd_vel"), None);
     assert_eq!(speed_label(0.35, "m/s"), "0.35 m/s");
+    // An analog command goes out early only for a stop or a real move.
+    let max = (1.0, 1.5);
+    assert!(!moved((0.5, 0.0), (0.5, 0.0), max));
+    assert!(!moved((0.5, 0.0), (0.51, 0.01), max));
+    assert!(moved((0.5, 0.0), (0.6, 0.0), max));
+    assert!(moved((0.01, 0.0), (0.0, 0.0), max));
 }
 
 const SDF: &str = r#"<sdf version="1.10"><world name="w">
@@ -211,7 +221,7 @@ fn the_pad_and_keys_drive_and_x_stops() {
         .iter()
         .all(|(t, l, _)| t == "/model/amr/cmd_vel" && *l == 1.0));
     app.world_mut().entity_mut(w).remove::<Pressed>();
-    key(&mut app, KeyCode::KeyA, bevy::input::ButtonState::Pressed);
+    key(&mut app, KeyCode::KeyA, ButtonState::Pressed);
     frames(&mut app, 2);
     let sent = twists(&mut app);
     assert_eq!(
@@ -219,8 +229,8 @@ fn the_pad_and_keys_drive_and_x_stops() {
         Some((0.0, 1.5)),
         "{sent:?}"
     );
-    key(&mut app, KeyCode::KeyA, bevy::input::ButtonState::Released);
-    key(&mut app, KeyCode::KeyX, bevy::input::ButtonState::Pressed);
+    key(&mut app, KeyCode::KeyA, ButtonState::Released);
+    key(&mut app, KeyCode::KeyX, ButtonState::Pressed);
     frames(&mut app, 2);
     assert!(!state(&app).armed);
     assert!(!app.world().resource::<DriveArmed>().0);
@@ -274,11 +284,26 @@ fn sliders_drive_and_joints_move() {
     frames(&mut app, 2);
     assert!(!state(&app).armed);
     assert_eq!(twists(&mut app).last().map(|s| s.1), Some(0.0));
+    // The thumb shows the stop.
+    assert_eq!(app.world().get::<SliderValue>(lin).unwrap().0, 0.0);
 
     let lift = slider(
         &mut app,
         &TeleopSlider::Joint("/model/amr/joint/lift/0/cmd_pos".into()),
     );
+    // Untouched, a joint's thumb sits at its live position.
+    app.world_mut().resource_mut::<JointStateWanted>().model = Some("amr".into());
+    frames(&mut app, 1);
+    app.world_mut().resource_mut::<JointStates>().joints.insert(
+        "lift".into(),
+        JointState {
+            position: 0.3,
+            velocity: 0.0,
+            effort: 0.0,
+        },
+    );
+    frames(&mut app, 2);
+    assert!((app.world().get::<SliderValue>(lift).unwrap().0 - 0.3).abs() < 1e-6);
     app.world_mut().trigger(ValueChange {
         source: lift,
         value: 0.25f32,
@@ -316,21 +341,184 @@ fn sliders_drive_and_joints_move() {
     assert_eq!(state(&app).max_lin, 0.3);
 }
 
-/// Hiding the panel stops driving; the selected model's drive is the
-/// target.
+/// Hiding the panel stops driving with a last zero; the selected model's
+/// drive is the target, over the one chosen before.
 #[test]
 fn hiding_stops_and_the_selection_picks() {
     let (mut app, amr) = live_teleop(Some(true));
     app.world_mut().resource_mut::<TeleopState>().armed = true;
     frames(&mut app, 2);
+    twists(&mut app);
     app.world_mut().write_message(UiCommand::ToggleSidebar);
     frames(&mut app, 2);
     assert!(!state(&app).armed);
+    assert_eq!(
+        twists(&mut app),
+        [("/model/amr/cmd_vel".to_string(), 0.0, 0.0)]
+    );
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    with_boat(&mut app);
+    app.world_mut().resource_mut::<TeleopState>().target = Some("/model/boat/cmd_vel".into());
+    frames(&mut app, 2);
     *app.world_mut().resource_mut::<Selection>() = Selection {
         entities: vec![amr],
         parts: vec![],
     };
-    app.world_mut().resource_mut::<TeleopState>().target = None;
     frames(&mut app, 2);
     assert_eq!(state(&app).target.as_deref(), Some("/model/amr/cmd_vel"));
+}
+
+/// A second target: a Twist topic the server lists.
+fn with_boat(app: &mut App) {
+    let mut topics = GzTopics::default();
+    topics.set(vec![("/model/boat/cmd_vel".into(), "gz.msgs.Twist".into())]);
+    *app.world_mut().resource_mut::<GzTopics>() = topics;
+    frames(app, 2);
+    assert_eq!(app.world().resource::<Targets>().0.len(), 2);
+}
+
+/// A gamepad with its left stick at `y` forward.
+fn push_stick(app: &mut App, y: f32) {
+    let world = app.world_mut();
+    let pad = world
+        .query_filtered::<Entity, With<Gamepad>>()
+        .iter(world)
+        .next();
+    let pad = pad.unwrap_or_else(|| world.spawn(Gamepad::default()).id());
+    let mut g = world.get_mut::<Gamepad>(pad).unwrap();
+    g.analog_mut().set(GamepadAxis::LeftStickY, y);
+    g.analog_mut().set(GamepadAxis::LeftStickX, 0.0);
+}
+
+fn gamepad_line(app: &mut App) -> String {
+    let world = app.world_mut();
+    world
+        .query_filtered::<&Text, With<GamepadStatus>>()
+        .single(world)
+        .unwrap()
+        .0
+        .clone()
+}
+
+/// The stick arms and drives; X and Stop stop it while it is still
+/// pushed, and it arms again only once it lets go. A stick that only
+/// trembles doesn't publish every frame.
+#[test]
+fn x_and_stop_hold_the_gamepad_until_it_lets_go() {
+    let (mut app, _) = live_teleop(Some(true));
+    app.world_mut().resource_mut::<TeleopState>().mode = DriveMode::Gamepad;
+    frames(&mut app, 2);
+    push_stick(&mut app, 1.0);
+    frames(&mut app, 2);
+    assert!(state(&app).armed);
+    assert_eq!(twists(&mut app).last().map(|s| s.1), Some(1.0));
+    assert_eq!(gamepad_line(&mut app), "Driving: 1.00 m/s · 0.00 rad/s");
+    // Trembling: about the ten-a-second rate, not every frame.
+    for i in 0..10 {
+        push_stick(&mut app, 0.95 + 0.001 * i as f32);
+        frames(&mut app, 1);
+    }
+    let n = twists(&mut app).len();
+    assert!((3..=7).contains(&n), "{n}");
+
+    key(&mut app, KeyCode::KeyX, ButtonState::Pressed);
+    frames(&mut app, 1);
+    key(&mut app, KeyCode::KeyX, ButtonState::Released);
+    frames(&mut app, 4);
+    assert!(!state(&app).armed);
+    let sent = twists(&mut app);
+    assert_eq!(
+        sent.iter().map(|s| (s.1, s.2)).collect::<Vec<_>>(),
+        [(0.0, 0.0)]
+    );
+    assert_eq!(gamepad_line(&mut app), "Gamepad connected");
+    push_stick(&mut app, 0.0);
+    frames(&mut app, 1);
+    push_stick(&mut app, 0.5);
+    frames(&mut app, 2);
+    assert!(state(&app).armed, "let go, then pushed: armed again");
+    twists(&mut app);
+
+    let stop = app.world_mut().spawn_empty().id();
+    app.world_mut().trigger(PanelActionActivated {
+        entity: stop,
+        panel: TELEOP,
+        action: STOP,
+    });
+    frames(&mut app, 4);
+    assert!(!state(&app).armed);
+    let sent = twists(&mut app);
+    assert_eq!(
+        sent.iter().map(|s| (s.1, s.2)).collect::<Vec<_>>(),
+        [(0.0, 0.0)]
+    );
+}
+
+/// A new target while the stick is pushed stops the robot it drove, and
+/// the new one waits for the stick to let go.
+#[test]
+fn a_new_target_stops_the_old_robot() {
+    let (mut app, _) = live_teleop(Some(true));
+    with_boat(&mut app);
+    app.world_mut().resource_mut::<TeleopState>().mode = DriveMode::Gamepad;
+    frames(&mut app, 2);
+    push_stick(&mut app, 1.0);
+    frames(&mut app, 2);
+    assert!(state(&app).armed);
+    twists(&mut app);
+    app.world_mut().resource_mut::<TeleopState>().target = Some("/model/boat/cmd_vel".into());
+    frames(&mut app, 4);
+    assert_eq!(
+        twists(&mut app),
+        [("/model/amr/cmd_vel".to_string(), 0.0, 0.0)]
+    );
+    assert!(!state(&app).armed);
+}
+
+/// A dropped connection keeps the robot's zero until the server takes
+/// publications again.
+#[test]
+fn a_drop_sends_the_zero_after_the_reconnect() {
+    let (mut app, _) = live_teleop(Some(true));
+    app.world_mut().resource_mut::<TeleopState>().armed = true;
+    frames(&mut app, 2);
+    twists(&mut app);
+    app.world_mut().resource_mut::<GzStatus>().publishes = None;
+    frames(&mut app, 3);
+    assert!(!state(&app).armed);
+    assert!(twists(&mut app).is_empty(), "the server can't take it yet");
+    app.world_mut().resource_mut::<GzStatus>().publishes = Some(true);
+    frames(&mut app, 2);
+    assert_eq!(
+        twists(&mut app),
+        [("/model/amr/cmd_vel".to_string(), 0.0, 0.0)]
+    );
+    frames(&mut app, 3);
+    assert!(twists(&mut app).is_empty(), "once");
+}
+
+/// Armed, a command chord (Ctrl+S) doesn't drive, and the keys drive only
+/// from the views or the panel, not while another panel has them.
+#[test]
+fn chords_and_other_panels_keep_the_keys() {
+    let (mut app, _) = live_teleop(Some(true));
+    app.world_mut().resource_mut::<TeleopState>().armed = true;
+    frames(&mut app, 2);
+    twists(&mut app);
+    key(&mut app, KeyCode::ControlLeft, ButtonState::Pressed);
+    key(&mut app, KeyCode::KeyS, ButtonState::Pressed);
+    frames(&mut app, 3);
+    assert!(twists(&mut app).iter().all(|s| s.1 == 0.0));
+    key(&mut app, KeyCode::KeyS, ButtonState::Released);
+    key(&mut app, KeyCode::ControlLeft, ButtonState::Released);
+    // Keys elsewhere (a press in the Scene tree): W doesn't drive.
+    app.world_mut().resource_mut::<ViewFocus>().0 = false;
+    frames(&mut app, 1);
+    key(&mut app, KeyCode::KeyW, ButtonState::Pressed);
+    frames(&mut app, 3);
+    assert!(twists(&mut app).iter().all(|s| s.1 == 0.0));
+    // The panel has them: W drives.
+    app.world_mut().resource_mut::<TeleopKeys>().0 = true;
+    frames(&mut app, 2);
+    assert_eq!(twists(&mut app).last().map(|s| s.1), Some(1.0));
 }
