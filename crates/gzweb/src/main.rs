@@ -33,8 +33,9 @@
 //!   (DECISIONS.md D-105).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
-//! - `--menu world|snap` opens the World menu or the Snap popover once the
-//!   world is live (DECISIONS.md D-108).
+//! - `--menu world|snap|context` opens the World menu or the Snap popover
+//!   once the world is live (DECISIONS.md D-108), or the entity context
+//!   menu for the `--select`ed model (D-109).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
@@ -105,7 +106,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -300,8 +301,8 @@ fn parse_args(
             "--palette" => palette = Some(value()?),
             "--menu" => {
                 let m = value()?;
-                if !["world", "snap"].contains(&m.as_str()) {
-                    return Err(format!("--menu: no menu '{m}' (world, snap)"));
+                if !["world", "snap", "context"].contains(&m.as_str()) {
+                    return Err(format!("--menu: no menu '{m}' (world, snap, context)"));
                 }
                 menu = Some(m);
             }
@@ -1045,6 +1046,10 @@ mod tests {
         assert_eq!(
             run_args(&["--menu", "snap"], None).menu.as_deref(),
             Some("snap")
+        );
+        assert_eq!(
+            run_args(&["--menu", "context"], None).menu.as_deref(),
+            Some("context")
         );
         assert!(parse(&["--menu", "edit"], None)
             .unwrap_err()

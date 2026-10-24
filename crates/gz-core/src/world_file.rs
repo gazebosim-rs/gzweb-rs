@@ -1,7 +1,8 @@
 //! Saving a world (spec §7.1; DECISIONS.md D-108): the SDFormat the
 //! server generates (`generate_world_sdf`), with its top-level models put
 //! back at their authored poses (where they were loaded or last placed),
-//! not where physics has taken them.
+//! not where physics has taken them; and one model's SDFormat, to copy it
+//! (D-109).
 
 use crate::scene::Pose;
 
@@ -111,6 +112,27 @@ pub fn with_model_poses(sdf: &str, poses: &[(&str, Pose)]) -> Result<String, Str
     Ok(out)
 }
 
+/// The top-level model `name` of `sdf` (a world's SDFormat) as an
+/// SDFormat document of its own, to `create` a copy of it from (DECISIONS.md
+/// D-109): its element as written, in an `<sdf>` of the world's version.
+pub fn model_sdf(sdf: &str, name: &str) -> Result<String, String> {
+    let doc = roxmltree::Document::parse(sdf).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let world = root
+        .children()
+        .find(|n| n.has_tag_name("world"))
+        .ok_or("no <world> in the SDFormat")?;
+    let model = world
+        .children()
+        .find(|n| n.has_tag_name("model") && n.attribute("name") == Some(name))
+        .ok_or_else(|| format!("no model {name} in the world"))?;
+    let version = root.attribute("version").unwrap_or("1.9");
+    Ok(format!(
+        "<?xml version=\"1.0\"?><sdf version=\"{version}\">{}</sdf>",
+        &sdf[model.range()]
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +239,23 @@ mod tests {
         assert!(roxmltree::Document::parse(&out).is_ok());
         assert!(with_model_poses("<sdf/>", &[]).is_err());
         assert!(with_model_poses("not xml", &[]).is_err());
+    }
+
+    /// A model comes out whole, in an `<sdf>` of the world's version; a
+    /// nested model of the same name or a missing one doesn't.
+    #[test]
+    fn a_model_comes_out_as_its_own_document() {
+        let sdf = r#"<sdf version="1.10"><world name="w">
+  <model name="outer"><model name="cart"><link name="n"/></model></model>
+  <model name="cart"><static>true</static><link name="l"/></model>
+</world></sdf>"#;
+        assert_eq!(
+            model_sdf(sdf, "cart").unwrap(),
+            r#"<?xml version="1.0"?><sdf version="1.10"><model name="cart"><static>true</static><link name="l"/></model></sdf>"#
+        );
+        assert!(model_sdf(sdf, "gone")
+            .unwrap_err()
+            .contains("no model gone"));
+        assert!(model_sdf("<sdf/>", "cart").is_err());
     }
 }

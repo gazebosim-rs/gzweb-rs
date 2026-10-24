@@ -10,6 +10,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
 use bevy::input_focus::{FocusedInput, InputFocus, InputFocusVisible};
+use bevy::picking::events::PointerPress;
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::Checked;
@@ -563,9 +565,31 @@ pub(super) fn on_visibility(
     });
 }
 
+/// A right press on a row opens its entity's context menu (§7.9; the
+/// world, joints and sensors have none), selecting it first unless it is.
+pub(super) fn on_row_context(
+    mut ev: On<PointerPress>,
+    slots: Query<&TreeSlot>,
+    rows: Res<TreeRows>,
+    model: Res<TreeModel>,
+    mut selection: ResMut<Selection>,
+    mut out: MessageWriter<gz_bevy::view::EntityContext>,
+) {
+    if ev.button != PointerButton::Secondary {
+        return;
+    }
+    let Some((_, row)) = row_of(&slots, &rows, ev.event_target()) else {
+        return;
+    };
+    ev.propagate(false);
+    if let Some(entity) = model.node(row).entity {
+        crate::shell::context_menu::tree_context(entity, &mut selection, &mut out);
+    }
+}
+
 /// A row click moves the tree's cursor there and selects it
-/// ([`select_row`]); a right or middle click doesn't (a context menu comes
-/// in M5).
+/// ([`select_row`]); a right or middle click doesn't (a right press opens
+/// the context menu, [`on_row_context`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn on_row_activate(
     ev: On<Activate>,

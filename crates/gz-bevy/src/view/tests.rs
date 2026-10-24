@@ -2411,6 +2411,40 @@ fn a_click_selects_the_model_under_it_and_empty_space_clears() {
     assert_eq!(selected(&r), []);
 }
 
+/// A right click on a model asks for its context menu, selecting it
+/// unless it already is (a selection it's in stays); on empty space, or
+/// after a right drag (a pan), nothing.
+#[test]
+fn a_right_click_asks_for_the_context_menu() {
+    use crate::view::EntityContext;
+    let (mut r, a, b) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    let asked = |r: &mut Rig| -> Vec<Entity> {
+        r.app
+            .world_mut()
+            .resource_mut::<Messages<EntityContext>>()
+            .drain()
+            .map(|c| c.entity)
+            .collect()
+    };
+    r.drag(MouseButton::Right, pa, &[]);
+    r.app.update();
+    assert_eq!(asked(&mut r), [a]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, pb, &[KeyCode::ShiftLeft]);
+    r.drag(MouseButton::Right, pb, &[]);
+    r.app.update();
+    assert_eq!(asked(&mut r), [b]);
+    assert_eq!(selected(&r), [a, b], "a selection it's in stays");
+    r.drag(MouseButton::Right, Vec2::new(400.0, 5.0), &[]);
+    r.app.update();
+    assert!(asked(&mut r).is_empty());
+    r.drag(MouseButton::Right, pa, &[Vec2::new(60.0, 0.0)]);
+    r.app.update();
+    assert!(asked(&mut r).is_empty(), "a pan");
+}
+
 #[test]
 fn shift_adds_and_ctrl_toggles() {
     let (mut r, a, b) = two_models();
@@ -2443,9 +2477,9 @@ fn a_drag_past_the_slop_orbits_and_selects_nothing() {
     r.drag(MouseButton::Left, pa, &[pa + Vec2::new(20.0, 0.0)]);
     assert_eq!(selected(&r), []);
     assert_ne!(r.transform(), before, "it orbited");
-    // A right click never selects.
+    // A right click selects the model it opens the context menu for.
     r.drag(MouseButton::Right, pa, &[]);
-    assert_eq!(selected(&r), []);
+    assert_eq!(selected(&r), [a]);
 }
 
 #[test]
@@ -3385,4 +3419,248 @@ fn placing_turns_a_click_into_a_place() {
     click(&mut r, pa, &[]);
     assert_eq!(selected(&r), [a]);
     assert!(drain(&mut r).is_empty());
+}
+
+/// Align moves the rest of the selection along a world axis so their
+/// bounds line up with the first's, as one edit; with nothing to move, or
+/// on a server that doesn't take edits, nothing happens.
+#[test]
+fn align_lines_the_selection_up_with_the_first() {
+    use crate::connection::GzStatus;
+    use crate::edit::SetPose;
+    use crate::undo::{Change, Record};
+    use crate::view::align::{AlignEdge, AlignModels};
+    let (mut r, a, b) = two_models();
+    for (e, name) in [(a, "a"), (b, "b")] {
+        r.app
+            .world_mut()
+            .entity_mut(e)
+            .insert(crate::spawn::GzEntity {
+                name: name.into(),
+                id: 3,
+                kind: gz_core::scene::NodeKind::Model,
+                path: name.into(),
+            });
+    }
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    click(&mut r, pa, &[]);
+    click(&mut r, pb, &[KeyCode::ShiftLeft]);
+    let align = |r: &mut Rig, axis, edge| {
+        r.app.world_mut().write_message(AlignModels { axis, edge });
+        r.app.update();
+        let poses: Vec<SetPose> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<SetPose>>()
+            .drain()
+            .collect();
+        let records: Vec<Record> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<Record>>()
+            .drain()
+            .collect();
+        (poses, records)
+    };
+    // Not without edits.
+    let (poses, _) = align(&mut r, 1, AlignEdge::Min);
+    assert!(poses.is_empty());
+    r.app.insert_resource(GzStatus {
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let (poses, records) = align(&mut r, 1, AlignEdge::Min);
+    assert_eq!(poses.len(), 1);
+    assert_eq!(poses[0].entity, b);
+    assert!((poses[0].pose.translation - Vec3::new(0.0, -3.0, 0.0)).length() < 1e-4);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].verb, "align");
+    // Held, so the stream's older poses don't pull it back meanwhile.
+    let now = r.app.world().resource::<Time<Real>>().elapsed_secs_f64();
+    assert!(r.app.world().resource::<crate::edit::Held>().holds(b, now));
+    assert!(matches!(
+        records[0].changes[..],
+        [Change::Pose { entity, .. }] if entity == b
+    ));
+    // Already lined up: nothing to do.
+    r.app.update();
+    let (poses, records) = align(&mut r, 0, AlignEdge::Center);
+    assert!(poses.is_empty() && records.is_empty());
+}
+
+/// Delete, Duplicate, Copy and Paste ask for the world's SDFormat, then
+/// remove the models or create copies of them (named by the client,
+/// beside them), as edits; a copy is selected once it appears.
+#[test]
+fn model_edits_go_through_the_worlds_sdformat() {
+    use crate::connection::{GzServiceReply, GzStatus};
+    use crate::undo::{Change, Record};
+    use crate::view::model_edits::{EditModels, ModelEdit, ModelsEdited};
+    use gz_core::msgs;
+    use prost::Message as _;
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    r.app.insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
+        world: Some("w".into()),
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    let sdf = r#"<sdf version="1.9"><world name="w"><model name="a"><link name="l"/></model></world></sdf>"#;
+    let reply = GzServiceReply {
+        service: "/world/w/generate_world_sdf".into(),
+        msg_type: "gz.msgs.StringMsg".into(),
+        payload: msgs::StringMsg {
+            data: sdf.into(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    };
+    let drain = |r: &mut Rig| {
+        let sent: Vec<GzCommand> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .collect();
+        let records: Vec<Record> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<Record>>()
+            .drain()
+            .collect();
+        let done: Vec<ModelsEdited> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<ModelsEdited>>()
+            .drain()
+            .collect();
+        (sent, records, done)
+    };
+    let service = |c: &GzCommand| match c {
+        GzCommand::Request { service, .. } => service.clone(),
+        _ => String::new(),
+    };
+    let created = |c: &GzCommand| match c {
+        GzCommand::Request { payload, .. } => {
+            msgs::EntityFactory::decode(payload.as_slice()).unwrap()
+        }
+        _ => panic!("not a request"),
+    };
+    let run = |r: &mut Rig, edit| {
+        drain(r);
+        r.app.world_mut().write_message(EditModels(edit));
+        r.app.update();
+        let (sent, ..) = drain(r);
+        assert_eq!(
+            sent.iter().map(service).collect::<Vec<_>>(),
+            ["/world/w/generate_world_sdf"]
+        );
+        r.app.world_mut().write_message(reply.clone());
+        r.app.update();
+        drain(r)
+    };
+    // Duplicate: a copy named a_1, one size and a gap along Y.
+    let (sent, records, done) = run(&mut r, ModelEdit::Duplicate);
+    assert_eq!(service(&sent[0]), "/world/w/create");
+    let f = created(&sent[0]);
+    assert_eq!(f.name, "a_1");
+    assert!((f.pose.unwrap().position.unwrap().y - 1.5).abs() < 1e-4);
+    assert!(matches!(
+        &f.from,
+        Some(msgs::entity_factory::From::Sdf(s)) if s.contains(r#"<model name="a"><link name="l"/></model>"#)
+    ));
+    assert_eq!(records[0].verb, "duplicate");
+    assert_eq!(done[0].result, Ok("Duplicated a_1".into()));
+    // It shows: selected.
+    let copy = r
+        .app
+        .world_mut()
+        .spawn(crate::spawn::GzEntity {
+            name: "a_1".into(),
+            id: 9,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a_1".into(),
+        })
+        .id();
+    r.app.update();
+    assert_eq!(selected(&r), [copy]);
+    r.app.world_mut().entity_mut(copy).despawn();
+    r.app.update();
+    click(&mut r, pa, &[]);
+    // Copy, then Paste twice: a_1 and a_2 (the first still on its way).
+    let (sent, _, done) = run(&mut r, ModelEdit::Copy);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Ok("Copied a".into()));
+    for (name, y) in [("a_1", 1.5), ("a_2", 3.0)] {
+        r.app
+            .world_mut()
+            .write_message(EditModels(ModelEdit::Paste));
+        r.app.update();
+        let (sent, records, _) = drain(&mut r);
+        let f = created(&sent[0]);
+        assert_eq!(f.name, name);
+        assert!((f.pose.unwrap().position.unwrap().y - y).abs() < 1e-4);
+        assert_eq!(records[0].verb, "paste");
+    }
+    // A reply without the model fails, and the model can be deleted
+    // again.
+    drain(&mut r);
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    drain(&mut r);
+    r.app.world_mut().write_message(GzServiceReply {
+        payload: msgs::StringMsg {
+            data: r#"<sdf version="1.9"><world name="w"/></sdf>"#.into(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        ..reply.clone()
+    });
+    r.app.update();
+    let (sent, _, done) = drain(&mut r);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Err("no model a in the world".into()));
+    // Delete: removed by its id, kept for undo with its pose as loaded.
+    let (sent, records, done) = run(&mut r, ModelEdit::Delete);
+    assert_eq!(service(&sent[0]), "/world/w/remove");
+    let GzCommand::Request { payload, .. } = &sent[0] else {
+        unreachable!()
+    };
+    let removed = msgs::Entity::decode(payload.as_slice()).unwrap();
+    assert_eq!((removed.name.as_str(), removed.id), ("a", 3));
+    assert!(matches!(
+        &records[0].changes[..],
+        [Change::Exists { model, after: false }] if model.name == "a" && model.sdf.contains("<link")
+    ));
+    assert_eq!(done[0].result, Ok("Deleted a".into()));
+    // Delete again before it's gone: nothing more (one edit, one remove).
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    let (sent, records, done) = drain(&mut r);
+    assert!(sent.is_empty() && records.is_empty() && done.is_empty());
+    // Not without edits.
+    r.app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    let (sent, _, done) = drain(&mut r);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Err("This server doesn't take edits".into()));
 }

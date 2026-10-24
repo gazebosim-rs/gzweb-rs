@@ -121,6 +121,40 @@ pub fn create_request(
     }
 }
 
+/// The `create` request for a copy of a model named `name` from `sdf` (a
+/// document holding one model) at `pose` in the world. The name is taken
+/// as it is (not renamed): a name the scene has fails.
+pub fn create_copy_request(world: &str, sdf: &str, name: &str, pose: &Transform) -> GzCommand {
+    let msg = msgs::EntityFactory {
+        name: name.to_string(),
+        allow_renaming: false,
+        pose: Some(pose_msg(pose)),
+        from: Some(msgs::entity_factory::From::Sdf(sdf.to_string())),
+        ..Default::default()
+    };
+    GzCommand::Request {
+        service: world_topic(world, "create"),
+        msg_type: "gz.msgs.EntityFactory".into(),
+        payload: msg.encode_to_vec(),
+    }
+}
+
+/// The `remove` request for the top-level model `name`, by its `id` when
+/// known (gz-sim finds a name's first model, maybe a nested one).
+pub fn remove_request(world: &str, name: &str, id: Option<u32>) -> GzCommand {
+    let msg = msgs::Entity {
+        name: name.to_string(),
+        id: id.map_or(0, u64::from),
+        r#type: msgs::entity::Type::Model as i32,
+        ..Default::default()
+    };
+    GzCommand::Request {
+        service: world_topic(world, "remove"),
+        msg_type: "gz.msgs.Entity".into(),
+        payload: msg.encode_to_vec(),
+    }
+}
+
 /// Whether `reply` answers a `create`, and if so whether it succeeded.
 pub fn create_reply(reply: &GzServiceReply) -> Option<bool> {
     reply
@@ -129,12 +163,10 @@ pub fn create_reply(reply: &GzServiceReply) -> Option<bool> {
         .then(|| msgs::Boolean::decode(reply.payload.as_slice()).is_ok_and(|b| b.data))
 }
 
-/// The `set_pose` request for `entity` at `pose`.
-pub fn set_pose_request(world: &str, entity: &GzEntity, pose: &Transform) -> GzCommand {
+/// `pose` as a `gz.msgs.Pose` (no name or id).
+fn pose_msg(pose: &Transform) -> msgs::Pose {
     let (t, q) = (pose.translation, pose.rotation);
-    let msg = msgs::Pose {
-        name: entity.name.clone(),
-        id: entity.id,
+    msgs::Pose {
         position: Some(msgs::Vector3d {
             x: t.x as f64,
             y: t.y as f64,
@@ -149,6 +181,15 @@ pub fn set_pose_request(world: &str, entity: &GzEntity, pose: &Transform) -> GzC
             ..Default::default()
         }),
         ..Default::default()
+    }
+}
+
+/// The `set_pose` request for `entity` at `pose`.
+pub fn set_pose_request(world: &str, entity: &GzEntity, pose: &Transform) -> GzCommand {
+    let msg = msgs::Pose {
+        name: entity.name.clone(),
+        id: entity.id,
+        ..pose_msg(pose)
     };
     GzCommand::Request {
         service: world_topic(world, "set_pose"),

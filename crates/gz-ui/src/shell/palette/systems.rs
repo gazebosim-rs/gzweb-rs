@@ -19,6 +19,7 @@ use gz_bevy::topics::GzTopics;
 use gz_bevy::undo::UndoStack;
 use gz_bevy::view::controls::RunBinding;
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::model_edits::ModelClipboard;
 use gz_bevy::view::Selection;
 use gz_core::scene::NodeKind;
 
@@ -44,7 +45,7 @@ use crate::widgets::TextSubmit;
 
 /// The commands the palette lists from `shortcuts.json`, in this order:
 /// those a key or a click can do now. (Held keys, the gizmo's axis
-/// constraints, Teleop's keys and what M8b and M8c bring wait.)
+/// constraints, Teleop's keys and Rename wait.)
 const COMMANDS: &[&str] = &[
     "file.save",
     "file.save_as",
@@ -53,6 +54,10 @@ const COMMANDS: &[&str] = &[
     "sim.reset",
     "edit.undo",
     "edit.redo",
+    "edit.copy",
+    "edit.paste",
+    "edit.duplicate",
+    "edit.delete",
     "tool.navigate",
     "tool.box_select",
     "tool.translate",
@@ -92,6 +97,8 @@ fn command_icon(id: &str) -> IconId {
         "sim.reset" => IconId::Reset,
         "edit.undo" => IconId::Undo,
         "edit.redo" => IconId::Redo,
+        "edit.copy" | "edit.paste" | "edit.duplicate" => IconId::Copy,
+        "edit.delete" => IconId::Trash,
         "view.focus" => IconId::Focus,
         "view.home" => IconId::Home,
         "view.projection" => IconId::ProjOrtho,
@@ -125,6 +132,8 @@ pub(crate) struct Sources<'w, 's> {
     phase: Res<'w, CurrentPhase>,
     gz: Option<Res<'w, GzStatus>>,
     undo: Option<Res<'w, UndoStack>>,
+    selection: Option<Res<'w, Selection>>,
+    clipboard: Option<Res<'w, ModelClipboard>>,
     topics: Option<Res<'w, GzTopics>>,
     entities: Query<'w, 's, (Entity, &'static GzEntity)>,
     new_entities: Query<'w, 's, (), Added<GzEntity>>,
@@ -153,6 +162,8 @@ impl Sources<'_, '_> {
             || self.phase.is_changed()
             || self.topics.as_ref().is_some_and(Res::is_changed)
             || self.undo.as_ref().is_some_and(Res::is_changed)
+            || self.selection.as_ref().is_some_and(Res::is_changed)
+            || self.clipboard.as_ref().is_some_and(Res::is_changed)
             || self.status.is_changed()
             || self.hosts.is_changed()
             || self.layout.is_changed()
@@ -185,8 +196,31 @@ impl Sources<'_, '_> {
             "edit.redo" if undo.and_then(UndoStack::redo_label).is_none() => {
                 Some("Nothing to redo")
             }
-            "file.save" | "file.save_as" if !live => Some("Not connected"),
-            "tool.translate" | "tool.rotate" if !edits_allowed(self.gz.as_deref()) => {
+            "file.save" | "file.save_as" | "edit.copy" | "edit.paste" | "edit.duplicate"
+            | "edit.delete"
+                if !live =>
+            {
+                Some("Not connected")
+            }
+            "edit.paste"
+                if self
+                    .clipboard
+                    .as_deref()
+                    .is_none_or(ModelClipboard::is_empty) =>
+            {
+                Some("Nothing copied")
+            }
+            "edit.copy" | "edit.duplicate" | "edit.delete"
+                if self
+                    .selection
+                    .as_deref()
+                    .is_none_or(|s| s.entities.is_empty()) =>
+            {
+                Some("Select a model")
+            }
+            "tool.translate" | "tool.rotate" | "edit.paste" | "edit.duplicate" | "edit.delete"
+                if !edits_allowed(self.gz.as_deref()) =>
+            {
                 Some("This server doesn't take edits")
             }
             // The view layout works offline; looking at the world doesn't.

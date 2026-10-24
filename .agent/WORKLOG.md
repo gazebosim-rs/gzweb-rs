@@ -1865,3 +1865,27 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   or another world; ⇧⌘S prevented in the browser; typed names keep their
   last part; "last saved" forgets another world; type-to-search in the
   World menu; long Undo labels end in "…"; hides aren't saved (D-108).
+
+## 2026-10-24: M8c entity context menu (D-109)
+
+- **Context menu:** a right click on a model in a view (no drag) or a
+  right press on a tree row; selects it unless it is. §7.9's items;
+  Rename, Apply force… and Edit model say why they can't.
+- **Model edits:** `gz_bevy::view::model_edits` gets the model's
+  SDFormat (`gz_core::world_file::model_sdf`); Copy, Paste and
+  Duplicate `create` copies named `<name>_N` beside it, Delete sends
+  `remove`. Undo removes or recreates (`Change::Exists`); Delete shows
+  a 5 s Undo chip. ⌘C ⌘V ⌘D Delete; the palette.
+- **Align ›:** `gz_bevy::view::align`, X/Y/Z by min, centre or max.
+- **Submenus:** hover, click, Enter or → opens; ← closes; a choice
+  closes the stack.
+- **Flags:** `gzweb --menu context` (with `--select`).
+- **Live check** (debug build, :9013 `diff_drive`): the menu opens on
+  `vehicle_blue`. Deleting, duplicating and aligning by hand not tried
+  (tested against server replies).
+- **Review fixes (#55):** ↓ moves past a submenu's row; Delete again
+  while one is under way does nothing; `remove` by id; undo waits for a
+  model it's bringing back, which keeps its pose as loaded; Align holds
+  its models; ⇧D doesn't fly on the web; the undo chip follows its
+  edit's serial.
+- **Tests:** workspace 861 → 879 passing.

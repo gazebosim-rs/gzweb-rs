@@ -6,13 +6,15 @@
 //! the world's: a new server or world clears it, a Reset (sim time going
 //! back) forgets the moves it undid, and a new scene from a reconnect
 //! forgets the hides and Isolate it undid (DECISIONS.md D-89). The world is
-//! dirty while the stack isn't where it was at load.
+//! dirty while the stack isn't where it was at load. A model spawned or
+//! deleted by an edit (Duplicate, Paste, Delete: D-109) is removed or
+//! created again from its SDFormat.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::connection::{GzCommand, GzStatus};
-use crate::edit::{edits_allowed, Held, SetPose};
+use crate::edit::{create_copy_request, edits_allowed, remove_request, Held, SetPose};
 use crate::spawn::{GzEntity, GzIndex};
 
 /// One change an edit makes, as recorded (by entity).
@@ -34,7 +36,32 @@ pub enum Change {
         before: Option<Saved>,
         after: Option<Saved>,
     },
+    /// A top-level model spawned (`after`) or deleted (not `after`).
+    Exists { model: ModelCopy, after: bool },
 }
+
+/// A top-level model as an edit spawns it or deleted it: its name (its
+/// scene path), its SDFormat ([`gz_core::world_file::model_sdf`]), its
+/// pose in the world, and (deleted) its pose as loaded, which Save writes
+/// for it ([`LoadedPoses`](crate::world_save::LoadedPoses)) once undo
+/// brings it back.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelCopy {
+    pub name: String,
+    pub sdf: String,
+    pub pose: Transform,
+    pub loaded: Option<Transform>,
+}
+
+/// How long undo waits for a model it created again to show up before a
+/// move of it can be undone anyway (and skips it).
+const RECREATE_SECS: f64 = 5.0;
+
+/// The models undo or redo has asked the server to create again, by scene
+/// path, with when: until one shows, an edit that moves or hides it waits
+/// (undoing it now would find nothing to put back).
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct Recreating(pub HashMap<String, f64>);
 
 /// Visibilities by scene path.
 pub type Saved = Vec<(String, Visibility)>;
@@ -82,6 +109,10 @@ enum Step {
         before: Option<Saved>,
         after: Option<Saved>,
     },
+    Exists {
+        model: ModelCopy,
+        after: bool,
+    },
 }
 
 impl Step {
@@ -91,14 +122,21 @@ impl Step {
             Step::Pose { before, after, .. } => before != after,
             Step::Visibility { before, after, .. } => before != after,
             Step::Isolated { before, after } => before != after,
+            Step::Exists { .. } => true,
         }
     }
 
     fn path(&self) -> Option<&str> {
         match self {
             Step::Pose { path, .. } | Step::Visibility { path, .. } => Some(path),
+            Step::Exists { model, .. } => Some(&model.name),
             Step::Isolated { .. } => None,
         }
+    }
+
+    /// Whether putting it back or doing it again asks the server.
+    fn asks_server(&self) -> bool {
+        matches!(self, Step::Pose { .. } | Step::Exists { .. })
     }
 }
 
@@ -107,6 +145,8 @@ impl Step {
 pub struct Edit {
     /// What the World menu calls it: "move cart" ("Undo move cart").
     pub label: String,
+    /// Its number on the stack: two edits with one label are two edits.
+    serial: u64,
     steps: Vec<Step>,
     scrub: Option<Entity>,
     open: bool,
@@ -139,6 +179,8 @@ pub struct UndoStack {
     /// How many edits were done when the world was last saved or loaded;
     /// `None` once that state can't come back.
     saved: Option<usize>,
+    /// The next edit's serial.
+    next: u64,
 }
 
 impl Default for UndoStack {
@@ -147,6 +189,7 @@ impl Default for UndoStack {
             done: Vec::new(),
             undone: Vec::new(),
             saved: Some(0),
+            next: 1,
         }
     }
 }
@@ -172,6 +215,12 @@ impl UndoStack {
                 _ => None,
             })
         })
+    }
+
+    /// Which edit ⌘Z would undo (its serial, for telling two with one
+    /// label apart).
+    pub fn undo_serial(&self) -> Option<u64> {
+        self.done.last().map(|e| e.serial)
     }
 
     /// What ⌘Z would undo.
@@ -219,7 +268,11 @@ impl UndoStack {
             self.close_top();
         }
         if edit.changes() || edit.open {
-            self.done.push(edit);
+            self.done.push(Edit {
+                serial: self.next,
+                ..edit
+            });
+            self.next += 1;
         }
     }
 
@@ -249,9 +302,10 @@ impl UndoStack {
         self.saved = self.saved.filter(|s| *s == 0);
     }
 
-    /// Forgets the moves a Reset undid (gz-sim puts every pose back).
+    /// Forgets the moves, spawns and deletes a Reset undid (gz-sim puts
+    /// the world back as it was loaded).
     fn forget_poses(&mut self) {
-        self.forget(|s| matches!(s, Step::Pose { .. }));
+        self.forget(|s| matches!(s, Step::Pose { .. } | Step::Exists { .. }));
     }
 
     /// Forgets the hides and Isolate a new scene undid (it comes with
@@ -277,6 +331,7 @@ impl Plugin for UndoPlugin {
             .init_resource::<UndoStack>()
             .init_resource::<Isolated>()
             .init_resource::<Held>()
+            .init_resource::<Recreating>()
             .add_systems(
                 Update,
                 (forget_other_worlds, record, undo_redo)
@@ -310,11 +365,15 @@ fn record(
                 Change::Pose { entity, .. } | Change::Visibility { entity, .. } => {
                     entities.get(*entity).ok()
                 }
-                Change::Isolated { .. } => None,
+                Change::Isolated { .. } | Change::Exists { .. } => None,
             };
-            if let Some(g) = entity {
-                if !names.contains(&g.name.as_str()) {
-                    names.push(&g.name);
+            let name = match c {
+                Change::Exists { model, .. } => Some(model.name.as_str()),
+                _ => entity.map(|g| g.name.as_str()),
+            };
+            if let Some(name) = name {
+                if !names.contains(&name) {
+                    names.push(name);
                 }
             }
             steps.push(match (c, entity) {
@@ -332,6 +391,10 @@ fn record(
                     before: before.clone(),
                     after: after.clone(),
                 },
+                (Change::Exists { model, after }, _) => Step::Exists {
+                    model: model.clone(),
+                    after: *after,
+                },
                 // Gone already: nothing to put back.
                 _ => continue,
             });
@@ -341,6 +404,7 @@ fn record(
         }
         stack.push(Edit {
             label: label(r.verb, r.named, &names),
+            serial: 0,
             steps,
             scrub: r.scrub,
             open: r.open,
@@ -349,8 +413,9 @@ fn record(
 }
 
 /// Undoes or redoes the top edit. A move needs a server that takes edits:
-/// without one the edit stays where it is. An entity that is gone is
-/// skipped.
+/// without one the edit stays where it is, and so it does while a model it
+/// changes is still being created again ([`Recreating`]). An entity that
+/// is gone is skipped.
 #[allow(clippy::too_many_arguments)]
 fn undo_redo(
     mut commands: MessageReader<UndoCommand>,
@@ -361,8 +426,23 @@ fn undo_redo(
     mut stack: ResMut<UndoStack>,
     mut isolated: ResMut<Isolated>,
     mut held: ResMut<Held>,
+    mut recreating: ResMut<Recreating>,
+    mut loaded: Option<ResMut<crate::world_save::LoadedPoses>>,
     mut edits: MessageWriter<SetPose>,
+    mut server: MessageWriter<GzCommand>,
 ) {
+    let now = time.elapsed_secs_f64();
+    if !recreating.0.is_empty() {
+        let shown: Vec<String> = recreating
+            .0
+            .keys()
+            .filter(|p| entities.iter().any(|(_, g)| &g.path == *p))
+            .cloned()
+            .collect();
+        recreating
+            .0
+            .retain(|p, at| now - *at < RECREATE_SECS && !shown.contains(p));
+    }
     for cmd in commands.read() {
         let undo = *cmd == UndoCommand::Undo;
         let top = if undo {
@@ -373,11 +453,20 @@ fn undo_redo(
         let Some(edit) = top else {
             continue;
         };
-        let moves = edit.steps.iter().any(|s| matches!(s, Step::Pose { .. }));
-        if moves && !edits_allowed(status.as_deref()) {
+        let moves = edit.steps.iter().any(Step::asks_server);
+        let world = status.as_deref().and_then(|s| s.world.clone());
+        let verb = if undo { "undo" } else { "redo" };
+        if moves && (!edits_allowed(status.as_deref()) || world.is_none()) {
+            warn!("can't {verb} {}: the server doesn't take edits", edit.label);
+            continue;
+        }
+        let waiting = edit.steps.iter().find_map(|s| match s {
+            Step::Exists { .. } => None,
+            s => s.path().filter(|p| recreating.0.contains_key(*p)),
+        });
+        if let Some(path) = waiting {
             warn!(
-                "can't {} {}: the server doesn't take edits",
-                if undo { "undo" } else { "redo" },
+                "can't {verb} {} yet: {path} is still coming back",
                 edit.label
             );
             continue;
@@ -394,7 +483,6 @@ fn undo_redo(
             .filter(|(_, g)| edit.steps.iter().any(|s| s.path() == Some(&g.path)))
             .map(|(e, g)| (g.path.as_str(), e))
             .collect();
-        let now = time.elapsed_secs_f64();
         // Undone last to first.
         let order: Vec<&Step> = if undo {
             edit.steps.iter().rev().collect()
@@ -402,6 +490,31 @@ fn undo_redo(
             edit.steps.iter().collect()
         };
         for step in order {
+            if let Step::Exists { model, after } = step {
+                let world = world.as_deref().unwrap_or_default();
+                // Undoing a spawn or redoing a delete removes the model
+                // (by its id while it's here: a nested model may share
+                // its name).
+                if *after == undo {
+                    let id = entities
+                        .iter()
+                        .find(|(_, g)| g.path == model.name)
+                        .map(|(_, g)| g.id);
+                    server.write(remove_request(world, &model.name, id));
+                } else {
+                    server.write(create_copy_request(
+                        world,
+                        &model.sdf,
+                        &model.name,
+                        &model.pose,
+                    ));
+                    recreating.0.insert(model.name.clone(), now);
+                    if let (Some(loaded), Some(at)) = (loaded.as_deref_mut(), model.loaded) {
+                        loaded.0.insert(model.name.clone(), at);
+                    }
+                }
+                continue;
+            }
             let found = step
                 .path()
                 .and_then(|p| by_path.get(p))

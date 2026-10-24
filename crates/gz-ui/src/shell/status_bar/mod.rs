@@ -213,6 +213,8 @@ pub(crate) fn narrow_rules(layout: Res<ShellLayout>, mut items: Query<(&StatusIt
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<CursorReadout>()
         .init_resource::<readouts::StatusNote>()
+        .add_message::<gz_bevy::undo::UndoCommand>()
+        .add_observer(readouts::on_undo_chip)
         .add_systems(
             Update,
             (

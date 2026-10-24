@@ -122,6 +122,8 @@ impl Plugin for ScenePanelPlugin {
         .add_observer(systems::on_expand)
         .add_observer(systems::on_visibility)
         .add_observer(systems::on_row_activate)
+        .add_observer(systems::on_row_context)
+        .add_message::<gz_bevy::view::EntityContext>()
         .add_observer(footer::build_footer)
         .add_observer(footer::on_footer)
         .add_observer(systems::on_chip)

@@ -406,6 +406,11 @@ workspaces, the switcher and persistence.
   with "Use current poses", Export screenshot, Connect to server… over the world, Undo and
   Redo by name, the status bar's "Saved …" note; the Snap popover. Left: New, Open, Revert and
   Import (no server support), video, Local snap space.
+- **M8c notes:** the entity context menu (D-109) from a view's right click or a tree row;
+  Copy, Paste, Duplicate and Delete of top-level models (`gz_bevy::view::model_edits`, undoable,
+  Delete's 5 s Undo chip, ⌘C ⌘V ⌘D Delete, the palette); Align › (`gz_bevy::view::align`); Show ›;
+  submenus in the menu widget. Left: Rename (no server support), Apply force…, Edit model,
+  per-entity overlays, copying lights and links, undoing Assets inserts.
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.
