@@ -340,13 +340,13 @@ fn the_tree_shows_the_scene_and_counts_it() {
     frames(&mut app, 2);
     assert_eq!(rows(&mut app).len(), 4);
     // The tree asks for the SDFormat while it shows.
-    assert!(app.world().resource::<SdfWanted>().0);
+    assert!(app.world().resource::<SdfWanted>().by("scene"));
     app.world_mut().write_message(UiCommand::OpenPanel {
         panel: PLOT,
         slot: Slot::Primary,
     });
     frames(&mut app, 2);
-    assert!(!app.world().resource::<SdfWanted>().0);
+    assert!(!app.world().resource::<SdfWanted>().by("scene"));
 }
 
 /// Spawns and deletions show at once; so does a hidden entity.

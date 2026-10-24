@@ -53,7 +53,7 @@ mod assets;
 mod console;
 mod plot;
 mod scene;
-mod sensors;
+pub(crate) mod sensors;
 mod teleop;
 mod topics;
 
@@ -68,7 +68,7 @@ pub use assets::{AssetsPanelPlugin, AssetsStart, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleUnread, CONSOLE};
 pub use plot::{PlotCharts, PlotPanelPlugin, PlotPick, PlotStart, PLOT};
 pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
-pub use sensors::{SensorsPanelPlugin, SENSORS};
+pub use sensors::{SensorsPanelPlugin, SensorsStart, ViewSensor, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TELEOP};
 pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
 

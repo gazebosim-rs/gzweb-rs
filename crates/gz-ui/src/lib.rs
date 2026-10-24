@@ -32,6 +32,7 @@ pub mod format;
 pub mod gallery;
 pub mod inspectors;
 pub mod panels;
+pub(crate) mod raster;
 pub(crate) mod registry;
 pub mod shell;
 pub mod theme;

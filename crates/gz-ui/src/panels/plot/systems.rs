@@ -6,7 +6,6 @@ use bevy::input_focus::InputFocus;
 use bevy::picking::hover::Hovered;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::text::EditableText;
 use bevy::ui::{Checked, RelativeCursorPosition};
 use bevy::ui_widgets::{Activate, ValueChange};
@@ -19,7 +18,6 @@ use super::model::{
     span_label, tick_label, ticks, value_label, Chart, Picker, PlotData, PlotState, SimClock,
     Target, CHART_HZ, COLORS, PLOT_RATE,
 };
-use super::raster::{trace, Canvas};
 use super::view::{
     pick_row, spawn_chart, spawn_picker, tip_line, y_label, ChartHover, ChartList, Crosshair,
     HoverDot, HoverTip, LegendPart, LegendRemove, LegendRow, PickRow, PickValue, PickerButton,
@@ -28,6 +26,7 @@ use super::view::{
 };
 use super::{PlotCharts, PlotPick, PlotStart, ADD, ADD_FIELD, EXPORT, PAUSE, PLOT};
 use crate::panels::{PanelAction, PanelActionActivated, PanelView};
+use crate::raster::{trace, Canvas};
 use crate::shell::{
     CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
 };
@@ -733,19 +732,7 @@ fn draw(frame: &ChartFrame, chart: &Chart, ys: &[f64], step: f64, theme: &Theme)
             canvas.polyline(&line, LINE_W * frame.scale, color);
         }
     }
-    let mut image = Image::new(
-        Extent3d {
-            width: frame.size.x,
-            height: frame.size.y,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        canvas.rgba8(),
-        TextureFormat::Rgba8UnormSrgb,
-        bevy::asset::RenderAssetUsages::default(),
-    );
-    image.sampler = bevy::image::ImageSampler::nearest();
-    image
+    canvas.image()
 }
 
 /// The pointer over a plot, from its [`RelativeCursorPosition`]: only

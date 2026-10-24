@@ -267,7 +267,7 @@ pub(super) fn want_sdf(
         let inspecting =
             inspected.is_some_and(|i| !matches!(i.kind, InspectKind::World | InspectKind::Multi));
         let shown = panel_shown(SCENE)(hosts);
-        wanted.set_if_neq(SdfWanted(shown || inspecting));
+        gz_bevy::overlays::extras::want_sdf(&mut wanted, "scene", shown || inspecting);
     }
 }
 

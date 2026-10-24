@@ -24,6 +24,9 @@
 //!   tree filtered or with every row open (DECISIONS.md D-70).
 //! - `--echo TOPIC` starts the full UI with the Topics panel open,
 //!   echoing TOPIC once the server lists it (DECISIONS.md D-99).
+//! - `--sensors [NAME]` starts the full UI with the Sensors panel open,
+//!   showing the sensor NAME of the model `--select` picks (DECISIONS.md
+//!   D-103).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
 //!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
 //!   (DECISIONS.md D-102).
@@ -66,6 +69,8 @@ struct Args {
     plot: Option<gz_ui::panels::PlotStart>,
     /// `--assets`.
     assets: Option<gz_ui::panels::AssetsStart>,
+    /// `--sensors`.
+    sensors: Option<gz_ui::panels::SensorsStart>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -80,6 +85,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
+                     [--sensors [NAME]] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -194,11 +200,12 @@ fn parse_args(
     let mut topics = None;
     let mut plot = gz_ui::panels::PlotStart::default();
     let mut assets = None;
+    let mut sensors = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
 
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().peekable();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} needs a value"));
         let mut millis = || -> Result<f64, String> {
@@ -258,6 +265,14 @@ fn parse_args(
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
             "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
+            "--sensors" => {
+                // The name is optional: the next argument unless it's a flag.
+                let name = args.peek().filter(|a| !a.starts_with("--")).cloned();
+                if name.is_some() {
+                    args.next();
+                }
+                sensors = Some(gz_ui::panels::SensorsStart { sensor: name });
+            }
             "--assets" => {
                 assets = Some(value()?.parse().map_err(|e| format!("--assets: {e}"))?);
             }
@@ -313,6 +328,9 @@ fn parse_args(
     if assets.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--assets needs --ui full".into());
     }
+    if sensors.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--sensors needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -355,6 +373,7 @@ fn parse_args(
         topics,
         plot,
         assets,
+        sensors,
         layout,
         no_vsync,
     })))
@@ -427,6 +446,7 @@ fn command() -> Result<Command, String> {
         topics: None,
         plot: None,
         assets: None,
+        sensors: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -640,6 +660,9 @@ fn main() -> AppExit {
         }
         if let Some(assets) = args.assets {
             app.insert_resource(assets);
+        }
+        if let Some(sensors) = args.sensors {
+            app.insert_resource(sensors);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -905,6 +928,14 @@ mod tests {
             .assets
             .is_some());
         assert!(run_args(&[], None).assets.is_none());
+        let a = run_args(&["--sensors", "camera", "--ui", "full"], None);
+        assert_eq!(a.sensors.unwrap().sensor.as_deref(), Some("camera"));
+        let a = run_args(&["--sensors", "--ui", "full"], None);
+        assert_eq!(a.sensors.unwrap().sensor, None);
+        assert_eq!(
+            parse(&["--sensors", "--ui", "minimal"], None).unwrap_err(),
+            "--sensors needs --ui full"
+        );
         assert_eq!(
             parse(&["--assets", "nope"], None).unwrap_err(),
             "--assets: not a tab (shapes, lights, fuel, local): nope"

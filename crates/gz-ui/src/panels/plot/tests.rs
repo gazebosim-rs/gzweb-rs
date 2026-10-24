@@ -15,7 +15,6 @@ use gz_core::msgs;
 use prost::Message as _;
 
 use super::model::*;
-use super::raster::{trace, Canvas};
 use super::systems::{ChartFrame, EMPTY};
 use super::view::{
     ChartHover, HoverTip, LegendPart, LegendRemove, PickRow, PickerButton, PickerStatus, PlotArea,
@@ -24,6 +23,7 @@ use super::view::{
 use super::{PlotCharts, PlotPick, PlotStart, ADD, ADD_FIELD, EXPORT, PAUSE, PLOT, POP_OUT};
 use crate::assets::icons::Icon;
 use crate::panels::{ActionId, PanelActionActivated, PanelView};
+use crate::raster::{trace, Canvas};
 use crate::shell::sidebar::body::{ActionButton, BodyView};
 use crate::shell::{PanelStatus, ShellLayout, Slot, UiCommand};
 use crate::test_support::frames;

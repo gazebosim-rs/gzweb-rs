@@ -24,6 +24,9 @@ mod model;
 mod systems;
 mod view;
 
+/// A message cut to show (the Sensors panel's text preview too).
+pub(crate) use model::clip_lines;
+
 /// A [`TopicsStart`]'s system, for a panel that opens beside it.
 pub(crate) use systems::apply_start as apply_topics_start;
 
