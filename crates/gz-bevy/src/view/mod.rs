@@ -23,6 +23,7 @@ pub mod gizmo;
 pub mod input;
 pub mod modes;
 pub mod outline;
+pub mod place;
 pub mod select;
 #[cfg(target_arch = "wasm32")]
 pub mod web;
@@ -317,6 +318,12 @@ pub enum ViewOp {
     Select {
         at: Vec2,
         mode: SelectMode,
+    },
+    /// A click while placing ([`place::Placing`]): place at the surface
+    /// under `at`; `keep` to place more.
+    Place {
+        at: Vec2,
+        keep: bool,
     },
     /// A marquee from `from` to `to`: picks the top-level models it
     /// overlaps.
@@ -1232,6 +1239,7 @@ pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
     mut views: ViewMoves,
     mut scene: ViewScene,
+    mut placed: MessageWriter<place::PlaceAt>,
     time: Res<Time<Real>>,
     linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
@@ -1250,6 +1258,15 @@ pub fn apply_view_commands(
                 continue;
             };
             let f = frame(camera);
+            if let ViewOp::Place { at, keep } = cmd.op {
+                if let Some(p) = place::surface_at(&mut scene, (&t, &p), f.size, at) {
+                    placed.write(place::PlaceAt {
+                        point: place::to_gazebo(p),
+                        keep,
+                    });
+                }
+                continue;
+            }
             let carried = matches!(
                 cmd.op,
                 ViewOp::Pan(_) | ViewOp::Fly { .. } | ViewOp::Zoom(_) | ViewOp::ZoomAt { .. }
@@ -1352,6 +1369,8 @@ fn apply(
             let picked = select::pick_at(scene, (t, p), f.size, at);
             select(&mut scene.selection.reborrow(), mode, picked.as_slice());
         }
+        // Placed by `apply_view_commands`, which writes the result.
+        ViewOp::Place { .. } => {}
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
             select(&mut scene.selection.reborrow(), mode, &picked);
