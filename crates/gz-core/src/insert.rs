@@ -233,10 +233,19 @@ impl Insertable {
     }
 
     /// The `create` request's message: it at `at` (Gazebo's world
-    /// coordinates) lifted by [`lift`](Self::lift), renamed by the server
-    /// if its name is taken.
-    pub fn factory(&self, at: [f64; 3]) -> msgs::EntityFactory {
-        let [x, y, z] = at;
+    /// coordinates) on a surface facing `normal`, moved off it by
+    /// [`lift`](Self::lift) along the normal (up, on the ground), so it
+    /// rests on it rather than in it; renamed by the server if its name is
+    /// taken.
+    pub fn factory(&self, at: [f64; 3], normal: [f64; 3]) -> msgs::EntityFactory {
+        let len = normal.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let n = if len > 1e-9 {
+            normal.map(|v| v / len)
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        let lift = self.lift();
+        let [x, y, z] = [0, 1, 2].map(|i| at[i] + n[i] * lift);
         msgs::EntityFactory {
             name: self.name(),
             allow_renaming: true,
@@ -244,7 +253,7 @@ impl Insertable {
                 position: Some(msgs::Vector3d {
                     x,
                     y,
-                    z: z + self.lift(),
+                    z,
                     ..Default::default()
                 }),
                 orientation: Some(msgs::Quaternion {
@@ -261,10 +270,15 @@ impl Insertable {
     /// Whether a model called `seen` is this one, as the server named it
     /// (its name, or its name and a suffix the server added).
     pub fn is_named(&self, seen: &str) -> bool {
-        let name = self.name();
+        Self::named(&self.name(), seen)
+    }
+
+    /// Whether `seen` is `name` as the server may rename it (`name`, or
+    /// `name_N`).
+    pub fn named(name: &str, seen: &str) -> bool {
         seen == name
             || seen
-                .strip_prefix(&name)
+                .strip_prefix(name)
                 .and_then(|rest| rest.strip_prefix('_'))
                 .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
     }
@@ -331,18 +345,22 @@ mod tests {
     /// renamable; a model is an include of its escaped URI.
     #[test]
     fn the_factory_places_and_names_it() {
-        let f = Insertable::Shape(Shape::Box).factory([1.0, 2.0, 0.25]);
+        let f = Insertable::Shape(Shape::Box).factory([1.0, 2.0, 0.25], [0.0, 0.0, 1.0]);
         assert_eq!(f.name, "box");
         assert!(f.allow_renaming);
         let p = f.pose.unwrap();
         let at = p.position.unwrap();
         assert_eq!((at.x, at.y, at.z), (1.0, 2.0, 0.75));
         assert_eq!(p.orientation.unwrap().w, 1.0);
+        // On a wall facing +X: off it by half its size, upright.
+        let f = Insertable::Shape(Shape::Box).factory([2.0, 0.0, 1.0], [3.0, 0.0, 0.0]);
+        let at = f.pose.unwrap().position.unwrap();
+        assert_eq!((at.x, at.y, at.z), (2.5, 0.0, 1.0));
         let m = Insertable::Model {
             uri: "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Euro%20pallet".into(),
             name: "euro_pallet".into(),
         };
-        let Some(msgs::entity_factory::From::Sdf(sdf)) = m.factory([0.0; 3]).from else {
+        let Some(msgs::entity_factory::From::Sdf(sdf)) = m.factory([0.0; 3], [0.0; 3]).from else {
             panic!();
         };
         assert!(sdf.contains("<include><uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Euro%20pallet</uri></include>"), "{sdf}");
@@ -353,7 +371,7 @@ mod tests {
         assert!(odd.sdf().contains("model://a&amp;b"));
         assert_eq!(
             Insertable::Light(LightKind::Point)
-                .factory([0.0; 3])
+                .factory([0.0; 3], [0.0, 0.0, 1.0])
                 .pose
                 .unwrap()
                 .position

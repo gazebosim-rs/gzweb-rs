@@ -3,6 +3,7 @@
 //! on), and while it shows, the tabs, tiles, results and inserts in place
 //! (DECISIONS.md D-102).
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
@@ -14,6 +15,7 @@ use gz_bevy::connection::{GzCommand, GzServiceReply, GzStatus};
 use gz_bevy::edit::{create_reply, create_request, edits_allowed};
 use gz_bevy::fuel::{FuelSearch, FuelState, GzFuel};
 use gz_bevy::spawn::GzIndex;
+use gz_bevy::view::gizmo::GizmoState;
 use gz_bevy::view::place::{PlaceAt, PlaceHover, Placing};
 use gz_bevy::view::NoViewPick;
 use gz_core::fuel::FuelModel;
@@ -111,10 +113,14 @@ pub(super) fn apply_start(
 pub(super) fn arm(
     keys: Res<ButtonInput<KeyCode>>,
     inserting: Inserting,
+    gizmo: Option<Res<GizmoState>>,
     mut state: ResMut<AssetsState>,
     mut placing: ResMut<Placing>,
 ) {
-    if state.armed.is_some() && (keys.just_pressed(KeyCode::Escape) || inserting.world().is_err()) {
+    // A gizmo drag takes this Esc (it puts the selection back): one step
+    // per Esc.
+    let esc = keys.just_pressed(KeyCode::Escape) && !gizmo.is_some_and(|g| g.takes_escape());
+    if state.armed.is_some() && (esc || inserting.world().is_err()) {
         state.armed = None;
     }
     placing.set_if_neq(Placing(state.armed.is_some()));
@@ -144,7 +150,7 @@ pub(super) fn place(
                     .collect()
             })
             .unwrap_or_default();
-        out.write(create_request(&world, &what, p.point));
+        out.write(create_request(&world, &what, p.point, p.normal));
         inserts.sent(what, time.elapsed_secs_f64(), taken);
         if !p.keep {
             state.armed = None;
@@ -174,6 +180,7 @@ pub(super) fn settle(
     time: Res<Time<Real>>,
     index: Option<Res<GzIndex>>,
     mut inserts: ResMut<Inserts>,
+    mut ticked: Local<f64>,
 ) {
     let waiting = inserts
         .bypass_change_detection()
@@ -184,6 +191,13 @@ pub(super) fn settle(
         return;
     }
     let now = time.elapsed_secs_f64();
+    // The scene changes only on a spawn or deletion, and the timeouts
+    // need a second's look at most.
+    let looked = index.as_ref().is_some_and(Res::is_changed) || inserts.is_changed();
+    if !looked && now - *ticked < 1.0 {
+        return;
+    }
+    *ticked = now;
     let names: Vec<&str> = index
         .as_deref()
         .map(|i| scene_names(i).collect())
@@ -226,21 +240,36 @@ pub(super) fn ghost(
     hover: Res<PlaceHover>,
     theme: Res<Theme>,
     meshes: Option<ResMut<Assets<Mesh>>>,
-    materials: Option<ResMut<Assets<StandardMaterial>>>,
-    mut ghosts: Query<(Entity, &Ghost, &mut Transform, &mut Visibility)>,
+    mut materials: Option<ResMut<Assets<StandardMaterial>>>,
+    mut ghosts: Query<(
+        Entity,
+        &Ghost,
+        &mut Transform,
+        &mut Visibility,
+        &MeshMaterial3d<StandardMaterial>,
+    )>,
     mut commands: Commands,
 ) {
     let want = state.armed.as_ref();
-    for (e, g, mut t, mut vis) in &mut ghosts {
+    let color = ghost_color(&theme);
+    for (e, g, mut t, mut vis, material) in &mut ghosts {
         if Some(&g.0) != want {
             commands.entity(e).despawn();
             continue;
         }
+        // A new theme's accent.
+        if theme.is_changed() {
+            if let Some(mut m) = materials.as_mut().and_then(|m| m.get_mut(&material.0)) {
+                m.base_color = color;
+            }
+        }
         match hover.0 {
-            Some(at) => {
+            Some((at, normal)) => {
+                // Off the surface along its normal, upright as it will be
+                // inserted.
                 #[allow(clippy::cast_possible_truncation)]
                 let lift = g.0.lift() as f32;
-                let to = at + Vec3::Y * lift;
+                let to = at + normal * lift;
                 if t.translation != to {
                     t.translation = to;
                 }
@@ -257,8 +286,6 @@ pub(super) fn ghost(
     if ghosts.iter().any(|(_, g, ..)| Some(&g.0) == want) {
         return;
     }
-    let mut color = theme.color(ColorRole::Accent);
-    color.set_alpha(0.35);
     let material = materials.add(StandardMaterial {
         base_color: color,
         unlit: true,
@@ -275,6 +302,13 @@ pub(super) fn ghost(
         NotShadowCaster,
         Name::new("Insert preview"),
     ));
+}
+
+/// The preview's colour: `accent`, translucent.
+fn ghost_color(theme: &Theme) -> Color {
+    let mut color = theme.color(ColorRole::Accent);
+    color.set_alpha(0.35);
+    color
 }
 
 /// The preview's mesh, in Bevy's axes (Y up, as Gazebo's Z).
@@ -345,7 +379,7 @@ pub(super) fn tab_states(
 pub(super) fn tile_states(
     state: Res<AssetsState>,
     inserting: Inserting,
-    tiles: Query<(Entity, &Tile, Has<Active>)>,
+    mut tiles: Query<(Entity, &Tile, Has<Active>, &mut AccessibilityNode)>,
     buttons: Query<
         (Entity, Has<InteractionDisabled>),
         Or<(With<Tile>, With<FuelInsert>, With<LocalInsert>)>,
@@ -356,8 +390,16 @@ pub(super) fn tile_states(
     if !state.is_changed() && !inserting.changed() && added.is_empty() {
         return;
     }
-    for (e, tile, active) in &tiles {
+    for (e, tile, active, mut access) in &mut tiles {
         let want = state.armed.as_ref() == Some(&tile.0);
+        // Armed, it's pressed to AccessKit too.
+        let pressed = want.then_some(accesskit::Toggled::True);
+        if access.toggled() != pressed {
+            match pressed {
+                Some(t) => access.set_toggled(t),
+                None => access.clear_toggled(),
+            }
+        }
         if want != active {
             if want {
                 commands.entity(e).insert(Active);
@@ -451,6 +493,9 @@ pub(super) fn sync_fuel_rows(
     let Ok((list, added)) = lists.single() else {
         return;
     };
+    if !added.is_added() && !fuel.is_changed() {
+        return;
+    }
     let key: Vec<String> = fuel.models.iter().map(FuelModel::uri).collect();
     if !added.is_added() && built.fuel.as_ref() == Some(&key) {
         return;
@@ -518,13 +563,17 @@ pub(super) fn sync_inserts(
 /// Moves each bar's segment across, and round again.
 pub(super) fn move_bars(
     time: Res<Time<Real>>,
-    mut segments: Query<&mut Node, With<Indeterminate>>,
+    mut segments: Query<(&mut Node, &ChildOf), With<Indeterminate>>,
+    bars: Query<&ComputedNode>,
 ) {
     let t = time.elapsed_secs() * BAR_SPEED;
     // From off the left (-30%) to off the right (100%).
     let left = (t.fract() * 130.0) - 30.0;
-    for mut node in &mut segments {
-        node.left = percent(left);
+    for (mut node, parent) in &mut segments {
+        // A hidden bar's (or tab's) has no width: leave its layout be.
+        if bars.get(parent.parent()).is_ok_and(|b| b.size().x > 0.0) {
+            node.left = percent(left);
+        }
     }
 }
 
@@ -554,6 +603,16 @@ fn toggle_armed(state: &mut AssetsState, what: Insertable) {
 pub(super) fn on_tile(ev: On<Activate>, tiles: Query<&Tile>, mut state: ResMut<AssetsState>) {
     if let Ok(tile) = tiles.get(ev.entity) {
         toggle_armed(&mut state, tile.0.clone());
+    }
+}
+
+/// A result's Insert says which model it inserts, to AccessKit.
+pub(super) fn label_insert(
+    ev: On<Add<FuelInsert>>,
+    mut buttons: Query<(&FuelInsert, &mut AccessibilityNode)>,
+) {
+    if let Ok((insert, mut access)) = buttons.get_mut(ev.entity) {
+        access.set_label(format!("Insert {}", insert.0.name));
     }
 }
 
@@ -605,11 +664,17 @@ pub(super) fn local_model(uri: &str) -> Option<Insertable> {
     if uri.is_empty() {
         return None;
     }
-    let last = uri
-        .trim_end_matches('/')
-        .rsplit(['/', ':'])
-        .find(|s| !s.is_empty())
-        .unwrap_or(uri);
+    // The model's directory, past a model file, a Fuel version (`3`,
+    // `tip`) or Fuel's `files`.
+    let skip = |s: &str| {
+        s.is_empty()
+            || s.strip_prefix("model.")
+                .is_some_and(|ext| ext == "sdf" || ext == "config")
+            || s == "tip"
+            || s == "files"
+            || s.chars().all(|c| c.is_ascii_digit())
+    };
+    let last = uri.rsplit(['/', ':']).find(|s| !skip(s)).unwrap_or(uri);
     let last = last.strip_suffix(".sdf").unwrap_or(last);
     Some(Insertable::Model {
         uri: uri.to_string(),

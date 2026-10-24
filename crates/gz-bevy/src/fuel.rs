@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::tasks::{futures::check_ready, IoTaskPool, Task};
 use gz_core::fuel::{parse_models, search_url, FuelModel, PAGE_SIZE};
 
+#[cfg(target_arch = "wasm32")]
 use crate::assets::fetch_bytes;
 
 /// Ask Fuel for `query`'s `page` (from 1; a later page adds to the
@@ -48,7 +49,32 @@ type Fetch = Task<Result<Vec<u8>, (bool, String)>>;
 #[derive(Resource, Clone, Copy)]
 pub struct FuelFetch(pub fn(String) -> Fetch);
 
+/// How long a search may take natively.
+#[cfg(not(target_arch = "wasm32"))]
+const SEARCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl Default for FuelFetch {
+    /// Natively the blocking fetch runs on a thread of its own (with a
+    /// short timeout), so a search dropped for a newer one doesn't hold an
+    /// IO thread the scene's meshes load on; the task only waits for it.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn default() -> Self {
+        FuelFetch(|url| {
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let got = crate::assets::fetch_within(&url, SEARCH_TIMEOUT)
+                    .map_err(|e| (e.unreachable, e.message));
+                let _ = tx.send_blocking(got);
+            });
+            IoTaskPool::get().spawn(async move {
+                rx.recv()
+                    .await
+                    .unwrap_or_else(|_| Err((false, "the search stopped".to_string())))
+            })
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
     fn default() -> Self {
         FuelFetch(|url| {
             IoTaskPool::get().spawn(async move {
@@ -157,6 +183,10 @@ mod tests {
             if url.contains("q=bad") {
                 return Ok(b"<html>".to_vec());
             }
+            if url.contains("q=slow") {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                return Ok(br#"[{"name":"slow","owner":"o"}]"#.to_vec());
+            }
             let n = if url.contains("page=1&") {
                 PAGE_SIZE
             } else {
@@ -240,5 +270,29 @@ mod tests {
         });
         app.update();
         assert_eq!(*app.world().resource::<GzFuel>(), GzFuel::default());
+    }
+
+    /// A newer search replaces one still under way: the older one's
+    /// reply, when it comes, is dropped.
+    #[test]
+    fn a_newer_search_replaces_one_under_way() {
+        let mut app = app();
+        app.world_mut().write_message(FuelSearch {
+            query: "slow".into(),
+            page: 1,
+        });
+        app.update();
+        let f = search(&mut app, "box", 1);
+        assert_eq!(f.query, "box");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        for _ in 0..5 {
+            app.update();
+        }
+        let f = app.world().resource::<GzFuel>();
+        assert_eq!(
+            (f.query.as_str(), f.models.len()),
+            ("box", PAGE_SIZE as usize)
+        );
+        assert!(f.models.iter().all(|m| m.name != "slow"));
     }
 }

@@ -1620,5 +1620,16 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   scene; removed again after. Captures: the Fuel tab searching
   "warehouse" (light, with thumbnails) and the Shapes tab (dark).
   Placing by clicking in the view is tested, not tried by hand.
-- **Tests:** workspace 780 → 799 passing; coverage 98.1% lines. check.sh
+- **Review fixes (PR #48):** a native Fuel search runs on its own
+  thread with a 10 s timeout (a superseded one held an IO thread for up
+  to 40 s, and meshes load there); each new scene name settles one
+  insert, the oldest; a reply after its insert timed out isn't taken as
+  the next one's; a place moves off the surface along its normal (a box
+  clicked onto a wall sat half inside it); an Esc a gizmo drag takes
+  leaves placing armed; the settle check, the hover cast, the bars and
+  the Fuel rows no longer run or rebuild every frame; the armed tile is
+  pressed to AccessKit and each Insert names its model; a local model is
+  named after its directory, past `model.sdf` or a Fuel version; the
+  preview follows a theme change.
+- **Tests:** workspace 780 → 801 passing; coverage 98.1% lines. check.sh
   passes.

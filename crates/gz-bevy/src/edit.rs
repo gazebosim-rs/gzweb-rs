@@ -106,13 +106,18 @@ pub fn edits_allowed(status: Option<&GzStatus>) -> bool {
     status.is_some_and(|s| s.edits == Some(true))
 }
 
-/// The `create` request that inserts `what` at `at` (Gazebo's world
-/// coordinates; DECISIONS.md D-102).
-pub fn create_request(world: &str, what: &gz_core::insert::Insertable, at: [f64; 3]) -> GzCommand {
+/// The `create` request that inserts `what` at `at` on a surface facing
+/// `normal` (Gazebo's world coordinates; DECISIONS.md D-102).
+pub fn create_request(
+    world: &str,
+    what: &gz_core::insert::Insertable,
+    at: [f64; 3],
+    normal: [f64; 3],
+) -> GzCommand {
     GzCommand::Request {
         service: world_topic(world, "create"),
         msg_type: "gz.msgs.EntityFactory".into(),
-        payload: what.factory(at).encode_to_vec(),
+        payload: what.factory(at, normal).encode_to_vec(),
     }
 }
 

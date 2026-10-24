@@ -112,6 +112,7 @@ impl Plugin for AssetsPanelPlugin {
         .add_observer(systems::on_tab)
         .add_observer(systems::on_tile)
         .add_observer(systems::on_fuel_insert)
+        .add_observer(systems::label_insert)
         .add_observer(systems::on_fuel_button)
         .add_observer(systems::on_local_insert)
         .add_observer(systems::on_dismiss)

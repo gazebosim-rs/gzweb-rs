@@ -109,6 +109,9 @@ impl Insert {
 pub(crate) struct Inserts {
     pub list: Vec<Insert>,
     next: u32,
+    /// Answers still owed to inserts that timed out: the next ones that
+    /// come are theirs, not a later insert's (replies carry no id).
+    late: u32,
 }
 
 impl Inserts {
@@ -128,6 +131,10 @@ impl Inserts {
     /// The server answered the oldest `create` still waiting: `ok` or
     /// not.
     pub(crate) fn answered(&mut self, ok: bool, now: f64) {
+        if self.late > 0 {
+            self.late -= 1;
+            return;
+        }
         if let Some(i) = self.list.iter_mut().find(|i| i.stage == InsertStage::Sent) {
             i.stage = if ok {
                 InsertStage::Accepted
@@ -138,18 +145,36 @@ impl Inserts {
         }
     }
 
-    /// Ends the accepted inserts that `names` (the scene's) now hold, and
-    /// fails those that ran out of time.
+    /// Ends the accepted inserts that `names` (the scene's) now hold, the
+    /// oldest claiming each new name (two boxes need two), and fails those
+    /// that ran out of time.
     pub(crate) fn settle<'a>(&mut self, names: impl Iterator<Item = &'a str> + Clone, now: f64) {
+        let mut claimed: Vec<&str> = vec![];
         self.list.retain(|i| {
-            i.stage != InsertStage::Accepted
-                || !names
-                    .clone()
-                    .any(|n| i.what.is_named(n) && !i.taken.iter().any(|t| t == n))
+            if i.stage != InsertStage::Accepted {
+                return true;
+            }
+            let name = i.what.name();
+            let new = names.clone().find(|n| {
+                Insertable::named(&name, n)
+                    && !i.taken.iter().any(|t| t == n)
+                    && !claimed.contains(n)
+            });
+            match new {
+                Some(n) => {
+                    claimed.push(n);
+                    false
+                }
+                None => true,
+            }
         });
+        for i in &mut self.list {
+            i.taken.extend(claimed.iter().map(|n| (*n).to_string()));
+        }
         for i in &mut self.list {
             let late = match i.stage {
                 InsertStage::Sent if now - i.since > REPLY_SECS => {
+                    self.late += 1;
                     Some("The server didn't answer".to_string())
                 }
                 InsertStage::Accepted if now - i.since > APPEAR_SECS => {

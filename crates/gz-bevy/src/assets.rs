@@ -379,7 +379,7 @@ pub(crate) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
 /// ureq blocks, but asset readers run on the IO task pool. A server that
 /// never answers fails within 40 s; any fetch within `total`.
 #[cfg(not(target_arch = "wasm32"))]
-fn fetch_within(url: &str, total: Duration) -> Result<Vec<u8>, FetchError> {
+pub(crate) fn fetch_within(url: &str, total: Duration) -> Result<Vec<u8>, FetchError> {
     Ok(ureq::get(url)
         .config()
         .timeout_connect(Some(Duration::from_secs(10)))

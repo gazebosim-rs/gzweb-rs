@@ -3264,6 +3264,11 @@ fn a_place_lands_on_the_surface_under_the_point() {
         at.distance(Vec3::ZERO) < 1e-3,
         "the ground at the origin: {at}"
     );
+    assert!(
+        (p[0].normal[2] - 1.0).abs() < 1e-6,
+        "the ground faces up: {:?}",
+        p[0].normal
+    );
     assert!(!p[0].keep);
     r.cube(None, Vec3::new(0.0, 1.0, 0.0), 1.0);
     r.op(ViewOp::Place {
@@ -3278,6 +3283,15 @@ fn a_place_lands_on_the_surface_under_the_point() {
         p[0].point[2] as f32,
     );
     assert!(at.distance(Vec3::new(-1.0, 0.0, 1.0)) < 1e-3, "{at}");
+    let n = Vec3::new(
+        p[0].normal[0] as f32,
+        p[0].normal[1] as f32,
+        p[0].normal[2] as f32,
+    );
+    assert!(
+        n.distance(Vec3::NEG_X) < 1e-3,
+        "the face towards the camera: {n}"
+    );
     assert!(p[0].keep);
     // The sky, from a level camera: nothing.
     let mut r = rig(horizon());

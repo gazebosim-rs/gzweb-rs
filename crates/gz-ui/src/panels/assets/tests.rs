@@ -60,6 +60,8 @@ fn inserts_follow_the_server_and_the_scene() {
     inserts.sent(model, 0.0, vec![]);
     assert!(inserts.loading("https://fuel/x"));
     assert!(!inserts.loading("https://fuel/y"));
+    // The light's late answer first, then the model's.
+    inserts.answered(false, 0.0);
     inserts.answered(true, 0.0);
     assert_eq!(inserts.list[0].status(), "Loading on the server…");
     inserts.settle([].into_iter(), APPEAR_SECS + 1.0);
@@ -67,6 +69,25 @@ fn inserts_follow_the_server_and_the_scene() {
     inserts.sent(boxed, 0.0, vec![]);
     inserts.answered(false, 0.0);
     assert_eq!(inserts.list[1].status(), "The server couldn't insert Box");
+}
+
+/// A reply that comes after its insert timed out is that insert's, not
+/// the next one's.
+#[test]
+fn a_late_reply_is_not_the_next_inserts() {
+    let mut inserts = Inserts::default();
+    inserts.sent(Insertable::Shape(Shape::Box), 0.0, vec![]);
+    inserts.settle([].into_iter(), REPLY_SECS + 1.0);
+    assert!(inserts.list[0].failed());
+    inserts.sent(Insertable::Shape(Shape::Cone), 20.0, vec![]);
+    inserts.answered(false, 21.0);
+    assert_eq!(
+        inserts.list[1].stage,
+        InsertStage::Sent,
+        "the box's late no"
+    );
+    inserts.answered(true, 22.0);
+    assert_eq!(inserts.list[1].stage, InsertStage::Accepted);
 }
 
 /// A local model is named after its URI's last part.
@@ -79,6 +100,15 @@ fn a_local_model_is_named_after_its_uri() {
     assert_eq!(name("model://warehouse_shelf"), "warehouse_shelf");
     assert_eq!(name("/home/u/models/My%20Robot/"), "my_robot");
     assert_eq!(name("/srv/world/thing.sdf"), "thing");
+    assert_eq!(name("/home/u/models/shelf/model.sdf"), "shelf");
+    assert_eq!(
+        name("https://fuel.gazebosim.org/1.0/OpenRobotics/models/Euro%20pallet/3"),
+        "euro_pallet"
+    );
+    assert_eq!(
+        name("https://fuel.gazebosim.org/1.0/o/models/m/tip/files"),
+        "m"
+    );
     assert_eq!(local_model("  "), None);
 }
 
@@ -212,8 +242,14 @@ fn a_tile_arms_and_a_place_inserts() {
         .world()
         .entity(t)
         .contains::<crate::theme::visuals::Active>());
+    let toggled = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(t)
+        .unwrap()
+        .toggled();
+    assert_eq!(toggled, Some(accesskit::Toggled::True));
     assert!(all_text(&mut app).contains(PLACE_HINT));
-    app.world_mut().resource_mut::<PlaceHover>().0 = Some(Vec3::new(1.0, 0.0, -2.0));
+    app.world_mut().resource_mut::<PlaceHover>().0 = Some((Vec3::new(1.0, 0.0, -2.0), Vec3::Y));
     frames(&mut app, 2);
     let world = app.world_mut();
     let (ghost, at, vis) = world
@@ -226,12 +262,14 @@ fn a_tile_arms_and_a_place_inserts() {
 
     app.world_mut().write_message(PlaceAt {
         point: [1.0, 2.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         keep: true,
     });
     frames(&mut app, 2);
     assert_eq!(armed(&app), Some(boxed.clone()), "Shift keeps it");
     app.world_mut().write_message(PlaceAt {
         point: [3.0, 2.0, 0.0],
+        normal: [0.0, 0.0, 1.0],
         keep: false,
     });
     frames(&mut app, 2);
@@ -268,8 +306,12 @@ fn a_tile_arms_and_a_place_inserts() {
         });
     }
     frames(&mut app, 2);
+    // One new box ends one of the two; the second waits for its own.
     let mut index = app.world_mut().resource_mut::<GzIndex>();
     index.by_name.insert("box".into(), vec![]);
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<Inserts>().list.len(), 1);
+    let mut index = app.world_mut().resource_mut::<GzIndex>();
     index.by_name.insert("box_0".into(), vec![]);
     frames(&mut app, 2);
     assert!(app.world().resource::<Inserts>().list.is_empty());
@@ -312,6 +354,7 @@ fn a_refused_insert_can_be_dismissed() {
     activate(&mut app, t);
     app.world_mut().write_message(PlaceAt {
         point: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
         keep: false,
     });
     frames(&mut app, 2);
@@ -372,8 +415,19 @@ fn fuel_searches_and_inserts() {
         s.query = "pallet".into();
         s.typed_at = Some(0.0);
     }
-    frames(&mut app, 12);
-    let _ = reader(&mut app);
+    // Messages last two frames: read after each.
+    let mut searches = vec![];
+    for _ in 0..12 {
+        app.update();
+        searches.extend(reader(&mut app));
+    }
+    assert!(
+        searches.contains(&FuelSearch {
+            query: "pallet".into(),
+            page: 1
+        }),
+        "{searches:?}"
+    );
     *app.world_mut().resource_mut::<GzFuel>() = GzFuel {
         query: "pallet".into(),
         page: 1,
@@ -396,6 +450,13 @@ fn fuel_searches_and_inserts() {
             .unwrap()
             .0
     };
+    let label = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(insert)
+        .unwrap()
+        .label()
+        .map(str::to_string);
+    assert_eq!(label.as_deref(), Some("Insert Pallet 1"));
     activate(&mut app, insert);
     let uri = "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pallet%201";
     assert_eq!(
@@ -407,6 +468,7 @@ fn fuel_searches_and_inserts() {
     );
     app.world_mut().write_message(PlaceAt {
         point: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
         keep: false,
     });
     frames(&mut app, 2);
@@ -445,7 +507,14 @@ fn fuel_searches_and_inserts() {
     assert_eq!(msg, UNREACHABLE);
     let retry = button(&mut app, FuelButton::Retry);
     app.world_mut().trigger(Activate { entity: retry });
-    assert_eq!(reader(&mut app).len(), 1);
+    // Asks again for the page that failed (the second).
+    assert_eq!(
+        reader(&mut app),
+        [FuelSearch {
+            query: "pallet".into(),
+            page: 2
+        }]
+    );
 }
 
 /// The Local tab's Insert arms its URI's model.
