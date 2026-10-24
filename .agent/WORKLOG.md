@@ -1826,6 +1826,23 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **More commands:** the overlays without keys; the layout commands
   work offline; Play says it waits for the clock; more Gazebo names.
 
+## 2026-10-24: review of fixes merged without one (#48, #49, #51)
+
+- **Joint states:** Teleop's want could take the Joint inspector's away
+  (hiding Teleop dropped it), and every selection change unsubscribed
+  and resubscribed Teleop's. `JointStateWants` keeps one want per
+  holder; the inspector's ranks first.
+- **Server:** the leaving client's zero went to its own still-registered
+  subscription, and its unsent messages stayed in `messageCount`, so the
+  service loop never waited again. The locked cleanup now comes first
+  (taking the unsent messages off the count), then the zeros. Live
+  check on the rebuilt image: a client drove while watching its own
+  cmd_vel and left; the server stayed at the sim's ~28% CPU, the
+  vehicle stopped and a new client connected.
+- **Console:** Clear while paused now clears the command line's lines
+  too; a dropped connection ends the calls waiting ("the connection
+  dropped") and forgets the late ones.
+
 ## 2026-10-24: M8b World menu and Snap popover (D-108)
 
 - **World menu:** header (file, "unsaved changes · last saved", "saved"),

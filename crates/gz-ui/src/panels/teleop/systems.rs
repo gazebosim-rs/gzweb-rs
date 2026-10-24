@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use bevy::ui::{Checked, Pressed};
 use bevy::ui_widgets::{SliderValue, ValueChange};
 use gz_bevy::connection::{GzCommand, GzStatus};
-use gz_bevy::joint_state::{JointStateWanted, JointStates};
+use gz_bevy::joint_state::{JointStateWanted, JointStateWants, JointStates};
 use gz_bevy::overlays::extras::{want_sdf as want, SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::topics::GzTopics;
@@ -553,42 +553,36 @@ pub(super) fn sync_sliders(
 }
 
 /// While the panel shows a target with joints, its model's joint states
-/// are wanted, for the sliders' live positions; the Joint inspector keeps
-/// the want while it shows another model's joint.
+/// are wanted, for the sliders' live positions; the Joint inspector's want
+/// ranks first (D-104).
 pub(super) fn want_joint_states(
     hosts: Res<ShownPanels>,
     state: Res<TeleopState>,
     targets: Res<Targets>,
     sdf: Option<Res<SdfExtras>>,
-    wanted: Option<ResMut<JointStateWanted>>,
-    mut mine: Local<Option<String>>,
+    wants: Option<ResMut<JointStateWants>>,
+    mut last: Local<Option<JointStateWanted>>,
 ) {
-    let Some(mut wanted) = wanted else {
+    let Some(mut wants) = wants else {
         return;
     };
-    if wanted.model.is_some() && wanted.model != *mine {
-        *mine = None;
-        return;
-    }
     let want = state
         .target
         .as_deref()
         .and_then(|t| targets.get(t))
         .filter(|t| hosts.is_shown(TELEOP) && !t.joints.is_empty())
-        .map(|t| t.model.clone());
-    if wanted.model != want {
-        let topic = want.as_deref().and_then(|m| {
-            sdf.as_deref()
+        .map(|t| JointStateWanted {
+            model: Some(t.model.clone()),
+            topic: sdf
+                .as_deref()
                 .and_then(|s| s.extras.as_ref())
-                .and_then(|w| w.model(m))
-                .and_then(|m| m.joint_state_topic.clone())
+                .and_then(|w| w.model(&t.model))
+                .and_then(|m| m.joint_state_topic.clone()),
         });
-        wanted.set_if_neq(JointStateWanted {
-            model: want.clone(),
-            topic,
-        });
+    if *last != want {
+        wants.set(1, "teleop", want.clone());
+        *last = want;
     }
-    *mine = want;
 }
 
 /// The joints' live positions, where the joint states held are the
