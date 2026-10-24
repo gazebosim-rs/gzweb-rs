@@ -33,12 +33,13 @@ pub(crate) const PLOT_RATE: u32 = 30;
 /// How often a chart redraws at most.
 pub(crate) const CHART_HZ: f64 = 30.0;
 
-/// How far a world's clock may go back before the samples are dropped
-/// (a reset).
+/// How far the reported sim time may go back before the samples are
+/// dropped (a reset).
 const RESET_SECS: f64 = 0.5;
 
-/// How far ahead of the last stats the clock runs while they don't come.
-const MAX_AHEAD_SECS: f64 = 1.0;
+/// How far ahead of the last stats the clock runs while they don't come
+/// (they come five times a second).
+const MAX_AHEAD_SECS: f64 = 0.5;
 
 /// A stamp further than this from the clock isn't sim time (a publisher
 /// that stamps wall time); the clock's time is used.
@@ -381,11 +382,22 @@ pub(crate) struct SimClock {
     at: Option<(f64, f64)>,
     rtf: f64,
     paused: bool,
+    /// How many times the reported sim time went back (a reset).
+    pub resets: u32,
 }
 
 impl SimClock {
-    /// New stats came at real time `real`.
+    /// New stats came at real time `real`; a sim time more than
+    /// [`RESET_SECS`] before the last reported one counts a reset (the
+    /// reported times, not the run-on clock, so a stalled server isn't
+    /// one).
     pub(crate) fn update(&mut self, stats: &SimStats, real: f64) {
+        if self
+            .at
+            .is_some_and(|(last, _)| stats.sim_time < last - RESET_SECS)
+        {
+            self.resets += 1;
+        }
         self.at = Some((stats.sim_time, real));
         self.rtf = stats.real_time_factor.clamp(0.0, 100.0);
         self.paused = stats.paused;
@@ -409,11 +421,6 @@ impl SimClock {
             (_, Some(now)) => Some(now),
             (stamp, None) => stamp,
         }
-    }
-
-    /// Whether the clock went back from `last` (a world reset).
-    pub(crate) fn went_back(last: f64, now: f64) -> bool {
-        now < last - RESET_SECS
     }
 }
 
@@ -495,15 +502,18 @@ pub(crate) fn ticks(lo: f64, hi: f64, target: usize) -> (f64, Vec<f64>) {
 }
 
 /// A tick's label at `step`: as many decimals as the step needs ("0.2",
-/// "1500"; e-notation past four), and zero as "0".
+/// "1500", "0.325001"; e-notation below 1e-4), and zero as "0".
 pub(crate) fn tick_label(v: f64, step: f64) -> String {
     if v.abs() < step * 1e-6 {
         return "0".into();
     }
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let decimals = (-step.log10().floor()).max(0.0) as usize;
-    if decimals > 4 {
-        return format!("{v:.1e}");
+    let decimals = (-step.log10().floor()).clamp(0.0, 12.0) as usize;
+    // Tiny values read in e-notation, with the digits the step needs.
+    if v.abs() < 1e-4 {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let digits = (v.abs().log10().floor() - step.log10().floor()).clamp(0.0, 6.0) as usize;
+        return format!("{v:.digits$e}");
     }
     format!("{v:.decimals$}")
 }

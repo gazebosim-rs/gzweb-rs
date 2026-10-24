@@ -1582,5 +1582,15 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   stats topic (light). Its odometry comes at 1 Hz (the world's
   `odom_publish_frequency`), and the vehicle isn't driven, so its lines
   are flat; the real-time factor's line moves.
-- **Tests:** workspace 754 → 778 passing; coverage 98.2% lines. check.sh
+- **Review fixes (PR #47):** a reset is the reported sim time going
+  back, not the run-on clock (a stalled server wiped the samples), and
+  the clock runs at most half a second ahead; tick labels keep the
+  digits a small step needs; Pause lets go with the last chart and on a
+  reset; a chart redraws only when its window or the samples it shows
+  change, not on every message; a rebuilt header keeps a toggle
+  pressed; the picker's rows rebuild only on a change; a field reads by
+  reference, without copying the message; names that look like numbers
+  or hold dots go in quotes in a path (`joint["3"]`); `--plot` splits at
+  the first colon; the browser download keeps its URL until it starts.
+- **Tests:** workspace 754 → 780 passing; coverage 98.2% lines. check.sh
   passes. Not tried by hand.

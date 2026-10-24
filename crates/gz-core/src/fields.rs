@@ -49,11 +49,18 @@ impl fmt::Display for FieldPath {
                 Step::Field(name) if i == 0 => write!(f, "{name}")?,
                 Step::Field(name) => write!(f, ".{name}")?,
                 Step::Index(n) => write!(f, "[{n}]")?,
-                Step::Key(key) => write!(f, "[{key}]")?,
+                Step::Key(key) if plain_key(key) => write!(f, "[{key}]")?,
+                Step::Key(key) => write!(f, "[\"{}\"]", key.replace('"', "\\\""))?,
             }
         }
         Ok(())
     }
+}
+
+/// Whether a key reads back as itself unquoted: not a number, and no
+/// brackets, dots or quotes.
+fn plain_key(key: &str) -> bool {
+    key.parse::<usize>().is_err() && !key.contains(['[', ']', '.', '"']) && !key.is_empty()
 }
 
 /// Why a path doesn't parse.
@@ -72,33 +79,60 @@ impl FromStr for FieldPath {
     type Err = BadPath;
 
     /// `a.b[2].c` or `joint[wheel_left].axis1.position`: an element in
-    /// brackets is an index when it's a number, a name otherwise.
+    /// brackets is an index when it's a number, a name otherwise; a name
+    /// in quotes (`joint["3"]`, `link["a.b"]`) is a name whatever it
+    /// holds, with `\"` for a quote.
     fn from_str(s: &str) -> Result<Self, BadPath> {
         let bad = || BadPath(s.to_string());
         let mut steps = Vec::new();
-        for part in s.split('.') {
-            let (name, mut rest) = part.split_at(part.find('[').unwrap_or(part.len()));
-            if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        let mut chars = s.chars().peekable();
+        loop {
+            let mut name = String::new();
+            while let Some(&c) = chars.peek().filter(|c| c.is_alphanumeric() || **c == '_') {
+                name.push(c);
+                chars.next();
+            }
+            if name.is_empty() {
                 return Err(bad());
             }
-            steps.push(Step::Field(name.to_string()));
-            while let Some(inner) = rest.strip_prefix('[') {
-                let end = inner.find(']').ok_or_else(bad)?;
-                let key = &inner[..end];
+            steps.push(Step::Field(name));
+            while chars.next_if_eq(&'[').is_some() {
+                if chars.next_if_eq(&'"').is_some() {
+                    let mut key = String::new();
+                    loop {
+                        match chars.next().ok_or_else(bad)? {
+                            '\\' => key.push(chars.next().ok_or_else(bad)?),
+                            '"' => break,
+                            c => key.push(c),
+                        }
+                    }
+                    if chars.next() != Some(']') {
+                        return Err(bad());
+                    }
+                    steps.push(Step::Key(key));
+                    continue;
+                }
+                let mut key = String::new();
+                loop {
+                    match chars.next().ok_or_else(bad)? {
+                        ']' => break,
+                        c => key.push(c),
+                    }
+                }
                 if key.is_empty() {
                     return Err(bad());
                 }
                 steps.push(match key.parse() {
                     Ok(n) => Step::Index(n),
-                    Err(_) => Step::Key(key.to_string()),
+                    Err(_) => Step::Key(key),
                 });
-                rest = &inner[end + 1..];
             }
-            if !rest.is_empty() {
-                return Err(bad());
+            match chars.next() {
+                None => return Ok(FieldPath(steps)),
+                Some('.') => {}
+                Some(_) => return Err(bad()),
             }
         }
-        Ok(FieldPath(steps))
     }
 }
 
@@ -129,32 +163,7 @@ impl Message {
     /// The number at `path`; `None` when the message has no such field or
     /// element, or it isn't a number.
     pub fn number(&self, path: &FieldPath) -> Option<f64> {
-        let mut steps = path.0.iter().peekable();
-        let mut msg = self.0.clone();
-        loop {
-            let Some(Step::Field(name)) = steps.next() else {
-                return None;
-            };
-            let field = msg.descriptor().get_field_by_name(name)?;
-            let value = msg.get_field(&field).into_owned();
-            let value = match (value, steps.peek()) {
-                (Value::List(items), Some(Step::Index(n))) => {
-                    steps.next();
-                    items.into_iter().nth(*n)?
-                }
-                (Value::List(items), Some(Step::Key(key))) => {
-                    steps.next();
-                    items.into_iter().find(|v| element_name(v) == Some(key))?
-                }
-                (Value::List(_), _) => return None,
-                (value, _) => value,
-            };
-            match value {
-                Value::Message(m) if steps.peek().is_some() => msg = m,
-                value if steps.peek().is_none() => return as_number(&value),
-                _ => return None,
-            }
-        }
+        number_in(&self.0, &path.0)
     }
 
     /// The header's stamp in seconds, if the message has one that is set.
@@ -173,6 +182,33 @@ impl Message {
             .and_then(|v| as_number(&v))?;
         let t = sec + nsec * 1e-9;
         (t > 0.0).then_some(t)
+    }
+}
+
+/// The number `steps` lead to in `msg`, by reference (a field unset is
+/// its default).
+fn number_in(msg: &DynamicMessage, steps: &[Step]) -> Option<f64> {
+    let (Step::Field(name), rest) = steps.split_first()? else {
+        return None;
+    };
+    let field = msg.descriptor().get_field_by_name(name)?;
+    let value = msg.get_field(&field);
+    value_in(&value, rest)
+}
+
+/// The number `steps` lead to from `value`: an element of a list, a field
+/// of a message, or the value itself when no steps are left.
+fn value_in(value: &Value, steps: &[Step]) -> Option<f64> {
+    match (value, steps.split_first()) {
+        (Value::List(_), None) => None,
+        (value, None) => as_number(value),
+        (Value::List(items), Some((Step::Index(n), rest))) => value_in(items.get(*n)?, rest),
+        (Value::List(items), Some((Step::Key(key), rest))) => {
+            let item = items.iter().find(|v| element_name(v) == Some(key))?;
+            value_in(item, rest)
+        }
+        (Value::Message(m), Some((Step::Field(_), _))) => number_in(m, steps),
+        _ => None,
     }
 }
 
@@ -308,7 +344,29 @@ mod tests {
             ]
         );
         assert_eq!(path("r[0]").0[1], Step::Index(0));
-        for bad in ["", "a.", ".a", "a[", "a[]", "a[1]x", "a b", "[1]"] {
+        // Names that look like numbers or hold dots or quotes go in quotes.
+        for (step, shown) in [
+            ("3", "j[\"3\"]"),
+            ("a.b", "j[\"a.b\"]"),
+            ("say \"hi\"", "j[\"say \\\"hi\\\"\"]"),
+            ("v::chassis", "j[v::chassis]"),
+        ] {
+            let p = FieldPath(vec![Step::Field("j".into()), Step::Key(step.into())]);
+            assert_eq!(p.to_string(), shown);
+            assert_eq!(path(shown), p, "{shown}");
+        }
+        for bad in [
+            "",
+            "a.",
+            ".a",
+            "a[",
+            "a[]",
+            "a[1]x",
+            "a b",
+            "[1]",
+            "a[\"x",
+            "a[\"x\"y]",
+        ] {
             assert_eq!(bad.parse::<FieldPath>(), Err(BadPath(bad.into())), "{bad}");
         }
         assert_eq!(BadPath("q".into()).to_string(), "not a field path: q");

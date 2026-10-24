@@ -19,6 +19,7 @@ mod imp {
 
 #[cfg(target_arch = "wasm32")]
 mod imp {
+    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::{JsCast, JsValue};
     use web_sys::{Blob, BlobPropertyBag, HtmlAnchorElement, Url};
 
@@ -26,11 +27,14 @@ mod imp {
         format!("{e:?}")
     }
 
-    /// Through a Blob URL and a clicked `<a download>`.
+    /// How long the Blob URL outlives the click (some browsers start the
+    /// download after the click returns).
+    const REVOKE_MS: i32 = 10_000;
+
+    /// Through a Blob URL and a clicked `<a download>` in the page.
     pub fn save_text(name: &str, mime: &str, contents: &str) -> Result<String, String> {
-        let document = web_sys::window()
-            .and_then(|w| w.document())
-            .ok_or("no document")?;
+        let window = web_sys::window().ok_or("no window")?;
+        let document = window.document().ok_or("no document")?;
         let parts = js_sys::Array::of1(&JsValue::from_str(contents));
         let options = BlobPropertyBag::new();
         options.set_type(mime);
@@ -43,8 +47,19 @@ mod imp {
             .map_err(|_| "not an anchor".to_string())?;
         a.set_href(&url);
         a.set_download(name);
+        let body = document.body().ok_or("no body")?;
+        body.append_child(&a).map_err(js)?;
         a.click();
-        Url::revoke_object_url(&url).map_err(js)?;
+        a.remove();
+        let revoke = Closure::once_into_js(move || {
+            let _ = Url::revoke_object_url(&url);
+        });
+        window
+            .set_timeout_with_callback_and_timeout_and_arguments_0(
+                revoke.unchecked_ref(),
+                REVOKE_MS,
+            )
+            .map_err(js)?;
         Ok(name.to_string())
     }
 }

@@ -254,7 +254,8 @@ fn parse_args(
             "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
             "--plot" => {
                 let v = value()?;
-                match v.rsplit_once(':') {
+                // A field's name can hold `::` (scoped names); a topic can't.
+                match v.split_once(':') {
                     None if !v.is_empty() => plot.pick = Some(v),
                     Some((topic, fields)) if !topic.is_empty() && !fields.is_empty() => {
                         let fields = fields.split(',').map(str::trim).map(str::to_string);
@@ -883,6 +884,14 @@ mod tests {
             ]
         );
         assert!(run_args(&[], None).plot.is_none());
+        let a = run_args(&["--plot", "/m/pose:pose[v::chassis].position.z"], None);
+        assert_eq!(
+            a.plot.unwrap().charts,
+            [(
+                "/m/pose".to_string(),
+                vec!["pose[v::chassis].position.z".to_string()]
+            )]
+        );
         let a = run_args(&["--plot", "/odom"], None);
         assert_eq!(a.plot.unwrap().pick.as_deref(), Some("/odom"));
         assert_eq!(

@@ -110,14 +110,30 @@ impl ChartFrame {
     }
 }
 
-/// What a chart's pixels depend on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a chart's pixels depend on: its size, window and theme, and each
+/// series' samples up to the window's end (how many, the oldest's time:
+/// samples are only added at the end, dropped from the front or cleared).
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DrawKey {
     size: UVec2,
     t0: u64,
     t1: u64,
-    data: u32,
+    samples: Vec<(usize, u64)>,
     dark: bool,
+}
+
+impl DrawKey {
+    fn samples(chart: &Chart, t1: f64) -> Vec<(usize, u64)> {
+        chart
+            .series
+            .iter()
+            .map(|s| {
+                // With the one after the end, which the line runs to.
+                let n = (s.samples.partition_point(|p| p.0 <= t1) + 1).min(s.samples.len());
+                (n, s.samples.front().map_or(0, |p| p.0.to_bits()))
+            })
+            .collect()
+    }
 }
 
 /// The empty state, with Add field… while live, until there is a chart
@@ -220,8 +236,8 @@ pub(super) fn read_picks(
 
 /// Records each message of a plotted topic into its series, at its
 /// stamp or the clock's time, and keeps the picked topic's numbers (at
-/// most [`VALUES_HZ`] times a second). A clock that goes back (a world
-/// reset) drops the samples.
+/// most [`VALUES_HZ`] times a second). A reset (the reported sim time
+/// went back) drops the samples and lets go of Pause.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record(
     time: Res<Time<Real>>,
@@ -230,15 +246,18 @@ pub(super) fn record(
     mut publishes: MessageReader<GzPublish>,
     mut data: ResMut<PlotData>,
     mut state: ResMut<PlotState>,
-    mut last_now: Local<Option<f64>>,
+    mut resets: Local<u32>,
     mut picked: Local<PickedMessage>,
 ) {
     let real = time.elapsed_secs_f64();
-    if let Some(now) = clock.now(real) {
-        if last_now.is_some_and(|last| SimClock::went_back(last, now)) && data.has_samples() {
+    if *resets != clock.resets {
+        *resets = clock.resets;
+        if data.has_samples() {
             data.clear_samples();
         }
-        *last_now = Some(now);
+        if state.paused_at.is_some() {
+            state.paused_at = None;
+        }
     }
     let plotted: Vec<String> = data.topics().into_iter().map(str::to_string).collect();
     let pick = state.picker.as_ref().and_then(|p| p.topic.clone());
@@ -313,7 +332,7 @@ pub(super) fn mark_listed(topics: Res<GzTopics>, mut data: ResMut<PlotData>) {
 pub(super) fn plot_status(
     phase: Res<CurrentPhase>,
     data: Res<PlotData>,
-    state: Res<PlotState>,
+    mut state: ResMut<PlotState>,
     mut status: ResMut<PanelStatus>,
     mut charts: ResMut<PlotCharts>,
 ) {
@@ -322,6 +341,10 @@ pub(super) fn plot_status(
     }
     let live = phase.0 == Phase::Live;
     let n = data.charts.len();
+    // Nothing to pause: a new chart starts moving.
+    if n == 0 && state.paused_at.is_some() {
+        state.paused_at = None;
+    }
     status.set_view(PLOT, view(live, n > 0 || state.picker.is_some()));
     let count = (n > 0).then(|| format!("{n} chart{}", if n == 1 { "" } else { "s" }));
     status.set_count(PLOT, count);
@@ -596,7 +619,6 @@ pub(super) fn draw_charts(
     }
     *drawn_at = real;
     let end = window_end(&src.state, &src.clock, &src.data, real);
-    let tick = src.data.last_changed().get();
     for (area, computed, mut frame) in &mut areas {
         let Some(chart) = src.data.charts.iter().find(|c| c.id == area.chart) else {
             continue;
@@ -611,10 +633,10 @@ pub(super) fn draw_charts(
             size,
             t0: t0.to_bits(),
             t1: t1.to_bits(),
-            data: tick,
+            samples: DrawKey::samples(chart, t1),
             dark: src.theme.is_dark,
         };
-        if frame.key == Some(key) {
+        if frame.key.as_ref() == Some(&key) {
             continue;
         }
         let (lo, hi) = chart.range(t0, t1).unwrap_or((0.0, 1.0));
@@ -918,6 +940,9 @@ pub(super) fn sync_picker_rows(
     let (Some(p), Ok(parent)) = (&state.picker, parents.single()) else {
         return;
     };
+    if !state.is_changed() && !topics.is_changed() && built.rows.is_some() {
+        return;
+    }
     let mut rows: Vec<(PickRow, String, String)> = vec![];
     let note = match &p.topic {
         None => {

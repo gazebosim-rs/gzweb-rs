@@ -54,7 +54,11 @@ fn ticks_cover_the_range_on_round_steps() {
     assert_eq!(tick_label(-0.5, 0.5), "-0.5");
     assert_eq!(tick_label(1500.0, 500.0), "1500");
     assert_eq!(tick_label(0.05, 0.05), "0.05");
-    assert_eq!(tick_label(2e-6, 1e-6), "2.0e-6");
+    assert_eq!(tick_label(2e-6, 1e-6), "2e-6");
+    assert_eq!(tick_label(2.5e-6, 5e-7), "2.5e-6");
+    // A small step on a large value keeps its digits.
+    assert_eq!(tick_label(0.325001, 1e-6), "0.325001");
+    assert_eq!(tick_label(1.000002, 2e-6), "1.000002");
     // Noise around zero is flat: one unit either side.
     let (_, t) = ticks(0.0, 1.6e-14, 3);
     assert_eq!((t[0], t[t.len() - 1]), (-1.0, 1.0));
@@ -221,15 +225,25 @@ fn the_clock_runs_between_stats() {
     clock.update(&stats, 10.0);
     assert_eq!(clock.now(10.0), Some(100.0));
     assert_eq!(clock.now(11.0), Some(100.5));
-    assert_eq!(clock.now(20.0), Some(101.0), "at most a second ahead");
+    assert_eq!(clock.now(20.0), Some(100.5), "at most half a second ahead");
     assert_eq!(clock.time_of(Some(99.0), 10.0), Some(99.0));
     assert_eq!(clock.time_of(Some(1e9), 10.0), Some(100.0), "wall time");
     assert_eq!(clock.time_of(None, 10.0), Some(100.0));
     stats.paused = true;
     clock.update(&stats, 10.0);
     assert_eq!(clock.now(15.0), Some(100.0));
-    assert!(SimClock::went_back(10.0, 9.0));
-    assert!(!SimClock::went_back(10.0, 9.8));
+    // A reset is the reported time going back; a stall that the run-on
+    // clock overshot isn't one.
+    stats.paused = false;
+    stats.real_time_factor = 1.0;
+    clock.update(&stats, 30.0);
+    assert_eq!(clock.now(31.0), Some(100.5));
+    stats.sim_time = 100.2;
+    clock.update(&stats, 31.0);
+    assert_eq!(clock.resets, 0);
+    stats.sim_time = 99.0;
+    clock.update(&stats, 32.0);
+    assert_eq!(clock.resets, 1);
 }
 
 /// A sparse series traces each sample; a dense one each column's first,
@@ -690,8 +704,27 @@ fn pause_and_window() {
         world.get::<Icon>(icon).unwrap().id,
         crate::assets::icons::IconId::Play
     );
+    let pressed = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query::<(&ActionButton, &bevy::a11y::AccessibilityNode)>()
+            .iter(world)
+            .find(|(b, _)| b.action == PAUSE)
+            .map(|(_, a)| a.toggled())
+            .unwrap()
+    };
+    assert_eq!(pressed(&mut app), Some(accesskit::Toggled::True));
+    // A rebuilt header keeps it pressed.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: crate::panels::TOPICS,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    open(&mut app);
+    assert_eq!(pressed(&mut app), Some(accesskit::Toggled::True));
     act(&mut app, PAUSE);
     assert_eq!(app.world().resource::<PlotState>().paused_at, None);
+    assert_eq!(pressed(&mut app), None);
 
     let chips: Vec<(Entity, TimeWindow)> = {
         let world = app.world_mut();
@@ -790,9 +823,73 @@ fn a_reset_drops_the_samples() {
     let mut app = plotted();
     publish(&mut app, odometry(0.1, None));
     assert!(data(&app).has_samples());
+    act(&mut app, PAUSE);
     let mut s = stats(false);
     s.sim_time = 1.0;
     app.world_mut().resource_mut::<GzStatus>().sim = Some(s);
     frames(&mut app, 2);
     assert!(!data(&app).has_samples());
+    assert_eq!(app.world().resource::<PlotState>().paused_at, None);
+}
+
+/// Paused, a chart redraws only when what it shows changes: not for
+/// samples past the window's end.
+#[test]
+fn a_paused_chart_redraws_only_on_a_change() {
+    let mut app = plotted();
+    publish(&mut app, odometry(0.1, Some(134.0)));
+    frames(&mut app, 4);
+    act(&mut app, PAUSE);
+    frames(&mut app, 4);
+    let image = |app: &mut App| {
+        let world = app.world_mut();
+        let area = world.query::<&PlotArea>().single(world).unwrap();
+        area.image.id()
+    };
+    let id = image(&mut app);
+    let mut changed = 0;
+    let mut reader = app
+        .world()
+        .resource::<Messages<AssetEvent<Image>>>()
+        .get_cursor_current();
+    // Messages last two frames: read after each.
+    let mut step = |app: &mut App, p: Option<GzPublish>| {
+        if let Some(p) = p {
+            app.world_mut().write_message(p);
+        }
+        app.update();
+        let events = app.world().resource::<Messages<AssetEvent<Image>>>();
+        reader.read(events).filter(|e| e.is_modified(id)).count()
+    };
+    // The first sample past the end: the line runs to it, so it draws.
+    step(&mut app, Some(odometry(0.2, Some(136.0))));
+    for _ in 0..4 {
+        step(&mut app, None);
+    }
+    // Later ones change nothing it shows.
+    changed += step(&mut app, Some(odometry(0.3, Some(137.0))));
+    changed += step(&mut app, Some(odometry(0.4, Some(138.0))));
+    for _ in 0..6 {
+        changed += step(&mut app, None);
+    }
+    assert_eq!(changed, 0, "past the paused end: nothing new to draw");
+    act(&mut app, PAUSE);
+    let mut s = stats(false);
+    s.sim_time = 135.5;
+    app.world_mut().resource_mut::<GzStatus>().sim = Some(s);
+    for _ in 0..4 {
+        changed += step(&mut app, None);
+    }
+    assert!(changed > 0, "moving again with the clock: it redraws");
+}
+
+/// With no chart left, Pause lets go, so a new chart moves.
+#[test]
+fn pause_ends_with_the_last_chart() {
+    let mut app = plotted();
+    act(&mut app, PAUSE);
+    let id = data(&app).charts[0].series[0].id;
+    app.world_mut().resource_mut::<PlotData>().remove(id);
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<PlotState>().paused_at, None);
 }

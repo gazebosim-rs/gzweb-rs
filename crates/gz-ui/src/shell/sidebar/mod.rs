@@ -365,9 +365,12 @@ pub(crate) fn toggle_looks(
         ),
         With<HeaderButton>,
     >,
+    added: Query<(), Added<HeaderButton>>,
     mut icons: Query<&mut Icon>,
 ) {
-    if !status.is_changed() {
+    // A rebuilt header's buttons too: they spawn with the look, but not
+    // pressed.
+    if !status.is_changed() && added.is_empty() {
         return;
     }
     for (b, mut tip, mut access, children) in &mut buttons {
