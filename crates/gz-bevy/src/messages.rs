@@ -59,6 +59,9 @@ pub struct SystemMessages {
     /// The latest warning or error, kept apart from the list: info and
     /// debug lines can push it out of that.
     latest_problem: Option<SystemMessage>,
+    /// Where the message tray's Clear left the problems: the last number
+    /// then, and the warnings and errors so far (§7.5).
+    cleared: (u64, u32, u32),
 }
 
 impl SystemMessages {
@@ -89,9 +92,32 @@ impl SystemMessages {
         self.last_seq
     }
 
-    /// The latest warning or error, even once the list has let it go.
+    /// The latest warning or error, even once the list has let it go;
+    /// none once the tray cleared it.
     pub fn latest_problem(&self) -> Option<&SystemMessage> {
-        self.latest_problem.as_ref()
+        self.latest_problem
+            .as_ref()
+            .filter(|m| m.seq > self.cleared.0)
+    }
+
+    /// The warnings and errors since the tray's Clear (since start, before
+    /// one). The totals stay as they were: the Console counts from them.
+    pub fn problem_counts(&self) -> (u32, u32) {
+        (self.warnings - self.cleared.1, self.errors - self.cleared.2)
+    }
+
+    /// The warnings and errors kept since the tray's Clear, newest first.
+    pub fn problems(&self) -> impl Iterator<Item = &SystemMessage> {
+        self.list
+            .iter()
+            .rev()
+            .filter(|m| m.level >= MessageLevel::Warning && m.seq > self.cleared.0)
+    }
+
+    /// The tray's Clear: the problems so far go from the tray and the
+    /// status bar's chip (not from the Console).
+    pub fn clear_problems(&mut self) {
+        self.cleared = (self.last_seq, self.warnings, self.errors);
     }
 }
 
@@ -196,6 +222,37 @@ mod tests {
     use bevy::log::tracing_subscriber::layer::SubscriberExt;
 
     use super::*;
+
+    fn message(level: MessageLevel, text: &str) -> SystemMessage {
+        SystemMessage {
+            level,
+            text: text.into(),
+            ..default()
+        }
+    }
+
+    /// The tray's Clear drops the problems so far from the tray and the
+    /// chip and counts from there; the totals (the Console's) stay.
+    #[test]
+    fn clearing_the_problems_keeps_the_totals() {
+        let mut m = SystemMessages::default();
+        m.push(message(MessageLevel::Warning, "w1"));
+        m.push(message(MessageLevel::Info, "i"));
+        m.push(message(MessageLevel::Error, "e1"));
+        let texts =
+            |m: &SystemMessages| -> Vec<String> { m.problems().map(|p| p.text.clone()).collect() };
+        assert_eq!(texts(&m), ["e1", "w1"], "newest first, problems only");
+        assert_eq!(m.problem_counts(), (1, 1));
+        m.clear_problems();
+        assert!(texts(&m).is_empty());
+        assert!(m.latest_problem().is_none());
+        assert_eq!(m.problem_counts(), (0, 0));
+        assert_eq!((m.warnings, m.errors), (1, 1));
+        m.push(message(MessageLevel::Warning, "w2"));
+        assert_eq!(texts(&m), ["w2"]);
+        assert_eq!(m.latest_problem().unwrap().text, "w2");
+        assert_eq!(m.problem_counts(), (1, 0));
+    }
 
     /// The layer passes this project's messages, not others' or trace;
     /// the list keeps the newest, numbered, and counts the warnings and

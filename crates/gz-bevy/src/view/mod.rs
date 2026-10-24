@@ -340,6 +340,53 @@ pub enum ViewOp {
     Context {
         at: Vec2,
     },
+    /// Put the camera where a workspace saved it (§8): its pose, pivot and
+    /// projection; free and no longer snapped.
+    Restore(ViewPose),
+}
+
+/// Where a view's camera is, as a workspace saves it (spec §8): its pose
+/// and pivot (Bevy's world frame), and the orthographic view height when
+/// orthographic.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub pivot: Vec3,
+    pub ortho: Option<f32>,
+}
+
+impl ViewPose {
+    /// The camera's pose now.
+    pub fn of(view: &ViewCamera, t: &Transform, p: &Projection) -> Self {
+        Self {
+            translation: t.translation,
+            rotation: t.rotation,
+            pivot: view.pivot,
+            ortho: ortho_height(p),
+        }
+    }
+}
+
+/// Puts the camera at `pose` ([`ViewOp::Restore`]).
+fn restore(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, pose: ViewPose) {
+    view.snapped = None;
+    view.mode = CameraMode::Free;
+    view.pivot = pose.pivot;
+    t.translation = pose.translation;
+    t.rotation = pose.rotation.normalize();
+    match pose.ortho {
+        Some(height) => {
+            let depth = depth_of(t, view.pivot).max(MIN_DISTANCE);
+            *p = Projection::Orthographic(OrthographicProjection {
+                near: depth,
+                far: view.perspective.far,
+                ..OrthographicProjection::default_3d()
+            });
+            set_ortho_height(p, height);
+        }
+        None => *p = Projection::Perspective(view.perspective.clone()),
+    }
 }
 
 /// A right click on a model in a view, or on an entity's row in the
@@ -1430,6 +1477,7 @@ fn apply(
             select(&mut scene.selection.reborrow(), mode, &picked);
         }
         ViewOp::SetDragAction(action) => view.drag_action = action,
+        ViewOp::Restore(pose) => restore(view, t, p, pose),
         ViewOp::PivotAt { at, orbit } => {
             view.pivot = scene.pivot(ray(p, t, at), orbit, view, t, p);
         }

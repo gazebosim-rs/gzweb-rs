@@ -3664,3 +3664,48 @@ fn model_edits_go_through_the_worlds_sdformat() {
     assert!(sent.is_empty());
     assert_eq!(done[0].result, Err("This server doesn't take edits".into()));
 }
+
+/// Restore puts the camera where a workspace saved it: pose, pivot and
+/// projection (orthographic with its height, or perspective), free and
+/// unsnapped; a pose read back is the one restored.
+#[test]
+fn restore_puts_the_camera_back() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Snap(SnapView::Top));
+    for _ in 0..30 {
+        r.app.update();
+    }
+    let pose = ViewPose {
+        translation: Vec3::new(2.0, 5.0, 3.0),
+        rotation: Transform::from_xyz(2.0, 5.0, 3.0)
+            .looking_at(Vec3::new(1.0, 0.0, 0.0), Vec3::Y)
+            .rotation,
+        pivot: Vec3::new(1.0, 0.0, 0.0),
+        ortho: Some(7.5),
+    };
+    r.op(ViewOp::Restore(pose));
+    let (v, t, p) = (r.view(), r.transform(), r.projection());
+    assert_eq!(v.snapped, None);
+    assert_eq!(v.mode, CameraMode::Free);
+    assert!((ortho_height(&p).unwrap() - 7.5).abs() < 1e-4);
+    let back = ViewPose::of(&v, &t, &p);
+    // Orthographic, the view may stand back along its axis (the same
+    // picture).
+    let along = (back.translation - pose.translation).normalize_or_zero();
+    let forward = pose.rotation * Vec3::NEG_Z;
+    assert!(along.cross(forward).length() < 1e-3, "{back:?}");
+    assert!(back.rotation.angle_between(pose.rotation) < 1e-4);
+    assert_eq!((back.pivot, back.ortho), (pose.pivot, pose.ortho));
+    // Perspective, it's where it was.
+    let pose = ViewPose {
+        ortho: None,
+        ..pose
+    };
+    r.op(ViewOp::Restore(pose));
+    assert!(matches!(r.projection(), Projection::Perspective(_)));
+    let back = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert!(
+        back.translation.distance(pose.translation) < 1e-4,
+        "{back:?}"
+    );
+}

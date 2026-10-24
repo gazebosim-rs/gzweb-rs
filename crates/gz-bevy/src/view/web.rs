@@ -60,6 +60,26 @@ pub fn remember_url(url: &str) {
     }
 }
 
+/// The `localStorage` key of the UI's workspaces (spec §8).
+pub const WORKSPACES_KEY: &str = "gzweb.workspaces";
+
+/// What the browser keeps under `key` (`localStorage`), if anything.
+pub fn stored(key: &str) -> Option<String> {
+    web_sys::window()?
+        .local_storage()
+        .ok()??
+        .get_item(key)
+        .ok()?
+}
+
+/// Keeps `value` under `key` in the browser (`localStorage`); whether it
+/// could.
+pub fn store(key: &str, value: &str) -> bool {
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .is_some_and(|s| s.set_item(key, value).is_ok())
+}
+
 /// The page was loaded over https, so its websockets must be `wss://`
 /// (browsers block a `ws://` socket from a secure page as mixed content).
 pub fn page_is_secure() -> bool {

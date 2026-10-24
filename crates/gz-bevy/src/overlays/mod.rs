@@ -155,6 +155,11 @@ impl Overlays {
         }
     }
 
+    /// Turns `o` on or off.
+    pub fn set(&mut self, o: Overlay, on: bool) {
+        *self.flag(o) = on;
+    }
+
     fn flag(&mut self, o: Overlay) -> &mut bool {
         match o {
             Overlay::Grid => &mut self.grid,
