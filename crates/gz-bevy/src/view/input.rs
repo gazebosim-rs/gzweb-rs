@@ -1048,6 +1048,8 @@ mod tests {
         assert!(map.web_prevent_default.contains(&chord("Space")));
         assert!(map.web_prevent_default.contains(&chord("Tab")));
         assert!(map.web_prevent_default.contains(&chord("mod+K")));
+        // Save as…: Firefox would also take its screenshot.
+        assert!(map.web_prevent_default.contains(&chord("mod+shift+S")));
         // Step: Cmd+Right is the browser's Forward on macOS (D-17).
         assert!(map.web_prevent_default.contains(&chord("mod+Right")));
         let mods = |ctrl, super_key, shift| KeyMods {

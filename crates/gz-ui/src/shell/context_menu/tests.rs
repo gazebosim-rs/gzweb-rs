@@ -332,3 +332,36 @@ fn a_delete_shows_an_undo_chip() {
         ("Copied cart", "", false)
     );
 }
+
+/// Typing a letter jumps to a submenu's row too, not into the submenu.
+#[test]
+fn typing_jumps_to_a_submenu_row() {
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input_focus::{FocusCause, InputFocus};
+    let (mut app, cart, _) = live();
+    open(&mut app, cart);
+    let (focus_item, _) = item(&mut app, ContextItem::Focus);
+    let row = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<(Entity, &crate::widgets::menu::MenuLabel), With<SubmenuRow>>()
+            .iter(world)
+            .find(|(_, l)| l.0 == "Align")
+            .unwrap()
+            .0
+    };
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(focus_item, FocusCause::Navigated);
+    let window = find::<Window>(&mut app);
+    app.world_mut().write_message(KeyboardInput {
+        key_code: KeyCode::KeyA,
+        logical_key: Key::Character("a".into()),
+        state: ButtonState::Pressed,
+        text: None,
+        repeat: false,
+        window,
+    });
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(row), "Align");
+}

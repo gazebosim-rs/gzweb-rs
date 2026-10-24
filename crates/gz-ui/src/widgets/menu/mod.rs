@@ -606,13 +606,18 @@ pub(crate) fn type_to_search(labels: &[&str], from: Option<usize>, c: char) -> O
         .find(|&i| labels[i].to_lowercase().starts_with(&lower))
 }
 
+/// What type-to-search jumps between: items and submenu rows.
+type Typed = Or<(With<MenuItem>, With<SubmenuRow>)>;
+
 /// Type-to-search inside an open menu: plain letters only, so a chord
 /// (Ctrl/Cmd/Alt+letter) is left to the shortcuts.
 pub(crate) fn on_menu_typing(
     mut ev: On<FocusedInput<KeyboardInput>>,
     keys: Res<ButtonInput<KeyCode>>,
-    items: Query<(&MenuLabel, &ChildOf), With<MenuItem>>,
+    items: Query<(&MenuLabel, &ChildOf), Typed>,
     popups: Query<&Children, With<MenuPopup>>,
+    children: Query<&Children>,
+    parents: Query<&ChildOf>,
     mut focus: ResMut<InputFocus>,
 ) {
     let input = &ev.input;
@@ -633,16 +638,31 @@ pub(crate) fn on_menu_typing(
     let Some(c) = ch.chars().next() else {
         return;
     };
-    let Ok((_, parent)) = items.get(ev.focused_entity) else {
+    if !items.contains(ev.focused_entity) {
+        return;
+    }
+    // The popup it's in (its items may sit in a column inside it), and
+    // its items and submenu rows in order, leaving out a submenu's items.
+    let Some(popup) = parents
+        .iter_ancestors(ev.focused_entity)
+        .find(|a| popups.contains(*a))
+    else {
         return;
     };
-    let Ok(siblings) = popups.get(parent.parent()) else {
-        return;
-    };
-    let list: Vec<(Entity, &str)> = siblings
-        .iter()
-        .filter_map(|e| items.get(e).ok().map(|(l, _)| (e, l.0.as_str())))
-        .collect();
+    let mut list: Vec<(Entity, &str)> = vec![];
+    let mut stack: Vec<Entity> = popups
+        .get(popup)
+        .map(|c| c.iter().rev().collect())
+        .unwrap_or_default();
+    while let Some(e) = stack.pop() {
+        if let Ok((l, _)) = items.get(e) {
+            list.push((e, l.0.as_str()));
+        } else if !popups.contains(e) {
+            if let Ok(c) = children.get(e) {
+                stack.extend(c.iter().rev());
+            }
+        }
+    }
     let labels: Vec<&str> = list.iter().map(|(_, l)| *l).collect();
     let from = list.iter().position(|(e, _)| *e == ev.focused_entity);
     if let Some(i) = type_to_search(&labels, from, c) {

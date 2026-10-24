@@ -163,16 +163,30 @@ pub(crate) fn sync_dialog(
     }
 }
 
-/// The name field takes the keys once it exists.
+/// While the dialog is open the keys stay in it: the name field takes
+/// them when it opens, and again whenever they're outside it (a press on
+/// the toggle or the card lets go of them), so Esc and Enter keep working
+/// and typing never reaches the world behind it. Tab moves within it.
 pub(crate) fn focus_name(
-    fields: Query<(Entity, &ChildOf), Added<TextFieldInput>>,
+    state: Res<SaveDialog>,
+    fields: Query<(Entity, &ChildOf), With<TextFieldInput>>,
     names: Query<(), With<DialogName>>,
+    roots: Query<(), With<DialogRoot>>,
+    parents: Query<&ChildOf>,
     mut focus: ResMut<InputFocus>,
 ) {
-    for (e, parent) in &fields {
-        if names.contains(parent.parent()) {
-            focus.set(e, FocusCause::Navigated);
-        }
+    if state.0.is_none() {
+        return;
+    }
+    let inside = focus
+        .get()
+        .is_some_and(|f| parents.iter_ancestors(f).any(|a| roots.contains(a)));
+    if inside {
+        return;
+    }
+    let field = fields.iter().find(|(_, p)| names.contains(p.parent()));
+    if let Some((e, _)) = field {
+        focus.set(e, FocusCause::Navigated);
     }
 }
 
@@ -191,10 +205,27 @@ fn chosen(
     (name, current)
 }
 
-/// Saves with what the dialog holds (a name without `.sdf` gets it) and
-/// closes it; an empty name does nothing.
+/// The file a typed name saves as: its last part (a path's folders are
+/// dropped: it saves where every save goes), with `.sdf`; none for a name
+/// that's empty without them.
+pub(crate) fn file_name_of(typed: &str) -> Option<String> {
+    let base = typed
+        .trim()
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let stem = base.strip_suffix(".sdf").unwrap_or(base);
+    match stem {
+        "" | "." | ".." => None,
+        stem => Some(format!("{stem}.sdf")),
+    }
+}
+
+/// Saves with what the dialog holds and closes it; a name that saves as
+/// nothing ([`file_name_of`]) leaves it as it is.
 fn save(
-    state: &mut SaveDialog,
+    state: &mut ResMut<SaveDialog>,
     name: String,
     current_poses: bool,
     saves: &mut MessageWriter<SaveWorld>,
@@ -202,14 +233,8 @@ fn save(
     let Some((mode, _)) = state.0 else {
         return;
     };
-    let name = name.trim();
-    if name.is_empty() {
+    let Some(name) = file_name_of(&name) else {
         return;
-    }
-    let name = if name.ends_with(".sdf") {
-        name.to_string()
-    } else {
-        format!("{name}.sdf")
     };
     saves.write(SaveWorld {
         name,

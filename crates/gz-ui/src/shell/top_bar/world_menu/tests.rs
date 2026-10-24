@@ -8,6 +8,7 @@ use bevy::text::EditableText;
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui::{Checked, InteractionDisabled};
 use bevy::ui_widgets::Activate;
+use gz_bevy::connection::GzStatus;
 use gz_bevy::spawn::{GzEntity, GzIndex, GzWorldRoot};
 use gz_bevy::undo::{Change, Record, UndoStack};
 use gz_bevy::view::gizmo::Snap;
@@ -179,19 +180,56 @@ fn the_world_menu_follows_the_world_and_saves_it() {
     frames(&mut app, 2);
     assert!(header(&mut app, WorldHeader::State).starts_with("unsaved changes · last saved "));
 
-    // A failed save logs why.
+    // A failed save says nothing saved and leaves the time (it logs why,
+    // through gz-bevy's log, which tests don't collect).
+    let at = app.world().resource::<LastSaved>().0.clone();
     app.world_mut().write_message(WorldSaved {
         result: Err("The server didn't answer".into()),
         marked: false,
     });
     frames(&mut app, 2);
-    let log = app.world().resource::<gz_bevy::messages::SystemMessages>();
-    assert!(
-        log.list.is_empty()
-            || log
-                .latest_problem()
-                .is_none_or(|m| m.text.contains("Couldn't save"))
-    );
+    assert_eq!(chip(&mut app), None);
+    assert_eq!(app.world().resource::<LastSaved>().0, at);
+    // Another world wasn't saved this session.
+    assert!(at.is_some());
+    app.world_mut().resource_mut::<GzStatus>().world = Some("other".into());
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<LastSaved>().0, None);
+}
+
+/// A long edit's name is cut so Undo and its key fit the menu.
+#[test]
+fn long_undo_labels_end_in_an_ellipsis() {
+    assert_eq!(fit_label("Undo move cart"), "Undo move cart");
+    let long = fit_label("Undo move warehouse_shelf_with_boxes_03");
+    assert_eq!(long.chars().count(), 26);
+    assert!(long.starts_with("Undo move warehouse_") && long.ends_with('…'));
+}
+
+/// Typing a letter in the World menu jumps to the next item starting
+/// with it (its items sit in a column inside the popup).
+#[test]
+fn the_world_menu_takes_type_to_search() {
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    use bevy::input::ButtonState;
+    use bevy::input_focus::{FocusCause, InputFocus};
+    let (mut app, _) = live();
+    let save = item(&mut app, WorldItem::Save);
+    let export = item(&mut app, WorldItem::ExportSdf);
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(save, FocusCause::Navigated);
+    let window = find::<Window>(&mut app);
+    app.world_mut().write_message(KeyboardInput {
+        key_code: KeyCode::KeyE,
+        logical_key: Key::Character("e".into()),
+        state: ButtonState::Pressed,
+        text: None,
+        repeat: false,
+        window,
+    });
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(export));
 }
 
 fn dialog_open(app: &App) -> Option<DialogMode> {
@@ -245,9 +283,31 @@ fn save_as_and_export_ask_for_a_name() {
     );
     let poses = find::<CurrentPoses>(&mut app);
     assert!(app.world().get::<Checked>(poses).is_none());
+    // A name that saves as nothing leaves the dialog as it is.
     set_field_text(
         &mut app.world_mut().get_mut::<EditableText>(input).unwrap(),
-        "copy",
+        ".sdf",
+    );
+    frames(&mut app, 1);
+    let save = dialog_button(&mut app, DialogButton::Save);
+    activate(&mut app, save);
+    assert!(saves(&mut app).is_empty());
+    let input = name_input(&mut app);
+    assert_eq!(
+        app.world().get::<EditableText>(input).unwrap().value(),
+        ".sdf"
+    );
+    // A click on the toggle turns it on and gives the keys back to the
+    // name.
+    let poses = find::<CurrentPoses>(&mut app);
+    click(&mut app, poses);
+    frames(&mut app, 2);
+    assert!(app.world().get::<Checked>(poses).is_some());
+    assert_eq!(focused(&app), Some(input));
+    // A path saves as its last part.
+    set_field_text(
+        &mut app.world_mut().get_mut::<EditableText>(input).unwrap(),
+        "../copy",
     );
     frames(&mut app, 1);
     let save = dialog_button(&mut app, DialogButton::Save);
@@ -256,7 +316,7 @@ fn save_as_and_export_ask_for_a_name() {
         saves(&mut app),
         [SaveWorld {
             name: "copy.sdf".into(),
-            current_poses: false,
+            current_poses: true,
             mark_saved: true,
         }]
     );
@@ -323,6 +383,7 @@ fn connect_shows_the_card_over_the_world() {
     activate(&mut app, cancel);
     frames(&mut app, 5);
     assert!(!app.world().resource::<ConnectionView>().switching);
+    assert!(!displayed(&app, card));
 }
 
 /// The Snap popover's fields set the steps, and the trigger reads the
@@ -381,7 +442,40 @@ fn screenshots_encode_as_png() {
     );
     let png = png_bytes(&image).unwrap();
     assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+    // A window's capture is usually BGRA.
+    let bgra = Image::new_fill(
+        Extent3d {
+            width: 2,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0, 0, 255, 255],
+        TextureFormat::Bgra8UnormSrgb,
+        default(),
+    );
+    let png = png_bytes(&bgra).unwrap();
+    let decoder = png::Decoder::new(std::io::Cursor::new(png));
+    let mut reader = decoder.read_info().unwrap();
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut buf).unwrap();
+    assert_eq!(&buf[..4], &[255, 0, 0, 255], "red, as RGBA");
     assert_eq!(file_name("/a/b/w.sdf"), "w.sdf");
     assert_eq!(file_name("w.sdf"), "w.sdf");
     assert_eq!(default_name(None), "world.sdf");
+}
+
+/// A typed name saves as its last part with `.sdf`; one empty without
+/// them saves as nothing.
+#[test]
+fn typed_names_save_as_a_file_name() {
+    use super::super::save_dialog::file_name_of;
+    assert_eq!(file_name_of(" copy ").as_deref(), Some("copy.sdf"));
+    assert_eq!(file_name_of("copy.sdf").as_deref(), Some("copy.sdf"));
+    assert_eq!(file_name_of("../a/b").as_deref(), Some("b.sdf"));
+    assert_eq!(file_name_of("/abs/w.sdf").as_deref(), Some("w.sdf"));
+    assert_eq!(file_name_of(r"C:\w\x").as_deref(), Some("x.sdf"));
+    for none in ["", "  ", ".sdf", "a/", "..", "a/.sdf"] {
+        assert_eq!(file_name_of(none), None, "{none:?}");
+    }
 }
