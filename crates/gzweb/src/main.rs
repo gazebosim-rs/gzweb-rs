@@ -33,9 +33,10 @@
 //!   (DECISIONS.md D-105).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
-//! - `--menu world|snap|context` opens the World menu or the Snap popover
-//!   once the world is live (DECISIONS.md D-108), or the entity context
-//!   menu for the `--select`ed model (D-109).
+//! - `--menu world|snap|context|workspace` opens the World menu or the
+//!   Snap popover once the world is live (DECISIONS.md D-108), the entity
+//!   context menu for the `--select`ed model (D-109), or the workspace
+//!   switcher (D-110).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
@@ -106,7 +107,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -301,8 +302,10 @@ fn parse_args(
             "--palette" => palette = Some(value()?),
             "--menu" => {
                 let m = value()?;
-                if !["world", "snap", "context"].contains(&m.as_str()) {
-                    return Err(format!("--menu: no menu '{m}' (world, snap, context)"));
+                if !["world", "snap", "context", "workspace"].contains(&m.as_str()) {
+                    return Err(format!(
+                        "--menu: no menu '{m}' (world, snap, context, workspace)"
+                    ));
                 }
                 menu = Some(m);
             }
@@ -755,6 +758,14 @@ fn main() -> AppExit {
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
+        }
+        // The workspaces persist (spec §8), except for captures, which
+        // start as the app does; a theme asked for wins over the saved one.
+        if args.snapshot.is_none() {
+            if let Some(mut store) = gz_ui::shell::WorkspaceStore::platform() {
+                store.theme = args.theme == ThemeMode::System;
+                app.insert_resource(store);
+            }
         }
     }
     if let Some(req) = args.snapshot {

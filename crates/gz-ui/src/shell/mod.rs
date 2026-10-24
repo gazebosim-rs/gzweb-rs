@@ -35,6 +35,7 @@ pub(crate) mod splitter;
 pub(crate) mod status_bar;
 pub(crate) mod top_bar;
 pub(crate) mod viewport;
+pub(crate) mod workspaces;
 
 use bevy::app::PluginGroupBuilder;
 use bevy::prelude::*;
@@ -53,6 +54,7 @@ pub use popout::StartPopOuts;
 pub use top_bar::tools::Tool;
 pub use top_bar::StartMenu;
 pub use viewport::views::{LayoutPreset, StartLayout};
+pub use workspaces::{WorkspaceCommand, WorkspaceStore, Workspaces};
 
 use crate::inspectors::{InspectorPlugins, InspectorRegistry};
 use crate::panels::{PanelId, PanelPlugins, PanelRegistry};
@@ -169,6 +171,7 @@ impl Plugin for ShellPlugin {
         popout::build(app);
         palette::build(app);
         context_menu::build(app);
+        workspaces::build(app);
         inspector::build(app);
         status_bar::build(app);
         viewport::build(app);

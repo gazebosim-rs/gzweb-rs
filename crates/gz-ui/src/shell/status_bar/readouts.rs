@@ -187,14 +187,10 @@ impl MessageChip {
     /// there have been ("2 warnings").
     pub(crate) fn of(messages: &SystemMessages) -> Option<Self> {
         let m = messages.latest_problem()?;
+        let (warnings, errors) = messages.problem_counts();
         let (kind, n, one, many) = match m.level {
-            MessageLevel::Error => (StatusKind::Error, messages.errors, "error", "errors"),
-            _ => (
-                StatusKind::Warning,
-                messages.warnings,
-                "warning",
-                "warnings",
-            ),
+            MessageLevel::Error => (StatusKind::Error, errors, "error", "errors"),
+            _ => (StatusKind::Warning, warnings, "warning", "warnings"),
         };
         Some(Self {
             kind,
@@ -312,6 +308,7 @@ pub(crate) fn message_chip(
     .side(TooltipSide::Above);
     let count = (!want.count.is_empty()).then(|| want.count.clone());
     let undoes = want.kind == StatusKind::Done && note.1.is_some();
+    let problem = matches!(want.kind, StatusKind::Warning | StatusKind::Error);
     let mut chip = commands.spawn((
         status_chip(&theme, want.kind, want.text.clone(), count),
         tip,
@@ -320,5 +317,11 @@ pub(crate) fn message_chip(
     ));
     if undoes {
         chip.insert(UndoChip);
+    } else if problem {
+        // It opens the message tray (the slot is its menu).
+        chip.insert((
+            crate::widgets::menu::MenuTrigger,
+            bevy::ui_widgets::MenuButton,
+        ));
     }
 }

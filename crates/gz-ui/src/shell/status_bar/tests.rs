@@ -81,3 +81,101 @@ fn the_message_chip_shows_the_latest_problem() {
         (StatusKind::Error, "1 error")
     );
 }
+
+/// The problem chip opens the message tray: the warnings and errors,
+/// newest first, with their counts; Clear drops them (and the chip), Open
+/// console opens the Console. Either closes it.
+#[test]
+fn the_problem_chip_opens_the_message_tray() {
+    use bevy::prelude::*;
+    use bevy::ui_widgets::Activate;
+    use gz_bevy::messages::{MessageLevel, SystemMessage, SystemMessages};
+
+    use super::readouts::MessageChip;
+    use super::tray::{TrayButton, TrayCounts, TrayRow};
+    use crate::test_support::frames;
+    use crate::test_support::shell::{layout, shell_app};
+    use crate::widgets::menu::MenuPopupOf;
+
+    let mut app = shell_app((1440, 900), 1.0);
+    app.init_resource::<SystemMessages>();
+    frames(&mut app, 2);
+    for (level, text) in [
+        (MessageLevel::Warning, "slow"),
+        (MessageLevel::Info, "fine"),
+        (MessageLevel::Error, "boom"),
+    ] {
+        app.world_mut()
+            .resource_mut::<SystemMessages>()
+            .push(SystemMessage {
+                level,
+                text: text.into(),
+                ..default()
+            });
+    }
+    frames(&mut app, 2);
+    let find = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<MessageChip>>()
+            .iter(world)
+            .next()
+    };
+    let tray_shown = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Visibility, With<MenuPopupOf>>()
+            .iter(world)
+            .any(|v| *v == Visibility::Visible)
+    };
+    let chip = find(&mut app).expect("a chip");
+    app.world_mut().trigger(Activate { entity: chip });
+    frames(&mut app, 3);
+    assert!(tray_shown(&mut app));
+    let rows: Vec<u64> = {
+        let world = app.world_mut();
+        let mut rows: Vec<(Entity, u64)> = world
+            .query::<(Entity, &TrayRow)>()
+            .iter(world)
+            .map(|(e, r)| (e, r.0))
+            .collect();
+        rows.sort_by_key(|(e, _)| e.index());
+        rows.into_iter().map(|(_, s)| s).collect()
+    };
+    assert_eq!(rows, [3, 1], "the error, then the warning");
+    let counts = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Text, With<TrayCounts>>()
+            .single(world)
+            .unwrap()
+            .0
+            .clone()
+    };
+    assert_eq!(counts, "1 warn · 1 err");
+    let button = |app: &mut App, which: TrayButton| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &TrayButton)>()
+            .iter(world)
+            .find(|(_, b)| **b == which)
+            .unwrap()
+            .0
+    };
+    let open = button(&mut app, TrayButton::OpenConsole);
+    app.world_mut().trigger(Activate { entity: open });
+    frames(&mut app, 3);
+    assert!(!tray_shown(&mut app));
+    assert_eq!(layout(&app).primary.map(|p| p.name()), Some("console"));
+    // Clear: the tray and the chip go; the Console's totals stay.
+    let chip = find(&mut app).unwrap();
+    app.world_mut().trigger(Activate { entity: chip });
+    frames(&mut app, 3);
+    let clear = button(&mut app, TrayButton::Clear);
+    app.world_mut().trigger(Activate { entity: clear });
+    frames(&mut app, 3);
+    assert!(find(&mut app).is_none());
+    let m = app.world().resource::<SystemMessages>();
+    assert_eq!((m.warnings, m.errors), (1, 1));
+    assert_eq!(m.problems().count(), 0);
+}

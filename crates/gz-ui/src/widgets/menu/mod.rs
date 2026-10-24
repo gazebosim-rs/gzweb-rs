@@ -148,7 +148,7 @@ where
 }
 
 /// A [`Menu`]'s popup, hidden until opened, holding what `items` spawns.
-fn popup<F>(theme: &Theme, side: MenuSide, items: F) -> impl Bundle
+pub(crate) fn popup<F>(theme: &Theme, side: MenuSide, items: F) -> impl Bundle
 where
     F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
 {

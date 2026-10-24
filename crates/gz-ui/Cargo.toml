@@ -14,6 +14,9 @@ bevy = "0.20"
 accesskit = { version = "0.24", default-features = false }
 # The World menu's screenshot as a PNG (Bevy's image loading has it already).
 png = "0.18"
+# Workspaces' file (spec §8).
+serde.workspace = true
+serde_json.workspace = true
 
 [build-dependencies]
 # Build time only: tokens.json → Rust, icons.json → icon atlas PNGs. None of
