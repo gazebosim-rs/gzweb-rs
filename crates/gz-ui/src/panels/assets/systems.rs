@@ -114,12 +114,15 @@ pub(super) fn arm(
     keys: Res<ButtonInput<KeyCode>>,
     inserting: Inserting,
     gizmo: Option<Res<GizmoState>>,
+    menu_esc: Option<Res<crate::widgets::focus::MenuTakesEscape>>,
     mut state: ResMut<AssetsState>,
     mut placing: ResMut<Placing>,
 ) {
-    // A gizmo drag takes this Esc (it puts the selection back): one step
-    // per Esc.
-    let esc = keys.just_pressed(KeyCode::Escape) && !gizmo.is_some_and(|g| g.takes_escape());
+    // A gizmo drag, an open menu or the palette takes this Esc (the drag
+    // puts the selection back, the menu closes): one step per Esc.
+    let esc = keys.just_pressed(KeyCode::Escape)
+        && !gizmo.is_some_and(|g| g.takes_escape())
+        && !menu_esc.is_some_and(|m| m.0);
     if state.armed.is_some() && (esc || inserting.world().is_err()) {
         state.armed = None;
     }
