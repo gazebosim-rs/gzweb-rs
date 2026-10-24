@@ -440,8 +440,11 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                 // One topic per plugin, as gz-sim names it: `<topic>`, else
                 // `/model/<model>/<sub_topic>`, else from the first joint;
                 // it moves all the plugin's joints. One that takes
-                // `gz.msgs.Actuators` (`use_actuator_msg`) isn't commanded.
-                .filter(|p| !text(*p, "use_actuator_msg").is_some_and(|v| v.trim() == "true"))
+                // `gz.msgs.Actuators` (`use_actuator_msg`, with the
+                // `actuator_number` gz-sim needs for it) isn't commanded.
+                .filter(|p| {
+                    !(flag(*p, "use_actuator_msg", false) && text(*p, "actuator_number").is_some())
+                })
                 .flat_map(|p| {
                     let joints: Vec<&str> = children(p, "joint_name")
                         .filter_map(|j| j.text())
