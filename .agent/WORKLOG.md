@@ -1549,5 +1549,5 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   /model/vehicle_blue/odometry` (light) and `--echo
   /world/diff_drive/stats` (dark, the tapped world topic): 14 topics,
   rates for the topics received, the echo in text format, the footer.
-- **Tests:** workspace 737 → 752 passing; coverage 98.3% lines. check.sh
+- **Tests:** workspace 737 → 754 passing; coverage 98.3% lines. check.sh
   passes. Not tried by hand.
