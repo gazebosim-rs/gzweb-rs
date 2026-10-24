@@ -1,0 +1,128 @@
+diff --git a/src/systems/websocket_server/WebsocketServer.cc b/src/systems/websocket_server/WebsocketServer.cc
+index 1951dda..6759e2e 100644
+--- a/src/systems/websocket_server/WebsocketServer.cc
++++ b/src/systems/websocket_server/WebsocketServer.cc
+@@ -672,13 +672,20 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   // Frame: operation,topic,type,payload
+   std::vector<std::string> frameParts;
+ 
+-  // A request carries a serialized protobuf as its payload, which can hold
+-  // commas and zero bytes. Take everything after the third comma verbatim
+-  // instead of splitting the whole frame.
+-  const std::string reqPrefix = this->operations[REQUEST] + ",";
++  // A request or a client's publication carries a serialized protobuf as
++  // its payload, which can hold commas and zero bytes. Take everything after
++  // the third comma verbatim instead of splitting the whole frame.
++  std::string verbatimOp;
++  for (const std::string &op : {this->operations[REQUEST],
++                                std::string("pub_in")})
++  {
++    if (_msg.compare(0, op.size() + 1, op + ",") == 0)
++      verbatimOp = op;
++  }
++  const std::string reqPrefix = verbatimOp + ",";
+   std::size_t svcEnd = std::string::npos;
+   std::size_t typeEnd = std::string::npos;
+-  if (_msg.compare(0, reqPrefix.size(), reqPrefix) == 0)
++  if (!verbatimOp.empty())
+   {
+     svcEnd = _msg.find(',', reqPrefix.size());
+     if (svcEnd != std::string::npos)
+@@ -688,7 +695,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   if (typeEnd != std::string::npos)
+   {
+     frameParts = {
+-        this->operations[REQUEST],
++        verbatimOp,
+         _msg.substr(reqPrefix.size(), svcEnd - reqPrefix.size()),
+         _msg.substr(svcEnd + 1, typeEnd - svcEnd - 1),
+         _msg.substr(typeEnd + 1)};
+@@ -1089,6 +1096,42 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   {
+     this->OnRequest(_socketId, frameParts);
+   }
++  else if (frameParts[0] == "pub_in")
++  {
++    this->OnPublishIn(frameParts);
++  }
++}
++
++//////////////////////////////////////////////////
++void WebsocketServer::OnPublishIn(const std::vector<std::string> &_frameParts)
++{
++  const std::string &topic = _frameParts[1];
++  const std::string &msgType = _frameParts[2];
++  if (topic.empty() || msgType.empty())
++  {
++    gzerr << "A publication needs a topic and a message type\n";
++    return;
++  }
++
++  auto it = this->clientPublishers.find(topic);
++  if (it == this->clientPublishers.end() || it->second.first != msgType)
++  {
++    // A topic is advertised with one type at a time.
++    if (it != this->clientPublishers.end())
++      this->clientPublishers.erase(it);
++    transport::Node::Publisher pub = this->node.Advertise(topic, msgType);
++    if (!pub)
++    {
++      gzerr << "Unable to advertise topic[" << topic << "] with type["
++            << msgType << "]\n";
++      return;
++    }
++    it = this->clientPublishers.emplace(
++        topic, std::make_pair(msgType, pub)).first;
++  }
++
++  if (!it->second.second.PublishRaw(_frameParts[3], msgType))
++    gzerr << "Unable to publish on topic[" << topic << "]\n";
+ }
+ 
+ //////////////////////////////////////////////////
+diff --git a/src/systems/websocket_server/WebsocketServer.hh b/src/systems/websocket_server/WebsocketServer.hh
+index 994323d..9e859fd 100644
+--- a/src/systems/websocket_server/WebsocketServer.hh
++++ b/src/systems/websocket_server/WebsocketServer.hh
+@@ -106,9 +106,9 @@ namespace systems
+     ///     3. `message_type`: string, and
+     ///     4. `payload`: serialized data.
+     ///
+-    /// The "req" payload is everything after the third comma, so it may
+-    /// contain commas and zero bytes. The `topic_name` and `message_type`
+-    /// components of a "req" frame must not contain commas.
++    /// The "req" and "pub_in" payload is everything after the third comma,
++    /// so it may contain commas and zero bytes. The `topic_name` and
++    /// `message_type` components of such a frame must not contain commas.
+     ///
+     /// The `operation` component is mandatory and must be one of:
+     ///     1. "sub": Subscribe to the topic in the `topic_name` component,
+@@ -134,6 +134,11 @@ namespace systems
+     ///                message. The payload should be a serialized
+     ///                protobuf message. The response payload holds the
+     ///                serialized protobuf response, if any.
++    ///     14. "pub_in": Publish the serialized message in the payload on
++    ///                the Gazebo Transport topic in the `topic_name`
++    ///                component, with the type in the `message_type`
++    ///                component. The topic is advertised on its first
++    ///                message and stays advertised; nothing is sent back.
+     ///
+     /// The `topic_name` component is mandatory for the "sub", "pub", "unsub",
+     /// and "req" operations. If present, it must be the name of a Gazebo
+@@ -255,6 +260,16 @@ namespace systems
+       private: void OnRequest(int _socketId,
+                    const std::vector<std::string> &_frameParts);
+ 
++      /// \brief Handles a client's publication ("pub_in").
++      /// \param[in] _frameParts The message in frame parts.
++      private: void OnPublishIn(const std::vector<std::string> &_frameParts);
++
++      /// \brief Publishers for the clients' publications, by topic, with
++      /// the message type each was advertised with.
++      private: std::map<std::string,
++               std::pair<std::string, transport::Node::Publisher>>
++                 clientPublishers;
++
+       private: gz::transport::Node node;
+ 
+       private: bool run = true;

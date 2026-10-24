@@ -38,10 +38,13 @@
 //! it keeps the frame's length and a `req`'s payload after its third comma
 //! whole). [`Transport::probe_binary_requests`] finds out, and
 //! [`Transport::set_binary_requests`] then lets `req` payloads hold any
-//! bytes (DECISIONS.md D-76). The
-//! server also has no `adv` or `pub_in` handler, so [`Transport::advertise`]
-//! and [`Transport::publish`] (gzweb's API) are ignored by every released
-//! server.
+//! bytes (DECISIONS.md D-76). No released server has an `adv` or `pub_in`
+//! handler, so [`Transport::advertise`] and [`Transport::publish`]
+//! (gzweb's API) do nothing there; the patched server (client-publish
+//! patch) publishes a `pub_in` frame's payload, kept whole after its third
+//! comma. [`Transport::probe_publishing`] finds out, and
+//! [`Transport::set_publishing`] then lets `pub_in` payloads hold any
+//! bytes (DECISIONS.md D-104).
 //!
 //! Jetty answers `auth` even without a key configured (`authorized`, for any
 //! key); gz-launch didn't answer it at all.
@@ -160,11 +163,22 @@ pub struct Transport {
     events: VecDeque<Event>,
     /// The server keeps binary `req` payloads whole.
     binary_requests: bool,
+    /// The server publishes `pub_in` payloads whole (D-104).
+    publishing: bool,
 }
 
 /// The service the binary-request probe calls: gz-sim's world list, which
 /// takes a `gz.msgs.Empty` and has no effect.
 pub const BINARY_PROBE_SERVICE: &str = "/gazebo/worlds";
+
+/// The topic [`Transport::probe_publishing`] publishes on.
+pub const PUBLISH_PROBE_TOPIC: &str = "/gzweb/publish_probe";
+
+/// Whether a `topics-types` reply after [`Transport::probe_publishing`]
+/// shows the server published the probe.
+pub fn topics_show_publishing(pairs: &[(String, String)]) -> bool {
+    pairs.iter().any(|(t, _)| t == PUBLISH_PROBE_TOPIC)
+}
 
 /// An Empty with an unknown field 15 of two bytes, a zero and a comma: a
 /// server that cuts the frame at the zero byte passes on a truncated field,
@@ -192,7 +206,28 @@ impl Transport {
             outgoing: VecDeque::new(),
             events: VecDeque::new(),
             binary_requests: false,
+            publishing: false,
         }
+    }
+
+    /// Lets `pub_in` payloads hold any bytes (the server publishes them
+    /// whole), or not. Off again with every new connection.
+    pub fn set_publishing(&mut self, on: bool) {
+        self.publishing = on;
+    }
+
+    pub fn publishing(&self) -> bool {
+        self.publishing
+    }
+
+    /// Asks whether the server publishes what the client sends: an empty
+    /// `gz.msgs.Empty` on [`PUBLISH_PROBE_TOPIC`] (harmless, and ignored by
+    /// a server without `pub_in`), then the topic list, which holds the
+    /// probe's topic once the server has advertised it; see
+    /// [`topics_show_publishing`].
+    pub fn probe_publishing(&mut self) -> Result<(), SendError> {
+        self.queue("pub_in", PUBLISH_PROBE_TOPIC, "gz.msgs.Empty", b"", true)?;
+        self.request_topics_types()
     }
 
     /// Lets `req` payloads hold any bytes (the server keeps them whole), or
@@ -366,8 +401,9 @@ impl Transport {
         self.send("adv", topic, msg_type, b"")
     }
 
-    /// gzweb `publish` (`pub_in`). No released server (gz-launch or Jetty)
-    /// handles it.
+    /// gzweb `publish` (`pub_in`): publishes on a patched server
+    /// ([`Transport::probe_publishing`]); no released server (gz-launch or
+    /// Jetty) handles it.
     pub fn publish(
         &mut self,
         topic: &str,
@@ -398,7 +434,7 @@ impl Transport {
         msg_type: &str,
         payload: &[u8],
     ) -> Result<(), SendError> {
-        let binary = op == "req" && self.binary_requests;
+        let binary = (op == "req" && self.binary_requests) || (op == "pub_in" && self.publishing);
         self.queue(op, topic, msg_type, payload, binary)
     }
 
@@ -428,6 +464,7 @@ impl Transport {
     fn set_status(&mut self, status: Status) {
         if !matches!(status, Status::Ready) {
             self.binary_requests = false;
+            self.publishing = false;
         }
         if self.status != status {
             self.status = status.clone();
@@ -539,12 +576,18 @@ fn check_frame(
     if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || (!binary && bad(payload)) {
         return Err(SendError::Unsendable("a field contains ',' or 0x00"));
     }
-    let needs_topic = matches!(op, "sub" | "image" | "unsub" | "throttle" | "req" | "scene");
+    let needs_topic = matches!(
+        op,
+        "sub" | "image" | "unsub" | "throttle" | "req" | "scene" | "pub_in"
+    );
     if needs_topic && topic.is_empty() {
         return Err(SendError::Unsendable("empty topic or service"));
     }
     if op == "req" && (msg_type.is_empty() || (!binary && payload.is_empty())) {
         return Err(SendError::Unsendable("empty request type or payload"));
+    }
+    if op == "pub_in" && msg_type.is_empty() {
+        return Err(SendError::Unsendable("empty message type"));
     }
     Ok(())
 }
@@ -747,6 +790,45 @@ mod tests {
         // An empty world name would make `scene,,,`: no scene request.
         t.on_message(&worlds_frame(&[""]));
         assert!(drain_out(&mut t).is_empty());
+    }
+
+    /// The publish probe is an empty publication and a topic list; a
+    /// publication's zero bytes go whole only once the server publishes,
+    /// and it needs a topic and a type.
+    #[test]
+    fn publications_go_whole_once_the_server_publishes() {
+        let mut t = connected();
+        t.probe_publishing().unwrap();
+        assert_eq!(
+            std::iter::from_fn(|| t.poll_outgoing()).collect::<Vec<_>>(),
+            [
+                build("pub_in", PUBLISH_PROBE_TOPIC, "gz.msgs.Empty", b""),
+                build("topics-types", "", "", b""),
+            ]
+        );
+        let pairs = |t: &str| vec![(t.to_string(), "gz.msgs.Empty".to_string())];
+        assert!(topics_show_publishing(&pairs(PUBLISH_PROBE_TOPIC)));
+        assert!(!topics_show_publishing(&pairs("/other")));
+        let twist = b"\x0a\x09\x09\x00\x00\x00\x00\x00\x00\xf0\x3f";
+        let field = Err(SendError::Unsendable("a field contains ',' or 0x00"));
+        assert_eq!(t.publish("/cmd_vel", "gz.msgs.Twist", twist), field);
+        t.set_publishing(true);
+        assert!(t.publishing());
+        t.publish("/cmd_vel", "gz.msgs.Twist", twist).unwrap();
+        assert_eq!(
+            t.poll_outgoing(),
+            Some(build("pub_in", "/cmd_vel", "gz.msgs.Twist", twist))
+        );
+        assert_eq!(
+            t.publish("", "gz.msgs.Twist", b"x"),
+            Err(SendError::Unsendable("empty topic or service"))
+        );
+        assert_eq!(
+            t.publish("/cmd_vel", "", b"x"),
+            Err(SendError::Unsendable("empty message type"))
+        );
+        t.on_open();
+        assert!(!t.publishing());
     }
 
     #[test]

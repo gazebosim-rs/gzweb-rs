@@ -44,8 +44,10 @@ pub struct GzTopics {
 impl GzTopics {
     /// Replaces the list with a reply's (topic, type) pairs, sorted by name.
     pub fn set(&mut self, pairs: Vec<(String, String)>) {
+        // The publish probe's topic is the client's own.
         let mut list: Vec<TopicInfo> = pairs
             .into_iter()
+            .filter(|(name, _)| name != gz_core::transport::PUBLISH_PROBE_TOPIC)
             .map(|(name, msg_type)| TopicInfo { name, msg_type })
             .collect();
         list.sort();

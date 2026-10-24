@@ -13,7 +13,8 @@ use gz_core::control;
 use gz_core::msgs;
 use gz_core::topic::world_topic;
 use gz_core::transport::{
-    probe_reply_supports_binary, Event, SendError, Status, Transport, BINARY_PROBE_SERVICE,
+    probe_reply_supports_binary, topics_show_publishing, Event, SendError, Status, Transport,
+    BINARY_PROBE_SERVICE,
 };
 use prost::Message as _;
 
@@ -51,7 +52,12 @@ pub struct WebsocketBackend {
     /// Those of them the app subscribed too: their messages also go out
     /// as [`GzPublish`] (DECISIONS.md D-97).
     taps: HashSet<String>,
+    /// Topic lists still to read for the publish probe (D-104).
+    publish_probes: u32,
 }
+
+/// How many topic lists the publish probe reads before it gives up.
+const PUBLISH_PROBES: u32 = 3;
 
 /// Simulation state from `/world/<world>/stats` (interactive mode only).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -77,6 +83,9 @@ pub struct GzStatus {
     pub world: Option<String>,
     /// Frames that could not be parsed or decoded.
     pub malformed: u32,
+    /// Whether the server publishes what the client sends (`pub_in`,
+    /// DECISIONS.md D-104): `None` until its probe is answered.
+    pub publishes: Option<bool>,
     /// When the next reconnect attempt is due (`Time<Real>` seconds).
     pub reconnect_at: Option<f64>,
     /// Reconnect attempts since the last time the scene was ready.
@@ -102,6 +111,7 @@ impl GzStatus {
             sim: None,
             attempting: false,
             edits: None,
+            publishes: None,
         }
     }
 }
@@ -332,6 +342,7 @@ impl WebsocketBackend {
             store,
             own: HashSet::new(),
             taps: HashSet::new(),
+            publish_probes: 0,
         }
     }
 
@@ -370,9 +381,19 @@ impl WebsocketBackend {
                         if let Err(e) = self.transport.probe_binary_requests() {
                             warn!("edit probe: {e}");
                         }
+                        match self.transport.probe_publishing() {
+                            Ok(()) => self.publish_probes = PUBLISH_PROBES,
+                            Err(e) => warn!("publish probe: {e}"),
+                        }
                     }
-                } else if io.status.edits.is_some() {
-                    io.status.edits = None;
+                } else {
+                    if io.status.edits.is_some() {
+                        io.status.edits = None;
+                    }
+                    if io.status.publishes.is_some() {
+                        io.status.publishes = None;
+                    }
+                    self.publish_probes = 0;
                 }
                 io.status.status = s;
             }
@@ -384,7 +405,26 @@ impl WebsocketBackend {
                 info!("worlds: {worlds:?}");
                 io.status.world = worlds.first().cloned();
             }
-            Event::TopicsTypes(pairs) => io.topics = Some(pairs),
+            Event::TopicsTypes(pairs) => {
+                // The probe's topic shows once the server has advertised it;
+                // a list without it is asked for again, a few times.
+                if self.publish_probes > 0 && io.status.publishes.is_none() {
+                    let publishes = topics_show_publishing(&pairs);
+                    self.publish_probes -= 1;
+                    if publishes || self.publish_probes == 0 {
+                        self.transport.set_publishing(publishes);
+                        io.status.publishes = Some(publishes);
+                        if publishes {
+                            info!("the server publishes for the client");
+                        } else {
+                            info!("the server doesn't publish for the client");
+                        }
+                    } else if let Err(e) = self.transport.request_topics_types() {
+                        warn!("publish probe: {e}");
+                    }
+                }
+                io.topics = Some(pairs);
+            }
             Event::Topics(topics) => info!("topics: {topics:?}"),
             Event::Scene(scene) => {
                 info!(
@@ -611,10 +651,15 @@ impl SimBackend for WebsocketBackend {
     /// No released Gazebo websocket server (gz-launch or Jetty) takes
     /// publications (gzweb's `pub_in` op is ignored), so this is refused
     /// rather than sent into the void.
-    fn publish(&mut self, _topic: &str, _msg_type: &str, _payload: &[u8]) -> Result<(), SendError> {
-        Err(SendError::Unsendable(
-            "the Gazebo websocket server doesn't take publications",
-        ))
+    /// Publishes through a server that takes publications (D-104); a
+    /// stock server's would be dropped, so it isn't sent.
+    fn publish(&mut self, topic: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
+        if !self.transport.publishing() {
+            return Err(SendError::Unsendable(
+                "the Gazebo websocket server doesn't take publications",
+            ));
+        }
+        self.transport.publish(topic, msg_type, payload)
     }
 
     fn request(&mut self, service: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError> {
@@ -751,6 +796,7 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use gz_core::frame::build;
+    use gz_core::transport::PUBLISH_PROBE_TOPIC;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -1062,6 +1108,63 @@ mod tests {
         }
     }
 
+    /// The publish probe's topic in a topic list says the server
+    /// publishes; lists without it are asked for again, a few times, then
+    /// it doesn't. Either way, the probe's topic isn't one of the world's.
+    #[test]
+    fn the_publish_probe_reads_the_topic_list() {
+        let config = || GzConfig {
+            ui: crate::UiMode::Minimal,
+            reconnect: false,
+            ..Default::default()
+        };
+        let list = |topics: &[&str]| {
+            let msg = msgs::Publishers {
+                publisher: topics
+                    .iter()
+                    .map(|t| msgs::Publish {
+                        topic: t.to_string(),
+                        msg_type: "gz.msgs.Empty".into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            build(
+                "pub",
+                "topics-types",
+                "gz.msgs.Publishers",
+                &msg.encode_to_vec(),
+            )
+        };
+        let mut h = Harness::with(config());
+        h.ready();
+        assert_eq!(h.world.resource::<GzStatus>().publishes, None);
+        let again = h.msg(list(&["/a"]));
+        assert!(again.iter().any(|f| f == "topics-types,,,"), "{again:?}");
+        assert_eq!(h.world.resource::<GzStatus>().publishes, None);
+        h.msg(list(&["/a", PUBLISH_PROBE_TOPIC]));
+        assert_eq!(h.world.resource::<GzStatus>().publishes, Some(true));
+        assert!(h
+            .world
+            .resource::<GzTopics>()
+            .get(PUBLISH_PROBE_TOPIC)
+            .is_none());
+        let sent = h.command(GzCommand::Publish {
+            topic: "/cmd_vel".into(),
+            msg_type: "gz.msgs.Twist".into(),
+            payload: vec![0x08, 0x00, b','],
+        });
+        assert_eq!(sent.len(), 1, "{sent:?}");
+
+        let mut h = Harness::with(config());
+        h.ready();
+        for _ in 0..3 {
+            h.msg(list(&["/a"]));
+        }
+        assert_eq!(h.world.resource::<GzStatus>().publishes, Some(false));
+    }
+
     #[test]
     fn interactive_mode_follows_the_sim_stats() {
         let mut h = Harness::with(GzConfig {
@@ -1078,6 +1181,8 @@ mod tests {
                 "sub,/world/w/scene/deletion,,",
                 "throttle,/world/w/stats,na,5",
                 "req,/gazebo/worlds,gz.msgs.Empty,z\u{2}\0,",
+                "pub_in,/gzweb/publish_probe,gz.msgs.Empty,",
+                "topics-types,,,",
             ]
         );
         // Deletions queue for the scene, in order; a bad one is dropped.
@@ -1261,7 +1366,7 @@ mod tests {
         assert!(h.command(GzCommand::Play).is_empty());
         assert!(h.command(GzCommand::Stop).is_empty());
         h.ready();
-        // The websocket server takes no publications: refused, not sent.
+        // A server that hasn't said it publishes: refused, not sent.
         assert!(h
             .command(GzCommand::Publish {
                 topic: "/cmd_vel".into(),
