@@ -335,3 +335,115 @@ fn a_reconnect_forgets_the_hides_and_a_restart_the_moves() {
     app.update();
     assert_eq!(*stack(&app), UndoStack::default());
 }
+
+/// A delete undone creates the model again from its SDFormat, at its pose
+/// and under its name; redone, removes it again. A spawn undone removes
+/// it. A Reset forgets both (gz-sim puts the world back as loaded).
+#[test]
+fn a_delete_or_a_spawn_is_undone_through_the_server() {
+    let mut app = app(Some(true));
+    let model = ModelCopy {
+        name: "cart".into(),
+        sdf: "<sdf version=\"1.9\"><model name=\"cart\"/></sdf>".into(),
+        pose: Transform::from_xyz(1.0, 2.0, 0.0),
+    };
+    let requests = |app: &mut App| -> Vec<(String, Vec<u8>)> {
+        app.world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .filter_map(|c| match c {
+                GzCommand::Request {
+                    service, payload, ..
+                } => Some((service, payload)),
+                _ => None,
+            })
+            .collect()
+    };
+    app.world_mut().write_message(Record {
+        verb: "delete",
+        named: true,
+        changes: vec![Change::Exists {
+            model: model.clone(),
+            after: false,
+        }],
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    let stack = app.world().resource::<UndoStack>();
+    assert_eq!(stack.undo_label(), Some("delete cart"));
+    assert!(stack.is_dirty());
+    requests(&mut app);
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    let sent = requests(&mut app);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "/world/w/create");
+    let factory = msgs::EntityFactory::decode(sent[0].1.as_slice()).unwrap();
+    assert_eq!(factory.name, "cart");
+    assert!(!factory.allow_renaming);
+    assert_eq!(factory.pose.unwrap().position.unwrap().y, 2.0);
+    assert_eq!(
+        factory.from,
+        Some(msgs::entity_factory::From::Sdf(model.sdf.clone()))
+    );
+    app.world_mut().write_message(UndoCommand::Redo);
+    app.update();
+    let sent = requests(&mut app);
+    assert_eq!(sent[0].0, "/world/w/remove");
+    let entity = msgs::Entity::decode(sent[0].1.as_slice()).unwrap();
+    assert_eq!(entity.name, "cart");
+    assert_eq!(entity.r#type, msgs::entity::Type::Model as i32);
+    // A spawn undone removes the copy.
+    app.world_mut().write_message(Record {
+        verb: "duplicate",
+        named: true,
+        changes: vec![Change::Exists {
+            model: ModelCopy {
+                name: "cart_1".into(),
+                ..model
+            },
+            after: true,
+        }],
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    let sent = requests(&mut app);
+    assert_eq!(sent[0].0, "/world/w/remove");
+    assert_eq!(
+        msgs::Entity::decode(sent[0].1.as_slice()).unwrap().name,
+        "cart_1"
+    );
+    app.world_mut().write_message(GzCommand::Reset);
+    app.update();
+    let stack = app.world().resource::<UndoStack>();
+    assert_eq!((stack.undo_label(), stack.redo_label()), (None, None));
+}
+
+/// Without edits, a delete stays where it is.
+#[test]
+fn a_delete_waits_for_a_server_that_takes_edits() {
+    let mut app = app(Some(false));
+    app.world_mut().write_message(Record {
+        verb: "delete",
+        named: true,
+        changes: vec![Change::Exists {
+            model: ModelCopy {
+                name: "cart".into(),
+                sdf: String::new(),
+                pose: Transform::IDENTITY,
+            },
+            after: false,
+        }],
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    let stack = app.world().resource::<UndoStack>();
+    assert_eq!(stack.undo_label(), Some("delete cart"));
+}

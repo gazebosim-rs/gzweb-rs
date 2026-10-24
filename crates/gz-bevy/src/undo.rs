@@ -6,13 +6,15 @@
 //! the world's: a new server or world clears it, a Reset (sim time going
 //! back) forgets the moves it undid, and a new scene from a reconnect
 //! forgets the hides and Isolate it undid (DECISIONS.md D-89). The world is
-//! dirty while the stack isn't where it was at load.
+//! dirty while the stack isn't where it was at load. A model spawned or
+//! deleted by an edit (Duplicate, Paste, Delete: D-109) is removed or
+//! created again from its SDFormat.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::connection::{GzCommand, GzStatus};
-use crate::edit::{edits_allowed, Held, SetPose};
+use crate::edit::{create_copy_request, edits_allowed, remove_request, Held, SetPose};
 use crate::spawn::{GzEntity, GzIndex};
 
 /// One change an edit makes, as recorded (by entity).
@@ -34,6 +36,18 @@ pub enum Change {
         before: Option<Saved>,
         after: Option<Saved>,
     },
+    /// A top-level model spawned (`after`) or deleted (not `after`).
+    Exists { model: ModelCopy, after: bool },
+}
+
+/// A top-level model as an edit spawns it or deleted it: its name (its
+/// scene path), its SDFormat ([`gz_core::world_file::model_sdf`]) and its
+/// pose in the world.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelCopy {
+    pub name: String,
+    pub sdf: String,
+    pub pose: Transform,
 }
 
 /// Visibilities by scene path.
@@ -82,6 +96,10 @@ enum Step {
         before: Option<Saved>,
         after: Option<Saved>,
     },
+    Exists {
+        model: ModelCopy,
+        after: bool,
+    },
 }
 
 impl Step {
@@ -91,14 +109,21 @@ impl Step {
             Step::Pose { before, after, .. } => before != after,
             Step::Visibility { before, after, .. } => before != after,
             Step::Isolated { before, after } => before != after,
+            Step::Exists { .. } => true,
         }
     }
 
     fn path(&self) -> Option<&str> {
         match self {
             Step::Pose { path, .. } | Step::Visibility { path, .. } => Some(path),
+            Step::Exists { model, .. } => Some(&model.name),
             Step::Isolated { .. } => None,
         }
+    }
+
+    /// Whether putting it back or doing it again asks the server.
+    fn asks_server(&self) -> bool {
+        matches!(self, Step::Pose { .. } | Step::Exists { .. })
     }
 }
 
@@ -249,9 +274,10 @@ impl UndoStack {
         self.saved = self.saved.filter(|s| *s == 0);
     }
 
-    /// Forgets the moves a Reset undid (gz-sim puts every pose back).
+    /// Forgets the moves, spawns and deletes a Reset undid (gz-sim puts
+    /// the world back as it was loaded).
     fn forget_poses(&mut self) {
-        self.forget(|s| matches!(s, Step::Pose { .. }));
+        self.forget(|s| matches!(s, Step::Pose { .. } | Step::Exists { .. }));
     }
 
     /// Forgets the hides and Isolate a new scene undid (it comes with
@@ -310,11 +336,15 @@ fn record(
                 Change::Pose { entity, .. } | Change::Visibility { entity, .. } => {
                     entities.get(*entity).ok()
                 }
-                Change::Isolated { .. } => None,
+                Change::Isolated { .. } | Change::Exists { .. } => None,
             };
-            if let Some(g) = entity {
-                if !names.contains(&g.name.as_str()) {
-                    names.push(&g.name);
+            let name = match c {
+                Change::Exists { model, .. } => Some(model.name.as_str()),
+                _ => entity.map(|g| g.name.as_str()),
+            };
+            if let Some(name) = name {
+                if !names.contains(&name) {
+                    names.push(name);
                 }
             }
             steps.push(match (c, entity) {
@@ -331,6 +361,10 @@ fn record(
                 (Change::Isolated { before, after }, _) => Step::Isolated {
                     before: before.clone(),
                     after: after.clone(),
+                },
+                (Change::Exists { model, after }, _) => Step::Exists {
+                    model: model.clone(),
+                    after: *after,
                 },
                 // Gone already: nothing to put back.
                 _ => continue,
@@ -362,6 +396,7 @@ fn undo_redo(
     mut isolated: ResMut<Isolated>,
     mut held: ResMut<Held>,
     mut edits: MessageWriter<SetPose>,
+    mut server: MessageWriter<GzCommand>,
 ) {
     for cmd in commands.read() {
         let undo = *cmd == UndoCommand::Undo;
@@ -373,8 +408,9 @@ fn undo_redo(
         let Some(edit) = top else {
             continue;
         };
-        let moves = edit.steps.iter().any(|s| matches!(s, Step::Pose { .. }));
-        if moves && !edits_allowed(status.as_deref()) {
+        let moves = edit.steps.iter().any(Step::asks_server);
+        let world = status.as_deref().and_then(|s| s.world.clone());
+        if moves && (!edits_allowed(status.as_deref()) || world.is_none()) {
             warn!(
                 "can't {} {}: the server doesn't take edits",
                 if undo { "undo" } else { "redo" },
@@ -402,6 +438,16 @@ fn undo_redo(
             edit.steps.iter().collect()
         };
         for step in order {
+            if let Step::Exists { model, after } = step {
+                let world = world.as_deref().unwrap_or_default();
+                // Undoing a spawn or redoing a delete removes the model.
+                server.write(if *after == undo {
+                    remove_request(world, &model.name)
+                } else {
+                    create_copy_request(world, &model.sdf, &model.name, &model.pose)
+                });
+                continue;
+            }
             let found = step
                 .path()
                 .and_then(|p| by_path.get(p))
