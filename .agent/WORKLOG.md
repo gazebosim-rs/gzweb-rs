@@ -1551,3 +1551,36 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   rates for the topics received, the echo in text format, the footer.
 - **Tests:** workspace 737 → 754 passing; coverage 98.3% lines. check.sh
   passes. Not tried by hand.
+
+## 2026-10-24: M7b Plot (D-100, D-101)
+
+- **Fields:** `gz_core::fields` lists a message's numbers by path and
+  reads one (by index, or by `name` in a list of named messages), and
+  its header stamp; `gz_core::echo` shares its decoding.
+- **Recording:** `PlotData` is always on; each series holds its topic at
+  30 Hz through `GzSubscriptions` and records at its message's stamp or
+  the sim clock (`SimClock`, from the stats); a reset drops the samples;
+  a topic that leaves the list marks its series.
+- **Charts:** stacked, up to four series each in the fixed colours, a
+  legend with live values, y ticks on round steps, the window chips,
+  Pause, the crosshair readout. The plot is drawn on the CPU (`raster`:
+  distance-based anti-aliasing, one blend a series, an sRGB table) into
+  an image at its physical size, at most 30 times a second and only on
+  a change.
+- **Picker:** inline, topics then a topic's numbers with live values,
+  and the chart a field goes to; Add field…, the header's +, and Topics'
+  Plot field (now enabled: it opens the picker on the echoed topic in
+  the second slot).
+- **Shell:** header toggles (D-101: `HeaderAction::toggle`,
+  `set_action_on`).
+- **Export CSV:** `gz_bevy::save::save_text`: a Blob download in the
+  browser, the working directory natively.
+- **`gzweb --plot TOPIC:FIELD,…`** (repeatable) and `--plot TOPIC` (the
+  picker on it); under Topics with `--echo`.
+- **Live check** (debug build, Jetty `diff_drive` on :9011): odometry
+  and stats charts (light), Topics over Plot (dark), the picker on the
+  stats topic (light). Its odometry comes at 1 Hz (the world's
+  `odom_publish_frequency`), and the vehicle isn't driven, so its lines
+  are flat; the real-time factor's line moves.
+- **Tests:** workspace 754 → 778 passing; coverage 98.2% lines. check.sh
+  passes. Not tried by hand.

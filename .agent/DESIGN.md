@@ -222,7 +222,10 @@ logged, not queued. Parts of the app subscribe through
 `Subscribe` directly, so two holders of one topic share it (D-97); the
 app subscribing a world topic the client takes itself taps it.
 `GzTopics` keeps the server's topic list and `GzTraffic` each received
-topic's count and rate.
+topic's count and rate. `gz_core::fields` reads a message's numbers by
+field path (the Plot panel, D-100); `gz_bevy::save::save_text` saves a
+file the user asked for (a download in the browser, the working
+directory natively).
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In
