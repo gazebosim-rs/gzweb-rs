@@ -120,6 +120,7 @@ pub(crate) fn build(app: &mut App) {
                 transport::steps_label_text,
                 world_button::world_texts,
                 world_button::unsaved_dot,
+                world_menu::forget_last_saved,
                 world_menu::world_menu_states,
                 world_menu::one_line_labels,
                 tools::snap_states,

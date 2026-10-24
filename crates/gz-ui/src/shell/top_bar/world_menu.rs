@@ -164,6 +164,36 @@ pub(crate) fn one_line_labels(
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LastSaved(pub Option<String>);
 
+/// Another server or world wasn't saved this session.
+pub(crate) fn forget_last_saved(
+    status: Option<Res<GzStatus>>,
+    mut last: ResMut<LastSaved>,
+    mut seen: Local<Option<(String, String)>>,
+) {
+    let now = status
+        .as_deref()
+        .and_then(|s| Some((s.url.clone(), s.world.clone()?)));
+    if now.is_some() && *seen != now {
+        if seen.is_some() && last.0.is_some() {
+            last.0 = None;
+        }
+        *seen = now;
+    }
+}
+
+/// The longest Undo or Redo label (with its edit's name), so it and its
+/// key fit the menu's fixed width: longer ones end in "…".
+const EDIT_LABEL_MAX: usize = 26;
+
+/// `label`, cut to [`EDIT_LABEL_MAX`] characters with an ellipsis.
+pub(crate) fn fit_label(label: &str) -> String {
+    if label.chars().count() <= EDIT_LABEL_MAX {
+        return label.to_string();
+    }
+    let cut: String = label.chars().take(EDIT_LABEL_MAX - 1).collect();
+    format!("{}…", cut.trim_end())
+}
+
 /// The world button, as the World menu's trigger.
 pub(crate) fn world_menu(theme: &Theme, map: &InputMap) -> impl Bundle {
     let t = theme.clone();
@@ -275,11 +305,11 @@ pub(crate) fn world_menu_states(
             | WorldItem::ExportSdf
             | WorldItem::ExportScreenshot => (live, label.to_string()),
             WorldItem::Undo => match undo.and_then(UndoStack::undo_label) {
-                Some(l) => (true, format!("Undo {l}")),
+                Some(l) => (true, fit_label(&format!("Undo {l}"))),
                 None => (false, label.to_string()),
             },
             WorldItem::Redo => match undo.and_then(UndoStack::redo_label) {
-                Some(l) => (true, format!("Redo {l}")),
+                Some(l) => (true, fit_label(&format!("Redo {l}"))),
                 None => (false, label.to_string()),
             },
             WorldItem::Connect => (true, label.to_string()),
