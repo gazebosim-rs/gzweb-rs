@@ -3682,6 +3682,7 @@ fn restore_puts_the_camera_back() {
             .rotation,
         pivot: Vec3::new(1.0, 0.0, 0.0),
         ortho: Some(7.5),
+        snapped: None,
     };
     r.op(ViewOp::Restore(pose));
     let (v, t, p) = (r.view(), r.transform(), r.projection());
@@ -3708,4 +3709,28 @@ fn restore_puts_the_camera_back() {
         back.translation.distance(pose.translation) < 1e-4,
         "{back:?}"
     );
+}
+
+/// A pose read mid-animation is where the animation ends, snapped too,
+/// and restoring it puts the axis view back.
+#[test]
+fn a_pose_read_mid_animation_is_its_end() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Snap(SnapView::Top));
+    r.app.update();
+    assert!(r.view().animating());
+    let mid = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert_eq!(mid.snapped, Some(SnapView::Top));
+    assert!(mid.ortho.is_some());
+    for _ in 0..30 {
+        r.app.update();
+    }
+    let end = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert!(
+        mid.rotation.angle_between(end.rotation) < 1e-4,
+        "{mid:?} {end:?}"
+    );
+    r.op(ViewOp::Orbit(Vec2::new(40.0, 0.0)));
+    r.op(ViewOp::Restore(mid));
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
 }

@@ -195,8 +195,12 @@ pub(crate) fn shortcut_keys(
                 continue;
             }
             "ui.workspace_1" | "ui.workspace_2" | "ui.workspace_3" | "ui.workspace_4" => {
-                let n = usize::from(id.as_bytes()[id.len() - 1] - b'1');
-                workspaces.write(super::workspaces::WorkspaceCommand::Switch(n));
+                // Not under an edit: the switch would move its camera
+                // or close its field.
+                if !shortcuts.editing() {
+                    let n = usize::from(id.as_bytes()[id.len() - 1] - b'1');
+                    workspaces.write(super::workspaces::WorkspaceCommand::Switch(n));
+                }
                 continue;
             }
             "edit.undo" | "edit.redo" => {

@@ -69,6 +69,8 @@ struct Args {
     /// `--ui gallery`: the widget gallery instead of a world.
     gallery: bool,
     theme: ThemeMode,
+    /// `--theme` or `?theme=` was given (it wins over the saved theme).
+    theme_set: bool,
     /// `--window WxH`.
     window: Option<(u32, u32)>,
     /// `--view`, `--overlays`.
@@ -215,6 +217,7 @@ fn parse_args(
     let mut capture_at_ms = None;
     let mut gallery = false;
     let mut theme = ThemeMode::System;
+    let mut theme_set = false;
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
@@ -259,7 +262,10 @@ fn parse_args(
                     })?;
                 }
             }
-            "--theme" => theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?,
+            "--theme" => {
+                theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?;
+                theme_set = true;
+            }
             "--no-hud" => hud = false,
             "--window" => window = Some(parse_window(&value()?)?),
             "--capture-at-ms" => capture_at_ms = Some(millis()?),
@@ -434,6 +440,7 @@ fn parse_args(
         http_mirror,
         gallery,
         theme,
+        theme_set,
         window,
         start,
         scene,
@@ -483,6 +490,8 @@ fn command() -> Result<Command, String> {
         bevy::log::warn!("?ui: {e}");
         UiMode::Minimal
     });
+    let theme: Option<ThemeMode> =
+        get("theme").and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             url: web_url(
@@ -509,9 +518,8 @@ fn command() -> Result<Command, String> {
         snapshot: None,
         http_mirror: get("http_mirror"),
         gallery: is_gallery(get("ui").as_deref()),
-        theme: get("theme")
-            .and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok())
-            .unwrap_or_default(),
+        theme: theme.unwrap_or_default(),
+        theme_set: theme.is_some(),
         window: None,
         start: None,
         scene: None,
@@ -763,7 +771,7 @@ fn main() -> AppExit {
         // start as the app does; a theme asked for wins over the saved one.
         if args.snapshot.is_none() {
             if let Some(mut store) = gz_ui::shell::WorkspaceStore::platform() {
-                store.theme = args.theme == ThemeMode::System;
+                store.theme = !args.theme_set;
                 app.insert_resource(store);
             }
         }
@@ -1137,7 +1145,10 @@ mod tests {
         assert_eq!(shot.mode, Mode::Capture);
         let d = run_args(&[], None);
         assert!(!d.gallery);
-        assert_eq!(d.theme, ThemeMode::System);
+        assert_eq!((d.theme, d.theme_set), (ThemeMode::System, false));
+        // An explicit system theme still wins over the saved one.
+        let s = run_args(&["--theme", "system"], None);
+        assert_eq!((s.theme, s.theme_set), (ThemeMode::System, true));
         assert_eq!(
             parse(&["--ui", "gallery", "--snapshot", "o.json"], None).unwrap_err(),
             "--snapshot doesn't apply to --ui gallery (use --screenshot)"

@@ -19,7 +19,8 @@ use std::str::FromStr;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use gz_bevy::camera::MainCamera;
-use gz_bevy::overlays::{Overlay, OverlaySet};
+use gz_bevy::overlays::{KeepGrid, Overlay, OverlaySet};
+use gz_bevy::spawn::GzIndex;
 use gz_bevy::view::{SnapView, ViewCamera, ViewCommand, ViewId, ViewOp, ViewPose};
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +47,8 @@ pub(crate) const WORKSPACE_FILE: &str = "workspaces.json";
 pub struct SavedView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pose: Option<SavedPose>,
-    /// "top", "front", … (§8's Build: a top ortho view).
+    /// "top", "front", …: with a pose, the axis view it sits in; without,
+    /// one to snap to (§8's Build: a top ortho view).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snap: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +83,7 @@ impl From<SavedPose> for ViewPose {
             rotation: Quat::from_array(p.rotation),
             pivot: Vec3::from_array(p.pivot),
             ortho: p.ortho,
+            snapped: None,
         }
     }
 }
@@ -202,6 +205,10 @@ impl Workspaces {
     }
 }
 
+/// The file's format. A newer one is read as far as it can be and never
+/// written over.
+pub(crate) const FILE_VERSION: u32 = 1;
+
 /// What the file holds.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub(crate) struct WorkspaceFile {
@@ -262,13 +269,18 @@ impl WorkspaceStore {
         }
     }
 
+    /// Writes `text`; a file whole or not at all (written beside it, then
+    /// moved over it).
     fn write(&mut self, text: &str) -> Result<(), String> {
         match &mut self.at {
             StoreAt::File(path) => {
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 }
-                std::fs::write(path, text).map_err(|e| e.to_string())
+                let part = path.with_file_name(format!("{WORKSPACE_FILE}.part"));
+                std::fs::write(&part, text)
+                    .and_then(|()| std::fs::rename(&part, &*path))
+                    .map_err(|e| e.to_string())
             }
             #[cfg(target_arch = "wasm32")]
             StoreAt::Browser => gz_bevy::view::web::store(gz_bevy::view::web::WORKSPACES_KEY, text)
@@ -280,6 +292,29 @@ impl WorkspaceStore {
                 *s = Some(text.to_string());
                 Ok(())
             }
+        }
+    }
+
+    /// Keeps `text`, which couldn't be read, apart (`workspaces.json.bad`,
+    /// `gzweb.workspaces.bad`), so writing doesn't lose it; where.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    fn set_aside(&mut self, text: &str) -> Result<String, String> {
+        match &self.at {
+            StoreAt::File(path) => {
+                let bad = path.with_file_name(format!("{WORKSPACE_FILE}.bad"));
+                std::fs::rename(path, &bad).map_err(|e| e.to_string())?;
+                Ok(bad.display().to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            StoreAt::Browser => {
+                let key = gz_bevy::view::web::WORKSPACES_BAD_KEY;
+                gz_bevy::view::web::store(key, text)
+                    .then(|| key.to_string())
+                    .ok_or_else(|| "the browser didn't keep it".to_string())
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            StoreAt::Browser => Ok(String::new()),
+            StoreAt::Memory(_) => Ok("memory".into()),
         }
     }
 }
@@ -366,10 +401,13 @@ impl LayoutState<'_, '_> {
             views: cams
                 .into_iter()
                 .filter(|(_, id, ..)| id.0 < preset.count())
-                .map(|(_, _, v, t, p, set)| SavedView {
-                    pose: Some(ViewPose::of(v, t, p).into()),
-                    snap: None,
-                    overlays: set.map(overlay_ids),
+                .map(|(_, _, v, t, p, set)| {
+                    let pose = ViewPose::of(v, t, p);
+                    SavedView {
+                        pose: Some(pose.into()),
+                        snap: pose.snapped.map(snap_id),
+                        overlays: set.map(overlay_ids),
+                    }
                 })
                 .collect(),
         }
@@ -440,31 +478,42 @@ impl LayoutState<'_, '_> {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct PendingViews(pub(crate) Vec<(ViewId, SavedView)>);
 
-/// Puts each pending view's camera in place once it exists.
+/// Puts each pending view's camera in place once it exists. Before the
+/// scene comes, its grid stays as saved when the scene's flag arrives.
 pub(crate) fn apply_pending_views(
     mut pending: ResMut<PendingViews>,
     mut cameras: Query<(Entity, &ViewId, Option<&mut OverlaySet>), With<MainCamera>>,
+    index: Option<Res<GzIndex>>,
     mut views: MessageWriter<ViewCommand>,
+    mut commands: Commands,
 ) {
     if pending.0.is_empty() {
         return;
     }
+    let before_scene = index.is_none_or(|i| i.scene.is_none());
     pending.0.retain(|(id, saved)| {
         let Some((view, _, set)) = cameras.iter_mut().find(|(_, i, _)| *i == id) else {
             return true;
         };
+        let snap = saved.snap.as_deref().and_then(snap_view);
         if let Some(pose) = saved.pose {
             views.write(ViewCommand {
                 view,
-                op: ViewOp::Restore(pose.into()),
+                op: ViewOp::Restore(ViewPose {
+                    snapped: snap,
+                    ..pose.into()
+                }),
             });
-        } else if let Some(snap) = saved.snap.as_deref().and_then(snap_view) {
+        } else if let Some(snap) = snap {
             views.write(ViewCommand {
                 view,
                 op: ViewOp::Snap(snap),
             });
         }
         if let (Some(ids), Some(mut set)) = (&saved.overlays, set) {
+            if before_scene {
+                commands.entity(view).insert(KeepGrid);
+            }
             for o in Overlay::ALL {
                 let on = ids.iter().any(|i| i == o.id());
                 if set.is_on(o) != on {
@@ -480,7 +529,12 @@ pub(crate) fn apply_pending_views(
 fn snap_view(name: &str) -> Option<SnapView> {
     SnapView::ALL
         .into_iter()
-        .find(|s| format!("{s:?}").eq_ignore_ascii_case(name))
+        .find(|s| snap_id(*s) == name.to_ascii_lowercase())
+}
+
+/// [`SnapView::Top`] → "top", and so on.
+fn snap_id(snap: SnapView) -> String {
+    format!("{snap:?}").to_ascii_lowercase()
 }
 
 /// Switch to a workspace, or save the current one's layout.
@@ -494,34 +548,63 @@ pub enum WorkspaceCommand {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WorkspacesLoaded(bool);
 
-/// What the file last had written, to write again only on a change.
+/// What the store holds beyond the app's own state, and what it last
+/// had written.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct Written(Option<WorkspaceFile>);
+pub(crate) struct Persisted {
+    /// What was last written (or read), to write again only on a change.
+    written: Option<WorkspaceFile>,
+    /// The file's theme, kept as it is while a theme was asked for
+    /// ([`WorkspaceStore::theme`] off).
+    theme: Option<String>,
+    /// Its workspaces this build doesn't know (a newer one's), kept.
+    others: std::collections::BTreeMap<String, WorkspaceLayout>,
+    /// It isn't written: it couldn't be read, or a newer gzweb wrote it.
+    read_only: bool,
+}
 
-/// What the file holds for `workspaces` and `theme`.
-fn file_of(workspaces: &Workspaces, theme: &Theme) -> WorkspaceFile {
-    WorkspaceFile {
-        version: 1,
-        current: WORKSPACES[workspaces.current].0.into(),
-        theme: Some(theme.mode.id().into()),
-        workspaces: WORKSPACES
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| workspaces.user_saved[*i])
-            .map(|(i, (id, ..))| (id.to_string(), workspaces.saved[i].clone()))
-            .collect(),
+impl Persisted {
+    /// What the file holds for `workspaces` and `theme`.
+    fn file_of(
+        &self,
+        workspaces: &Workspaces,
+        theme: &Theme,
+        store: &WorkspaceStore,
+    ) -> WorkspaceFile {
+        let mut saved = self.others.clone();
+        for (i, (id, ..)) in WORKSPACES.iter().enumerate() {
+            if workspaces.user_saved[i] {
+                saved.insert(id.to_string(), workspaces.saved[i].clone());
+            }
+        }
+        WorkspaceFile {
+            version: FILE_VERSION,
+            current: WORKSPACES[workspaces.current].0.into(),
+            theme: if store.theme {
+                Some(theme.mode.id().into())
+            } else {
+                self.theme.clone()
+            },
+            workspaces: saved,
+        }
     }
 }
 
-/// Reads the store once the shell is up: the saved workspaces, the current
-/// one (laid out as saved, if it was) and the theme. A file it can't read
-/// leaves the defaults, saying so. Either way, it's written again only
-/// once something in it changes.
+/// Reads the store on the first frame: the saved workspaces, the
+/// current one (laid out as saved, else its default; Build unsaved is the
+/// app's start) and the theme. Either way, it's written again only once
+/// something in it changes.
+///
+/// A file it can't parse is kept apart (`.bad`) and the defaults used; if
+/// it can't be kept apart, or can't be read at all, it's left as it is
+/// and not written this session. A newer version's is read as far as it
+/// can be and not written either.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_workspaces(
-    store: Option<Res<WorkspaceStore>>,
+    store: Option<ResMut<WorkspaceStore>>,
     mut loaded: ResMut<WorkspacesLoaded>,
     mut workspaces: ResMut<Workspaces>,
-    mut written: ResMut<Written>,
+    mut persisted: ResMut<Persisted>,
     mut theme: ResMut<Theme>,
     mut state: LayoutState,
     mut pending: ResMut<PendingViews>,
@@ -530,38 +613,65 @@ pub(crate) fn load_workspaces(
         return;
     }
     loaded.0 = true;
-    let Some(store) = store else {
+    let Some(mut store) = store else {
         return;
     };
-    let read = store.read().and_then(|text| {
-        text.map(|t| serde_json::from_str::<WorkspaceFile>(&t).map_err(|e| e.to_string()))
-            .transpose()
-    });
-    let file = match read {
-        Ok(Some(file)) => file,
-        Ok(None) => {
-            written.0 = Some(file_of(&workspaces, &theme));
-            return;
-        }
+    let text = match store.read() {
+        Ok(text) => text,
         Err(e) => {
-            warn!("Couldn't read {WORKSPACE_FILE}, using defaults: {e}");
-            written.0 = Some(file_of(&workspaces, &theme));
+            warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e}");
+            persisted.read_only = true;
             return;
         }
     };
-    for (i, (id, ..)) in WORKSPACES.iter().enumerate() {
-        if let Some(w) = file.workspaces.get(*id) {
-            workspaces.saved[i] = w.clone();
-            workspaces.user_saved[i] = true;
+    let parsed = text.map(|t| serde_json::from_str::<WorkspaceFile>(&t).map_err(|e| (t, e)));
+    let file = match parsed {
+        Some(Ok(file)) => file,
+        None => {
+            persisted.written = Some(persisted.file_of(&workspaces, &theme, &store));
+            return;
+        }
+        Some(Err((text, e))) => {
+            match store.set_aside(&text) {
+                Ok(at) => {
+                    warn!(
+                        "Couldn't read {WORKSPACE_FILE}, using defaults (it's kept as {at}): {e}"
+                    );
+                }
+                Err(why) => {
+                    warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e} (couldn't keep it apart: {why})");
+                    persisted.read_only = true;
+                }
+            }
+            return;
+        }
+    };
+    if file.version > FILE_VERSION {
+        warn!(
+            "{WORKSPACE_FILE} is from a newer gzweb (version {}); reading what this one can, not writing it",
+            file.version
+        );
+        persisted.read_only = true;
+    }
+    for (id, w) in &file.workspaces {
+        match WORKSPACES.iter().position(|(known, ..)| known == id) {
+            Some(i) => {
+                workspaces.saved[i] = w.clone();
+                workspaces.user_saved[i] = true;
+            }
+            None => {
+                persisted.others.insert(id.clone(), w.clone());
+            }
         }
     }
     if let Some(i) = WORKSPACES.iter().position(|(id, ..)| *id == file.current) {
         workspaces.current = i;
-        if workspaces.user_saved[i] {
+        if i != 0 || workspaces.user_saved[i] {
             let w = workspaces.saved[i].clone();
             state.apply(&w, &mut pending);
         }
     }
+    persisted.theme = file.theme.clone();
     if store.theme {
         if let Some(mode) = file
             .theme
@@ -571,7 +681,7 @@ pub(crate) fn load_workspaces(
             theme.set_mode(mode);
         }
     }
-    written.0 = Some(file_of(&workspaces, &theme));
+    persisted.written = Some(persisted.file_of(&workspaces, &theme, &store));
 }
 
 /// Runs the [`WorkspaceCommand`]s: a switch keeps the layout being left
@@ -619,21 +729,21 @@ pub(crate) fn persist_workspaces(
     loaded: Res<WorkspacesLoaded>,
     workspaces: Res<Workspaces>,
     theme: Res<Theme>,
-    mut written: ResMut<Written>,
+    mut persisted: ResMut<Persisted>,
 ) {
     let Some(mut store) = store else {
         return;
     };
-    if !loaded.0 || !(workspaces.is_changed() || theme.is_changed()) {
+    if !loaded.0 || persisted.read_only || !(workspaces.is_changed() || theme.is_changed()) {
         return;
     }
-    let file = file_of(&workspaces, &theme);
-    if written.0.as_ref() == Some(&file) {
+    let file = persisted.file_of(&workspaces, &theme, &store);
+    if persisted.written.as_ref() == Some(&file) {
         return;
     }
     let text = serde_json::to_string_pretty(&file).unwrap_or_default();
     match store.write(&text) {
-        Ok(()) => written.0 = Some(file),
+        Ok(()) => persisted.written = Some(file),
         Err(e) => warn!("Couldn't write {WORKSPACE_FILE}: {e}"),
     }
 }
@@ -642,12 +752,14 @@ pub(crate) fn build(app: &mut App) {
     app.add_message::<WorkspaceCommand>()
         .init_resource::<Workspaces>()
         .init_resource::<WorkspacesLoaded>()
-        .init_resource::<Written>()
+        .init_resource::<Persisted>()
         .init_resource::<PendingViews>()
+        // Before Update, so the start flags (`--layout`, `--pop-out`, a
+        // panel to open) go over the layout it reads.
+        .add_systems(PreUpdate, load_workspaces)
         .add_systems(
             Update,
             (
-                load_workspaces,
                 run_workspace_commands,
                 apply_pending_views,
                 persist_workspaces,

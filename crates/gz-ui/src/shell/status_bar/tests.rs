@@ -178,4 +178,37 @@ fn the_problem_chip_opens_the_message_tray() {
     let m = app.world().resource::<SystemMessages>();
     assert_eq!((m.warnings, m.errors), (1, 1));
     assert_eq!(m.problems().count(), 0);
+
+    // Open while a note replaces its chip, it still closes.
+    app.world_mut()
+        .resource_mut::<SystemMessages>()
+        .push(SystemMessage {
+            level: MessageLevel::Warning,
+            text: "again".into(),
+            ..default()
+        });
+    frames(&mut app, 2);
+    let chip = find(&mut app).unwrap();
+    app.world_mut().trigger(Activate { entity: chip });
+    frames(&mut app, 3);
+    assert!(tray_shown(&mut app));
+    app.world_mut()
+        .resource_mut::<super::readouts::StatusNote>()
+        .show("Saved", 1.0e9);
+    frames(&mut app, 2);
+    let popup = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<(Entity, &Visibility), With<MenuPopupOf>>()
+            .iter(world)
+            .find(|(_, v)| **v == Visibility::Visible)
+            .unwrap()
+            .0
+    };
+    app.world_mut().trigger(bevy::ui_widgets::MenuEvent {
+        source: popup,
+        action: bevy::ui_widgets::MenuAction::CloseAll,
+    });
+    frames(&mut app, 2);
+    assert!(!tray_shown(&mut app));
 }

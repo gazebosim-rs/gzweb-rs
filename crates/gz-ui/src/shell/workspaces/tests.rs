@@ -260,3 +260,205 @@ fn layouts_round_trip_through_json() {
     assert_eq!(snap_view("top"), Some(SnapView::Top));
     assert_eq!(snap_view("nope"), None);
 }
+
+fn start_with(text: Option<&str>, theme: bool, before: impl FnOnce(&mut App)) -> App {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(text.map(str::to_string)),
+        theme,
+    });
+    before(&mut app);
+    frames(&mut app, 3);
+    app
+}
+
+fn file_text(current: &str, version: u32, saved: &[(&str, WorkspaceLayout)]) -> String {
+    serde_json::to_string(&WorkspaceFile {
+        version,
+        current: current.into(),
+        theme: Some("dark".into()),
+        workspaces: saved
+            .iter()
+            .map(|(id, w)| (id.to_string(), w.clone()))
+            .collect(),
+    })
+    .unwrap()
+}
+
+/// A file it can't parse is kept apart, and the next write is whole: the
+/// saved layouts aren't lost to a typo, nor the file to a crash.
+#[test]
+fn a_file_it_cant_parse_is_kept_apart() {
+    let dir = std::env::temp_dir().join(format!("gz-ui-workspaces-{}", std::process::id()));
+    let path = dir.join(WORKSPACE_FILE);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&path, "{oops").unwrap();
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::File(path.clone()),
+        theme: true,
+    });
+    frames(&mut app, 3);
+    assert_eq!(workspaces(&app).current, 0);
+    let bad = dir.join(format!("{WORKSPACE_FILE}.bad"));
+    assert_eq!(std::fs::read_to_string(&bad).unwrap(), "{oops");
+    alt(&mut app, KeyCode::Digit2);
+    let file: WorkspaceFile =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(file.current, "run");
+    assert!(!dir.join(format!("{WORKSPACE_FILE}.part")).exists());
+    std::fs::remove_dir_all(&dir).unwrap();
+    // In memory too: it's written again after a bad one.
+    let mut app = start_with(Some("{not json"), true, |_| {});
+    alt(&mut app, KeyCode::Digit3);
+    assert_eq!(stored(&app).unwrap().current, "debug");
+}
+
+/// A newer gzweb's file is read as far as it can be and never written
+/// over; workspaces this build doesn't know are kept when it writes.
+#[test]
+fn newer_files_and_unknown_workspaces_are_kept() {
+    let text = file_text("run", FILE_VERSION + 1, &[]);
+    let mut app = start_with(Some(&text), true, |_| {});
+    assert_eq!(workspaces(&app).current, 1);
+    alt(&mut app, KeyCode::Digit3);
+    match &app.world().resource::<WorkspaceStore>().at {
+        StoreAt::Memory(Some(t)) => assert_eq!(t, &text, "not written over"),
+        other => panic!("{other:?}"),
+    }
+
+    let custom = WorkspaceLayout::default_for(3);
+    let text = file_text("build", FILE_VERSION, &[("custom", custom.clone())]);
+    let mut app = start_with(Some(&text), true, |_| {});
+    alt(&mut app, KeyCode::Digit2);
+    let file = stored(&app).unwrap();
+    assert_eq!(file.current, "run");
+    assert_eq!(file.workspaces.get("custom"), Some(&custom));
+}
+
+/// A theme asked for (`--theme`) isn't saved: the file keeps its own.
+#[test]
+fn a_theme_asked_for_isnt_saved() {
+    let text = file_text("build", FILE_VERSION, &[]);
+    let mut app = start_with(Some(&text), false, |app| {
+        app.world_mut()
+            .resource_mut::<Theme>()
+            .set_mode(ThemeMode::Light);
+    });
+    alt(&mut app, KeyCode::Digit2);
+    assert_eq!(stored(&app).unwrap().theme.as_deref(), Some("dark"));
+    let mut app = start_with(None, false, |_| {});
+    alt(&mut app, KeyCode::Digit2);
+    assert_eq!(stored(&app).unwrap().theme, None);
+}
+
+/// Left in a workspace never saved, the app starts in its default (Build's
+/// is the app's start).
+#[test]
+fn an_unsaved_workspace_starts_as_its_default() {
+    let text = file_text("debug", FILE_VERSION, &[]);
+    let app = start_with(Some(&text), true, |_| {});
+    assert_eq!(workspaces(&app).current, 2);
+    let l = layout(&app);
+    assert_eq!(l.primary.map(|p| p.name()), Some("topics"));
+    assert_eq!(l.secondary.map(|p| p.name()), Some("plot"));
+}
+
+/// The start flags go over the saved layout.
+#[test]
+fn start_flags_go_over_the_saved_layout() {
+    let mut run = WorkspaceLayout::default_for(1);
+    run.inspector_open = true;
+    let text = file_text("run", FILE_VERSION, &[("run", run)]);
+    let mut app = start_with(Some(&text), true, |app| {
+        app.insert_resource(crate::shell::StartLayout(LayoutPreset::TwoColumns));
+        app.insert_resource(crate::shell::StartPopOuts(vec!["console".into()]));
+    });
+    frames(&mut app, 2);
+    assert_eq!(preset(&app), LayoutPreset::TwoColumns);
+    let l = layout(&app);
+    assert!(l.inspector_open, "the rest as saved");
+    assert_eq!(
+        l.popouts.iter().map(|p| p.panel.name()).collect::<Vec<_>>(),
+        ["console"]
+    );
+}
+
+/// A view's grid as saved stays when the scene's grid flag first comes;
+/// later ones apply.
+#[test]
+fn a_saved_grid_outlasts_the_scenes_flag() {
+    let mut run = WorkspaceLayout::default_for(1);
+    run.views = vec![SavedView {
+        overlays: Some(vec![]),
+        ..default()
+    }];
+    let text = file_text("run", FILE_VERSION, &[("run", run)]);
+    let mut app = start_with(Some(&text), true, |_| {});
+    let grid = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&OverlaySet, With<MainCamera>>()
+            .single(world)
+            .unwrap()
+            .is_on(Overlay::Grid)
+    };
+    assert!(!grid(&mut app));
+    app.world_mut()
+        .resource_mut::<gz_bevy::render::GzGrid>()
+        .visible = true;
+    frames(&mut app, 2);
+    assert!(!grid(&mut app), "the scene's first flag leaves it");
+    app.world_mut()
+        .resource_mut::<gz_bevy::render::GzGrid>()
+        .set_changed();
+    frames(&mut app, 2);
+    assert!(grid(&mut app), "a later one applies");
+}
+
+/// Alt+1–4 wait while an edit is under way.
+#[test]
+fn alt_keys_wait_for_an_edit() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let scrub = app
+        .world_mut()
+        .spawn(crate::widgets::number_field::Scrub {
+            value: 0.0,
+            moved: false,
+        })
+        .id();
+    alt(&mut app, KeyCode::Digit2);
+    assert_eq!(workspaces(&app).current, 0);
+    app.world_mut().despawn(scrub);
+    alt(&mut app, KeyCode::Digit2);
+    assert_eq!(workspaces(&app).current, 1);
+}
+
+/// A view's axis view comes back with it.
+#[test]
+fn a_snapped_view_comes_back_snapped() {
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_millis(100),
+    ));
+    frames(&mut app, 3);
+    let view = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<MainCamera>>()
+            .single(world)
+            .unwrap()
+    };
+    app.world_mut().write_message(ViewCommand {
+        view,
+        op: ViewOp::Snap(SnapView::Front),
+    });
+    // Mid-animation: the switch keeps where it ends.
+    frames(&mut app, 1);
+    alt(&mut app, KeyCode::Digit2);
+    alt(&mut app, KeyCode::Digit1);
+    frames(&mut app, 2);
+    let (v, ..) = camera(&mut app, 0).unwrap();
+    assert_eq!(v.snapped, Some(SnapView::Front));
+}

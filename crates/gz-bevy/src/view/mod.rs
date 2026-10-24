@@ -340,37 +340,42 @@ pub enum ViewOp {
     Context {
         at: Vec2,
     },
-    /// Put the camera where a workspace saved it (§8): its pose, pivot and
-    /// projection; free and no longer snapped.
+    /// Put the camera where a workspace saved it (§8): its pose, pivot,
+    /// projection and axis view; free.
     Restore(ViewPose),
 }
 
 /// Where a view's camera is, as a workspace saves it (spec §8): its pose
-/// and pivot (Bevy's world frame), and the orthographic view height when
-/// orthographic.
+/// and pivot (Bevy's world frame), the orthographic view height when
+/// orthographic, and the axis view it sits in.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewPose {
     pub translation: Vec3,
     pub rotation: Quat,
     pub pivot: Vec3,
     pub ortho: Option<f32>,
+    pub snapped: Option<SnapView>,
 }
 
 impl ViewPose {
-    /// The camera's pose now.
+    /// Where the camera is going: a running animation's end, else its
+    /// pose now.
     pub fn of(view: &ViewCamera, t: &Transform, p: &Projection) -> Self {
+        let (mut view, mut t, mut p) = (view.clone(), *t, p.clone());
+        finish(&mut view, &mut t, &mut p);
         Self {
             translation: t.translation,
             rotation: t.rotation,
             pivot: view.pivot,
-            ortho: ortho_height(p),
+            ortho: ortho_height(&p),
+            snapped: view.snapped,
         }
     }
 }
 
 /// Puts the camera at `pose` ([`ViewOp::Restore`]).
 fn restore(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, pose: ViewPose) {
-    view.snapped = None;
+    view.snapped = pose.snapped;
     view.mode = CameraMode::Free;
     view.pivot = pose.pivot;
     t.translation = pose.translation;

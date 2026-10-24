@@ -63,6 +63,9 @@ pub fn remember_url(url: &str) {
 /// The `localStorage` key of the UI's workspaces (spec §8).
 pub const WORKSPACES_KEY: &str = "gzweb.workspaces";
 
+/// Where a workspaces value it couldn't read is kept.
+pub const WORKSPACES_BAD_KEY: &str = "gzweb.workspaces.bad";
+
 /// What the browser keeps under `key` (`localStorage`), if anything.
 pub fn stored(key: &str) -> Option<String> {
     web_sys::window()?

@@ -61,11 +61,14 @@ fn level_color(level: MessageLevel) -> ColorRole {
     }
 }
 
-/// "2 warn · 1 err", "No warnings or errors".
+/// The rows': "2 warn · 1 err", nothing with none (the list says so).
 pub(crate) fn counts_text(messages: &SystemMessages) -> String {
-    let (w, e) = messages.problem_counts();
+    let (w, e) = messages.problems().fold((0, 0), |(w, e), m| match m.level {
+        MessageLevel::Error => (w, e + 1),
+        _ => (w + 1, e),
+    });
     match (w, e) {
-        (0, 0) => "none".into(),
+        (0, 0) => String::new(),
         (w, 0) => format!("{w} warn"),
         (0, e) => format!("{e} err"),
         (w, e) => format!("{w} warn · {e} err"),
@@ -166,11 +169,10 @@ fn tray_row(m: &SystemMessage) -> impl Bundle {
 }
 
 /// The rows and counts follow the log while the tray shows ("No warnings
-/// or errors" with none).
-#[allow(clippy::type_complexity)]
+/// or errors" with none); hidden, they wait for it to open.
 pub(crate) fn tray_rows(
     messages: Option<Res<SystemMessages>>,
-    popups: Query<(&Visibility, &ChildOf), (With<MenuPopupOf>, Changed<Visibility>)>,
+    popups: Query<Ref<Visibility>, With<MenuPopupOf>>,
     lists: Query<(Entity, Option<&Children>), With<TrayList>>,
     mut counts: Query<&mut Text, With<TrayCounts>>,
     parents: Query<&ChildOf>,
@@ -182,10 +184,15 @@ pub(crate) fn tray_rows(
     let Ok((list, children)) = lists.single() else {
         return;
     };
-    // Its popup just opened, or the log changed.
-    let tray = parents.iter_ancestors(list).find(|a| popups.contains(*a));
-    let opened = tray.is_some_and(|t| popups.get(t).is_ok_and(|(v, _)| *v == Visibility::Visible));
-    if !opened && !messages.is_changed() {
+    // Its popup just opened, or the log changed while it shows.
+    let Some(shown) = parents
+        .iter_ancestors(list)
+        .find_map(|a| popups.get(a).ok())
+        .filter(|v| **v == Visibility::Visible)
+    else {
+        return;
+    };
+    if !shown.is_changed() && !messages.is_changed() {
         return;
     }
     for mut t in &mut counts {
