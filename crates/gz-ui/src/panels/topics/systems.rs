@@ -2,7 +2,6 @@
 //! list's refresh, the echo's subscription and text, and the body's rows
 //! and echo in place (DECISIONS.md D-99).
 
-use bevy::clipboard::Clipboard;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
@@ -28,6 +27,7 @@ use crate::shell::{
 };
 use crate::theme::visuals::Active;
 use crate::theme::{Theme, SPACE};
+use crate::widgets::clipboard::CopyText;
 use crate::widgets::layout::set_shown;
 use crate::widgets::text::set_text;
 
@@ -468,7 +468,7 @@ fn reveal_row(scroll: &mut ScrollPosition, list: &ComputedNode, row_h: f32, i: u
 pub(super) fn on_action(
     ev: On<PanelActionActivated>,
     echo: Res<Echo>,
-    clipboard: Option<ResMut<Clipboard>>,
+    mut copies: MessageWriter<CopyText>,
     mut picks: MessageWriter<PlotPick>,
 ) {
     if ev.panel != TOPICS {
@@ -483,10 +483,7 @@ pub(super) fn on_action(
     if ev.action != COPY {
         return;
     }
-    let (Some(text), Some(mut clipboard)) = (&echo.full, clipboard) else {
-        return;
-    };
-    if let Err(e) = clipboard.set_text(text.as_str()) {
-        warn!("copy the message: {e:?}");
+    if let Some(text) = &echo.full {
+        copies.write(CopyText(text.clone()));
     }
 }

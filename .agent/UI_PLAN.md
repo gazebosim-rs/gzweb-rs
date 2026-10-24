@@ -351,6 +351,12 @@ pop-out windows.
   toggle, D-101), the crosshair readout, the inline field picker (Add field…, +, Topics' Plot
   field), Export CSV, `gzweb --plot`. Left: Pop out (M7e); the inspector's Plot actions (joint
   position and velocity, a sensor's output) with M7d's joints.
+- **M7c notes:** the Assets panel (D-102): shapes and lights as SDFormat, Fuel search with
+  thumbnails and paging, a model by URI; a tile or Insert arms placing, a click in the views
+  places on the surface under it (`gz_bevy::view::place`), with a preview, Shift for several,
+  Esc to stop; each place a `create` (verified live on Jetty: a box, and a Fuel pallet the
+  server downloaded); each insert's row until it shows in the scene. Left: drag a shape into a
+  model as a link (M9); the mock's header +.
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).
@@ -360,7 +366,7 @@ pop-out windows.
 - The panels' §3.3.1 states from their data (D-58: each writes its `PanelView`): Topics
   done in M7a (D-99); Sensors "Select a model with sensors" vs "No sensors in
   this world" (needs the world's sensors in the scene model and M5's selection); Assets
-  "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled
+  "Fuel is unreachable" + Retry (M7c, D-102: in the Fuel tab); Plot's Add field… enabled
   (M7b, D-100).
   Topics' Publish and Services stay unavailable on the stock server (D-99).
 - Footers (PR #33 review, N10): done in M7a (D-98): `PanelDef::footer_action` and

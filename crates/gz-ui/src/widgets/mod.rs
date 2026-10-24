@@ -19,6 +19,7 @@ pub(crate) mod activity;
 pub(crate) mod badge;
 pub(crate) mod button;
 pub(crate) mod chip;
+pub mod clipboard;
 pub(crate) mod cursor;
 pub(crate) mod fade;
 pub(crate) mod focus;

@@ -3236,3 +3236,100 @@ fn a_linked_orthographic_fly_up_carries_its_zoom() {
     assert!(ratio > 1.0);
     assert!((height(&r, r.camera) / h0 - ratio).abs() < 1e-4);
 }
+
+/// A place lands on the nearest mesh under the point, else the ground,
+/// in Gazebo coordinates, and says whether to keep placing.
+#[test]
+fn a_place_lands_on_the_surface_under_the_point() {
+    let mut r = rig(default_view());
+    let placed = |r: &mut Rig| -> Vec<place::PlaceAt> {
+        r.app
+            .world_mut()
+            .resource_mut::<Messages<place::PlaceAt>>()
+            .drain()
+            .collect()
+    };
+    r.op(ViewOp::Place {
+        at: CENTER,
+        keep: false,
+    });
+    let p = placed(&mut r);
+    assert_eq!(p.len(), 1);
+    let at = Vec3::new(
+        p[0].point[0] as f32,
+        p[0].point[1] as f32,
+        p[0].point[2] as f32,
+    );
+    assert!(
+        at.distance(Vec3::ZERO) < 1e-3,
+        "the ground at the origin: {at}"
+    );
+    assert!(
+        (p[0].normal[2] - 1.0).abs() < 1e-6,
+        "the ground faces up: {:?}",
+        p[0].normal
+    );
+    assert!(!p[0].keep);
+    r.cube(None, Vec3::new(0.0, 1.0, 0.0), 1.0);
+    r.op(ViewOp::Place {
+        at: CENTER,
+        keep: true,
+    });
+    let p = placed(&mut r);
+    // The cube's -X face at Bevy (-1, 1, 0): Gazebo (-1, 0, 1).
+    let at = Vec3::new(
+        p[0].point[0] as f32,
+        p[0].point[1] as f32,
+        p[0].point[2] as f32,
+    );
+    assert!(at.distance(Vec3::new(-1.0, 0.0, 1.0)) < 1e-3, "{at}");
+    let n = Vec3::new(
+        p[0].normal[0] as f32,
+        p[0].normal[1] as f32,
+        p[0].normal[2] as f32,
+    );
+    assert!(
+        n.distance(Vec3::NEG_X) < 1e-3,
+        "the face towards the camera: {n}"
+    );
+    assert!(p[0].keep);
+    // The sky, from a level camera: nothing.
+    let mut r = rig(horizon());
+    r.op(ViewOp::Place {
+        at: Vec2::new(W / 2.0, 1.0),
+        keep: false,
+    });
+    assert!(placed(&mut r).is_empty());
+}
+
+/// While placing, a click places (Shift keeps placing) instead of
+/// selecting, and the point under the pointer is followed.
+#[test]
+fn placing_turns_a_click_into_a_place() {
+    let (mut r, a, _) = two_models();
+    r.app.insert_resource(place::Placing(true));
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let drain = |r: &mut Rig| -> Vec<place::PlaceAt> {
+        r.app
+            .world_mut()
+            .resource_mut::<Messages<place::PlaceAt>>()
+            .drain()
+            .collect()
+    };
+    r.cursor(Some(pa));
+    r.frames(2);
+    assert!(r.app.world().resource::<place::PlaceHover>().0.is_some());
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [], "no select while placing");
+    let p = drain(&mut r);
+    assert_eq!(p.len(), 1);
+    assert!(!p[0].keep);
+    click(&mut r, pa, &[KeyCode::ShiftLeft]);
+    assert!(drain(&mut r)[0].keep);
+    r.app.insert_resource(place::Placing(false));
+    r.frames(1);
+    assert_eq!(r.app.world().resource::<place::PlaceHover>().0, None);
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [a]);
+    assert!(drain(&mut r).is_empty());
+}
