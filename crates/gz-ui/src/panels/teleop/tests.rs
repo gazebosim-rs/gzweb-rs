@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use bevy::input::gamepad::{Gamepad, GamepadAxis};
 use bevy::input::ButtonState;
+use bevy::input_focus::{FocusCause, InputFocus};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::ui::Pressed;
@@ -16,6 +17,7 @@ use gz_bevy::topics::GzTopics;
 use gz_bevy::view::{DriveArmed, Selection};
 use gz_core::msgs;
 use gz_core::scene::NodeKind;
+use gz_core::transport::Status;
 use prost::Message as _;
 
 use super::model::*;
@@ -476,25 +478,42 @@ fn a_new_target_stops_the_old_robot() {
 }
 
 /// A dropped connection keeps the robot's zero until the server takes
-/// publications again.
+/// publications again, for the same world; another world's server gets
+/// none.
 #[test]
 fn a_drop_sends_the_zero_after_the_reconnect() {
-    let (mut app, _) = live_teleop(Some(true));
-    app.world_mut().resource_mut::<TeleopState>().armed = true;
-    frames(&mut app, 2);
-    twists(&mut app);
-    app.world_mut().resource_mut::<GzStatus>().publishes = None;
-    frames(&mut app, 3);
-    assert!(!state(&app).armed);
-    assert!(twists(&mut app).is_empty(), "the server can't take it yet");
-    app.world_mut().resource_mut::<GzStatus>().publishes = Some(true);
-    frames(&mut app, 2);
+    let drop_to = |world: &str| {
+        let (mut app, _) = live_teleop(Some(true));
+        app.world_mut().resource_mut::<TeleopState>().armed = true;
+        frames(&mut app, 2);
+        twists(&mut app);
+        {
+            let mut s = app.world_mut().resource_mut::<GzStatus>();
+            s.status = Status::Disconnected;
+            s.publishes = None;
+        }
+        frames(&mut app, 3);
+        assert!(!state(&app).armed);
+        assert!(twists(&mut app).is_empty(), "the server can't take it yet");
+        {
+            let mut s = app.world_mut().resource_mut::<GzStatus>();
+            s.status = Status::Ready;
+            s.world = Some(world.into());
+        }
+        frames(&mut app, 2);
+        assert!(twists(&mut app).is_empty(), "not before the probe answers");
+        app.world_mut().resource_mut::<GzStatus>().publishes = Some(true);
+        frames(&mut app, 2);
+        let sent = twists(&mut app);
+        frames(&mut app, 3);
+        assert!(twists(&mut app).is_empty(), "once");
+        sent
+    };
     assert_eq!(
-        twists(&mut app),
+        drop_to("warehouse_demo"),
         [("/model/amr/cmd_vel".to_string(), 0.0, 0.0)]
     );
-    frames(&mut app, 3);
-    assert!(twists(&mut app).is_empty(), "once");
+    assert!(drop_to("other").is_empty());
 }
 
 /// Armed, a command chord (Ctrl+S) doesn't drive, and the keys drive only
@@ -521,4 +540,115 @@ fn chords_and_other_panels_keep_the_keys() {
     app.world_mut().resource_mut::<TeleopKeys>().0 = true;
     frames(&mut app, 2);
     assert_eq!(twists(&mut app).last().map(|s| s.1), Some(1.0));
+    key(&mut app, KeyCode::KeyW, ButtonState::Released);
+}
+
+/// X stops wherever the keys are (another panel's list has them), and
+/// zeroes the sliders like Stop.
+#[test]
+fn x_stops_from_anywhere() {
+    let (mut app, _) = live_teleop(Some(true));
+    app.world_mut().resource_mut::<TeleopState>().mode = DriveMode::Sliders;
+    frames(&mut app, 2);
+    let lin = slider(&mut app, &TeleopSlider::Linear);
+    app.world_mut().trigger(ValueChange {
+        source: lin,
+        value: 0.5f32,
+        is_final: true,
+    });
+    frames(&mut app, 2);
+    assert!(state(&app).armed);
+    app.world_mut().resource_mut::<ViewFocus>().0 = false;
+    app.world_mut().resource_mut::<TeleopKeys>().0 = false;
+    frames(&mut app, 1);
+    twists(&mut app);
+    key(&mut app, KeyCode::KeyX, ButtonState::Pressed);
+    frames(&mut app, 2);
+    assert!(!state(&app).armed);
+    assert_eq!(twists(&mut app).last().map(|s| s.1), Some(0.0));
+    assert_eq!((state(&app).lin, state(&app).ang), (0.0, 0.0));
+    assert_eq!(app.world().get::<SliderValue>(lin).unwrap().0, 0.0);
+}
+
+/// In Keyboard mode a gamepad's stick resting past its dead zone doesn't
+/// keep the pad from arming again after a stop.
+#[test]
+fn a_resting_stick_doesnt_hold_the_pad_off() {
+    let (mut app, _) = live_teleop(Some(true));
+    push_stick(&mut app, 0.2);
+    frames(&mut app, 2);
+    let w = pad(&mut app, PadKey::Forward);
+    for _ in 0..2 {
+        app.world_mut().entity_mut(w).insert(Pressed);
+        frames(&mut app, 2);
+        assert!(state(&app).armed);
+        let stop = app.world_mut().spawn_empty().id();
+        app.world_mut().trigger(PanelActionActivated {
+            entity: stop,
+            panel: TELEOP,
+            action: STOP,
+        });
+        frames(&mut app, 2);
+        assert!(!state(&app).armed);
+        app.world_mut().entity_mut(w).remove::<Pressed>();
+        frames(&mut app, 2);
+    }
+}
+
+fn pad(app: &mut App, key: PadKey) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &PadKey)>()
+        .iter(world)
+        .find(|(_, k)| **k == key)
+        .unwrap()
+        .0
+}
+
+/// The panel gets the drive keys from keyboard focus in it, and loses
+/// them to focus elsewhere.
+#[test]
+fn focus_routes_the_drive_keys() {
+    let (mut app, _) = live_teleop(Some(true));
+    let w = pad(&mut app, PadKey::Forward);
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(w, FocusCause::Navigated);
+    frames(&mut app, 1);
+    assert!(app.world().resource::<TeleopKeys>().0);
+    let elsewhere = app.world_mut().spawn(Node::default()).id();
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(elsewhere, FocusCause::Navigated);
+    frames(&mut app, 1);
+    assert!(!app.world().resource::<TeleopKeys>().0);
+}
+
+/// The target's model's joint states are wanted while the panel shows,
+/// for the joint sliders; the topic list is asked for every 2 s, once
+/// however many panels read it.
+#[test]
+fn the_panel_wants_joint_states_and_the_topics() {
+    let (mut app, _) = live_teleop(Some(true));
+    assert_eq!(
+        app.world().resource::<JointStateWanted>().model.as_deref(),
+        Some("amr")
+    );
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: crate::panels::TOPICS,
+        slot: Slot::Secondary,
+    });
+    frames(&mut app, 2);
+    let hosts = app.world().resource::<crate::shell::ShownPanels>();
+    assert!(hosts.is_shown(crate::panels::TOPICS) && hosts.is_shown(TELEOP));
+    sent(&mut app);
+    frames(&mut app, 50);
+    let asked = sent(&mut app)
+        .into_iter()
+        .filter(|c| *c == GzCommand::RefreshTopics)
+        .count();
+    assert_eq!(asked, 1, "one in 2.5 s");
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<JointStateWanted>().model, None);
 }

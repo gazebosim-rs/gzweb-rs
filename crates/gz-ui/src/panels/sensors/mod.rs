@@ -55,6 +55,7 @@ pub struct SensorsPanelPlugin;
 impl Plugin for SensorsPanelPlugin {
     fn build(&self, app: &mut App) {
         gz_bevy::topics::TopicsPlugin::ensure(app);
+        super::topics::refresh_while_shown(app, SENSORS);
         app.register_panel(
             PanelDef::new(SENSORS, "Sensors", IconId::ActivitySensors)
                 .place(DATA_GROUP, 40)
@@ -87,7 +88,6 @@ impl Plugin for SensorsPanelPlugin {
                 )
                     .chain(),
                 (
-                    super::topics::refresh_topics,
                     systems::sync_rows,
                     systems::row_states,
                     systems::preview_parts,

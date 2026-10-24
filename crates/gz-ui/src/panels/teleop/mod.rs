@@ -45,6 +45,7 @@ pub struct TeleopPanelPlugin;
 impl Plugin for TeleopPanelPlugin {
     fn build(&self, app: &mut App) {
         gz_bevy::topics::TopicsPlugin::ensure(app);
+        super::topics::refresh_while_shown(app, TELEOP);
         app.register_panel(
             PanelDef::new(TELEOP, "Teleop", IconId::ActivityTeleop)
                 .place(DATA_GROUP, 50)
@@ -67,13 +68,13 @@ impl Plugin for TeleopPanelPlugin {
                     systems::want_sdf,
                     systems::collect_targets,
                     systems::choose_target,
+                    systems::want_joint_states,
                     systems::route_keys,
                     systems::drive,
                     systems::teleop_status,
                 )
                     .chain(),
                 (
-                    super::topics::refresh_topics,
                     systems::sync_target,
                     systems::sync_sliders,
                     systems::follow_sliders,

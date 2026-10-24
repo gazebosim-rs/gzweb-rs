@@ -21,9 +21,9 @@ use super::view::{
     TopicList, TopicRow, TopicRows,
 };
 use super::{TopicsStart, COPY, PLOT_FIELD, TOPICS};
-use crate::panels::{PanelActionActivated, PanelRegistry, PanelView, PlotPick, PLOT};
+use crate::panels::{PanelActionActivated, PanelId, PanelRegistry, PanelView, PlotPick, PLOT};
 use crate::shell::{
-    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
+    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShellSystems, ShownPanels, Slot, UiCommand,
 };
 use crate::theme::visuals::Active;
 use crate::theme::{Theme, SPACE};
@@ -104,10 +104,35 @@ pub(crate) fn apply_start(
     }
 }
 
+/// The panels that read the topic list (Topics, Sensors, Teleop): one
+/// [`refresh_topics`] runs while any of them shows.
+#[derive(Resource, Clone, Debug, Default)]
+pub(crate) struct TopicListReaders(Vec<PanelId>);
+
+/// Asks for the topic list while `panel` shows, with one refresh for all
+/// such panels.
+pub(crate) fn refresh_while_shown(app: &mut App, panel: PanelId) {
+    if !app.world().contains_resource::<TopicListReaders>() {
+        app.init_resource::<TopicListReaders>().add_systems(
+            Update,
+            refresh_topics
+                .run_if(
+                    |readers: Res<TopicListReaders>, hosts: Option<Res<ShownPanels>>| {
+                        hosts.is_some_and(|h| readers.0.iter().any(|p| h.is_shown(*p)))
+                    },
+                )
+                .in_set(ShellSystems::Panels),
+        );
+    }
+    app.world_mut()
+        .resource_mut::<TopicListReaders>()
+        .0
+        .push(panel);
+}
+
 /// Asks for the topic list every [`REFRESH_SECS`] while the world is
-/// live, so topics that start or end show; each panel that reads the list
-/// (Topics, Sensors, Teleop) runs it while it shows.
-pub(crate) fn refresh_topics(
+/// live, so topics that start or end show.
+fn refresh_topics(
     time: Res<Time<Real>>,
     phase: Res<CurrentPhase>,
     mut last: Local<Option<f64>>,

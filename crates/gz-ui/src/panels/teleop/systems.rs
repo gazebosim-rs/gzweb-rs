@@ -291,7 +291,12 @@ impl DriveInput<'_, '_> {
     /// The keys may drive: not while typing; from the views or the panel
     /// (shortcuts.json), not from another panel's list.
     fn keys_live(&self) -> bool {
-        !self.typing.as_ref().is_some_and(|t| t.0) && (self.routing.keys || self.panel_keys.0)
+        !self.typing() && (self.routing.keys || self.panel_keys.0)
+    }
+
+    /// A text field has the keys.
+    fn typing(&self) -> bool {
+        self.typing.as_ref().is_some_and(|t| t.0)
     }
 
     /// The drive keys held (W A S D and the arrows). With Ctrl, Alt or ⌘
@@ -358,8 +363,8 @@ pub(super) struct DriveMemory {
 /// The command, and arming: in Keyboard mode the pad arms, and once armed
 /// the drive keys drive too; a slider arms in Sliders mode; the stick in
 /// Gamepad mode. X, Stop, a hidden panel, a new mode or target, or a world
-/// that can't take it disarms, and nothing arms again until the input lets
-/// go. The robot driven last gets a zero command when the drive leaves it,
+/// that can't take it disarms, and nothing arms again until the mode's
+/// input lets go. The robot driven last gets a zero command when the drive leaves it,
 /// once the server takes it (after a reconnect, if the connection
 /// dropped). While armed, the command goes out on each change and
 /// [`PUBLISH_HZ`] times a second.
@@ -380,7 +385,13 @@ pub(super) fn drive(
         phase.0 == Phase::Live && status.as_deref().and_then(|s| s.publishes) == Some(true);
     let world = status.as_deref().and_then(|s| s.world.clone());
     let can = publishes && input.hosts.is_shown(TELEOP) && state.target.is_some();
-    let stop = state.armed && input.keys_live() && input.keys.just_pressed(KeyCode::KeyX);
+    // X stops wherever the keys are (shortcuts.json `teleop.stop`), only
+    // not while typing; like Stop, it zeroes the sliders.
+    let stop = state.armed && !input.typing() && input.keys.just_pressed(KeyCode::KeyX);
+    if stop {
+        state.lin = 0.0;
+        state.ang = 0.0;
+    }
     let seen = (state.mode, state.target.clone());
     let new_drive = mem.seen.as_ref() != Some(&seen);
     if state.armed && (!can || stop || new_drive) {
@@ -392,7 +403,14 @@ pub(super) fn drive(
     mem.seen = Some(seen);
     let pad = input.pad_held();
     let stick = input.stick().unwrap_or((0.0, 0.0));
-    if mem.latched && !pad.any() && stick == (0.0, 0.0) {
+    // The mode's own input lets go: a resting stick doesn't hold the pad
+    // off, nor the pad the stick.
+    let idle = match state.mode {
+        DriveMode::Keyboard => !pad.any(),
+        DriveMode::Sliders => true,
+        DriveMode::Gamepad => stick == (0.0, 0.0),
+    };
+    if mem.latched && idle {
         mem.latched = false;
     }
     let may_arm = can && !state.armed && !mem.latched;
@@ -532,6 +550,45 @@ pub(super) fn sync_sliders(
             built.joints = Some(key);
         }
     }
+}
+
+/// While the panel shows a target with joints, its model's joint states
+/// are wanted, for the sliders' live positions; the Joint inspector keeps
+/// the want while it shows another model's joint.
+pub(super) fn want_joint_states(
+    hosts: Res<ShownPanels>,
+    state: Res<TeleopState>,
+    targets: Res<Targets>,
+    sdf: Option<Res<SdfExtras>>,
+    wanted: Option<ResMut<JointStateWanted>>,
+    mut mine: Local<Option<String>>,
+) {
+    let Some(mut wanted) = wanted else {
+        return;
+    };
+    if wanted.model.is_some() && wanted.model != *mine {
+        *mine = None;
+        return;
+    }
+    let want = state
+        .target
+        .as_deref()
+        .and_then(|t| targets.get(t))
+        .filter(|t| hosts.is_shown(TELEOP) && !t.joints.is_empty())
+        .map(|t| t.model.clone());
+    if wanted.model != want {
+        let topic = want.as_deref().and_then(|m| {
+            sdf.as_deref()
+                .and_then(|s| s.extras.as_ref())
+                .and_then(|w| w.model(m))
+                .and_then(|m| m.joint_state_topic.clone())
+        });
+        wanted.set_if_neq(JointStateWanted {
+            model: want.clone(),
+            topic,
+        });
+    }
+    *mine = want;
 }
 
 /// The joints' live positions, where the joint states held are the
