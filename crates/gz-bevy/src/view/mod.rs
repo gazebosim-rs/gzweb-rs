@@ -18,9 +18,11 @@
 //! tracking) can follow an entity, moving with it, or track it, turning to
 //! keep it in view ([`modes`], DECISIONS.md D-60).
 
+pub mod align;
 pub mod controls;
 pub mod gizmo;
 pub mod input;
+pub mod model_edits;
 pub mod modes;
 pub mod outline;
 pub mod place;
@@ -332,6 +334,22 @@ pub enum ViewOp {
         to: Vec2,
         mode: SelectMode,
     },
+    /// A right click at `at` (no drag): the model under it is the
+    /// subject of a context menu ([`EntityContext`]), selected first
+    /// unless it already is.
+    Context {
+        at: Vec2,
+    },
+}
+
+/// A right click on a model in a view, or on an entity's row in the
+/// Scene tree (§7.9): the full UI opens the entity context menu for it at
+/// the pointer.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityContext {
+    pub entity: Entity,
+    /// The view's camera, when a view asked (not the Scene tree).
+    pub view: Option<Entity>,
 }
 
 /// A [`ViewOp`] for the view on camera entity `view`.
@@ -1254,11 +1272,13 @@ type ViewMoves<'w, 's> = Query<
 /// Applies [`ViewCommand`]s, then advances animations, carries linked
 /// moves to the other views, and publishes the first view's pivot as
 /// [`GzCameraTarget`]. Idle frames change nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
     mut views: ViewMoves,
     mut scene: ViewScene,
     mut placed: MessageWriter<place::PlaceAt>,
+    mut contexts: MessageWriter<EntityContext>,
     time: Res<Time<Real>>,
     linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
@@ -1283,6 +1303,18 @@ pub fn apply_view_commands(
                         point: place::to_gazebo(p),
                         normal: place::to_gazebo(n),
                         keep,
+                    });
+                }
+                continue;
+            }
+            if let ViewOp::Context { at } = cmd.op {
+                if let Some(e) = select::pick_at(&mut scene, (&t, &p), f.size, at) {
+                    if !scene.selection.entities.contains(&e) {
+                        select(&mut scene.selection.reborrow(), SelectMode::Replace, &[e]);
+                    }
+                    contexts.write(EntityContext {
+                        entity: e,
+                        view: Some(cmd.view),
                     });
                 }
                 continue;
@@ -1381,6 +1413,7 @@ fn apply(
             | ViewOp::Track { .. }
             | ViewOp::Select { .. }
             | ViewOp::SelectRect { .. }
+            | ViewOp::Context { .. }
     ) {
         finish(view, t, p);
     }
@@ -1389,8 +1422,9 @@ fn apply(
             let picked = select::pick_at(scene, (t, p), f.size, at);
             select(&mut scene.selection.reborrow(), mode, picked.as_slice());
         }
-        // Placed by `apply_view_commands`, which writes the result.
-        ViewOp::Place { .. } => {}
+        // Placed, and the context menu asked for, by `apply_view_commands`,
+        // which writes the result.
+        ViewOp::Place { .. } | ViewOp::Context { .. } => {}
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
             select(&mut scene.selection.reborrow(), mode, &picked);

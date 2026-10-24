@@ -81,7 +81,11 @@ impl ViewerControls {
             // The full UI routes viewport keys by hover and focus
             // (`ViewRouting`); W A S D are the fly keys, except while an
             // armed Teleop drives with them (`DriveArmed`).
-            UiMode::Minimal | UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
+            // The full UI empties the scopes while a text field has the
+            // keys, so its `text` bindings (copy, paste, delete…) don't
+            // fire there.
+            UiMode::Minimal => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
+            UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text],
         }
     }
 }
@@ -243,6 +247,16 @@ impl Plugin for ViewerControls {
             .init_resource::<Marquee>()
             .init_resource::<super::DriveArmed>()
             .add_message::<super::place::PlaceAt>()
+            .add_message::<super::EntityContext>()
+            .add_message::<super::align::AlignModels>()
+            .add_message::<super::model_edits::EditModels>()
+            .add_message::<super::model_edits::ModelsEdited>()
+            .add_message::<crate::connection::GzServiceReply>()
+            .init_resource::<super::model_edits::ModelClipboard>()
+            .init_resource::<super::model_edits::EditJobs>()
+            .init_resource::<super::model_edits::SelectWhenSpawned>()
+            .add_message::<crate::edit::SetPose>()
+            .add_message::<crate::undo::Record>()
             .init_resource::<super::place::Placing>()
             .init_resource::<super::place::PlaceHover>()
             .init_resource::<BoxSelectTool>()
@@ -275,6 +289,19 @@ impl Plugin for ViewerControls {
                     // A new environment respawns the camera from its state:
                     // this frame's commands go in first.
                     .before(crate::render::apply_environment),
+            )
+            .add_systems(
+                Update,
+                (
+                    super::align::align_models,
+                    super::model_edits::request_model_edits,
+                    super::model_edits::finish_model_edits,
+                    super::model_edits::select_copies,
+                )
+                    .chain()
+                    .after(apply_view_commands)
+                    // Their edits are on the stack this frame.
+                    .before(crate::undo::UndoSystems),
             )
             // Followed targets move with this frame's poses.
             .add_systems(
@@ -556,6 +583,10 @@ pub fn mouse_input(
             if let Some(op) = released(drag, held.shift, command, placing.0) {
                 send(&mut out, op);
             }
+        }
+        // A right click (no drag) asks for the context menu.
+        if drag.button == MouseButton::Right && drag.selects && !drag.moved && !placing.0 {
+            send(&mut out, ViewOp::Context { at: drag.start });
         }
     }
     // A press on a gizmo handle is the gizmo's drag.
