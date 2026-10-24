@@ -1,7 +1,8 @@
-//! The shell's layout state and rules (spec §2.1, §3.2, §3.3.2), as plain
-//! data and functions so they can be tested without an app:
+//! The shell's layout state and rules (spec §2.1, §3.2, §3.3.2, §7.11), as
+//! plain data and functions so they can be tested without an app:
 //! panel widths and collapse, the start-up collapse rules, the viewport
-//! floor, splitter widths, and the activity bar's slot logic.
+//! floor, splitter widths, the activity bar's slot logic, and the pop-out
+//! windows.
 
 use bevy::prelude::*;
 
@@ -41,6 +42,33 @@ pub const STARTUP_SECS: f64 = 1.0;
 pub const DEFAULT_SPLIT: f32 = 0.55;
 /// A slot is never shorter than this (§3.3.2).
 pub const MIN_SLOT_H: f32 = 180.0;
+/// A pop-out window is never smaller than this (§7.11).
+pub const POPOUT_MIN: Vec2 = Vec2::new(320.0, 240.0);
+/// A new pop-out window's size.
+pub const POPOUT_SIZE: Vec2 = Vec2::new(360.0, 440.0);
+/// A new pop-out window's place in the viewport area, and how far each
+/// next one steps down and right.
+pub(crate) const POPOUT_AT: Vec2 = Vec2::new(SPACE[6], SPACE[6]);
+pub(crate) const POPOUT_STEP: f32 = 24.0;
+
+/// Which edges a pop-out's resize moves.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Reflect)]
+pub struct Edges {
+    pub left: bool,
+    pub top: bool,
+    pub right: bool,
+    pub bottom: bool,
+}
+
+/// A panel popped out of the sidebar into a window over the viewport area
+/// (§7.11): its rect in the area (logical px), and the slot Dock returns
+/// it to.
+#[derive(Clone, Debug, PartialEq, Reflect)]
+pub struct PopOut {
+    pub panel: PanelId,
+    pub from: Slot,
+    pub rect: Rect,
+}
 
 /// Panel widths, collapse state and slots (spec §2.1, §8). The workspace
 /// persists it from M8; until then it lives for the session.
@@ -69,6 +97,11 @@ pub struct ShellLayout {
     /// fitting its page, a tiling window manager). Ends with the user's
     /// first layout change, or once start-up is over (DECISIONS.md D-53).
     pub startup: bool,
+    /// The pop-out windows, back to front: the last is on top (§7.11:
+    /// they stack by last focused).
+    pub popouts: Vec<PopOut>,
+    /// The viewport area's size (logical px), which the windows stay in.
+    pub area: Vec2,
 }
 
 fn index(side: Side) -> usize {
@@ -97,6 +130,8 @@ impl ShellLayout {
             floor_closed: [false; 2],
             floor_w: s.viewport_min,
             startup: true,
+            popouts: Vec::new(),
+            area: Vec2::ZERO,
         };
         l.enforce_floor(None);
         l
@@ -290,9 +325,12 @@ impl ShellLayout {
 
     /// An activity button click (§3.2): an inactive panel opens in the
     /// primary slot (Shift: the secondary); the active one collapses the
-    /// sidebar, or expands it again if it's collapsed.
+    /// sidebar, or expands it again if it's collapsed; a popped-out one
+    /// comes to the top.
     pub fn activity_click(&mut self, panel: PanelId, shift: bool) {
-        if shift {
+        if self.is_popped(panel) {
+            self.raise(panel);
+        } else if shift {
             self.open_in(panel, Slot::Secondary);
         } else if self.is_active(panel) {
             self.show(Side::Sidebar, !self.sidebar_open);
@@ -303,8 +341,14 @@ impl ShellLayout {
 
     /// Opens `panel` in `slot` and shows the sidebar. A panel is in one
     /// slot only: one already in the other slot swaps places with what
-    /// `slot` held. A secondary with an empty primary moves up.
+    /// `slot` held. A secondary with an empty primary moves up. A
+    /// popped-out panel is already showing: it comes to the top instead
+    /// (Dock puts it back in a slot).
     pub fn open_in(&mut self, panel: PanelId, slot: Slot) {
+        if self.is_popped(panel) {
+            self.raise(panel);
+            return;
+        }
         let (target, other) = match slot {
             Slot::Primary => (self.primary, self.secondary),
             Slot::Secondary => (self.secondary, self.primary),
@@ -337,5 +381,125 @@ impl ShellLayout {
         if self.primary.is_none() {
             self.primary = self.secondary.take();
         }
+    }
+
+    /// `panel` is in a pop-out window.
+    pub fn is_popped(&self, panel: PanelId) -> bool {
+        self.popouts.iter().any(|p| p.panel == panel)
+    }
+
+    fn popout_index(&self, panel: PanelId) -> Option<usize> {
+        self.popouts.iter().position(|p| p.panel == panel)
+    }
+
+    /// Pops `panel` out of its slot into a window on top (§7.11), each new
+    /// one a step down and right of the last; the sidebar closes with no
+    /// panel left in it. One already popped out comes to the top.
+    pub fn pop_out(&mut self, panel: PanelId) {
+        if self.is_popped(panel) {
+            self.raise(panel);
+            return;
+        }
+        let from = self.slot_of(panel).unwrap_or(Slot::Primary);
+        match self.slot_of(panel) {
+            Some(Slot::Primary) => self.primary = self.secondary.take(),
+            Some(Slot::Secondary) => self.secondary = None,
+            None => {}
+        }
+        if self.primary.is_none() {
+            self.sidebar_open = false;
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let step = POPOUT_STEP * self.popouts.len() as f32;
+        let min = POPOUT_AT + Vec2::splat(step);
+        let rect = Rect::from_corners(min, min + POPOUT_SIZE);
+        self.popouts.push(PopOut {
+            panel,
+            from,
+            rect: self.clamped(rect),
+        });
+    }
+
+    /// Dock (§7.11): the window's panel goes back to the slot it came
+    /// from.
+    pub fn dock(&mut self, panel: PanelId) {
+        if let Some(i) = self.popout_index(panel) {
+            let p = self.popouts.remove(i);
+            self.open_in(p.panel, p.from);
+        }
+    }
+
+    /// Close (§7.11): the window goes, and its panel with it.
+    pub fn close_popout(&mut self, panel: PanelId) {
+        self.popouts.retain(|p| p.panel != panel);
+    }
+
+    /// The window comes to the top (a press in it).
+    pub fn raise(&mut self, panel: PanelId) {
+        if let Some(i) = self.popout_index(panel) {
+            let p = self.popouts.remove(i);
+            self.popouts.push(p);
+        }
+    }
+
+    /// The window moves to `rect` (a header drag), kept in the area.
+    pub fn move_popout(&mut self, panel: PanelId, at: Vec2) {
+        let Some(i) = self.popout_index(panel) else {
+            return;
+        };
+        let size = self.popouts[i].rect.size();
+        self.popouts[i].rect = self.clamped(Rect::from_corners(at, at + size));
+    }
+
+    /// The window's `edges` move by `delta` from `start` (an edge or
+    /// corner drag): never smaller than [`POPOUT_MIN`], kept in the area.
+    pub fn resize_popout(&mut self, panel: PanelId, start: Rect, edges: Edges, delta: Vec2) {
+        let Some(i) = self.popout_index(panel) else {
+            return;
+        };
+        let (mut min, mut max) = (start.min, start.max);
+        let area = self.area_rect();
+        if edges.left {
+            min.x = (min.x + delta.x).clamp(area.min.x, max.x - POPOUT_MIN.x);
+        }
+        if edges.right {
+            max.x =
+                (max.x + delta.x).clamp(min.x + POPOUT_MIN.x, area.max.x.max(min.x + POPOUT_MIN.x));
+        }
+        if edges.top {
+            min.y = (min.y + delta.y).clamp(area.min.y, max.y - POPOUT_MIN.y);
+        }
+        if edges.bottom {
+            max.y =
+                (max.y + delta.y).clamp(min.y + POPOUT_MIN.y, area.max.y.max(min.y + POPOUT_MIN.y));
+        }
+        self.popouts[i].rect = self.clamped(Rect::from_corners(min, max));
+    }
+
+    /// The viewport area changed size: the windows stay in it.
+    pub fn set_area(&mut self, area: Vec2) {
+        self.area = area;
+        for i in 0..self.popouts.len() {
+            self.popouts[i].rect = self.clamped(self.popouts[i].rect);
+        }
+    }
+
+    fn area_rect(&self) -> Rect {
+        // Before the area's first layout, anywhere.
+        let size = if self.area == Vec2::ZERO {
+            Vec2::splat(f32::MAX / 4.0)
+        } else {
+            self.area
+        };
+        Rect::from_corners(Vec2::ZERO, size)
+    }
+
+    /// `rect` kept in the area: at least [`POPOUT_MIN`], no bigger than the
+    /// area, moved back in where it hangs out.
+    fn clamped(&self, rect: Rect) -> Rect {
+        let area = self.area_rect().size();
+        let size = rect.size().max(POPOUT_MIN).min(area.max(POPOUT_MIN));
+        let at = rect.min.clamp(Vec2::ZERO, (area - size).max(Vec2::ZERO));
+        Rect::from_corners(at, at + size)
     }
 }

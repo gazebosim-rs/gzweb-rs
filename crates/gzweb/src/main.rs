@@ -31,6 +31,8 @@
 //!   `--select MODEL` for its drive; DECISIONS.md D-104).
 //! - `--console` starts the full UI with the Console panel open
 //!   (DECISIONS.md D-105).
+//! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
+//!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
 //!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
 //!   (DECISIONS.md D-102).
@@ -79,6 +81,8 @@ struct Args {
     teleop: bool,
     /// `--console`.
     console: bool,
+    /// `--pop-out`.
+    pop_out: Vec<String>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -93,7 +97,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -211,6 +215,7 @@ fn parse_args(
     let mut sensors = None;
     let mut teleop = false;
     let mut console = false;
+    let mut pop_out = vec![];
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -282,6 +287,14 @@ fn parse_args(
             }
             "--teleop" => teleop = true,
             "--console" => console = true,
+            "--pop-out" => {
+                pop_out = value()?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect();
+            }
             "--sensors" => {
                 // The name is optional: the next argument unless it's a flag.
                 let name = args.peek().filter(|a| !a.starts_with("--")).cloned();
@@ -354,6 +367,9 @@ fn parse_args(
     if console && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--console needs --ui full".into());
     }
+    if !pop_out.is_empty() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--pop-out needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -399,6 +415,7 @@ fn parse_args(
         sensors,
         teleop,
         console,
+        pop_out,
         layout,
         no_vsync,
     })))
@@ -474,6 +491,7 @@ fn command() -> Result<Command, String> {
         sensors: None,
         teleop: false,
         console: false,
+        pop_out: vec![],
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -696,6 +714,9 @@ fn main() -> AppExit {
         }
         if args.console {
             app.insert_resource(gz_ui::panels::ConsoleStart);
+        }
+        if !args.pop_out.is_empty() {
+            app.insert_resource(gz_ui::shell::StartPopOuts(args.pop_out));
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -971,6 +992,14 @@ mod tests {
         );
         assert!(run_args(&["--teleop"], None).teleop);
         assert!(run_args(&["--console"], None).console);
+        assert_eq!(
+            run_args(&["--pop-out", "plot, console"], None).pop_out,
+            ["plot", "console"]
+        );
+        assert_eq!(
+            parse(&["--pop-out", "plot", "--ui", "minimal"], None).unwrap_err(),
+            "--pop-out needs --ui full"
+        );
         assert_eq!(
             parse(&["--console", "--ui", "minimal"], None).unwrap_err(),
             "--console needs --ui full"

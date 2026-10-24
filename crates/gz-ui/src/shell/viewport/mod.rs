@@ -97,6 +97,7 @@ pub(crate) fn viewport_area(theme: &Theme) -> impl Bundle {
                 Opacity(DIM_OPACITY),
                 pass_through(),
             ));
+            a.spawn(super::popout::popout_layer());
             a.spawn(banner::disconnect_banner(&t));
             a.spawn(connect_card::connect_card(&t));
         })),

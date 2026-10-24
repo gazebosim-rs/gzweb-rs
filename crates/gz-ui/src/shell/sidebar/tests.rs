@@ -554,7 +554,7 @@ fn a_focused_header_action_survives_the_second_slot() {
     let mut app = probe_app(Slot::Primary);
     let poke = header_button(&mut app, POKE);
     let header = app.world().get::<ChildOf>(poke).unwrap().parent();
-    assert_eq!(slot_actions(&mut app, header), [Collapse]);
+    assert_eq!(slot_actions(&mut app, header), [PopOut, Collapse]);
     tab_to(&mut app, poke);
     frames(&mut app, 1);
     app.world_mut().write_message(UiCommand::OpenPanel {
@@ -565,7 +565,7 @@ fn a_focused_header_action_survives_the_second_slot() {
     assert_eq!(header_button(&mut app, POKE), poke);
     assert_eq!(app.world().get::<ChildOf>(poke).unwrap().parent(), header);
     assert_eq!(focused(&app), Some(poke));
-    assert_eq!(slot_actions(&mut app, header), [Swap, Collapse]);
+    assert_eq!(slot_actions(&mut app, header), [Swap, PopOut, Collapse]);
     // The slot buttons stay last, after the header actions.
     let kids = app.world().get::<Children>(header).unwrap().to_vec();
     let at = |e: Entity| kids.iter().position(|k| *k == e).unwrap();
@@ -579,7 +579,7 @@ fn a_focused_header_action_survives_the_second_slot() {
     frames(&mut app, 2);
     assert_eq!(header_button(&mut app, POKE), poke);
     assert_eq!(focused(&app), Some(poke));
-    assert_eq!(slot_actions(&mut app, header), [Collapse]);
+    assert_eq!(slot_actions(&mut app, header), [PopOut, Collapse]);
 }
 
 /// A body the slots don't host (M7's pop-out) isn't theirs to despawn.

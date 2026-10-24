@@ -83,7 +83,7 @@ impl Plugin for PlotPanelPlugin {
                 .content::<PlotBody>()
                 .footer_action(PanelAction::new(ADD_FIELD, "Add field…").disabled())
                 .footer_action(PanelAction::new(EXPORT, "Export CSV").disabled())
-                .footer_action(PanelAction::new(POP_OUT, "Pop out").disabled()),
+                .footer_action(PanelAction::new(POP_OUT, "Pop out")),
         )
         .add_message::<PlotPick>()
         .init_resource::<PlotCharts>()
@@ -102,6 +102,7 @@ impl Plugin for PlotPanelPlugin {
                     systems::record,
                     systems::mark_listed,
                     systems::plot_status,
+                    systems::pop_out_state,
                     systems::hold_series.before(gz_bevy::topics::sync_subscriptions),
                     systems::refresh_topics,
                 )

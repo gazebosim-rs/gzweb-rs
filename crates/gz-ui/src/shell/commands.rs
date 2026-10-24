@@ -47,6 +47,27 @@ pub enum UiCommand {
     ResetWidth(Side),
     /// A collapsed panel's bar button: expand it at its previous width.
     Show(Side),
+    /// A slot header's Pop out (§7.11).
+    PopOut(PanelId),
+    /// A pop-out window's Dock: back to its slot.
+    Dock(PanelId),
+    /// A pop-out window's Close.
+    ClosePopOut(PanelId),
+    /// A press in a pop-out window: it comes to the top.
+    RaisePopOut(PanelId),
+    /// A pop-out header drag: the window's top-left corner, in the
+    /// viewport area.
+    MovePopOut {
+        panel: PanelId,
+        at: Vec2,
+    },
+    /// A pop-out edge or corner drag: `edges` moved `delta` from `start`.
+    ResizePopOut {
+        panel: PanelId,
+        start: Rect,
+        edges: super::layout::Edges,
+        delta: Vec2,
+    },
 }
 
 /// The shortcut bindings pressed this frame, from the input map in the
@@ -238,6 +259,26 @@ pub(crate) fn apply_ui_commands(
             UiCommand::ToggleTheme => theme.toggle(),
             UiCommand::ResetWidth(side) => layout.reset_width(side),
             UiCommand::Show(side) => layout.show(side, true),
+            UiCommand::PopOut(panel) => {
+                if panels.get(panel).is_some() {
+                    layout.pop_out(panel);
+                }
+            }
+            UiCommand::Dock(panel) => layout.dock(panel),
+            UiCommand::ClosePopOut(panel) => layout.close_popout(panel),
+            UiCommand::RaisePopOut(panel) => {
+                // A press in the top window changes nothing.
+                if layout.popouts.last().is_some_and(|p| p.panel != panel) {
+                    layout.raise(panel);
+                }
+            }
+            UiCommand::MovePopOut { panel, at } => layout.move_popout(panel, at),
+            UiCommand::ResizePopOut {
+                panel,
+                start,
+                edges,
+                delta,
+            } => layout.resize_popout(panel, start, edges, delta),
         }
     }
 }

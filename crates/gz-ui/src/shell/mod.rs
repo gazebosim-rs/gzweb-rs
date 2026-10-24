@@ -25,6 +25,7 @@ pub(crate) mod host;
 pub(crate) mod inspector;
 pub(crate) mod layout;
 pub(crate) mod panel_status;
+pub(crate) mod popout;
 pub(crate) mod regions;
 pub(crate) mod routing;
 pub(crate) mod sidebar;
@@ -41,10 +42,11 @@ pub use commands::UiCommand;
 pub use connection::{world_name, CurrentPhase, Phase};
 pub use host::ShownPanels;
 pub use layout::{
-    ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W, MIN_SLOT_H,
-    MIN_WINDOW, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
+    Edges, PopOut, ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W,
+    MIN_SLOT_H, MIN_WINDOW, POPOUT_MIN, POPOUT_SIZE, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
 };
 pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
+pub use popout::StartPopOuts;
 pub use top_bar::tools::Tool;
 pub use viewport::views::{LayoutPreset, StartLayout};
 
@@ -158,6 +160,7 @@ impl Plugin for ShellPlugin {
         activity_bar::build(app);
         top_bar::build(app);
         sidebar::build(app);
+        popout::build(app);
         inspector::build(app);
         status_bar::build(app);
         viewport::build(app);
