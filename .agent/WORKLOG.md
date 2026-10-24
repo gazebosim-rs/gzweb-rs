@@ -1594,3 +1594,31 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   the first colon; the browser download keeps its URL until it starts.
 - **Tests:** workspace 754 → 780 passing; coverage 98.2% lines. check.sh
   passes. Not tried by hand.
+
+## 2026-10-24: M7c Assets (D-102)
+
+- **Inserting:** `gz_core::insert` (shapes and lights as SDFormat, a
+  model by URI as an `<include>`, the `create` request's
+  `EntityFactory`); `gz_bevy::edit::create_request` and `create_reply`.
+- **Placing:** `gz_bevy::view::place`: while `Placing`, a click in the
+  views places at the surface under it (`PlaceAt`), Shift keeps it,
+  drags still move the camera; `PlaceHover` follows the pointer for the
+  preview. The shell's Esc waits while placing; the status bar's hint
+  says how.
+- **Fuel:** `gz_core::fuel` (search URL, models, URIs, thumbnails, sizes)
+  and `gz_bevy::fuel` (`FuelSearch` → `GzFuel`, fetched off the main
+  thread, a newer search replacing one under way; `FuelFetch` swaps in
+  canned replies for tests).
+- **The panel:** Shapes, Lights, Fuel and Local tabs; tiles and Insert
+  arm; a translucent preview; each insert's row from sent to shown in
+  the scene (or failed, dismissable); the Fuel search with thumbnails,
+  Load more, "Fuel is unreachable" and Retry; inert, saying why, without
+  a world that takes edits. `gzweb --assets TAB[:QUERY]`.
+- **Live check** (debug build, Jetty `diff_drive` on :9011, the patched
+  server): `create` of a box and of the Fuel `Euro pallet` (the server
+  downloaded it into its cache), both answered true and showed in the
+  scene; removed again after. Captures: the Fuel tab searching
+  "warehouse" (light, with thumbnails) and the Shapes tab (dark).
+  Placing by clicking in the view is tested, not tried by hand.
+- **Tests:** workspace 780 → 799 passing; coverage 98.1% lines. check.sh
+  passes.

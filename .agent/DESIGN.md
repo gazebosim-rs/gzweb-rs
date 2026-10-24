@@ -225,7 +225,10 @@ app subscribing a world topic the client takes itself taps it.
 topic's count and rate. `gz_core::fields` reads a message's numbers by
 field path (the Plot panel, D-100); `gz_bevy::save::save_text` saves a
 file the user asked for (a download in the browser, the working
-directory natively).
+directory natively). `gz_core::insert` writes shapes, lights and model
+includes as SDFormat and the `create` request's message; `gz_bevy::fuel`
+searches Fuel; `gz_bevy::view::place` turns a click in the views into a
+place while the UI arms one (D-102).
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In
