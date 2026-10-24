@@ -33,11 +33,16 @@ pub(crate) struct ConnectionDot;
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct CursorReadout(pub Option<[f32; 2]>);
 
+/// The hint while placing.
+pub(crate) const PLACE_HINT: &str = "Click to place · Shift to place several · Esc to stop";
+
 /// What the status bar's texts are read from.
 #[derive(SystemParam)]
 pub(crate) struct StatusSources<'w, 's> {
     status: Option<Res<'w, GzStatus>>,
     tool: Res<'w, Tool>,
+    /// Placing replaces the tool's hint (D-102).
+    placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
     cursor: Res<'w, CursorReadout>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     selection: Option<Res<'w, Selection>>,
@@ -49,6 +54,7 @@ impl StatusSources<'_, '_> {
     /// run.
     fn changed(&self) -> bool {
         self.tool.is_changed()
+            || self.placing.as_ref().is_some_and(Res::is_changed)
             || self.cursor.is_changed()
             || self.status.as_ref().is_some_and(Res::is_changed)
             || self.selection.as_ref().is_some_and(Res::is_changed)
@@ -84,6 +90,7 @@ impl StatusSources<'_, '_> {
             StatusItem::Physics => format::physics(None, sim.map(|s| s.step_size)),
             StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
+            StatusItem::Hint if self.placing.as_ref().is_some_and(|p| p.0) => PLACE_HINT.into(),
             StatusItem::Hint => self.tool.hint().into(),
             StatusItem::Selection => self.selection(),
             StatusItem::Cursor => format::cursor(self.cursor.0),

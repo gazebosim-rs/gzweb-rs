@@ -24,6 +24,9 @@
 //!   tree filtered or with every row open (DECISIONS.md D-70).
 //! - `--echo TOPIC` starts the full UI with the Topics panel open,
 //!   echoing TOPIC once the server lists it (DECISIONS.md D-99).
+//! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
+//!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
+//!   (DECISIONS.md D-102).
 //! - `--plot TOPIC:FIELD[,FIELD…]` (repeatable) starts the full UI with
 //!   the Plot panel open, a chart of each TOPIC's FIELDs once the server
 //!   lists it (DECISIONS.md D-100); `--plot TOPIC` opens its picker on
@@ -61,6 +64,8 @@ struct Args {
     topics: Option<gz_ui::panels::TopicsStart>,
     /// `--plot`.
     plot: Option<gz_ui::panels::PlotStart>,
+    /// `--assets`.
+    assets: Option<gz_ui::panels::AssetsStart>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -74,7 +79,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
-                     [--plot TOPIC[:FIELD,…]] \
+                     [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -188,6 +193,7 @@ fn parse_args(
     let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut topics = None;
     let mut plot = gz_ui::panels::PlotStart::default();
+    let mut assets = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -252,6 +258,9 @@ fn parse_args(
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
             "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
+            "--assets" => {
+                assets = Some(value()?.parse().map_err(|e| format!("--assets: {e}"))?);
+            }
             "--plot" => {
                 let v = value()?;
                 // A field's name can hold `::` (scoped names); a topic can't.
@@ -301,6 +310,9 @@ fn parse_args(
     if plot.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--plot needs --ui full".into());
     }
+    if assets.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--assets needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -342,6 +354,7 @@ fn parse_args(
         scene,
         topics,
         plot,
+        assets,
         layout,
         no_vsync,
     })))
@@ -413,6 +426,7 @@ fn command() -> Result<Command, String> {
         scene: None,
         topics: None,
         plot: None,
+        assets: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -623,6 +637,9 @@ fn main() -> AppExit {
         }
         if let Some(plot) = args.plot {
             app.insert_resource(plot);
+        }
+        if let Some(assets) = args.assets {
+            app.insert_resource(assets);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -884,6 +901,22 @@ mod tests {
             ]
         );
         assert!(run_args(&[], None).plot.is_none());
+        assert!(run_args(&["--assets", "fuel:pallet"], None)
+            .assets
+            .is_some());
+        assert!(run_args(&[], None).assets.is_none());
+        assert_eq!(
+            parse(&["--assets", "nope"], None).unwrap_err(),
+            "--assets: not a tab (shapes, lights, fuel, local): nope"
+        );
+        assert_eq!(
+            parse(&["--assets", "shapes:box"], None).unwrap_err(),
+            "--assets: only the Fuel tab takes a query"
+        );
+        assert_eq!(
+            parse(&["--assets", "lights", "--ui", "minimal"], None).unwrap_err(),
+            "--assets needs --ui full"
+        );
         let a = run_args(&["--plot", "/m/pose:pose[v::chassis].position.z"], None);
         assert_eq!(
             a.plot.unwrap().charts,

@@ -73,9 +73,14 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .insert_resource(GzStatus::new("ws://localhost:9004"))
         .init_resource::<GzIndex>()
         .init_resource::<Sent>()
+        // No network: a Fuel search fails as if offline.
+        .insert_resource(gz_bevy::fuel::FuelFetch(|_| {
+            bevy::tasks::IoTaskPool::get().spawn(async { Err((true, "offline".to_string())) })
+        }))
         // The view's and the overlays' state, as ViewerControls keeps it.
         .init_asset::<StandardMaterial>()
         .add_message::<ViewCommand>()
+        .add_message::<gz_bevy::view::place::PlaceAt>()
         .add_message::<OverlayCommand>()
         .init_resource::<Overlays>()
         .init_resource::<GzGrid>()
