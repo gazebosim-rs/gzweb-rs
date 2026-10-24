@@ -282,7 +282,7 @@ fn parse_args(
             "--echo" => {
                 topics = Some(gz_ui::panels::TopicsStart {
                     echo: value()?,
-                    beside: false,
+                    beside: None,
                 });
             }
             "--teleop" => teleop = true,

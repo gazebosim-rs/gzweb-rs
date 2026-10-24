@@ -23,7 +23,8 @@ use super::view::{
 use super::{TopicsStart, COPY, PLOT_FIELD, TOPICS};
 use crate::panels::{PanelActionActivated, PanelId, PanelRegistry, PanelView, PlotPick, PLOT};
 use crate::shell::{
-    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShellSystems, ShownPanels, Slot, UiCommand,
+    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShellLayout, ShellSystems, ShownPanels, Slot,
+    UiCommand,
 };
 use crate::theme::visuals::Active;
 use crate::theme::{Theme, SPACE};
@@ -85,6 +86,7 @@ pub(super) fn topics_status(
 pub(crate) fn apply_start(
     start: Option<Res<TopicsStart>>,
     topics: Res<GzTopics>,
+    layout: Option<Res<ShellLayout>>,
     mut echo: ResMut<Echo>,
     mut ui: MessageWriter<UiCommand>,
     mut commands: Commands,
@@ -93,10 +95,13 @@ pub(crate) fn apply_start(
         return;
     };
     if start.is_added() {
-        let slot = if start.beside {
-            Slot::Secondary
-        } else {
-            Slot::Primary
+        // Beside a panel: the slot it isn't in.
+        let beside = start
+            .beside
+            .map(|p| layout.as_deref().and_then(|l| l.slot_of(p)));
+        let slot = match beside {
+            None | Some(Some(Slot::Secondary)) => Slot::Primary,
+            Some(_) => Slot::Secondary,
         };
         ui.write(UiCommand::OpenPanel {
             panel: TOPICS,

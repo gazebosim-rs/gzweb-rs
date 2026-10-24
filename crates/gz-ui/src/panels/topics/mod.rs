@@ -74,13 +74,13 @@ fn copy_action() -> PanelAction {
 
 /// Opens the panel echoing a topic: for a capture (`gzweb --echo TOPIC`,
 /// D-99), the inspector's Echo topic and the Console's `topic -e`. The
-/// panel opens in the primary slot (`beside`: the secondary, beside the
-/// panel that asked) and echoes `echo` once the server lists it; then the
+/// panel opens in the primary slot (`beside` a panel: the slot that panel
+/// isn't in) and echoes `echo` once the server lists it; then the
 /// resource is removed.
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TopicsStart {
     pub echo: String,
-    pub beside: bool,
+    pub beside: Option<PanelId>,
 }
 
 /// The Topics panel's content marker: its ready body.

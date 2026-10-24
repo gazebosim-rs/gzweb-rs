@@ -81,6 +81,7 @@ impl Plugin for ConsolePanelPlugin {
                 )
                     .chain(),
                 (
+                    systems::apply_recall,
                     systems::filter_text,
                     systems::chip_states,
                     systems::sync_rows,

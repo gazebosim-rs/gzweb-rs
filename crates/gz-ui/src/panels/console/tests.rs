@@ -1,6 +1,8 @@
 //! The Console panel: its rules, and the panel through the shell.
 
 use bevy::a11y::AccessibilityNode;
+use bevy::input::keyboard::{Key, KeyboardInput};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::ValueChange;
@@ -111,10 +113,14 @@ fn lines_chips_filter_and_labels() {
     assert_eq!(text(&ConsoleState::default()), ["› help", "c", "b", "a"]);
     let later = ConsoleState {
         cleared_through: 1,
-        paused_at: Some(3),
+        paused_at: Some(2),
         ..default()
     };
-    assert_eq!(text(&later), ["c", "b"]);
+    assert_eq!(
+        text(&later),
+        ["› help", "b"],
+        "the command line isn't paused"
+    );
 }
 
 /// The panel open on a live world, with these lines in the log.
@@ -172,6 +178,11 @@ fn rows(app: &mut App) -> Vec<String> {
     children
         .iter()
         .filter(|c| world.get::<ConsoleRow>(*c).is_some())
+        .filter(|c| {
+            world
+                .get::<Node>(*c)
+                .is_some_and(|n| n.display != Display::None)
+        })
         .filter_map(|c| world.get::<AccessibilityNode>(c))
         .filter_map(|a| a.label().map(str::to_string))
         .collect()
@@ -264,8 +275,18 @@ fn the_log_lists_filters_pauses_and_clears() {
     push(&mut app, MessageLevel::Error, "held back");
     frames(&mut app, 2);
     assert_eq!(rows(&mut app)[0], "Reconnected", "paused");
+    submit(&mut app, "help");
+    frames(&mut app, 1);
+    assert!(
+        rows(&mut app)[0].contains("topic -l"),
+        "the command line answers while paused"
+    );
     act(&mut app, PAUSE);
-    assert_eq!(rows(&mut app)[0], "held back", "resumed");
+    assert_eq!(
+        rows(&mut app)[2],
+        "held back",
+        "resumed, under the command line's lines"
+    );
 
     act(&mut app, CLEAR);
     assert_eq!(view(&mut app), PanelView::empty("No messages"));
@@ -303,6 +324,22 @@ fn unseen_problems_count_until_the_console_shows() {
     });
     frames(&mut app, 3);
     assert_eq!(app.world().resource::<PanelStatus>().badge(CONSOLE), None);
+    // Closed again: a warning the info lines push out of the log still
+    // counts.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: crate::panels::SCENE,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 2);
+    push(&mut app, MessageLevel::Warning, "pushed out");
+    for _ in 0..SystemMessages::CAP {
+        push(&mut app, MessageLevel::Info, "chatter");
+    }
+    frames(&mut app, 2);
+    assert_eq!(
+        app.world().resource::<PanelStatus>().badge(CONSOLE),
+        Some((BadgeKind::Warning, 1))
+    );
 }
 
 /// Runs `line` in the command line.
@@ -336,6 +373,27 @@ fn command_text(app: &mut App) -> String {
         .find(|(_, p)| p.parent() == line)
         .map(|(t, _)| t.value().to_string())
         .unwrap()
+}
+
+/// An arrow key as a keyboard sends it (its logical key too, which the
+/// text input reads), in focused `e`.
+fn arrow(app: &mut App, e: Entity, key_code: KeyCode, key: Key) {
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(e, bevy::input_focus::FocusCause::Navigated);
+    let window = find::<Window>(app);
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut().write_message(KeyboardInput {
+            key_code,
+            logical_key: key.clone(),
+            state,
+            text: None,
+            repeat: false,
+            window,
+        });
+        app.update();
+    }
+    app.update();
 }
 
 /// `topic -l`, `-i` and `-e`; help; a mistake says how; a line runs once
@@ -380,6 +438,19 @@ fn the_command_line_reads_topics() {
         (Some(CONSOLE), Some(crate::panels::TOPICS))
     );
     assert!(app.world().get_resource::<TopicsStart>().is_none());
+    // From the secondary slot, beside is the primary.
+    app.world_mut().write_message(UiCommand::SwapSlots);
+    frames(&mut app, 2);
+    submit(&mut app, "topic -e -t /clock");
+    frames(&mut app, 2);
+    let l = layout(&app);
+    assert_eq!(
+        (l.primary, l.secondary),
+        (Some(crate::panels::TOPICS), Some(CONSOLE))
+    );
+    app.world_mut().write_message(UiCommand::SwapSlots);
+    frames(&mut app, 2);
+    said(&mut app);
     submit(&mut app, "model -l");
     assert_eq!(said(&mut app)[1].0, MessageLevel::Error);
     submit(&mut app, "help");
@@ -401,8 +472,17 @@ fn the_command_line_reads_topics() {
             .unwrap()
             .0
     };
-    focused_key(&mut app, input, KeyCode::ArrowUp);
+    arrow(&mut app, input, KeyCode::ArrowUp, Key::ArrowUp);
     assert_eq!(command_text(&mut app), "help");
+    let caret = app
+        .world()
+        .get::<EditableText>(input)
+        .unwrap()
+        .editor
+        .raw_selection()
+        .focus()
+        .index();
+    assert_eq!(caret, 4, "the caret ends the recalled line");
     focused_key(&mut app, input, KeyCode::ArrowUp);
     assert_eq!(command_text(&mut app), "model -l");
     focused_key(&mut app, input, KeyCode::ArrowDown);
@@ -487,6 +567,24 @@ fn the_command_line_calls_services_and_publishes() {
         said(&mut app)[2],
         (MessageLevel::Error, "/slow: no reply in time".into())
     );
+    // Its reply comes late, after the next call went out: not the next
+    // call's.
+    submit(
+        &mut app,
+        "service -s /slow --reqtype gz.msgs.Empty --reptype gz.msgs.Boolean",
+    );
+    let yes = |data| msgs::Boolean { data, ..default() }.encode_to_vec();
+    for data in [false, true] {
+        app.world_mut().write_message(GzServiceReply {
+            service: "/slow".into(),
+            msg_type: "gz.msgs.Boolean".into(),
+            payload: yes(data),
+        });
+        frames(&mut app, 1);
+    }
+    let lines = said(&mut app);
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    assert!(lines[2].1.ends_with("data: true"), "{lines:?}");
 
     // A message to send needs binary requests.
     app.world_mut().resource_mut::<GzStatus>().edits = Some(false);

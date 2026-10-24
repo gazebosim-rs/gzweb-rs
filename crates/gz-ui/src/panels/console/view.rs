@@ -15,7 +15,7 @@ use super::model::{source_label, ConsoleState, LevelChip};
 use super::{ConsoleBody, ConsoleFooter};
 use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
-use crate::widgets::layout::{column, row};
+use crate::widgets::layout::{column, display, row};
 use crate::widgets::text_field::command_field;
 use crate::widgets::{a11y, choice_chip, filter_field, rounded};
 
@@ -151,8 +151,8 @@ pub(crate) fn level_color(level: MessageLevel) -> ColorRole {
 }
 
 /// A line's row: its level's dot, the message, then `source · time` in
-/// mono 11.
-pub(super) fn line_row(m: &SystemMessage) -> impl Bundle {
+/// mono 11; hidden unless `shown` (the chip and the filter take it).
+pub(super) fn line_row(m: &SystemMessage, shown: bool) -> impl Bundle {
     let meta = format!("{} · {}", source_label(&m.source), m.clock);
     (
         ConsoleRow(m.seq),
@@ -161,6 +161,7 @@ pub(super) fn line_row(m: &SystemMessage) -> impl Bundle {
             border: UiRect::bottom(px(border::HAIRLINE)),
             align_items: AlignItems::Start,
             flex_shrink: 0.0,
+            display: display(shown),
             ..row(SPACE[4])
         },
         Stroke(ColorRole::LineSoft),

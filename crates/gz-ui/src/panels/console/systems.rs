@@ -6,6 +6,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
 use bevy::input_focus::FocusedInput;
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::Checked;
@@ -18,7 +19,7 @@ use gz_core::cli::{self, GzCli};
 use gz_core::control::service_not_found;
 use gz_core::echo::{encode_text, message_text};
 
-use super::model::{count_label, lines, matches, ConsoleOutput, ConsoleState, LevelChip};
+use super::model::{count_label, lines, matches, ConsoleOutput, ConsoleState};
 use super::view::{
     line_row, ChipChoice, CommandLine, ConsoleFilter, ConsoleRow, ConsoleRows, NoMatches,
 };
@@ -77,19 +78,14 @@ pub(super) fn unread(
     if !log.is_changed() && !hosts.is_changed() && !state.is_changed() {
         return;
     }
-    if hosts.is_shown(CONSOLE) && state.read_through != log.last_seq {
-        state.read_through = log.last_seq;
+    let counted = (log.warnings, log.errors);
+    if hosts.is_shown(CONSOLE) && state.seen != counted {
+        state.seen = counted;
     }
-    let since = state.read_through.max(state.cleared_through);
-    let (mut warnings, mut errors) = (0, 0);
-    for m in log.list.iter().filter(|m| m.seq > since) {
-        match m.level {
-            MessageLevel::Warning => warnings += 1,
-            MessageLevel::Error => errors += 1,
-            MessageLevel::Info | MessageLevel::Debug => {}
-        }
-    }
-    unread.set_if_neq(ConsoleUnread { warnings, errors });
+    unread.set_if_neq(ConsoleUnread {
+        warnings: counted.0.saturating_sub(state.seen.0),
+        errors: counted.1.saturating_sub(state.seen.1),
+    });
 }
 
 /// The view ("No messages" with none), the header's count ("2 warn · 1
@@ -115,24 +111,25 @@ pub(super) fn console_status(
     status.set_action_on(CONSOLE, PAUSE, state.paused_at.is_some());
 }
 
-/// What the rows were built for (the filter, chip, clear and pause) and
-/// the lines they show, newest first.
+/// What the rows were built for (Clear and Pause) and the lines they
+/// hold, newest first.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct BuiltRows {
-    key: Option<(String, LevelChip, u64, Option<u64>)>,
+    key: Option<(u64, Option<u64>)>,
     seqs: Vec<u64>,
 }
 
-/// The rows follow the lines: a new line's row goes on top, a line the
-/// log let go of loses its row, and a new filter, chip, clear or pause
-/// builds them all again.
+/// The rows follow the lines: each held line has a row, shown while it
+/// matches the chip and the filter (so typing in the filter only shows
+/// and hides rows); a new line's row goes on top, a line the log let go
+/// of loses its row, and Clear or Pause builds them again.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_rows(
     log: Res<SystemMessages>,
     output: Res<ConsoleOutput>,
     state: Res<ConsoleState>,
     parents: Query<(Entity, Ref<ConsoleRows>)>,
-    rows: Query<(Entity, &ConsoleRow)>,
+    mut rows: Query<(Entity, &ConsoleRow, &mut Node), Without<NoMatches>>,
     mut none: Query<&mut Node, With<NoMatches>>,
     mut built: ResMut<BuiltRows>,
     mut commands: Commands,
@@ -145,40 +142,40 @@ pub(super) fn sync_rows(
         return;
     }
     let all = lines(&log, &output, &state);
-    let shown: Vec<_> = all.iter().filter(|m| matches(m, &state)).collect();
-    let key = Some((
-        state.filter.clone(),
-        state.chip,
-        state.cleared_through,
-        state.paused_at,
-    ));
-    let want: Vec<u64> = shown.iter().map(|m| m.seq).collect();
+    let key = Some((state.cleared_through, state.paused_at));
+    let seqs: Vec<u64> = all.iter().map(|m| m.seq).collect();
+    let by_seq: HashMap<u64, bool> = all.iter().map(|m| (m.seq, matches(m, &state))).collect();
     if fresh || built.key != key {
         commands.entity(parent).despawn_children();
         commands.entity(parent).with_children(|p| {
-            for m in &shown {
-                p.spawn(line_row(m));
+            for m in &all {
+                p.spawn(line_row(m, by_seq[&m.seq]));
             }
         });
-    } else if built.seqs != want {
-        for (e, row) in &rows {
-            if !want.contains(&row.0) {
-                commands.entity(e).despawn();
+    } else {
+        // Rows the log let go of go; the others show as they match.
+        for (e, row, mut node) in &mut rows {
+            match by_seq.get(&row.0) {
+                Some(shown) => set_shown(&mut node, *shown),
+                None => commands.entity(e).despawn(),
             }
         }
         // New lines are newer than every built one: they go on top.
         let newest = built.seqs.first().copied().unwrap_or(0);
-        let new: Vec<Entity> = shown
+        let new: Vec<Entity> = all
             .iter()
             .take_while(|m| m.seq > newest)
-            .map(|m| commands.spawn(line_row(m)).id())
+            .map(|m| commands.spawn(line_row(m, by_seq[&m.seq])).id())
             .collect();
-        commands.entity(parent).insert_children(0, &new);
+        if !new.is_empty() {
+            commands.entity(parent).insert_children(0, &new);
+        }
     }
+    let any_shown = by_seq.values().any(|s| *s);
     for mut node in &mut none {
-        set_shown(&mut node, !all.is_empty() && shown.is_empty());
+        set_shown(&mut node, !all.is_empty() && !any_shown);
     }
-    built.set_if_neq(BuiltRows { key, seqs: want });
+    built.set_if_neq(BuiltRows { key, seqs });
 }
 
 /// The filter field's text is the state's filter.
@@ -244,6 +241,7 @@ pub(super) fn on_action(
     }
     if ev.action == CLEAR {
         state.cleared_through = state.paused_at.unwrap_or(log.last_seq);
+        state.seen = (log.warnings, log.errors);
     } else if ev.action == PAUSE {
         state.paused_at = match state.paused_at {
             Some(_) => None,
@@ -251,6 +249,10 @@ pub(super) fn on_action(
         };
     }
 }
+
+/// How long after a call times out its reply is still taken for that
+/// call's (and dropped).
+const LATE_SECS: f64 = 30.0;
 
 /// A service call waiting for its reply.
 #[derive(Clone, Debug, PartialEq)]
@@ -267,6 +269,12 @@ pub(crate) struct Pending {
 pub(crate) struct CommandState {
     pub(crate) pending: Vec<Pending>,
     recall: Option<usize>,
+    /// A line ↑ or ↓ brought back, for its field, set by [`apply_recall`]
+    /// after the text input's own handling of the key.
+    recalled: Option<(Entity, String)>,
+    /// Services whose call timed out, until when: a reply that comes in
+    /// that time is the late one, not the next call's.
+    late: Vec<(String, f64)>,
 }
 
 /// What a command reads and writes.
@@ -420,7 +428,7 @@ pub(super) fn on_submit(
     if let Some(topic) = run.run(&line) {
         commands.insert_resource(TopicsStart {
             echo: topic,
-            beside: true,
+            beside: Some(CONSOLE),
         });
     }
     for (parent, mut text) in &mut inputs {
@@ -435,14 +443,14 @@ pub(super) fn on_submit(
 pub(super) fn on_history_key(
     mut ev: On<FocusedInput<KeyboardInput>>,
     lines: Query<(), With<CommandLine>>,
-    mut inputs: Query<(&ChildOf, &mut EditableText), With<TextFieldInput>>,
+    inputs: Query<&ChildOf, With<TextFieldInput>>,
     output: Res<ConsoleOutput>,
     mut calls: ResMut<CommandState>,
 ) {
     if ev.input.state != ButtonState::Pressed || ev.event_target() != ev.focused_entity {
         return;
     }
-    let Ok((parent, mut text)) = inputs.get_mut(ev.focused_entity) else {
+    let Ok(parent) = inputs.get(ev.focused_entity) else {
         return;
     };
     if !lines.contains(parent.parent()) {
@@ -459,7 +467,23 @@ pub(super) fn on_history_key(
     ev.propagate(false);
     calls.recall = next;
     let line = next.map_or("", |i| output.history[i].as_str());
-    set_field_text(&mut text, line);
+    calls.recalled = Some((ev.focused_entity, line.to_string()));
+}
+
+/// Puts the recalled line in its field, the caret at its end: after the
+/// text input's observer has queued its own move for the arrow.
+pub(super) fn apply_recall(
+    mut calls: ResMut<CommandState>,
+    mut inputs: Query<&mut EditableText, With<TextFieldInput>>,
+) {
+    let Some((field, line)) = calls.recalled.take() else {
+        return;
+    };
+    if let Ok(mut text) = inputs.get_mut(field) {
+        set_field_text(&mut text, &line);
+        // Even when the text is the same: the arrow moved the caret.
+        text.queue_edit(bevy::text::TextEdit::TextEnd(false));
+    }
 }
 
 /// A reply to the command line's service call says what came back; a
@@ -472,7 +496,13 @@ pub(super) fn service_replies(
     mut calls: ResMut<CommandState>,
 ) {
     let now = time.elapsed_secs_f64();
+    calls.late.retain(|(_, until)| *until > now);
     for reply in replies.read() {
+        // A timed-out call's reply, come late: dropped.
+        if let Some(j) = calls.late.iter().position(|(s, _)| *s == reply.service) {
+            calls.late.remove(j);
+            continue;
+        }
         let Some(i) = calls
             .pending
             .iter()
@@ -513,6 +543,7 @@ pub(super) fn service_replies(
         .partition(|p| p.deadline <= now);
     calls.pending = waiting;
     for p in late {
+        calls.late.push((p.service.clone(), now + LATE_SECS));
         let text = format!("{}: no reply in time", p.service);
         output.say(&mut log, MessageLevel::Error, text, now);
     }

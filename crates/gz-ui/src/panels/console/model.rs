@@ -59,8 +59,10 @@ pub(crate) struct ConsoleState {
     /// Clear: the lines up to this one are gone from the panel (the
     /// status bar's chip keeps its own).
     pub cleared_through: u64,
-    /// The problems up to this one have been seen (the Console showed).
-    pub read_through: u64,
+    /// How many warnings and errors the log had counted when they were
+    /// last seen (the Console showed) or cleared: the ones since are
+    /// unread, even those the list has let go.
+    pub seen: (u32, u32),
 }
 
 /// The command line's own lines: what was typed, and the results. They
@@ -102,7 +104,8 @@ impl ConsoleOutput {
 /// The command line's lines' source.
 pub(crate) const SOURCE: &str = "console";
 
-/// The lines the panel holds (since Clear, up to a pause), newest first.
+/// The lines the panel holds (since Clear; the log's up to a pause),
+/// newest first.
 pub(crate) fn lines<'a>(
     log: &'a SystemMessages,
     output: &'a ConsoleOutput,
@@ -113,7 +116,8 @@ pub(crate) fn lines<'a>(
         .iter()
         .chain(&output.lines)
         .filter(|m| m.seq > state.cleared_through)
-        .filter(|m| state.paused_at.is_none_or(|p| m.seq <= p))
+        // Pause holds the log back, not the command line's answers.
+        .filter(|m| m.source == SOURCE || state.paused_at.is_none_or(|p| m.seq <= p))
         .collect();
     all.sort_by_key(|m| std::cmp::Reverse(m.seq));
     all
