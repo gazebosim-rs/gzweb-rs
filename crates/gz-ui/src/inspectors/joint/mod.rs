@@ -8,6 +8,7 @@
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
+use bevy::ui_widgets::SliderValue;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::joint_state::{JointStateWanted, JointStates};
 use gz_bevy::overlays::extras::SdfExtras;
@@ -42,6 +43,10 @@ pub(crate) struct JointValue {
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct JointCommand(pub(crate) String);
 
+/// The command slider was moved: it no longer follows the joint.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct Commanded;
+
 /// Registers the Joint inspector, the joint-state subscription it uses and
 /// its live values.
 pub struct JointInspectorPlugin;
@@ -52,7 +57,7 @@ impl Plugin for JointInspectorPlugin {
             .add_plugins(gz_bevy::joint_state::JointStatePlugin)
             .add_systems(
                 Update,
-                (want_joint_states, joint_values).in_set(ShellSystems::Readouts),
+                (want_joint_states, joint_values, follow_joint).in_set(ShellSystems::Readouts),
             )
             .add_observer(build_joint)
             .add_observer(on_command);
@@ -281,17 +286,45 @@ fn on_command(
     parents: Query<&ChildOf>,
     rows: Query<&JointCommand>,
     mut out: MessageWriter<gz_bevy::connection::GzCommand>,
+    mut commands: Commands,
 ) {
-    let Some(row) = parents
+    let Some((e, row)) = parents
         .get(ev.source)
         .ok()
-        .and_then(|p| rows.get(p.parent()).ok())
+        .and_then(|p| rows.get(p.parent()).ok().map(|r| (p.parent(), r)))
     else {
         return;
     };
+    commands.entity(e).insert(Commanded);
     out.write(gz_bevy::connection::GzCommand::Publish {
         topic: row.0.clone(),
         msg_type: "gz.msgs.Double".into(),
         payload: gz_core::teleop::double(f64::from(ev.value)),
     });
+}
+
+/// Until it is moved, the command slider sits at the joint's live
+/// position, so taking the thumb doesn't jump the joint.
+fn follow_joint(
+    inspected: Res<Inspected>,
+    states: Res<JointStates>,
+    rows: Query<(), (With<JointCommand>, Without<Commanded>)>,
+    sliders: Query<(Entity, &ChildOf, &SliderValue)>,
+    mut commands: Commands,
+) {
+    let Some(position) = inspected
+        .part
+        .as_ref()
+        .and_then(|p| states.joints.get(&p.name))
+        .map(|s| s.position)
+    else {
+        return;
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let v = position as f32;
+    for (e, row, value) in &sliders {
+        if rows.contains(row.parent()) && value.0 != v {
+            commands.entity(e).insert(SliderValue(v));
+        }
+    }
 }

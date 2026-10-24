@@ -467,8 +467,9 @@ fn flags_read_in_any_case_and_a_default_topic_is_none() {
 }
 
 /// A model's drive takes Twists on its `<topic>` (rooted) or
-/// `/model/<name>/cmd_vel`; each JointPositionController joint on its
-/// `<topic>` or the default with its joint index.
+/// `/model/<name>/cmd_vel`; each JointPositionController's joints on its
+/// `<topic>`, its `<sub_topic>` under the model, or the default from its
+/// first joint and its joint index; one taking Actuators is left out.
 #[test]
 fn drives_and_joint_controllers_have_their_topics() {
     let xml = r#"<sdf version="1.10"><world name="w">
@@ -483,6 +484,15 @@ fn drives_and_joint_controllers_have_their_topics() {
         </plugin>
         <plugin filename="gz-sim-joint-position-controller-system" name="y">
           <joint_name>wrist</joint_name><joint_index>1</joint_index>
+        </plugin>
+        <plugin filename="gz-sim-joint-position-controller-system" name="z">
+          <joint_name>left</joint_name><joint_name>right</joint_name>
+        </plugin>
+        <plugin filename="gz-sim-joint-position-controller-system" name="s">
+          <joint_name>pan</joint_name><sub_topic>pan_cmd</sub_topic>
+        </plugin>
+        <plugin filename="gz-sim-joint-position-controller-system" name="u">
+          <joint_name>tilt</joint_name><use_actuator_msg>true</use_actuator_msg>
         </plugin>
       </model>
       <model name="car">
@@ -505,6 +515,15 @@ fn drives_and_joint_controllers_have_their_topics() {
                 "wrist".to_string(),
                 "/model/amr/joint/wrist/1/cmd_pos".to_string()
             ),
+            (
+                "left".to_string(),
+                "/model/amr/joint/left/0/cmd_pos".to_string()
+            ),
+            (
+                "right".to_string(),
+                "/model/amr/joint/left/0/cmd_pos".to_string()
+            ),
+            ("pan".to_string(), "/model/amr/pan_cmd".to_string()),
         ]
     );
     assert_eq!(w.models["car"].drive_topic.as_deref(), Some("/drive"));

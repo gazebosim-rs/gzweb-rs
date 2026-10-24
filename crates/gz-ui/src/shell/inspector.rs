@@ -42,8 +42,10 @@ pub(crate) struct InspectorBody;
 
 /// The content in the body, for this subject (kind, entity, the part's
 /// name; for several, the selection itself), built from this generation
-/// of the world's SDFormat (a new reply rebuilds it), and for a server
-/// that does or doesn't take edits (the pose is fields or text).
+/// of the world's SDFormat (a new reply rebuilds it), and for whether its
+/// edits apply: a movable model on a server that takes edits (the pose is
+/// fields or text), a joint on one that takes publications (its command
+/// slider).
 #[derive(Component, Clone, Debug, PartialEq)]
 pub(crate) struct InspectorContent(
     pub(crate) InspectKind,
@@ -319,12 +321,14 @@ pub(crate) fn rebuild_body(
     added: Query<(), Added<InspectorBody>>,
     contents: Query<&InspectorContent>,
     (nodes, roots, planes): Movable,
-    mut was_editable: Local<bool>,
+    mut was_editable: Local<(bool, bool)>,
     mut commands: Commands,
 ) {
     let sdf_changed = sdf.as_ref().is_some_and(|s| s.is_changed());
     let editable = edits_allowed(status.as_deref());
-    let edits_changed = std::mem::replace(&mut *was_editable, editable) != editable;
+    let publishes = status.as_deref().and_then(|s| s.publishes) == Some(true);
+    let edits_changed =
+        std::mem::replace(&mut *was_editable, (editable, publishes)) != (editable, publishes);
     // A plane found after the body was built makes the pose text.
     if !inspected.is_changed()
         && !selection.is_changed()
@@ -349,11 +353,14 @@ pub(crate) fn rebuild_body(
         inspected.part.as_ref().map(|p| p.name.clone()),
         (inspected.kind == InspectKind::Multi).then(|| selection.clone()),
         // Only the Model inspector's pose can be edited, and only a
-        // movable model's.
-        inspected.kind == InspectKind::Model
-            && inspected.entity.is_some_and(|e| {
+        // movable model's; a joint is commanded where the server publishes.
+        match inspected.kind {
+            InspectKind::Model => inspected.entity.is_some_and(|e| {
                 crate::inspectors::common::pose_editable(status.as_deref(), e, &nodes, &roots)
             }),
+            InspectKind::Joint => publishes,
+            _ => false,
+        },
     );
     for (body, children) in &bodies {
         let current = children

@@ -146,7 +146,9 @@ fn an_end_that_isnt_in_the_scene_cant_be_selected() {
 }
 
 /// A joint with a JointPositionController has a command slider on a
-/// server that publishes, which publishes its position; not otherwise.
+/// server that publishes (once the probe says so), which sits at the
+/// joint's position until moved and publishes its position; not
+/// otherwise.
 #[test]
 fn a_controlled_joint_takes_a_command() {
     use gz_bevy::connection::{GzCommand, GzStatus};
@@ -171,7 +173,16 @@ fn a_controlled_joint_takes_a_command() {
         .iter(world)
         .next()
         .is_none());
-    let mut app = open(Some(true));
+    let mut refused = open(Some(false));
+    let world = refused.world_mut();
+    assert!(world
+        .query::<&super::JointCommand>()
+        .iter(world)
+        .next()
+        .is_none());
+    // The probe answers after the inspector opened.
+    app.world_mut().resource_mut::<GzStatus>().publishes = Some(true);
+    frames(&mut app, 3);
     let (row, topic) = {
         let world = app.world_mut();
         let (e, c) = world
@@ -188,6 +199,26 @@ fn a_controlled_joint_takes_a_command() {
             .find(|c| world.get::<bevy::ui_widgets::Slider>(*c).is_some())
             .unwrap()
     };
+    let at = |app: &App| {
+        app.world()
+            .get::<bevy::ui_widgets::SliderValue>(slider)
+            .unwrap()
+            .0
+    };
+    let state = |position| JointState {
+        position,
+        velocity: 0.0,
+        effort: 0.0,
+    };
+    let live = |app: &mut App, p: f64| {
+        app.world_mut()
+            .resource_mut::<JointStates>()
+            .joints
+            .insert("slide".into(), state(p));
+        frames(app, 2);
+    };
+    live(&mut app, 0.1);
+    assert!((at(&app) - 0.1).abs() < 1e-6, "follows the joint");
     sent(&mut app);
     app.world_mut().trigger(bevy::ui_widgets::ValueChange {
         source: slider,
@@ -195,6 +226,8 @@ fn a_controlled_joint_takes_a_command() {
         is_final: true,
     });
     frames(&mut app, 1);
+    live(&mut app, 0.05);
+    assert!((at(&app) - 0.3).abs() < 1e-6, "moved: keeps the command");
     let positions: Vec<f64> = sent(&mut app)
         .into_iter()
         .filter_map(|c| match c {

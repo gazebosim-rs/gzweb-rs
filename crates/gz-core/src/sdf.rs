@@ -228,8 +228,10 @@ pub struct ModelExtras {
     /// `/model/<name>/cmd_vel`.
     pub drive_topic: Option<String>,
     /// Its JointPositionControllers: each joint and the topic it takes
-    /// `gz.msgs.Double` positions on (its `<topic>`, or
-    /// `/model/<name>/joint/<joint>/<index>/cmd_pos`).
+    /// `gz.msgs.Double` positions on (its plugin's `<topic>`,
+    /// `/model/<name>/<sub_topic>`, or
+    /// `/model/<name>/joint/<first joint>/<index>/cmd_pos`; a plugin's
+    /// joints share it).
     pub joint_controllers: Vec<(String, String)>,
 }
 
@@ -435,20 +437,33 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                         &[("JointPositionController", "joint-position-controller")],
                     )
                 })
+                // One topic per plugin, as gz-sim names it: `<topic>`, else
+                // `/model/<model>/<sub_topic>`, else from the first joint;
+                // it moves all the plugin's joints. One that takes
+                // `gz.msgs.Actuators` (`use_actuator_msg`) isn't commanded.
+                .filter(|p| !text(*p, "use_actuator_msg").is_some_and(|v| v.trim() == "true"))
                 .flat_map(|p| {
-                    let topic = text(p, "topic").filter(|t| !t.is_empty()).map(rooted);
-                    let index = text(p, "joint_index").unwrap_or("0").to_string();
-                    let name = name.to_string();
-                    children(p, "joint_name")
+                    let joints: Vec<&str> = children(p, "joint_name")
                         .filter_map(|j| j.text())
                         .map(str::trim)
                         .filter(|j| !j.is_empty())
-                        .map(move |j| {
-                            let t = topic.clone().unwrap_or_else(|| {
-                                format!("/model/{name}/joint/{j}/{index}/cmd_pos")
-                            });
-                            (j.to_string(), t)
+                        .collect();
+                    let index = text(p, "joint_index").unwrap_or("0");
+                    let topic = text(p, "topic")
+                        .filter(|t| !t.is_empty())
+                        .map(rooted)
+                        .or_else(|| {
+                            text(p, "sub_topic")
+                                .filter(|t| !t.is_empty())
+                                .map(|t| format!("/model/{name}/{}", t.trim_start_matches('/')))
                         })
+                        .or_else(|| {
+                            let first = joints.first()?;
+                            Some(format!("/model/{name}/joint/{first}/{index}/cmd_pos"))
+                        });
+                    joints
+                        .iter()
+                        .filter_map(|j| Some((j.to_string(), topic.clone()?)))
                         .collect::<Vec<_>>()
                 })
                 .collect(),
