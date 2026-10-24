@@ -11,6 +11,8 @@ pub(crate) mod body;
 pub(crate) mod footer;
 pub(crate) mod slot_splitter;
 
+use accesskit::Toggled;
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -24,7 +26,7 @@ use super::layout::DEFAULT_SPLIT;
 use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::{PanelStatus, ShellLayout, ShellSystems, Side, Slot};
-use crate::assets::icons::IconId;
+use crate::assets::icons::{Icon, IconId};
 use crate::panels::{HeaderAction, PanelBody, PanelDef, PanelId, PanelRegistry, PanelView};
 use crate::theme::Theme;
 use crate::widgets::layout::{self, column};
@@ -259,7 +261,8 @@ pub(crate) fn slot_counts(
 }
 
 /// A header action's button (with its [`ActionButton`]): its enabled
-/// state follows [`PanelStatus`] in place ([`header_action_states`]).
+/// state follows [`PanelStatus`] in place ([`action_states`]), and a
+/// toggle's look too ([`toggle_looks`]).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct HeaderButton;
 
@@ -275,7 +278,8 @@ fn header_action(
     a: &HeaderAction,
 ) {
     let enabled = status.header_action_enabled(panel, a);
-    let mut tip = Tooltip::new(a.tooltip);
+    let (icon, title) = a.look(status.action_on(panel, a.id));
+    let mut tip = Tooltip::new(title);
     if let Some(b) = a.binding {
         tip = tip.binding(map, b);
     }
@@ -283,7 +287,7 @@ fn header_action(
         tip = tip.detail(a.why.unwrap_or(body::NOT_YET));
     }
     let mut e = h.spawn((
-        icon_button(theme, a.icon, IconButtonSize::Small, tip),
+        icon_button(theme, icon, IconButtonSize::Small, tip),
         ActionButton {
             panel,
             action: a.id,
@@ -342,6 +346,59 @@ pub(crate) fn action_states(
             *tip = action_tooltip(&label, enabled, why);
         } else {
             tip.detail = (!enabled).then(|| why.unwrap_or(body::NOT_YET).to_string());
+        }
+    }
+}
+
+/// A header toggle's button shows its on or off look
+/// ([`HeaderAction::toggle`]): icon, tooltip and accessible name, and
+/// whether it is pressed.
+pub(crate) fn toggle_looks(
+    status: Res<PanelStatus>,
+    panels: Res<PanelRegistry>,
+    mut buttons: Query<
+        (
+            &ActionButton,
+            &mut Tooltip,
+            &mut AccessibilityNode,
+            &Children,
+        ),
+        With<HeaderButton>,
+    >,
+    mut icons: Query<&mut Icon>,
+) {
+    if !status.is_changed() {
+        return;
+    }
+    for (b, mut tip, mut access, children) in &mut buttons {
+        let Some(a) = panels
+            .get(b.panel)
+            .and_then(|d| d.header_actions.iter().find(|a| a.id == b.action))
+            .filter(|a| a.on.is_some())
+        else {
+            continue;
+        };
+        let on = status.action_on(b.panel, b.action);
+        let (id, title) = a.look(on);
+        if tip.title != title {
+            tip.title = title.into();
+        }
+        if access.label() != Some(title) {
+            access.set_label(title);
+        }
+        let pressed = on.then_some(Toggled::True);
+        if access.toggled() != pressed {
+            match pressed {
+                Some(t) => access.set_toggled(t),
+                None => access.clear_toggled(),
+            }
+        }
+        for &c in children {
+            if let Ok(mut icon) = icons.get_mut(c) {
+                if icon.id != id {
+                    icon.id = id;
+                }
+            }
         }
     }
 }
@@ -458,7 +515,7 @@ pub(crate) fn build(app: &mut App) {
     // After the panels have written their views, before the readouts.
     .add_systems(
         Update,
-        (rebuild_hosts, slot_counts, action_states)
+        (rebuild_hosts, slot_counts, action_states, toggle_looks)
             .chain()
             .in_set(ShellSystems::Slots),
     )

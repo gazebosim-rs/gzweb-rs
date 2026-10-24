@@ -24,6 +24,10 @@
 //!   tree filtered or with every row open (DECISIONS.md D-70).
 //! - `--echo TOPIC` starts the full UI with the Topics panel open,
 //!   echoing TOPIC once the server lists it (DECISIONS.md D-99).
+//! - `--plot TOPIC:FIELD[,FIELD…]` (repeatable) starts the full UI with
+//!   the Plot panel open, a chart of each TOPIC's FIELDs once the server
+//!   lists it (DECISIONS.md D-100); `--plot TOPIC` opens its picker on
+//!   TOPIC's fields. With `--echo`, Plot opens under Topics.
 //! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
 //!   full UI's viewport in that layout (DECISIONS.md D-90).
 //! - `--no-vsync` presents frames as fast as they render, to measure.
@@ -55,6 +59,8 @@ struct Args {
     scene: Option<gz_ui::panels::SceneTreeStart>,
     /// `--echo`.
     topics: Option<gz_ui::panels::TopicsStart>,
+    /// `--plot`.
+    plot: Option<gz_ui::panels::PlotStart>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -68,6 +74,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
+                     [--plot TOPIC[:FIELD,…]] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -180,6 +187,7 @@ fn parse_args(
     let mut start = gz_bevy::view::StartView::default();
     let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut topics = None;
+    let mut plot = gz_ui::panels::PlotStart::default();
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -244,6 +252,17 @@ fn parse_args(
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
             "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
+            "--plot" => {
+                let v = value()?;
+                match v.rsplit_once(':') {
+                    None if !v.is_empty() => plot.pick = Some(v),
+                    Some((topic, fields)) if !topic.is_empty() && !fields.is_empty() => {
+                        let fields = fields.split(',').map(str::trim).map(str::to_string);
+                        plot.charts.push((topic.to_string(), fields.collect()));
+                    }
+                    _ => return Err(format!("--plot wants TOPIC[:FIELD,…], not {v}")),
+                }
+            }
             "--no-vsync" => no_vsync = true,
             "--layout" => {
                 layout = Some(value()?.parse().map_err(|e| format!("--layout: {e}"))?);
@@ -276,6 +295,10 @@ fn parse_args(
     }
     if topics.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--echo needs --ui full".into());
+    }
+    let plot = (plot != gz_ui::panels::PlotStart::default()).then_some(plot);
+    if plot.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--plot needs --ui full".into());
     }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
@@ -317,6 +340,7 @@ fn parse_args(
         start,
         scene,
         topics,
+        plot,
         layout,
         no_vsync,
     })))
@@ -387,6 +411,7 @@ fn command() -> Result<Command, String> {
         start: None,
         scene: None,
         topics: None,
+        plot: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -594,6 +619,9 @@ fn main() -> AppExit {
         }
         if let Some(topics) = args.topics {
             app.insert_resource(topics);
+        }
+        if let Some(plot) = args.plot {
+            app.insert_resource(plot);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -835,6 +863,36 @@ mod tests {
         let a = run_args(&["--echo", "/stats", "--ui", "full"], None);
         assert_eq!(a.topics.unwrap().echo, "/stats");
         assert!(run_args(&[], None).topics.is_none());
+        let a = run_args(
+            &[
+                "--plot",
+                "/odom:twist.linear.x, twist.angular.z",
+                "--plot",
+                "/stats:real_time_factor",
+            ],
+            None,
+        );
+        assert_eq!(
+            a.plot.unwrap().charts,
+            [
+                (
+                    "/odom".to_string(),
+                    vec!["twist.linear.x".to_string(), "twist.angular.z".to_string()]
+                ),
+                ("/stats".to_string(), vec!["real_time_factor".to_string()]),
+            ]
+        );
+        assert!(run_args(&[], None).plot.is_none());
+        let a = run_args(&["--plot", "/odom"], None);
+        assert_eq!(a.plot.unwrap().pick.as_deref(), Some("/odom"));
+        assert_eq!(
+            parse(&["--plot", "/odom:"], None).unwrap_err(),
+            "--plot wants TOPIC[:FIELD,…], not /odom:"
+        );
+        assert_eq!(
+            parse(&["--plot", "/a:x", "--ui", "minimal"], None).unwrap_err(),
+            "--plot needs --ui full"
+        );
         assert_eq!(
             parse(&["--echo", "/stats", "--ui", "minimal"], None).unwrap_err(),
             "--echo needs --ui full"

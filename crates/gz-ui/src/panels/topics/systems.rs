@@ -21,8 +21,8 @@ use super::view::{
     topic_row, ChipChoice, EchoClose, EchoPart, EchoSection, NoMatches, RowRate, TopicFilter,
     TopicList, TopicRow, TopicRows,
 };
-use super::{TopicsStart, COPY, TOPICS};
-use crate::panels::{PanelActionActivated, PanelView};
+use super::{TopicsStart, COPY, PLOT_FIELD, TOPICS};
+use crate::panels::{PanelActionActivated, PanelRegistry, PanelView, PlotPick, PLOT};
 use crate::shell::{
     CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
 };
@@ -56,12 +56,14 @@ pub(super) fn view(phase: Phase, topics: usize) -> PanelView {
     }
 }
 
-/// The view, the header's count ("12 topics") and Copy, which needs a
-/// message.
+/// The view, the header's count ("12 topics"), Copy, which needs a
+/// message, and Plot field, which needs an echoed topic and the Plot
+/// panel.
 pub(super) fn topics_status(
     phase: Res<CurrentPhase>,
     topics: Res<GzTopics>,
     echo: Res<Echo>,
+    panels: Res<PanelRegistry>,
     mut status: ResMut<PanelStatus>,
 ) {
     if !phase.is_changed() && !topics.is_changed() && !echo.is_changed() {
@@ -74,11 +76,13 @@ pub(super) fn topics_status(
     status.set_count(TOPICS, count);
     let copy = echo.full.is_some() && clipboard_available();
     status.set_action_enabled(TOPICS, COPY, copy);
+    let plot = echo.topic.is_some() && panels.get(PLOT).is_some();
+    status.set_action_enabled(TOPICS, PLOT_FIELD, plot);
 }
 
 /// A [`TopicsStart`]: opens the panel at once, and echoes its topic once
 /// the server lists it.
-pub(super) fn apply_start(
+pub(crate) fn apply_start(
     start: Option<Res<TopicsStart>>,
     topics: Res<GzTopics>,
     mut echo: ResMut<Echo>,
@@ -459,13 +463,24 @@ fn reveal_row(scroll: &mut ScrollPosition, list: &ComputedNode, row_h: f32, i: u
     scroll.y = y.max(0.0);
 }
 
-/// Copy puts the echoed message on the clipboard.
+/// Copy puts the echoed message on the clipboard; Plot field opens the
+/// Plot panel's picker on the echoed topic.
 pub(super) fn on_action(
     ev: On<PanelActionActivated>,
     echo: Res<Echo>,
     clipboard: Option<ResMut<Clipboard>>,
+    mut picks: MessageWriter<PlotPick>,
 ) {
-    if ev.panel != TOPICS || ev.action != COPY {
+    if ev.panel != TOPICS {
+        return;
+    }
+    if ev.action == PLOT_FIELD {
+        if let Some(topic) = &echo.topic {
+            picks.write(PlotPick(topic.clone()));
+        }
+        return;
+    }
+    if ev.action != COPY {
         return;
     }
     let (Some(text), Some(mut clipboard)) = (&echo.full, clipboard) else {
