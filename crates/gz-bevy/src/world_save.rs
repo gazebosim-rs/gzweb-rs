@@ -19,7 +19,7 @@ use prost::Message as _;
 
 use crate::connection::{GzCommand, GzServiceReply, GzStatus};
 use crate::save::save_text;
-use crate::spawn::{GzEntity, GzWorldRoot};
+use crate::spawn::{GzEntity, GzIndex, GzWorldRoot};
 use crate::undo::UndoStack;
 
 /// How long a save waits for the server's SDFormat.
@@ -54,7 +54,8 @@ impl WorldSaved {
 }
 
 /// Each top-level model's pose when this client loaded the world, by
-/// scene path.
+/// scene path: kept through a reconnect to the same world (its scene puts
+/// models where physics has them), forgotten for another server or world.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct LoadedPoses(pub HashMap<String, Transform>);
 
@@ -62,15 +63,52 @@ pub struct LoadedPoses(pub HashMap<String, Transform>);
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct SaveJobs(Vec<(SaveWorld, f64)>);
 
-/// Notes each top-level model's pose as it first spawns.
+/// What [`note_loaded_poses`] last saw: the world, the scenes that had
+/// come, and the top-level models' paths by entity.
+#[derive(Default)]
+struct SeenModels {
+    world: Option<(String, String)>,
+    scenes: u32,
+    paths: HashMap<Entity, String>,
+}
+
+/// Notes each top-level model's pose as it first spawns in this world. A
+/// model deleted (not respawned with a new scene) is forgotten, so a new
+/// one under its name starts from its own pose.
 fn note_loaded_poses(
-    added: Query<(&GzEntity, &Transform, &ChildOf), Added<GzEntity>>,
+    added: Query<(Entity, &GzEntity, &Transform, &ChildOf), Added<GzEntity>>,
     roots: Query<(), With<GzWorldRoot>>,
+    status: Option<Res<GzStatus>>,
+    index: Option<Res<GzIndex>>,
+    mut gone: RemovedComponents<GzEntity>,
     mut loaded: ResMut<LoadedPoses>,
+    mut seen: Local<SeenModels>,
 ) {
-    for (g, t, parent) in &added {
+    let scenes = index.as_deref().map_or(0, |i| i.scenes);
+    let respawned = scenes != seen.scenes;
+    seen.scenes = scenes;
+    for e in gone.read() {
+        if let Some(path) = seen.paths.remove(&e) {
+            if !respawned {
+                loaded.0.remove(&path);
+            }
+        }
+    }
+    let seen_world = &mut seen.world;
+    let now = status
+        .as_deref()
+        .and_then(|s| Some((s.url.clone(), s.world.clone()?)));
+    // A connection on its way (no world yet) isn't another world.
+    if now.is_some() && *seen_world != now {
+        if seen_world.is_some() {
+            loaded.0.clear();
+        }
+        *seen_world = now;
+    }
+    for (e, g, t, parent) in &added {
         if roots.contains(parent.parent()) {
-            loaded.0.insert(g.path.clone(), *t);
+            loaded.0.entry(g.path.clone()).or_insert(*t);
+            seen.paths.insert(e, g.path.clone());
         }
     }
 }

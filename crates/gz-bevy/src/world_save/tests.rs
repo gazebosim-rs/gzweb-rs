@@ -196,3 +196,46 @@ fn a_save_says_why_it_failed() {
     app.update();
     assert_eq!(saved(&mut app), [Err("Not connected".to_string())]);
 }
+
+/// A model's loaded pose survives a reconnect's new scene (which puts it
+/// where physics has it); a model deleted, or another world, forgets it.
+#[test]
+fn loaded_poses_survive_a_reconnect_only() {
+    use crate::spawn::GzIndex;
+    let (mut app, cart) = app();
+    app.init_resource::<GzIndex>();
+    let loaded = |app: &App| app.world().resource::<LoadedPoses>().0.get("cart").copied();
+    assert_eq!(loaded(&app), Some(Transform::from_xyz(1.0, 2.0, 0.0)));
+    let root = app.world().get::<ChildOf>(cart).unwrap().parent();
+    let spawn = |app: &mut App, x: f32| {
+        app.world_mut()
+            .spawn((
+                GzEntity {
+                    name: "cart".into(),
+                    id: 1,
+                    kind: NodeKind::Model,
+                    path: "cart".into(),
+                },
+                Transform::from_xyz(x, 0.0, 0.0),
+                ChildOf(root),
+            ))
+            .id()
+    };
+    // A reconnect: a new scene, the cart where physics took it.
+    app.world_mut().entity_mut(cart).despawn();
+    app.world_mut().resource_mut::<GzIndex>().scenes += 1;
+    let cart = spawn(&mut app, 5.0);
+    app.update();
+    assert_eq!(loaded(&app), Some(Transform::from_xyz(1.0, 2.0, 0.0)));
+    // Deleted, then inserted again under the name: its own pose.
+    app.world_mut().entity_mut(cart).despawn();
+    app.update();
+    assert_eq!(loaded(&app), None);
+    spawn(&mut app, 7.0);
+    app.update();
+    assert_eq!(loaded(&app), Some(Transform::from_xyz(7.0, 0.0, 0.0)));
+    // Another world.
+    app.world_mut().resource_mut::<GzStatus>().world = Some("other".into());
+    app.update();
+    assert_eq!(loaded(&app), None);
+}
