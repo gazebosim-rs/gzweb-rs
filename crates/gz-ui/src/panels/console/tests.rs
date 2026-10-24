@@ -288,6 +288,14 @@ fn the_log_lists_filters_pauses_and_clears() {
         "resumed, under the command line's lines"
     );
 
+    // Clear while paused clears the command line's lines too.
+    act(&mut app, PAUSE);
+    submit(&mut app, "help");
+    frames(&mut app, 1);
+    act(&mut app, CLEAR);
+    assert!(rows(&mut app).is_empty(), "{:?}", rows(&mut app));
+    act(&mut app, PAUSE);
+
     act(&mut app, CLEAR);
     assert_eq!(view(&mut app), PanelView::empty("No messages"));
     assert_eq!(count(&app), None);
@@ -645,6 +653,23 @@ fn the_command_line_calls_services_and_publishes() {
     );
     submit(&mut app, "topic -t /cmd_vel -m gz.msgs.Twist -p 'nope: 1'");
     assert_eq!(said(&mut app)[1].0, MessageLevel::Error);
+
+    // A call waiting when the connection drops ends, saying so.
+    submit(
+        &mut app,
+        "service -s /wait --reqtype gz.msgs.Empty --reptype gz.msgs.Boolean",
+    );
+    said(&mut app);
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Connecting;
+    frames(&mut app, 2);
+    // (The control call above never got its reply either.)
+    let dropped = said(&mut app);
+    assert!(dropped
+        .iter()
+        .all(|(l, t)| *l == MessageLevel::Error && t.ends_with("the connection dropped")));
+    assert_eq!(dropped.last().unwrap().1, "/wait: the connection dropped");
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Ready;
+    frames(&mut app, 2);
 
     // Not connected: nothing runs but help.
     app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Disconnected;
