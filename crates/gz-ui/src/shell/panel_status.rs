@@ -7,7 +7,7 @@
 
 use std::ops::DerefMut;
 
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::panels::{ActionId, HeaderAction, PanelId, PanelView};
@@ -28,6 +28,9 @@ pub struct PanelState {
     /// [`PanelAction::enabled`](crate::panels::PanelAction)): Expand all
     /// while there is a tree, Copy while there is a message.
     pub actions: HashMap<ActionId, bool>,
+    /// Its header toggles that are on
+    /// ([`HeaderAction::toggle`](crate::panels::HeaderAction::toggle)).
+    pub on: HashSet<ActionId>,
 }
 
 /// Every panel's [`PanelState`], by id; a panel without an entry shows its
@@ -62,6 +65,11 @@ impl PanelStatus {
         self.get(id).and_then(|s| s.actions.get(&action).copied())
     }
 
+    /// Whether `id`'s header toggle `action` is on.
+    pub fn action_on(&self, id: PanelId, action: ActionId) -> bool {
+        self.get(id).is_some_and(|s| s.on.contains(&action))
+    }
+
     /// Whether `id`'s header action `a` is enabled now: as its systems
     /// set it, else as registered.
     pub(crate) fn header_action_enabled(&self, id: PanelId, a: &HeaderAction) -> bool {
@@ -91,6 +99,9 @@ pub trait SetPanelStatus {
     /// shell updates its button in place (look, tooltip, whether it
     /// reacts).
     fn set_action_enabled(&mut self, id: PanelId, action: ActionId, enabled: bool);
+    /// Turns `id`'s header toggle `action` on or off; the shell swaps its
+    /// icon and tooltip in place.
+    fn set_action_on(&mut self, id: PanelId, action: ActionId, on: bool);
 }
 
 impl<T> SetPanelStatus for T
@@ -122,6 +133,17 @@ where
                 .or_default()
                 .actions
                 .insert(action, enabled);
+        }
+    }
+
+    fn set_action_on(&mut self, id: PanelId, action: ActionId, on: bool) {
+        if self.bypass_change_detection().action_on(id, action) != on {
+            let set = &mut self.panels.entry(id).or_default().on;
+            if on {
+                set.insert(action);
+            } else {
+                set.remove(&action);
+            }
         }
     }
 }

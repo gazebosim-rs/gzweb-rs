@@ -345,6 +345,12 @@ pop-out windows.
   `gzweb --echo` (D-99), on the system clipboard natively too (`system_clipboard`; BSL-1.0
   allowed in `deny.toml`). Left: Plot field (M7b); Publish and Services until a server takes
   publications and lists services.
+- **M7b notes:** the Plot panel (D-100): numeric fields by path (`gz_core::fields`), series
+  that record while closed at their stamps or the sim clock, charts of up to four series drawn
+  on the CPU (anti-aliased 2 px lines, gridlines, y ticks), the window chips, Pause (a header
+  toggle, D-101), the crosshair readout, the inline field picker (Add field…, +, Topics' Plot
+  field), Export CSV, `gzweb --plot`. Left: Pop out (M7e); the inspector's Plot actions (joint
+  position and velocity, a sensor's output) with M7d's joints.
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).
@@ -354,7 +360,8 @@ pop-out windows.
 - The panels' §3.3.1 states from their data (D-58: each writes its `PanelView`): Topics
   done in M7a (D-99); Sensors "Select a model with sensors" vs "No sensors in
   this world" (needs the world's sensors in the scene model and M5's selection); Assets
-  "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled.
+  "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled
+  (M7b, D-100).
   Topics' Publish and Services stay unavailable on the stock server (D-99).
 - Footers (PR #33 review, N10): done in M7a (D-98): `PanelDef::footer_action` and
   `footer_content`, drawn by the shell under every state; Console's command input is footer
