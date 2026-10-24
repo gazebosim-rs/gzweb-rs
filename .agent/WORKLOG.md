@@ -1633,3 +1633,111 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   preview follows a theme change.
 - **Tests:** workspace 780 → 801 passing; coverage 98.1% lines. check.sh
   passes.
+
+## 2026-10-24: M7d Sensors (D-103)
+
+- **Sensors:** the selected model's sensors (nested models' too) with
+  their type badges and rates; each sensor's topic from its `<topic>`
+  (or Gazebo's derived one) among the server's; the chosen one's
+  preview, held only while the panel shows: camera frames (PNG, decoded
+  on the async compute pool, the last dimmed until a new sensor's
+  first), a lidar's scan from above (`crate::raster`, now shared with
+  Plot), or the message as text; "Waiting for first message…" and "No
+  data for 3.2 s". `gz_core::sensor` decodes a scan's middle ring and a
+  PNG's size.
+- **SDFormat wanted by holders:** `SdfWanted` is a set (the Scene panel,
+  the Sensors panel), so one doesn't turn the other's off.
+- **Inspector:** View in Sensors shows that sensor; Echo topic and Plot
+  work once the sensor's topic is known.
+- **`gzweb --sensors [NAME]`**, with `--select MODEL`.
+- **Live check** (debug build, Jetty `sensors_demo` in a second container
+  on :9012): `camera_with_lidar`'s camera streaming (light) and its
+  lidar's scan (dark).
+- **Teleop** isn't in yet: the websocket server takes no publications
+  (D-88), so it waits on that decision.
+- **Tests:** workspace 801 → 808 passing; coverage 98.1% lines. check.sh
+  passes. Not tried by hand.
+
+## 2026-10-24: M7d Teleop (D-104)
+
+- **Server:** `docker/websocket-server/client-publish.patch` adds a
+  `pub_in` operation to the websocket server (raw publish through a
+  gz-transport publisher, its payload kept whole); `Dockerfile.gazebo`
+  applies it after binary-requests.patch. Built as
+  `gz-websocket-jetty-pub`.
+- **Client:** the publish probe (an empty `gz.msgs.Empty` on
+  `/gzweb/publish_probe`, then the topic list), `GzStatus::publishes`,
+  `Transport::set_publishing` (whole `pub_in` payloads), and
+  `GzCommand::Publish` going out only to a server that publishes.
+- **Teleop panel:** targets from the SDFormat's drives and joint
+  controllers (`gz_core::sdf` reads their topics) and the server's Twist
+  topics; Keyboard (pad and keys), Sliders, Gamepad; arming, X and Stop;
+  the Twist at 10 Hz (`gz_core::teleop`); `DriveArmed` stands the fly
+  keys and the gizmo down. The Joint inspector's command slider.
+- **Copy** goes through `CopyText`: the Topics tests wrote the real
+  clipboard (the workspace build has `system_clipboard`) and two of them
+  raced on it.
+- **`gzweb --teleop`.**
+- **Live check** (debug build, the new image with `diff_drive` on
+  :9013): the probe says the server publishes; a scratch client's
+  `pub_in` of a Twist on `/model/vehicle_blue/cmd_vel` drove the vehicle
+  (odometry rising at its 0.5 m/s limit); a capture of the panel with
+  `vehicle_blue` selected. Driving from the panel is tested, not tried
+  by hand.
+- **Tests:** workspace 808 → 820 passing; coverage 98.0% lines. check.sh
+  passes.
+
+## 2026-10-24: PR #49 review fixes
+
+- **Teleop stops:** X, Stop, a new mode or target, hiding or a dropped
+  world disarm, and nothing arms again until the pad and the stick let
+  go (a held stick re-armed through X and Stop). The robot driven last
+  gets a zero whenever the drive leaves it, a new target included; after
+  a drop the zero waits until the server takes publications again (for
+  the same world).
+- **Keys:** a command chord (Ctrl, Alt, ⌘) doesn't drive, and the keys
+  drive from the views or the panel only (`TeleopKeys`: a press or
+  focus in the panel), not from another panel's list.
+- **Analog:** the stick's command goes out early only once it moves 2%
+  of a limit; "Driving: …" reads the command going out; Stop zeroes the
+  slider thumbs.
+- **Joints:** JointPositionController topics as gz-sim names them (the
+  first joint, `<sub_topic>`, Actuators left out); command sliders sit at
+  the joint's live position until moved; the Joint inspector builds its
+  slider once the probe answers.
+- **Sensors:** the topic list is asked for every 2 s while Sensors or
+  Teleop shows; a topic whose type becomes known starts the preview
+  again and subscribes again (a camera's `image`); the list no longer
+  rebuilds on each stats tick.
+- **Server patch:** publishers are kept per client, at most 64, and
+  dropped with the last client that used them; a client that goes gets
+  an empty Twist on each Twist topic it published on. Live check on the
+  rebuilt `gz-websocket-jetty-pub` (diff_drive, :9013): a scratch client
+  drove `vehicle_blue` at 0.5 m/s and left without a zero; the vehicle
+  stopped (x held at 2.374). The earlier container had aborted in ODE
+  hours after a scratch client left it driving.
+- **Merged** M7c's CI fixes (clipboard-win 5.4.3).
+- **Tests:** workspace 820 → 825 passing.
+
+## 2026-10-24: PR #49 re-review fixes
+
+- **Server freeze:** OnDisconnect published the zero Twist while holding
+  `subscriptionMutex`; the server's own subscriber on that topic (a
+  client echoing or plotting cmd_vel) runs on the same thread and takes
+  the lock, so the server hung. The zeros now go out before the lock.
+  Live check on the rebuilt `gz-websocket-jetty-pub` (diff_drive,
+  :9013): one client watched `/model/vehicle_blue/cmd_vel`, another
+  drove and left without a zero; the watcher got the zero and a new
+  client then connected and read the vehicle stopped.
+- **X** stops wherever the keys are (only not while typing) and zeroes
+  the sliders, like Stop; the drive keys keep their routing.
+- **Latch:** only the mode's own input holds re-arming off, so a resting
+  stick doesn't block the pad.
+- **Joints:** Teleop wants its target's joint states while it shows
+  (deferring to the Joint inspector), so its sliders start at the live
+  positions; `use_actuator_msg` is read as gz-sim does (a bool, with an
+  `actuator_number`).
+- **One topic refresh** for Topics, Sensors and Teleop.
+- **Tests:** focus routing, X from another panel, a resting stick, a
+  reconnect through Disconnected (and to another world), Teleop's joint
+  states and the single refresh.

@@ -1,6 +1,7 @@
 # Builds gz-sim's websocket server system on its own, against the installed
 # Jetty libraries, from a gz-sim source tree (GZ_SIM_SOURCE) with
-# binary-requests.patch applied. Dockerfile.gazebo uses it; see there.
+# binary-requests.patch and client-publish.patch applied. Dockerfile.gazebo
+# uses it; see there.
 cmake_minimum_required(VERSION 3.22)
 project(gz-sim-websocket-server-system CXX)
 

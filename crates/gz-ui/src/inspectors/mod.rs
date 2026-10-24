@@ -23,7 +23,7 @@ mod light;
 mod link;
 mod model;
 mod multi;
-mod sensor;
+pub(crate) mod sensor;
 mod world;
 
 pub use joint::{JointInspectorPlugin, JOINT};

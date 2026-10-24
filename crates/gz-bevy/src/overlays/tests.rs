@@ -371,7 +371,9 @@ fn the_sdf_is_asked_for_when_wanted() {
     let mut app = app();
     app.update();
     assert!(requests(&mut app).is_empty());
-    app.insert_resource(SdfWanted(true));
+    let mut wanted = SdfWanted::default();
+    wanted.0.insert("test");
+    app.insert_resource(wanted);
     app.update();
     assert_eq!(requests(&mut app), [SDF_REQUEST]);
 }

@@ -1,10 +1,10 @@
-//! A chart's pixels (DECISIONS.md D-100): gridlines and series lines
-//! drawn on the CPU into an image at the chart's physical size, so a line
-//! is anti-aliased the same in every browser and natively, with no
-//! shader or extra dependency. A line's coverage is its distance from
-//! each pixel's centre (round caps and joins for free); a series is
-//! drawn whole before it blends, so its own segments never darken where
-//! they meet.
+//! Lines drawn on the CPU (DECISIONS.md D-100): the Plot panel's charts
+//! and the Sensors panel's lidar view, into an image at its physical
+//! size, so a line is anti-aliased the same in every browser and
+//! natively, with no shader or extra dependency. A line's coverage is its
+//! distance from each pixel's centre (round caps and joins for free); a
+//! line is drawn whole before it blends, so its own segments never darken
+//! where they meet.
 
 use std::collections::VecDeque;
 use std::sync::OnceLock;
@@ -97,6 +97,45 @@ impl Canvas {
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let range = |a: f32, b: f32, max: f32| (a.max(0.0) as usize)..(b.min(max).ceil() as usize);
         Some((range(lo.x, hi.x, w), range(lo.y, hi.y, h)))
+    }
+
+    /// A circle `width` wide about `center`, of radius `r`.
+    pub(crate) fn circle(&mut self, center: Vec2, r: f32, width: f32, color: Rgba) {
+        // A segment every few pixels of arc reads as round.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let n = ((std::f32::consts::TAU * r / 3.0).ceil() as usize).clamp(16, 720);
+        #[allow(clippy::cast_precision_loss)]
+        let points: Vec<Vec2> = (0..=n)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / n as f32;
+                center + Vec2::new(a.cos(), a.sin()) * r
+            })
+            .collect();
+        self.polyline(&points, width, color);
+    }
+
+    /// A filled dot of radius `r` at `at`.
+    pub(crate) fn dot(&mut self, at: Vec2, r: f32, color: Rgba) {
+        self.polyline(&[at], r * 2.0, color);
+    }
+
+    /// The drawing as an sRGB image.
+    pub(crate) fn image(&self) -> Image {
+        #[allow(clippy::cast_possible_truncation)]
+        let size = bevy::render::render_resource::Extent3d {
+            width: self.w as u32,
+            height: self.h as u32,
+            depth_or_array_layers: 1,
+        };
+        let mut image = Image::new(
+            size,
+            bevy::render::render_resource::TextureDimension::D2,
+            self.rgba8(),
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        );
+        image.sampler = bevy::image::ImageSampler::nearest();
+        image
     }
 
     /// The image's bytes: sRGB, straight alpha.

@@ -372,6 +372,11 @@ impl Selection {
     }
 }
 
+/// The Teleop panel is driving (armed): the drive keys and X are its, so
+/// the gizmo takes no drags (spec decision Q5; DECISIONS.md D-104).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DriveArmed(pub bool);
+
 /// A selected joint (on its model) or sensor (on its link).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Part {

@@ -506,6 +506,13 @@ type GizmoNodes<'w, 's> = ParamSet<
     ),
 >;
 
+/// The buttons, the keys, and whether Teleop drives.
+type GizmoKeys<'w> = (
+    Res<'w, ButtonInput<MouseButton>>,
+    Res<'w, ButtonInput<KeyCode>>,
+    Option<Res<'w, super::DriveArmed>>,
+);
+
 /// Hover, press, drag, constrain, cancel and release.
 #[allow(clippy::too_many_arguments)]
 pub fn gizmo_input(
@@ -517,7 +524,7 @@ pub fn gizmo_input(
     views: Views,
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
     routing: Res<ViewRouting>,
-    (buttons, keys): (Res<ButtonInput<MouseButton>>, Res<ButtonInput<KeyCode>>),
+    (buttons, keys, driving): GizmoKeys,
     time: Res<Time<Real>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     planes: Query<(), With<HasPlane>>,
@@ -530,7 +537,10 @@ pub fn gizmo_input(
     if state.escaped {
         state.escaped = false;
     }
-    let active = *tool != TransformTool::None && edits_allowed(status.as_deref());
+    // An armed Teleop takes X (stop) and the drive keys: no gizmo drags
+    // then (spec decision Q5).
+    let driving = driving.is_some_and(|d| d.0);
+    let active = *tool != TransformTool::None && edits_allowed(status.as_deref()) && !driving;
     // In the active view (spec §3.4), and a drag in its own.
     let view = state.drag.as_ref().map_or(routing.active, |d| d.view);
     let Some(target) = target(&windows, &views, view).filter(|_| active) else {

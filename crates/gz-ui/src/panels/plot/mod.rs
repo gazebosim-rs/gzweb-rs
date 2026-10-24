@@ -17,7 +17,6 @@
 //! time.
 
 mod model;
-mod raster;
 mod systems;
 mod view;
 

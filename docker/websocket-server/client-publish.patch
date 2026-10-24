@@ -1,0 +1,193 @@
+diff --git a/src/systems/websocket_server/WebsocketServer.cc b/src/systems/websocket_server/WebsocketServer.cc
+index 1951dda..2e3c74f 100644
+--- a/src/systems/websocket_server/WebsocketServer.cc
++++ b/src/systems/websocket_server/WebsocketServer.cc
+@@ -641,6 +641,26 @@ void WebsocketServer::OnConnect(int _socketId)
+ //////////////////////////////////////////////////
+ void WebsocketServer::OnDisconnect(int _socketId)
+ {
++  // The client's publishers go with it. A drive it commanded (a
++  // gz.msgs.Twist topic) gets a last, empty (zero) command, so a robot
++  // doesn't keep driving after its client goes. This runs before the
++  // subscription lock is taken: a publication reaches the server's own
++  // subscribers at once, on this thread, and
++  // OnWebsocketSubscribedMessage takes that lock.
++  for (auto it = this->clientPublishers.begin();
++       it != this->clientPublishers.end();)
++  {
++    if (it->second.sockets.erase(_socketId) > 0 &&
++        it->second.type == "gz.msgs.Twist")
++    {
++      it->second.publisher.PublishRaw("", it->second.type);
++    }
++    if (it->second.sockets.empty())
++      it = this->clientPublishers.erase(it);
++    else
++      ++it;
++  }
++
+   std::lock_guard<std::mutex> mainLock(this->subscriptionMutex);
+   // Skip invalid sockets
+   if (this->connections.find(_socketId) == this->connections.end())
+@@ -672,13 +692,20 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   // Frame: operation,topic,type,payload
+   std::vector<std::string> frameParts;
+ 
+-  // A request carries a serialized protobuf as its payload, which can hold
+-  // commas and zero bytes. Take everything after the third comma verbatim
+-  // instead of splitting the whole frame.
+-  const std::string reqPrefix = this->operations[REQUEST] + ",";
++  // A request or a client's publication carries a serialized protobuf as
++  // its payload, which can hold commas and zero bytes. Take everything after
++  // the third comma verbatim instead of splitting the whole frame.
++  std::string verbatimOp;
++  for (const std::string &op : {this->operations[REQUEST],
++                                std::string("pub_in")})
++  {
++    if (_msg.compare(0, op.size() + 1, op + ",") == 0)
++      verbatimOp = op;
++  }
++  const std::string reqPrefix = verbatimOp + ",";
+   std::size_t svcEnd = std::string::npos;
+   std::size_t typeEnd = std::string::npos;
+-  if (_msg.compare(0, reqPrefix.size(), reqPrefix) == 0)
++  if (!verbatimOp.empty())
+   {
+     svcEnd = _msg.find(',', reqPrefix.size());
+     if (svcEnd != std::string::npos)
+@@ -688,7 +715,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   if (typeEnd != std::string::npos)
+   {
+     frameParts = {
+-        this->operations[REQUEST],
++        verbatimOp,
+         _msg.substr(reqPrefix.size(), svcEnd - reqPrefix.size()),
+         _msg.substr(svcEnd + 1, typeEnd - svcEnd - 1),
+         _msg.substr(typeEnd + 1)};
+@@ -1089,6 +1116,62 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   {
+     this->OnRequest(_socketId, frameParts);
+   }
++  else if (frameParts[0] == "pub_in")
++  {
++    this->OnPublishIn(_socketId, frameParts);
++  }
++}
++
++//////////////////////////////////////////////////
++void WebsocketServer::OnPublishIn(int _socketId,
++    const std::vector<std::string> &_frameParts)
++{
++  const std::string &topic = _frameParts[1];
++  const std::string &msgType = _frameParts[2];
++  if (topic.empty() || msgType.empty())
++  {
++    gzerr << "A publication needs a topic and a message type\n";
++    return;
++  }
++
++  // OnMessage and OnDisconnect both run on the websocket service thread,
++  // so the publishers need no lock of their own.
++  auto it = this->clientPublishers.find(topic);
++  if (it != this->clientPublishers.end() && it->second.type != msgType)
++  {
++    // A topic is advertised with one type at a time.
++    it->second.sockets.erase(_socketId);
++    if (!it->second.sockets.empty())
++    {
++      gzerr << "Topic[" << topic << "] is published with type["
++            << it->second.type << "], not [" << msgType << "]\n";
++      return;
++    }
++    this->clientPublishers.erase(it);
++    it = this->clientPublishers.end();
++  }
++  if (it == this->clientPublishers.end())
++  {
++    if (this->clientPublishers.size() >= kMaxClientPublishers)
++    {
++      gzerr << "Unable to publish on topic[" << topic << "]: the clients "
++            << "already publish on " << kMaxClientPublishers << " topics\n";
++      return;
++    }
++    transport::Node::Publisher pub = this->node.Advertise(topic, msgType);
++    if (!pub)
++    {
++      gzerr << "Unable to advertise topic[" << topic << "] with type["
++            << msgType << "]\n";
++      return;
++    }
++    it = this->clientPublishers.emplace(
++        topic, ClientPublisher{msgType, pub, {}}).first;
++  }
++  it->second.sockets.insert(_socketId);
++
++  if (!it->second.publisher.PublishRaw(_frameParts[3], msgType))
++    gzerr << "Unable to publish on topic[" << topic << "]\n";
+ }
+ 
+ //////////////////////////////////////////////////
+diff --git a/src/systems/websocket_server/WebsocketServer.hh b/src/systems/websocket_server/WebsocketServer.hh
+index 994323d..de04757 100644
+--- a/src/systems/websocket_server/WebsocketServer.hh
++++ b/src/systems/websocket_server/WebsocketServer.hh
+@@ -106,9 +106,9 @@ namespace systems
+     ///     3. `message_type`: string, and
+     ///     4. `payload`: serialized data.
+     ///
+-    /// The "req" payload is everything after the third comma, so it may
+-    /// contain commas and zero bytes. The `topic_name` and `message_type`
+-    /// components of a "req" frame must not contain commas.
++    /// The "req" and "pub_in" payload is everything after the third comma,
++    /// so it may contain commas and zero bytes. The `topic_name` and
++    /// `message_type` components of such a frame must not contain commas.
+     ///
+     /// The `operation` component is mandatory and must be one of:
+     ///     1. "sub": Subscribe to the topic in the `topic_name` component,
+@@ -134,6 +134,14 @@ namespace systems
+     ///                message. The payload should be a serialized
+     ///                protobuf message. The response payload holds the
+     ///                serialized protobuf response, if any.
++    ///     14. "pub_in": Publish the serialized message in the payload on
++    ///                the Gazebo Transport topic in the `topic_name`
++    ///                component, with the type in the `message_type`
++    ///                component. The topic is advertised on its first
++    ///                message while a client that published on it is
++    ///                connected, for at most 64 topics; nothing is sent
++    ///                back. When such a client goes, a gz.msgs.Twist topic
++    ///                gets an empty (zero) message, to stop a drive.
+     ///
+     /// The `topic_name` component is mandatory for the "sub", "pub", "unsub",
+     /// and "req" operations. If present, it must be the name of a Gazebo
+@@ -255,6 +263,31 @@ namespace systems
+       private: void OnRequest(int _socketId,
+                    const std::vector<std::string> &_frameParts);
+ 
++      /// \brief Handles a client's publication ("pub_in").
++      /// \param[in] _socketId ID of the socket it came on.
++      /// \param[in] _frameParts The message in frame parts.
++      private: void OnPublishIn(int _socketId,
++                   const std::vector<std::string> &_frameParts);
++
++      /// \brief A publisher for the clients' publications on a topic.
++      private: struct ClientPublisher
++      {
++        /// \brief The message type it was advertised with.
++        std::string type;
++
++        /// \brief The publisher.
++        transport::Node::Publisher publisher;
++
++        /// \brief The sockets of the clients that published on it.
++        std::set<int> sockets;
++      };
++
++      /// \brief How many topics the clients may publish on at once.
++      private: static constexpr std::size_t kMaxClientPublishers = 64;
++
++      /// \brief Publishers for the clients' publications, by topic.
++      private: std::map<std::string, ClientPublisher> clientPublishers;
++
+       private: gz::transport::Node node;
+ 
+       private: bool run = true;

@@ -22,7 +22,12 @@
 
 mod model;
 mod systems;
+
+pub(super) use systems::refresh_while_shown;
 mod view;
+
+/// A message cut to show (the Sensors panel's text preview too).
+pub(crate) use model::clip_lines;
 
 /// A [`TopicsStart`]'s system, for a panel that opens beside it.
 pub(crate) use systems::apply_start as apply_topics_start;
@@ -85,6 +90,7 @@ pub struct TopicsPanelPlugin;
 impl Plugin for TopicsPanelPlugin {
     fn build(&self, app: &mut App) {
         gz_bevy::topics::TopicsPlugin::ensure(app);
+        refresh_while_shown(app, TOPICS);
         app.register_panel(
             PanelDef::new(TOPICS, "Topics", IconId::ActivityTopics)
                 .place(DATA_GROUP, 20)
@@ -120,7 +126,6 @@ impl Plugin for TopicsPanelPlugin {
                 )
                     .chain(),
                 (
-                    systems::refresh_topics,
                     systems::filter_text,
                     systems::keep_scroll,
                     systems::sync_rows,

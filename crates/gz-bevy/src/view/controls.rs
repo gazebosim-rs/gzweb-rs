@@ -79,8 +79,8 @@ impl ViewerControls {
         match mode {
             UiMode::None => Vec::new(),
             // The full UI routes viewport keys by hover and focus
-            // (`ViewRouting`); W A S D stay the fly keys until Teleop (M7)
-            // can take them while armed.
+            // (`ViewRouting`); W A S D are the fly keys, except while an
+            // armed Teleop drives with them (`DriveArmed`).
             UiMode::Minimal | UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
         }
     }
@@ -240,6 +240,7 @@ impl Plugin for ViewerControls {
             .init_resource::<Overlays>()
             .init_resource::<Selection>()
             .init_resource::<Marquee>()
+            .init_resource::<super::DriveArmed>()
             .add_message::<super::place::PlaceAt>()
             .init_resource::<super::place::Placing>()
             .init_resource::<super::place::PlaceHover>()
@@ -802,8 +803,13 @@ pub fn fly_input(
     scopes: Res<ActiveScopes>,
     routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
+    driving: Option<Res<super::DriveArmed>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
+    // An armed Teleop drives with these keys instead.
+    if driving.is_some_and(|d| d.0) {
+        return;
+    }
     let scopes = routing.key_scopes(&scopes.0);
     let dir: Vec3 = map
         .held(&keys, &scopes)

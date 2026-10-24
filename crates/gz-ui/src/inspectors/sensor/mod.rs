@@ -1,7 +1,7 @@
 //! The Sensor inspector (spec §3.5): the SENSOR tag and the sensor's name,
-//! its path, View in Sensors (Echo topic and Plot wait for the Topics and
-//! Plot panels, M7), its pose on the link, and its output from the world's
-//! SDFormat.
+//! its path, View in Sensors, Echo topic and Plot (once its topic is
+//! known: DECISIONS.md D-103), its pose on the link, and its output from
+//! the world's SDFormat.
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
@@ -9,6 +9,7 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
+use gz_bevy::topics::GzTopics;
 
 use super::common::{
     breadcrumb, crumb, definition_group, links, pose_texts, quick_action, quick_action_node,
@@ -16,7 +17,8 @@ use super::common::{
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
 use crate::format;
-use crate::panels::SENSORS;
+use crate::panels::sensors::model::sensor_topic;
+use crate::panels::{PlotPick, TopicsStart, ViewSensor, SENSORS};
 use crate::shell::{world_name, Slot, UiCommand};
 use crate::theme::Theme;
 
@@ -27,9 +29,19 @@ pub const SENSOR: InspectorId = InspectorId::new("sensor");
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct SensorBody;
 
-/// View in Sensors.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub(crate) struct ViewInSensors;
+/// View in Sensors: the sensor's link and name.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ViewInSensors(pub Entity, pub String);
+
+/// Echo topic and Plot: the sensor's topic.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TopicAction {
+    Echo(String),
+    Plot(String),
+}
+
+/// Why Echo topic and Plot wait.
+pub(crate) const NO_TOPIC: &str = "Its topic isn't known yet";
 
 /// Registers the Sensor inspector.
 pub struct SensorInspectorPlugin;
@@ -40,7 +52,8 @@ impl Plugin for SensorInspectorPlugin {
             InspectorDef::new(SENSOR, InspectKind::Sensor).content::<SensorBody>(),
         )
         .add_observer(build_sensor)
-        .add_observer(on_view_in_sensors);
+        .add_observer(on_view_in_sensors)
+        .add_observer(on_topic_action);
     }
 }
 
@@ -79,6 +92,7 @@ fn build_sensor(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     sdf: Option<Res<SdfExtras>>,
+    topics: Option<Res<GzTopics>>,
     links_q: Query<(&GzEntity, Option<&GzSensors>)>,
     mut commands: Commands,
 ) {
@@ -97,6 +111,17 @@ fn build_sensor(
         .and_then(|s| s.extras.as_ref())
         .and_then(|w| w.link(&path))
         .and_then(|l| l.sensors.iter().find(|s| s.name == part.name).cloned());
+    let ty_now = desc.as_ref().map(|d| d.ty.clone()).unwrap_or_default();
+    let topic = topics.as_deref().and_then(|topics| {
+        sensor_topic(
+            world.as_deref().unwrap_or_default(),
+            &path,
+            &part.name,
+            &ty_now,
+            output.as_ref().and_then(|o| o.topic.as_deref()),
+            topics,
+        )
+    });
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -106,11 +131,18 @@ fn build_sensor(
             b.spawn(quick_actions()).with_children(|r| {
                 r.spawn(quick_action(&t, "View in Sensors", None))
                     .insert(quick_action_node(&t))
-                    .insert(ViewInSensors);
-                r.spawn(quick_action(&t, "Echo topic", Some("Not available yet")))
-                    .insert(quick_action_node(&t));
-                r.spawn(quick_action(&t, "Plot", Some("Not available yet")))
-                    .insert(quick_action_node(&t));
+                    .insert(ViewInSensors(link, part.name.clone()));
+                let why = topic.is_none().then_some(NO_TOPIC);
+                let mut echo = r.spawn(quick_action(&t, "Echo topic", why));
+                echo.insert(quick_action_node(&t));
+                if let Some(topic) = &topic {
+                    echo.insert(TopicAction::Echo(topic.clone()));
+                }
+                let mut plot = r.spawn(quick_action(&t, "Plot", why));
+                plot.insert(quick_action_node(&t));
+                if let Some(topic) = &topic {
+                    plot.insert(TopicAction::Plot(topic.clone()));
+                }
             });
             let ty = desc
                 .as_ref()
@@ -189,10 +221,12 @@ fn build_sensor(
 
 fn on_view_in_sensors(
     ev: On<Activate>,
-    buttons: Query<(), With<ViewInSensors>>,
+    buttons: Query<&ViewInSensors>,
     mut out: MessageWriter<UiCommand>,
+    mut views: MessageWriter<ViewSensor>,
 ) {
-    if buttons.contains(ev.entity) {
+    if let Ok(b) = buttons.get(ev.entity) {
+        views.write(ViewSensor(b.0, b.1.clone()));
         out.write(UiCommand::OpenPanel {
             panel: SENSORS,
             slot: Slot::Primary,
@@ -202,3 +236,21 @@ fn on_view_in_sensors(
 
 #[cfg(test)]
 mod tests;
+
+/// Echo topic opens Topics echoing it; Plot opens Plot's picker on it.
+fn on_topic_action(
+    ev: On<Activate>,
+    buttons: Query<&TopicAction>,
+    mut picks: MessageWriter<PlotPick>,
+    mut commands: Commands,
+) {
+    match buttons.get(ev.entity) {
+        Ok(TopicAction::Echo(topic)) => commands.insert_resource(TopicsStart {
+            echo: topic.clone(),
+        }),
+        Ok(TopicAction::Plot(topic)) => {
+            picks.write(PlotPick(topic.clone()));
+        }
+        Err(_) => {}
+    }
+}

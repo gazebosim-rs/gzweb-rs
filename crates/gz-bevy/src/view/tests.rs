@@ -1226,6 +1226,19 @@ fn viewport_keys_drive_the_view_and_the_grid() {
     assert!(r.sent().is_empty());
 }
 
+/// While Teleop drives (armed), W A S D are its: the camera stays.
+#[test]
+fn an_armed_teleop_takes_the_fly_keys() {
+    let mut r = rig(default_view());
+    r.app.insert_resource(DriveArmed(true));
+    r.key(KeyCode::KeyW, ButtonState::Pressed);
+    r.frames(5);
+    assert_eq!(r.transform(), default_view());
+    r.app.insert_resource(DriveArmed(false));
+    r.frames(5);
+    assert_ne!(r.transform(), default_view());
+}
+
 #[test]
 fn fly_keys_move_the_camera_unless_a_command_chord_is_held() {
     let mut r = rig(default_view());
@@ -2784,6 +2797,24 @@ fn dragging_an_arrow_moves_the_model_along_it_and_sends_its_pose() {
     r.app
         .world_mut()
         .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(
+        r.app.world().get::<Transform>(a).unwrap().translation.x,
+        0.0
+    );
+}
+
+/// While Teleop drives, a press on an arrow doesn't start a drag.
+#[test]
+fn an_armed_teleop_leaves_the_gizmo_alone() {
+    let (mut r, a) = gizmo_rig(gizmo::TransformTool::Translate);
+    r.app.insert_resource(DriveArmed(true));
+    let from = arrow_point(&r, 0, 0.8);
+    r.cursor(Some(from));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    r.cursor(Some(arrow_point(&r, 0, 1.6)));
     r.app.update();
     assert_eq!(
         r.app.world().get::<Transform>(a).unwrap().translation.x,
