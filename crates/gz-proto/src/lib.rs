@@ -9,3 +9,8 @@ pub mod gz {
 }
 
 pub use gz::msgs;
+
+/// The `gz.msgs` file descriptors (a serialized
+/// `google.protobuf.FileDescriptorSet`), for decoding a message whose type
+/// is known only by name.
+pub const DESCRIPTOR_SET: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/gz_msgs.fds"));

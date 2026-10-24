@@ -1,30 +1,27 @@
 //! The Scene panel's ready body (spec §3.3; board 04): the filter bar,
-//! the type chips, the virtualized tree and the footer, built from the
-//! panel's resources whenever the shell spawns the body (DECISIONS.md
-//! D-58, D-66).
+//! the type chips and the virtualized tree, built from the panel's
+//! resources whenever the shell spawns the body (DECISIONS.md D-58,
+//! D-66).
 
 use accesskit::Role;
 use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
-use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{Button as Headless, RadioGroup, ScrollArea};
 use bevy::window::PrimaryWindow;
 use gz_bevy::view::Selection;
 
-use super::footer::FooterButton;
 use super::model::{Chip, Row, TreeModel, TreeScroll, TreeState};
 use super::systems::TreeRows;
 use super::SceneTree;
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Active, Visuals};
-use crate::theme::{border, radius, ColorRole, Stroke, Theme, TypeStyle, SPACE};
+use crate::theme::{border, radius, ColorRole, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, display, row};
 use crate::widgets::{
-    a11y, button, choice_chip, clickable, filter_field, rounded, tree_row, ButtonVariant, Tooltip,
-    TreeRowSpec,
+    a11y, choice_chip, clickable, filter_field, rounded, tree_row, Tooltip, TreeRowSpec,
 };
 
 /// The filter field's root.
@@ -239,38 +236,6 @@ pub(crate) fn build_tree(
                         ..default()
                     },
                 ));
-            });
-            // Footer (§3.3): New group, Hide others, Isolate; their
-            // state follows the selection (`footer::footer_states`).
-            c.spawn((
-                Node {
-                    padding: UiRect::axes(px(SPACE[7]), px(SPACE[5])),
-                    border: UiRect::top(px(border::HAIRLINE)),
-                    flex_shrink: 0.0,
-                    ..row(SPACE[3])
-                },
-                Stroke(ColorRole::Line),
-            ))
-            .with_children(|f| {
-                for which in FooterButton::ALL {
-                    f.spawn(button(&t, which.label(), ButtonVariant::Normal))
-                        .insert((
-                            which,
-                            Node {
-                                flex_grow: 1.0,
-                                flex_basis: px(0),
-                                height: px(t.s.button_h),
-                                padding: UiRect::horizontal(px(SPACE[4])),
-                                border: UiRect::all(px(border::HAIRLINE)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border_radius: rounded(radius::SM),
-                                ..default()
-                            },
-                            InteractionDisabled,
-                            Tooltip::new(which.label()),
-                        ));
-                }
             });
         });
     });

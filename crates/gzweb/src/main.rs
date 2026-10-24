@@ -22,6 +22,8 @@
 //!   capture can show them (DECISIONS.md D-64). Not with `--snapshot`.
 //! - `--scene-filter TEXT` and `--scene-expand` start the full UI's Scene
 //!   tree filtered or with every row open (DECISIONS.md D-70).
+//! - `--echo TOPIC` starts the full UI with the Topics panel open,
+//!   echoing TOPIC once the server lists it (DECISIONS.md D-99).
 //! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
 //!   full UI's viewport in that layout (DECISIONS.md D-90).
 //! - `--no-vsync` presents frames as fast as they render, to measure.
@@ -51,6 +53,8 @@ struct Args {
     start: Option<gz_bevy::view::StartView>,
     /// `--scene-filter`, `--scene-expand`.
     scene: Option<gz_ui::panels::SceneTreeStart>,
+    /// `--echo`.
+    topics: Option<gz_ui::panels::TopicsStart>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -63,7 +67,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
-                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] \
+                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -175,6 +179,7 @@ fn parse_args(
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
     let mut scene = gz_ui::panels::SceneTreeStart::default();
+    let mut topics = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -238,6 +243,7 @@ fn parse_args(
             ),
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
+            "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
             "--no-vsync" => no_vsync = true,
             "--layout" => {
                 layout = Some(value()?.parse().map_err(|e| format!("--layout: {e}"))?);
@@ -267,6 +273,9 @@ fn parse_args(
     }
     if scene.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--scene-filter and --scene-expand need --ui full".into());
+    }
+    if topics.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--echo needs --ui full".into());
     }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
@@ -307,6 +316,7 @@ fn parse_args(
         window,
         start,
         scene,
+        topics,
         layout,
         no_vsync,
     })))
@@ -376,6 +386,7 @@ fn command() -> Result<Command, String> {
         window: None,
         start: None,
         scene: None,
+        topics: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -580,6 +591,9 @@ fn main() -> AppExit {
         ));
         if let Some(scene) = args.scene {
             app.insert_resource(scene);
+        }
+        if let Some(topics) = args.topics {
+            app.insert_resource(topics);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -818,6 +832,13 @@ mod tests {
             })
         );
         assert!(run_args(&[], None).scene.is_none());
+        let a = run_args(&["--echo", "/stats", "--ui", "full"], None);
+        assert_eq!(a.topics.unwrap().echo, "/stats");
+        assert!(run_args(&[], None).topics.is_none());
+        assert_eq!(
+            parse(&["--echo", "/stats", "--ui", "minimal"], None).unwrap_err(),
+            "--echo needs --ui full"
+        );
         assert_eq!(
             parse(&["--scene-expand", "--ui", "minimal"], None).unwrap_err(),
             "--scene-filter and --scene-expand need --ui full"

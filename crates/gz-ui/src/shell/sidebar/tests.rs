@@ -11,7 +11,9 @@ use bevy::ui_widgets::Activate;
 use bevy::app::PluginGroupBuilder;
 
 use crate::inspectors::InspectorPlugins;
-use crate::panels::{PanelBody, PanelId, PanelView, ScenePanelPlugin, ASSETS, PLOT, SCENE};
+use crate::panels::{
+    ActionId, PanelBody, PanelId, PanelView, ScenePanelPlugin, ASSETS, PLOT, SCENE,
+};
 use crate::shell::layout::MIN_SLOT_H;
 use crate::shell::sidebar::{PanelHeader, SlotView};
 use crate::shell::{ShellPlugin, ShellPlugins};
@@ -19,6 +21,7 @@ use crate::shell::{Slot, UiCommand};
 use crate::test_support::frames;
 use crate::test_support::probe::*;
 use crate::test_support::shell::*;
+use crate::widgets::Tooltip;
 
 #[test]
 fn slot_header_buttons_swap_and_close() {
@@ -303,13 +306,18 @@ fn bodies_survive_the_second_slot_opening_swapping_and_closing() {
         (Slot::Secondary, Slot::Primary)
     );
     assert_eq!(rows(&mut app), content, "and keeps its content");
-    // Each slot is its header, then its body.
-    for body in [scene, probe] {
+    // Each slot is its header, its body, then its footer.
+    use crate::shell::sidebar::footer::PanelFooter;
+    for (body, panel) in [(scene, SCENE), (probe, PROBE)] {
         let slot = app.world().get::<ChildOf>(body).unwrap().parent();
         let kids: Vec<Entity> = app.world().get::<Children>(slot).unwrap().to_vec();
-        assert_eq!(kids.len(), 2);
+        assert_eq!(kids.len(), 3);
         assert!(app.world().get::<PanelHeader>(kids[0]).is_some());
         assert_eq!(kids[1], body);
+        assert_eq!(
+            app.world().get::<PanelFooter>(kids[2]),
+            Some(&PanelFooter(panel))
+        );
     }
     app.world_mut().write_message(UiCommand::CloseSecondary);
     frames(&mut app, 2);
@@ -377,7 +385,7 @@ fn a_body_is_rebuilt_only_for_its_view_and_built_from_panel_state() {
 /// server from any panel.
 #[test]
 fn panel_actions_reach_their_panel_and_reconnect_retries() {
-    use crate::panels::{ActionId, PanelAction};
+    use crate::panels::PanelAction;
     use crate::shell::sidebar::body::ActionButton;
     use bevy::ui::InteractionDisabled;
     use gz_bevy::connection::GzReconnect;
@@ -402,6 +410,8 @@ fn panel_actions_reach_their_panel_and_reconnect_retries() {
     let mut want = [
         (POKE, false),
         (LATER, true),
+        (FOOT, false),
+        (UNREADY, true),
         (retry, false),
         (crate::panels::RECONNECT, false),
         (later, true),
@@ -422,13 +432,79 @@ fn panel_actions_reach_their_panel_and_reconnect_retries() {
     want.sort();
     // Each event names its button, to anchor a popover on.
     assert_eq!(seen, want);
-    assert_eq!(seen.len(), 3);
+    assert_eq!(seen.len(), 4);
     assert_eq!(
         app.world().resource::<Sent>().1,
         [GzReconnect { url: None }]
     );
     let text = all_text(&mut app);
     assert!(text.contains("down") && text.contains("Retry"));
+}
+
+/// A panel's footer sits under its body in every state (§3.3; DECISIONS.md
+/// D-98): its buttons share the row equally, an unavailable one says why,
+/// and an action's enabled state follows the panel's status in place.
+#[test]
+fn a_footer_shows_under_every_state_and_follows_the_status() {
+    use crate::shell::sidebar::body::{ActionButton, NOT_YET};
+    use crate::shell::sidebar::footer::{FooterButton, PanelFooter};
+    use bevy::ui::{ComputedNode, InteractionDisabled};
+
+    let mut app = probe_app(Slot::Primary);
+    let footer = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &PanelFooter)>()
+            .iter(world)
+            .find(|(_, f)| f.0 == PROBE)
+            .map(|(e, _)| e)
+    };
+    let buttons = |app: &mut App| {
+        let world = app.world_mut();
+        let mut b: Vec<(ActionId, Entity, bool, Option<String>, f32)> = world
+            .query_filtered::<(
+                Entity,
+                &ActionButton,
+                Has<InteractionDisabled>,
+                &Tooltip,
+                &ComputedNode,
+            ), With<FooterButton>>()
+            .iter(world)
+            .filter(|(_, a, ..)| a.panel == PROBE)
+            .map(|(e, a, d, t, n)| (a.action, e, d, t.detail.clone(), n.size.x))
+            .collect();
+        b.sort_by_key(|b| b.0);
+        b
+    };
+    let first = footer(&mut app).expect("a footer");
+    let b = buttons(&mut app);
+    assert_eq!(b.len(), 2);
+    let (foot, unready) = (&b[0], &b[1]);
+    assert_eq!((foot.0, foot.2, foot.3.clone()), (FOOT, false, None));
+    assert_eq!(
+        (unready.0, unready.2, unready.3.as_deref()),
+        (UNREADY, true, Some(UNREADY_WHY))
+    );
+    assert!(
+        foot.4 > 0.0 && (foot.4 - unready.4).abs() <= 1.0,
+        "equal widths (to the pixel): {b:?}"
+    );
+
+    app.world_mut().resource_mut::<Probe>().view = PanelView::Loading;
+    frames(&mut app, 2);
+    assert_eq!(footer(&mut app), Some(first), "kept across a view change");
+
+    app.world_mut().resource_mut::<Probe>().foot = Some(false);
+    frames(&mut app, 2);
+    let b = buttons(&mut app);
+    assert_eq!((b[0].2, b[0].3.as_deref()), (true, Some(NOT_YET)));
+    app.world_mut().resource_mut::<Probe>().foot = Some(true);
+    frames(&mut app, 2);
+    let b = buttons(&mut app);
+    assert_eq!((b[0].2, b[0].3.clone()), (false, None));
+    app.world_mut().trigger(Activate { entity: b[0].1 });
+    frames(&mut app, 1);
+    assert_eq!(app.world().resource::<ProbeActions>().0, [(FOOT, b[0].1)]);
 }
 
 /// `panel_shown` is true while the panel is in a slot of the open
@@ -448,7 +524,7 @@ fn panel_shown_follows_the_slots_and_the_sidebar() {
 }
 
 /// The probe's header action button for `action`.
-fn header_button(app: &mut App, action: crate::panels::ActionId) -> Entity {
+fn header_button(app: &mut App, action: ActionId) -> Entity {
     use crate::shell::sidebar::body::ActionButton;
     let world = app.world_mut();
     world

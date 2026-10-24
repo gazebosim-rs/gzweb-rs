@@ -1,9 +1,9 @@
 //! Joint states for the full UI's Joint inspector (spec §3.5: position,
 //! velocity and effort, live): while [`JointStateWanted`] names a model,
 //! its `joint_state` topic (or the `<topic>` its JointStatePublisher sets)
-//! is subscribed (Gazebo's JointStatePublisher system publishes it, when
-//! the world has one) and decoded into [`JointStates`]. Nothing is
-//! subscribed otherwise.
+//! is held in [`GzSubscriptions`] (Gazebo's JointStatePublisher system
+//! publishes it, when the world has one) and decoded into
+//! [`JointStates`]. Nothing is held otherwise.
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -12,7 +12,11 @@ use gz_core::topic::world_topic;
 use gz_core::transport::Status;
 use prost::Message as _;
 
-use crate::connection::{GzCommand, GzPublish, GzStatus};
+use crate::connection::{GzPublish, GzStatus};
+use crate::topics::{sync_subscriptions, GzSubscriptions, Holder, TopicsPlugin};
+
+/// What holds the joint state topic ([`GzSubscriptions`]).
+const HOLDER: Holder = "joint_state";
 
 /// How many joint states a second the inspector needs.
 pub const JOINT_STATE_RATE: u32 = 10;
@@ -58,22 +62,27 @@ pub struct JointStatePlugin;
 
 impl Plugin for JointStatePlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<GzCommand>()
-            .add_message::<GzPublish>()
-            .init_resource::<JointStateWanted>()
+        TopicsPlugin::ensure(app);
+        app.init_resource::<JointStateWanted>()
             .init_resource::<JointStates>()
-            .add_systems(Update, (subscribe_joint_states, read_joint_states).chain());
+            .add_systems(
+                Update,
+                (
+                    subscribe_joint_states.before(sync_subscriptions),
+                    read_joint_states,
+                ),
+            );
     }
 }
 
-/// Subscribes to the wanted model's topic (throttled) and drops the last
-/// one's. While the connection isn't ready it forgets the subscription, so
-/// a reconnect subscribes again.
+/// Holds the wanted model's topic (throttled) and lets go of the last
+/// one's. While the connection isn't ready it lets go, so a reconnect to
+/// another world holds that world's topic.
 fn subscribe_joint_states(
     wanted: Res<JointStateWanted>,
     status: Option<Res<GzStatus>>,
     mut states: ResMut<JointStates>,
-    mut out: MessageWriter<GzCommand>,
+    mut subs: ResMut<GzSubscriptions>,
 ) {
     if !wanted.is_changed() && !status.as_ref().is_some_and(|s| s.is_changed()) {
         return;
@@ -94,12 +103,11 @@ fn subscribe_joint_states(
     if want == states.topic {
         return;
     }
-    if let (Some(old), Some(_)) = (&states.topic, ready) {
-        out.write(GzCommand::Unsubscribe(old.clone()));
+    if let Some(old) = &states.topic {
+        subs.release(HOLDER, old);
     }
     if let Some(topic) = &want {
-        out.write(GzCommand::Subscribe(topic.clone()));
-        out.write(GzCommand::Throttle(topic.clone(), JOINT_STATE_RATE));
+        subs.hold(HOLDER, topic, Some(JOINT_STATE_RATE));
     }
     states.topic = want;
     states.joints.clear();
@@ -133,6 +141,7 @@ fn read_joint_states(mut publishes: MessageReader<GzPublish>, mut states: ResMut
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection::GzCommand;
 
     fn app() -> App {
         let mut app = App::new();

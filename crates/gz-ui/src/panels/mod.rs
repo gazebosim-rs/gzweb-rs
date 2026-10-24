@@ -13,9 +13,11 @@
 //!
 //! - **Static:** the [`PanelDef`]: title, icon, binding, place in the
 //!   activity bar, its [`HeaderAction`]s, the [`PanelView`] it starts
-//!   with, and the marker component its content is built under.
+//!   with, the marker component its content is built under, and its
+//!   footer (D-98: [`PanelAction`]s and a footer content marker, drawn by
+//!   the shell under every state).
 //! - **What changes:** its own systems write its view, activity badge,
-//!   header count and header actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
+//!   header count and actions' enabled state into the shell's [`PanelStatus`](crate::shell::PanelStatus)
 //!   (through [`SetPanelStatus`](crate::shell::SetPanelStatus), which marks
 //!   a change only), in [`ShellSystems::Panels`](crate::shell::ShellSystems).
 //!   The shell rebuilds a body only when its view differs.
@@ -23,10 +25,14 @@
 //!   the panel's own observer on `Add<Marker>` fills it with whatever
 //!   system parameters it needs. The body is full-bleed; the shell pads
 //!   only the empty, loading and error states.
-//! - **Actions:** buttons in an empty or error state ([`PanelAction`]) and
-//!   in the header ([`HeaderAction`]) trigger [`PanelActionActivated`],
-//!   which the panel observes. Reconnect ([`PanelAction::reconnect`]) is
-//!   the shell's own.
+//! - **Actions:** buttons in an empty or error state or the footer
+//!   ([`PanelAction`]) and in the header ([`HeaderAction`]) trigger
+//!   [`PanelActionActivated`], which the panel observes. Reconnect
+//!   ([`PanelAction::reconnect`]) is the shell's own. One unavailable for
+//!   good says why (`unavailable`).
+//! - **Hosts:** a panel shows in a host (D-98: a sidebar slot, a pop-out
+//!   in M7e); gate a system that only feeds what it shows with
+//!   [`panel_shown`](crate::shell::panel_shown).
 //! - **Bodies are disposable views.** A view change, a swap or (M7) a
 //!   pop-out respawns a body; the shell keeps it across a second slot
 //!   opening or closing and moves it on a swap, but a panel never relies
@@ -64,7 +70,7 @@ pub use plot::{PlotCharts, PlotPanelPlugin, PLOT};
 pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
 pub use sensors::{SensorsPanelPlugin, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TELEOP};
-pub use topics::{TopicsPanelPlugin, TOPICS};
+pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
 
 ui_id! {
     /// A panel's id: a short, stable name ("scene"), unique among the
@@ -128,14 +134,18 @@ impl PanelView {
     }
 }
 
-/// A button in an empty or error state (§3.3.1). Activating it triggers
-/// [`PanelActionActivated`] with its id.
+/// A button in an empty or error state (§3.3.1) or in a panel's footer
+/// (§3.3). Activating it triggers [`PanelActionActivated`] with its id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PanelAction {
     pub id: ActionId,
     pub label: Cow<'static, str>,
-    /// A disabled action shows dimmed, with "Not available yet".
+    /// A disabled action shows dimmed, with [`why`](Self::why). A footer
+    /// action keeps this state until the panel's systems set one
+    /// ([`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus::set_action_enabled)).
     pub enabled: bool,
+    /// What a disabled action's tooltip says (none: "Not available yet").
+    pub why: Option<&'static str>,
 }
 
 /// [`PanelAction::reconnect`]'s id: the shell retries the server.
@@ -147,6 +157,7 @@ impl PanelAction {
             id,
             label: label.into(),
             enabled: true,
+            why: None,
         }
     }
 
@@ -154,6 +165,14 @@ impl PanelAction {
     /// milestone).
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
+        self
+    }
+
+    /// Shown, but unavailable for the reason `why` gives (the tooltip's
+    /// detail while it is disabled).
+    pub fn unavailable(mut self, why: &'static str) -> Self {
+        self.enabled = false;
+        self.why = Some(why);
         self
     }
 
@@ -176,10 +195,12 @@ pub struct HeaderAction {
     /// The `shortcuts.json` binding that activates it while its panel is
     /// shown (its tooltip shows the keys), if any.
     pub binding: Option<&'static str>,
-    /// A disabled action shows dimmed, with "Not available yet". This is
+    /// A disabled action shows dimmed, with [`why`](Self::why). This is
     /// its state until the panel's systems set one
     /// ([`SetPanelStatus::set_action_enabled`](crate::shell::SetPanelStatus::set_action_enabled)).
     pub enabled: bool,
+    /// What a disabled action's tooltip says (none: "Not available yet").
+    pub why: Option<&'static str>,
 }
 
 impl HeaderAction {
@@ -190,6 +211,7 @@ impl HeaderAction {
             tooltip,
             binding: None,
             enabled: true,
+            why: None,
         }
     }
 
@@ -203,10 +225,17 @@ impl HeaderAction {
         self.enabled = false;
         self
     }
+
+    /// Shown, but unavailable for the reason `why` gives.
+    pub fn unavailable(mut self, why: &'static str) -> Self {
+        self.enabled = false;
+        self.why = Some(why);
+        self
+    }
 }
 
 /// A panel's action button was activated: a [`PanelAction`] in its body or
-/// a [`HeaderAction`]. `entity` is the button (an anchor for a popover);
+/// footer, or a [`HeaderAction`]. `entity` is the button (an anchor for a popover);
 /// a panel observes the event globally and matches its `panel` id.
 #[derive(EntityEvent, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PanelActionActivated {
@@ -253,6 +282,11 @@ pub struct PanelDef {
     /// Marks its body while [`PanelView::Ready`], for its observer to fill
     /// ([`content`](Self::content)).
     pub content: Option<ContentMarker>,
+    /// Its footer's buttons, in order (§3.3: equal widths).
+    pub footer: Vec<PanelAction>,
+    /// Marks its footer, for its observer to fill
+    /// ([`footer_content`](Self::footer_content)).
+    pub footer_content: Option<ContentMarker>,
 }
 
 impl PanelDef {
@@ -271,6 +305,8 @@ impl PanelDef {
             view: PanelView::Ready,
             header_actions: Vec::new(),
             content: None,
+            footer: Vec::new(),
+            footer_content: None,
         }
     }
 
@@ -314,6 +350,40 @@ impl PanelDef {
             body.insert(C::default());
         });
         self
+    }
+
+    /// Adds a button to its footer, which the shell draws under the body
+    /// in every state (§3.3).
+    pub fn footer_action(mut self, action: PanelAction) -> Self {
+        self.footer.push(action);
+        self
+    }
+
+    /// Its footer's content: the shell's footer row gets `C::default()`,
+    /// after any [`footer_action`](Self::footer_action)s, and the panel's
+    /// own observer on `Add<C>` builds into it (a command input, buttons
+    /// with an on state). Like the body it is disposable: it is respawned
+    /// when its host changes panels.
+    pub fn footer_content<C: Component + Default>(mut self) -> Self {
+        self.footer_content = Some(|footer| {
+            footer.insert(C::default());
+        });
+        self
+    }
+
+    /// Whether it has a footer.
+    pub fn has_footer(&self) -> bool {
+        !self.footer.is_empty() || self.footer_content.is_some()
+    }
+
+    /// Its header or footer action `id`, as registered: whether it starts
+    /// enabled, and why not.
+    pub fn action(&self, id: ActionId) -> Option<(bool, Option<&'static str>)> {
+        let header = self.header_actions.iter().find(|a| a.id == id);
+        let footer = self.footer.iter().find(|a| a.id == id);
+        header
+            .map(|a| (a.enabled, a.why))
+            .or_else(|| footer.map(|a| (a.enabled, a.why)))
     }
 }
 

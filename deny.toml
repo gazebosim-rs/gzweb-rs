@@ -43,6 +43,16 @@ allow = [
 ]
 confidence-threshold = 0.9
 
+# Windows' clipboard, under arboard (Bevy's system_clipboard): BSL-1.0
+# for these two crates only.
+[[licenses.exceptions]]
+crate = "clipboard-win"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+crate = "error-code"
+allow = ["BSL-1.0"]
+
 [[licenses.clarify]]
 crate = "gz-parity"
 expression = "Apache-2.0"

@@ -1510,3 +1510,44 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   tab order is dropped; the side-key test reaches the floor, the divider
   tests check the laid-out drag start and the taken key; §5.18 and §3.3.2
   amended. 735 → 737 tests.
+
+## 2026-10-23: M7a panel hosts, footers, shared subscriptions, Topics (D-97 to D-99)
+
+- **Topics groundwork (D-97):** gz-proto embeds the `gz.msgs` descriptors
+  (85 KB) and `gz_core::echo` prints any message by its type name in
+  text format. gz-bevy keeps the server's topic list (`GzTopics`,
+  `GzCommand::RefreshTopics`), shares subscriptions by holder
+  (`GzSubscriptions`; a world topic the client takes is tapped), and
+  counts each received topic's messages and rate (`GzTraffic`). The joint
+  states hold their topic through it.
+- **Hosts and footers (D-98):** the slots are `PanelHost`s, rebuilt the
+  same way, and `ShownPanels` replaces the layout's slot checks in
+  `panel_shown`, the activity bar and the header keys. A panel's footer
+  (`footer_action`, `footer_content`) shows under every state, its
+  actions follow `PanelStatus`, and an unavailable one says why; the
+  Scene footer moved onto it.
+- **Topics (D-99):** filter, chips, the list with rates, the echo while
+  shown ("Waiting for first message…", "Topic ended"), Copy, Publish and
+  Services unavailable with a reason, `gzweb --echo`.
+- **Native clipboard:** gzweb turns on Bevy's `system_clipboard`, so
+  Copy (and the text fields) reach the system clipboard natively too;
+  `deny.toml` allows BSL-1.0 for the two Windows-only crates under it.
+- **Review fixes (PR #46):** the echo prints a long `bytes` field as its
+  size and cuts lines at 2,000 characters (a point cloud's data was one
+  1 MB line); Copy copies the whole message, and is unavailable in a
+  browser off https or localhost (Bevy's web clipboard throws there);
+  rates redraw when measured (`GzTraffic::measured`), not on every
+  arrival, and the list recomputes only when its inputs change; a key
+  move scrolls its row into view; `GzWebPlugin` adds `TopicsPlugin`
+  only if it isn't there; BSL-1.0 is an exception for the two crates,
+  not a global allowance.
+- **Flaky test fixed:** a hidden view's cube camera could stay on when
+  its scene spawned in the frame the reveal reached 0 (one long frame);
+  the camera is now checked every frame. It failed about one run in four
+  on main under load; 10 runs in a row pass now.
+- **Live check** (debug build, Jetty `diff_drive` on :9011): `--echo
+  /model/vehicle_blue/odometry` (light) and `--echo
+  /world/diff_drive/stats` (dark, the tapped world topic): 14 topics,
+  rates for the topics received, the echo in text format, the footer.
+- **Tests:** workspace 737 → 754 passing; coverage 98.3% lines. check.sh
+  passes. Not tried by hand.

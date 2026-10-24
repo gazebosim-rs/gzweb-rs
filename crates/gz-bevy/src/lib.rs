@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod backend;
 pub mod camera;
+pub mod clipboard;
 pub mod collada;
 pub mod connection;
 pub mod driver;
@@ -24,6 +25,7 @@ pub mod snapshot;
 pub mod spawn;
 pub mod stl;
 pub mod submesh;
+pub mod topics;
 pub mod undo;
 pub mod view;
 
@@ -132,6 +134,8 @@ pub struct GzWebPlugin {
 
 impl Plugin for GzWebPlugin {
     fn build(&self, app: &mut App) {
+        // A panel or the joint states may have added it already.
+        topics::TopicsPlugin::ensure(app);
         app.insert_resource(self.config.clone())
             .insert_resource(ClearColor(camera::CLEAR_COLOR))
             // gzweb's colour until the scene sets one, at full fill strength

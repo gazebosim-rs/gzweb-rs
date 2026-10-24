@@ -38,12 +38,11 @@ pub(crate) struct ActionButton {
 /// What a disabled action's tooltip says.
 pub(crate) const NOT_YET: &str = "Not available yet";
 
-/// Spawns `def`'s body in `view` under `slot`: empty and full-bleed when
-/// ready (with the panel's content marker, for its observer to fill),
-/// padded otherwise.
+/// Spawns `def`'s body in `view`, for its host to place: empty and
+/// full-bleed when ready (with the panel's content marker, for its
+/// observer to fill), padded otherwise.
 pub(super) fn spawn_body(
     commands: &mut Commands,
-    slot: Entity,
     theme: &Theme,
     def: &PanelDef,
     view: PanelView,
@@ -78,7 +77,6 @@ pub(super) fn spawn_body(
                 PanelView::Empty { .. } | PanelView::Error { .. } => SPACE[5],
             })
         },
-        ChildOf(slot),
     ));
     let t = theme.clone();
     let panel = def.id;
@@ -133,8 +131,7 @@ pub(super) fn spawn_body(
     body.id()
 }
 
-/// An empty or error state's button: dimmed with "Not available yet" when
-/// disabled.
+/// An empty or error state's button: dimmed, saying why, when disabled.
 fn spawn_action(row: &mut ChildSpawner, theme: &Theme, panel: PanelId, a: PanelAction) {
     let mut e = row.spawn((
         button(theme, a.label.clone(), ButtonVariant::Normal),
@@ -144,7 +141,10 @@ fn spawn_action(row: &mut ChildSpawner, theme: &Theme, panel: PanelId, a: PanelA
         },
     ));
     if !a.enabled {
-        e.insert((InteractionDisabled, Tooltip::new(a.label).detail(NOT_YET)));
+        e.insert((
+            InteractionDisabled,
+            Tooltip::new(a.label).detail(a.why.unwrap_or(NOT_YET)),
+        ));
     }
 }
 

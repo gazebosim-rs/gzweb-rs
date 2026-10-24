@@ -21,6 +21,7 @@ pub(crate) mod activity_bar;
 pub(crate) mod collapsed_bar;
 pub(crate) mod commands;
 pub(crate) mod connection;
+pub(crate) mod host;
 pub(crate) mod inspector;
 pub(crate) mod layout;
 pub(crate) mod panel_status;
@@ -38,6 +39,7 @@ use gz_bevy::connection::{GzCommand, GzReconnect};
 
 pub use commands::UiCommand;
 pub use connection::{world_name, CurrentPhase, Phase};
+pub use host::ShownPanels;
 pub use layout::{
     ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W, MIN_SLOT_H,
     MIN_WINDOW, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
@@ -70,13 +72,14 @@ pub enum ShellSystems {
     Readouts,
 }
 
-/// A run condition: `panel` is in a slot of the open sidebar. For a
-/// panel's systems that only feed what it shows (M7: a topic echo's
-/// subscription); what it must keep while closed (Plot's series, the
-/// Console's log) runs unconditionally, and so do the systems writing its
-/// [`PanelStatus`], which the shell reads when the panel opens.
-pub fn panel_shown(panel: PanelId) -> impl FnMut(Option<Res<ShellLayout>>) -> bool + Clone {
-    move |layout| layout.is_some_and(|l| l.sidebar_open && l.is_active(panel))
+/// A run condition: `panel` is on screen in a host ([`ShownPanels`]: a
+/// slot of the open sidebar). For a panel's systems that only feed what
+/// it shows (a topic echo's subscription); what it must keep while
+/// closed (Plot's series, the Console's log) runs unconditionally, and so
+/// do the systems writing its [`PanelStatus`], which the shell reads when
+/// the panel opens.
+pub fn panel_shown(panel: PanelId) -> impl FnMut(Option<Res<ShownPanels>>) -> bool + Clone {
+    move |shown| shown.is_some_and(|s| s.is_shown(panel))
 }
 
 /// The shell with the built-in panels and inspectors: [`ShellPlugin`],
@@ -115,6 +118,7 @@ impl Plugin for ShellPlugin {
             .init_resource::<PanelRegistry>()
             .init_resource::<InspectorRegistry>()
             .init_resource::<PanelStatus>()
+            .init_resource::<ShownPanels>()
             .init_resource::<connection::ConnectionView>()
             .init_resource::<CurrentPhase>()
             .configure_sets(

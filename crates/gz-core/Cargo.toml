@@ -8,6 +8,8 @@ license = "Apache-2.0"
 [dependencies]
 gz-proto.workspace = true
 prost.workspace = true
+# Decoding a topic's message by its type name, as text (`echo`).
+prost-reflect = { version = "0.14", features = ["text-format"] }
 serde.workspace = true
 serde_json.workspace = true
 # SDFormat for the overlays (`sdf`); already in the tree through resvg.

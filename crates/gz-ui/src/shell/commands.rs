@@ -15,7 +15,7 @@ use super::sidebar::body::ActionButton;
 use super::sidebar::HeaderButton;
 use super::top_bar::tools::Tool;
 use super::viewport::views::LayoutCommand;
-use super::PanelStatus;
+use super::{PanelStatus, ShownPanels};
 use crate::panels::{PanelActionActivated, PanelId, PanelRegistry};
 use crate::theme::{Theme, ThemeMode};
 use crate::widgets::focus::MenuTakesEscape;
@@ -162,17 +162,17 @@ pub(crate) fn shortcut_keys(
 /// [`HeaderAction::binding`]: crate::panels::HeaderAction
 pub(crate) fn header_action_keys(
     shortcuts: Shortcuts,
-    layout: Res<ShellLayout>,
+    hosts: Res<ShownPanels>,
     panels: Res<PanelRegistry>,
     status: Res<PanelStatus>,
     buttons: Query<(Entity, &ActionButton), With<HeaderButton>>,
     mut commands: Commands,
 ) {
     let pressed = shortcuts.pressed();
-    if pressed.is_empty() || !layout.sidebar_open {
+    if pressed.is_empty() {
         return;
     }
-    let shown = panels.iter().filter(|d| layout.is_active(d.id));
+    let shown = panels.iter().filter(|d| hosts.is_shown(d.id));
     for def in shown {
         for a in &def.header_actions {
             let bound = a.binding.is_some_and(|b| pressed.iter().any(|p| p == b));

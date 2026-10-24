@@ -1,5 +1,8 @@
 //! The Scene panel's footer (spec §3.3): Hide others and Isolate act on
-//! the selection's models; New group waits for groups.
+//! the selection's models; New group waits for groups. The shell draws the
+//! footer under every state of the body (DECISIONS.md D-98); the panel
+//! builds its buttons into it, since Isolate has an on state and each
+//! button's tooltip follows the selection.
 
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
@@ -10,7 +13,10 @@ use gz_bevy::undo::{Change, Isolated, Record};
 use gz_bevy::view::{Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
 
+use super::SceneFooter;
+use crate::shell::sidebar::footer::footer_button;
 use crate::theme::visuals::Active;
+use crate::theme::Theme;
 use crate::widgets::Tooltip;
 
 /// The footer's buttons.
@@ -47,6 +53,20 @@ impl FooterButton {
         };
         Tooltip::new(self.label()).detail(detail)
     }
+}
+
+/// Builds the buttons into the shell's footer row, disabled until
+/// [`footer_states`] runs.
+pub(crate) fn build_footer(ev: On<Add<SceneFooter>>, theme: Res<Theme>, mut commands: Commands) {
+    commands.entity(ev.entity).with_children(|f| {
+        for which in FooterButton::ALL {
+            footer_button(f, &theme, which.label()).insert((
+                which,
+                InteractionDisabled,
+                Tooltip::new(which.label()),
+            ));
+        }
+    });
 }
 
 /// The world's top-level models, and those the selection is part of.

@@ -5,7 +5,8 @@ use bevy::prelude::*;
 
 use crate::assets::IconId;
 use crate::panels::{
-    ActionId, HeaderAction, PanelActionActivated, PanelDef, PanelId, PanelView, RegisterPanel,
+    ActionId, HeaderAction, PanelAction, PanelActionActivated, PanelDef, PanelId, PanelView,
+    RegisterPanel,
 };
 use crate::shell::{PanelStatus, SetPanelStatus, ShellSystems};
 use crate::widgets::BadgeKind;
@@ -16,6 +17,12 @@ pub(crate) const PROBE: PanelId = PanelId::new("probe");
 pub(crate) const POKE: ActionId = ActionId::new("poke");
 /// Its disabled header action.
 pub(crate) const LATER: ActionId = ActionId::new("later");
+/// Its footer's action, enabled as [`Probe::foot`] says.
+pub(crate) const FOOT: ActionId = ActionId::new("foot");
+/// Its footer's unavailable action.
+pub(crate) const UNREADY: ActionId = ActionId::new("unready");
+/// Why [`UNREADY`] is unavailable.
+pub(crate) const UNREADY_WHY: &str = "Needs a server";
 
 /// What the probe panel shows, and the panel-owned state its content is
 /// built from; tests write it.
@@ -26,6 +33,8 @@ pub(crate) struct Probe {
     pub count: Option<String>,
     /// How many rows its content has (as M4's tree keeps its expansion).
     pub rows: u32,
+    /// Whether [`FOOT`] is enabled, once set.
+    pub foot: Option<bool>,
 }
 
 impl Default for Probe {
@@ -35,6 +44,7 @@ impl Default for Probe {
             badge: None,
             count: None,
             rows: 2,
+            foot: None,
         }
     }
 }
@@ -61,7 +71,9 @@ impl Plugin for ProbePanelPlugin {
                 .place(9, 0)
                 .header_action(HeaderAction::new(POKE, IconId::Plus, "Poke").binding("file.import"))
                 .header_action(HeaderAction::new(LATER, IconId::Copy, "Later").disabled())
-                .content::<ProbeContent>(),
+                .content::<ProbeContent>()
+                .footer_action(PanelAction::new(FOOT, "Foot"))
+                .footer_action(PanelAction::new(UNREADY, "Unready").unavailable(UNREADY_WHY)),
         )
         .init_resource::<Probe>()
         .init_resource::<ProbeActions>()
@@ -76,6 +88,9 @@ fn write_status(probe: Res<Probe>, mut status: ResMut<PanelStatus>) {
         status.set_view(PROBE, probe.view.clone());
         status.set_badge(PROBE, probe.badge);
         status.set_count(PROBE, probe.count.clone());
+        if let Some(on) = probe.foot {
+            status.set_action_enabled(PROBE, FOOT, on);
+        }
     }
 }
 
