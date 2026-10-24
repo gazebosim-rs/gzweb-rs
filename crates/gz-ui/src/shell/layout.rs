@@ -421,12 +421,18 @@ impl ShellLayout {
     }
 
     /// Dock (§7.11): the window's panel goes back to the slot it came
-    /// from.
+    /// from. A panel that moved up into the primary meanwhile (its
+    /// secondary, when the primary popped out) moves back down; with both
+    /// slots full, what holds the slot gives it up.
     pub fn dock(&mut self, panel: PanelId) {
-        if let Some(i) = self.popout_index(panel) {
-            let p = self.popouts.remove(i);
-            self.open_in(p.panel, p.from);
+        let Some(i) = self.popout_index(panel) else {
+            return;
+        };
+        let p = self.popouts.remove(i);
+        if p.from == Slot::Primary && self.secondary.is_none() {
+            self.secondary = self.primary.take();
         }
+        self.open_in(p.panel, p.from);
     }
 
     /// Close (§7.11): the window goes, and its panel with it.

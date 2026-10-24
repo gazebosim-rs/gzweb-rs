@@ -51,6 +51,15 @@ fn panels_pop_out_dock_and_close() {
     assert!(l.popouts.is_empty());
     l.dock(SCENE);
     assert_eq!(l.primary, Some(TOPICS), "nothing to dock");
+
+    // The panel that moved up when the primary popped out moves back
+    // down when it docks.
+    let mut l = ShellLayout::for_width(1440.0, Some(SCENE));
+    l.open_in(TOPICS, Slot::Secondary);
+    l.pop_out(SCENE);
+    assert_eq!((l.primary, l.secondary), (Some(TOPICS), None));
+    l.dock(SCENE);
+    assert_eq!((l.primary, l.secondary), (Some(SCENE), Some(TOPICS)));
 }
 
 /// A window moves and resizes within the viewport area, never under
@@ -196,7 +205,6 @@ fn a_window_hosts_its_panel() {
     let h = header(&mut app, PLOT);
     assert!(app.world().get::<HeaderDrag>(h).is_some());
     let dock = button(&mut app, h, WindowAction::Dock);
-    button(&mut app, h, WindowAction::Close);
     assert!(all_text(&mut app).contains("Pop out"), "the footer");
     let body = {
         let world = app.world_mut();
@@ -228,7 +236,11 @@ fn a_window_hosts_its_panel() {
     };
     assert!(displayed(&app, ring));
 
-    // The header moves the window; an edge resizes it.
+    // A drag that starts on a header button leaves the window where it
+    // is; the header moves it; an edge resizes it.
+    let close = button(&mut app, h, WindowAction::Close);
+    drag(&mut app, close, Vec2::new(100.0, 40.0));
+    assert_eq!(layout(&app).popouts[0].rect, l.popouts[0].rect);
     drag(&mut app, h, Vec2::new(100.0, 40.0));
     let moved = layout(&app).popouts[0].rect;
     assert_eq!(moved.min, l.popouts[0].rect.min + Vec2::new(100.0, 40.0));
@@ -262,8 +274,10 @@ fn a_window_hosts_its_panel() {
     app.world_mut().write_message(UiCommand::PopOut(TOPICS));
     frames(&mut app, 3);
     assert_eq!(layout(&app).popouts.last().unwrap().panel, TOPICS);
-    app.world_mut().trigger(PointerPress {
-        entity: w,
+    // A press on a control in it (here Dock, which stops the press's
+    // propagation) raises it too.
+    app.world_mut().write_message(PointerPress {
+        entity: dock,
         pointer: pointer(),
         button: PointerButton::Primary,
         hit: hit(),

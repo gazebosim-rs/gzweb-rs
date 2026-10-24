@@ -13,7 +13,7 @@ use bevy::picking::cursor::EntityCursor;
 use bevy::picking::events::{PointerDrag, PointerDragStart, PointerPress};
 use bevy::prelude::*;
 use bevy::ui::ComputedNode;
-use bevy::ui_widgets::Activate;
+use bevy::ui_widgets::{Activate, Button};
 use bevy::window::SystemCursorIcon;
 
 use super::host::PanelHost;
@@ -51,10 +51,12 @@ pub(crate) enum WindowAction {
 }
 
 /// A window's header: dragging it moves the window, from where the drag
-/// started.
+/// started; not a drag that started on one of its buttons (it would move
+/// the button under the pointer and click it).
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct HeaderDrag {
     from: Vec2,
+    moving: bool,
 }
 
 /// A window's edge or corner: dragging it moves those edges, from the
@@ -340,14 +342,19 @@ fn panel_of(
         .find_map(|a| windows.get(a).ok().map(|w| w.0))
 }
 
-/// A press anywhere in a window brings it to the top.
-pub(crate) fn on_window_press(
-    ev: On<PointerPress>,
+/// A press anywhere in a window brings it to the top. Read from the
+/// presses bevy_picking writes, not their propagation, which a button, a
+/// chip or a text field stops.
+pub(crate) fn raise_pressed(
+    mut presses: MessageReader<PointerPress>,
+    parents: Query<&ChildOf>,
     windows: Query<&PopOutWindow>,
     mut out: MessageWriter<UiCommand>,
 ) {
-    if let Ok(w) = windows.get(ev.entity) {
-        out.write(UiCommand::RaisePopOut(w.0));
+    for press in presses.read() {
+        if let Some(panel) = panel_of(press.entity, &parents, &windows) {
+            out.write(UiCommand::RaisePopOut(panel));
+        }
     }
 }
 
@@ -378,6 +385,7 @@ pub(crate) fn on_drag_start(
     layout: Res<ShellLayout>,
     parents: Query<&ChildOf>,
     windows: Query<&PopOutWindow>,
+    buttons: Query<(), With<Button>>,
     mut headers: Query<&mut HeaderDrag>,
     mut edges: Query<&mut EdgeDrag>,
 ) {
@@ -394,6 +402,13 @@ pub(crate) fn on_drag_start(
     };
     if let Ok(mut h) = headers.get_mut(ev.entity) {
         h.from = rect.min;
+        // Between where it started and the header: a button?
+        let start = ev.original_event_target();
+        let on_button = std::iter::once(start)
+            .chain(parents.iter_ancestors(start))
+            .take_while(|e| *e != ev.entity)
+            .any(|e| buttons.contains(e));
+        h.moving = !on_button;
     }
     if let Ok(mut e) = edges.get_mut(ev.entity) {
         e.from = rect;
@@ -413,6 +428,9 @@ pub(crate) fn on_drag(
 ) {
     let delta = ev.distance / scale.0;
     if let Ok(h) = headers.get(ev.entity) {
+        if !h.moving {
+            return;
+        }
         if let Some(panel) = panel_of(ev.entity, &parents, &windows) {
             out.write(UiCommand::MovePopOut {
                 panel,
@@ -434,7 +452,7 @@ pub(crate) fn on_drag(
 pub(crate) fn build(app: &mut App) {
     app.add_systems(
         Update,
-        apply_start_popouts
+        (apply_start_popouts, raise_pressed)
             .in_set(ShellSystems::Layout)
             .before(super::commands::apply_ui_commands),
     )
@@ -445,7 +463,6 @@ pub(crate) fn build(app: &mut App) {
             .in_set(ShellSystems::Layout)
             .after(super::regions::apply_layout),
     )
-    .add_observer(on_window_press)
     .add_observer(on_window_action)
     .add_observer(on_drag_start)
     .add_observer(on_drag);
