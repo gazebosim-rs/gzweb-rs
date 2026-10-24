@@ -652,3 +652,57 @@ fn the_panel_wants_joint_states_and_the_topics() {
     frames(&mut app, 2);
     assert_eq!(app.world().resource::<JointStateWanted>().model, None);
 }
+
+/// The Joint inspector's want ranks over Teleop's: Teleop hiding (or
+/// changing its target) leaves the inspector's joint read; the inspector
+/// letting go leaves Teleop's, and selecting around doesn't resubscribe.
+#[test]
+fn teleop_and_the_joint_inspector_share_the_joint_states() {
+    use gz_bevy::view::{Part, PartKind};
+    let (mut app, amr) = live_teleop(Some(true));
+    let model = |app: &App| app.world().resource::<JointStateWanted>().model.clone();
+    assert_eq!(model(&app).as_deref(), Some("amr"), "Teleop's");
+    // The inspector shows amr's lift: amr's either way.
+    *app.world_mut().resource_mut::<Selection>() = Selection {
+        entities: vec![],
+        parts: vec![Part {
+            kind: PartKind::Joint,
+            owner: amr,
+            name: "lift".into(),
+        }],
+    };
+    frames(&mut app, 3);
+    assert_eq!(model(&app).as_deref(), Some("amr"));
+    // Teleop hides: the inspector still reads amr's.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: crate::panels::SCENE,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 3);
+    assert!(!app
+        .world()
+        .resource::<crate::shell::ShownPanels>()
+        .is_shown(TELEOP));
+    assert_eq!(model(&app).as_deref(), Some("amr"), "the inspector's");
+    // Teleop back; the inspector moves to the model: Teleop's, and the
+    // topic is never let go of in between.
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: TELEOP,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 3);
+    sent(&mut app);
+    *app.world_mut().resource_mut::<Selection>() = Selection {
+        entities: vec![amr],
+        parts: vec![],
+    };
+    frames(&mut app, 4);
+    assert_eq!(model(&app).as_deref(), Some("amr"));
+    let churn: Vec<_> = sent(&mut app)
+        .into_iter()
+        .filter(|c| {
+            matches!(c, GzCommand::Unsubscribe(t) | GzCommand::Subscribe(t) if t.contains("joint_state"))
+        })
+        .collect();
+    assert!(churn.is_empty(), "{churn:?}");
+}
