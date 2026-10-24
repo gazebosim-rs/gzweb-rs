@@ -488,7 +488,7 @@ fn the_plot_panel_starts_empty() {
         (ADD_FIELD, true),
         (PAUSE, true),
         (EXPORT, true),
-        (POP_OUT, true),
+        (POP_OUT, false),
     ];
     want.sort_by_key(|a| a.0);
     assert_eq!(actions(&mut app), want);

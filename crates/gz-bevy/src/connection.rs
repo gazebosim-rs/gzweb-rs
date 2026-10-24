@@ -725,11 +725,7 @@ impl WorldTopic {
 fn log_reply(service: &str, msg_type: &str, payload: &[u8]) {
     match control::reply_ok(msg_type, payload) {
         Some(false) => warn!("{service} returned false"),
-        // The websocket server's reply to a service it can't find; other
-        // services answer with a StringMsg too (generate_world_sdf).
-        _ if msg_type.ends_with(".StringMsg")
-            && msgs::StringMsg::decode(payload).is_ok_and(|m| m.data == "service_not_found") =>
-        {
+        _ if control::service_not_found(msg_type, payload) => {
             warn!("{service} failed: service_not_found");
         }
         _ => debug!("{service}: {msg_type} reply"),

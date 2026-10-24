@@ -128,6 +128,14 @@ pub fn reply_ok(msg_type: &str, payload: &[u8]) -> Option<bool> {
     msgs::Boolean::decode(payload).ok().map(|b| b.data)
 }
 
+/// The websocket server's reply to a service it can't find: a
+/// `gz.msgs.StringMsg` reading `service_not_found` (other services answer
+/// with a StringMsg too: `generate_world_sdf`).
+pub fn service_not_found(msg_type: &str, payload: &[u8]) -> bool {
+    msg_type.ends_with(".StringMsg")
+        && msgs::StringMsg::decode(payload).is_ok_and(|m| m.data == "service_not_found")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +206,14 @@ mod tests {
         assert_eq!(reply_ok("gz.msgs.Boolean", &[]), Some(false));
         assert_eq!(reply_ok("gz.msgs.Boolean", &[0xff]), None);
         assert_eq!(reply_ok("gz.msgs.StringMsg", &yes), None);
+        let missing = msgs::StringMsg {
+            data: "service_not_found".into(),
+            ..Default::default()
+        }
+        .encode_to_vec();
+        assert!(service_not_found("gz.msgs.StringMsg", &missing));
+        assert!(service_not_found("ignition.msgs.StringMsg", &missing));
+        assert!(!service_not_found("gz.msgs.StringMsg", &[]));
+        assert!(!service_not_found("gz.msgs.Boolean", &missing));
     }
 }

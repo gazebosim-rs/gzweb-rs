@@ -24,11 +24,11 @@ use super::view::{
     PickerFilter, PickerRoot, PickerRows, PickerStatus, PickerTarget, PlotArea, PlotNotice,
     WindowChip, XLabel, XRow, YAxis, AXIS_CHAR_W, GUTTER_W, LINE_W,
 };
-use super::{PlotCharts, PlotPick, PlotStart, ADD, ADD_FIELD, EXPORT, PAUSE, PLOT};
+use super::{PlotCharts, PlotPick, PlotStart, ADD, ADD_FIELD, EXPORT, PAUSE, PLOT, POP_OUT};
 use crate::panels::{PanelAction, PanelActionActivated, PanelView};
 use crate::raster::{trace, Canvas};
 use crate::shell::{
-    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
+    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShellLayout, ShownPanels, Slot, UiCommand,
 };
 use crate::theme::{ColorRole, Ink, Theme, SPACE};
 use crate::widgets::layout::set_shown;
@@ -1033,15 +1033,23 @@ pub(super) fn on_window_chip(
     }
 }
 
+/// Pop out, while the panel is in a slot (a window's header has Dock).
+pub(super) fn pop_out_state(layout: Res<ShellLayout>, mut status: ResMut<PanelStatus>) {
+    if layout.is_changed() {
+        status.set_action_enabled(PLOT, POP_OUT, !layout.is_popped(PLOT));
+    }
+}
+
 /// Add field… and + open the picker on the topics; Pause freezes the
 /// charts where they are (or lets them move again); Export CSV saves
-/// every sample.
+/// every sample; Pop out floats the panel over the viewport (§7.11).
 pub(super) fn on_action(
     ev: On<PanelActionActivated>,
     time: Res<Time<Real>>,
     clock: Res<SimClock>,
     data: Res<PlotData>,
     mut state: ResMut<PlotState>,
+    mut ui: MessageWriter<UiCommand>,
 ) {
     if ev.panel != PLOT {
         return;
@@ -1068,6 +1076,9 @@ pub(super) fn on_action(
                 Err(e) => format!("Couldn't save the CSV: {e}"),
             };
             state.notice = Some((said, real));
+        }
+        POP_OUT => {
+            ui.write(UiCommand::PopOut(PLOT));
         }
         _ => {}
     }

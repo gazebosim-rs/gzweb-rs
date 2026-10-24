@@ -45,7 +45,7 @@ fn the_message_chip_shows_the_latest_problem() {
                 level,
                 text: text.into(),
                 source: "gz_bevy::assets".into(),
-                at: 0.0,
+                ..default()
             });
         frames(app, 2);
     };

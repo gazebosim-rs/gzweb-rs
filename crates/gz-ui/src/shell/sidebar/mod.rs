@@ -23,6 +23,7 @@ use gz_bevy::view::input::InputMap;
 use super::commands::UiCommand;
 use super::host::PanelHost;
 use super::layout::DEFAULT_SPLIT;
+use super::popout::{self, PopOutHost};
 use super::regions::side_panel;
 use super::splitter::side_splitter;
 use super::{PanelStatus, ShellLayout, ShellSystems, Side, Slot};
@@ -46,6 +47,8 @@ pub(crate) struct SlotView(pub Slot);
 pub(crate) enum SlotAction {
     /// With two slots: the panels swap.
     Swap,
+    /// The panel goes into a window over the viewport area (§7.11).
+    PopOut,
     /// The primary header's chevron: collapse the sidebar.
     Collapse,
     /// The secondary header's close: back to one slot.
@@ -137,7 +140,7 @@ impl SlotSources<'_> {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_hosts(
     sources: SlotSources,
-    hosts: Query<(Entity, &PanelHost, Option<&SlotView>)>,
+    hosts: Query<(Entity, &PanelHost, Option<&SlotView>, Has<PopOutHost>)>,
     changed: Query<(), Changed<PanelHost>>,
     headers: Query<(Entity, &PanelHeader, &ChildOf)>,
     footers: Query<(Entity, &ChildOf), With<PanelFooter>>,
@@ -154,7 +157,7 @@ pub(crate) fn rebuild_hosts(
         .iter()
         .filter(|b| hosts.contains(b.3.parent()))
         .collect();
-    for (host_e, host, slot) in &hosts {
+    for (host_e, host, slot, window) in &hosts {
         let def = host.panel.and_then(|p| sources.panels.get(p));
         let want = def.map(|d| PanelHeader { panel: d.id, two });
         let header = headers.iter().find(|h| h.2.parent() == host_e);
@@ -183,6 +186,9 @@ pub(crate) fn rebuild_hosts(
                 if let (Some(def), Some(want)) = (def, want) {
                     let slot = slot.map(|s| s.0);
                     let h = spawn_header(&mut commands, &sources, def, slot, want);
+                    if window {
+                        popout::window_header(&mut commands, h, &sources.theme);
+                    }
                     commands.entity(host_e).insert_children(0, &[h]);
                     let t = &sources.theme;
                     if let Some(f) = footer::spawn_footer(&mut commands, t, &sources.status, def) {
@@ -440,6 +446,15 @@ fn slot_buttons(
             SlotAction::Swap,
         ));
     }
+    h.spawn((
+        icon_button(
+            theme,
+            IconId::PopOut,
+            small,
+            Tooltip::new("Pop out").detail("Float this panel over the viewport"),
+        ),
+        SlotAction::PopOut,
+    ));
     match slot {
         Slot::Primary => {
             h.spawn((
@@ -496,11 +511,22 @@ pub(crate) fn apply_slots(
 pub(crate) fn on_slot_action(
     ev: On<Activate>,
     actions: Query<&SlotAction>,
+    parents: Query<&ChildOf>,
+    headers: Query<&PanelHeader>,
     mut out: MessageWriter<UiCommand>,
 ) {
     if let Ok(action) = actions.get(ev.entity) {
         let cmd = match action {
             SlotAction::Swap => UiCommand::SwapSlots,
+            SlotAction::PopOut => {
+                let header = parents
+                    .iter_ancestors(ev.entity)
+                    .find_map(|a| headers.get(a).ok());
+                let Some(header) = header else {
+                    return;
+                };
+                UiCommand::PopOut(header.panel)
+            }
             SlotAction::Collapse => UiCommand::ToggleSidebar,
             SlotAction::Close => UiCommand::CloseSecondary,
         };

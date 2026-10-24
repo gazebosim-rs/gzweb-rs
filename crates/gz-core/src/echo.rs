@@ -1,6 +1,7 @@
 //! A topic's message as text, for the Topics panel's echo: decoded by its
 //! type name against the `gz.msgs` descriptors and written in protobuf
-//! text format, as `gz topic -e` prints it.
+//! text format, as `gz topic -e` prints it; and back, for the Console's
+//! `gz topic -p` and `gz service --req`.
 
 use std::sync::OnceLock;
 
@@ -14,6 +15,8 @@ pub enum EchoError {
     UnknownType(String),
     /// The payload isn't a message of its type.
     Decode(String),
+    /// The text isn't a message of its type in text format.
+    Parse(String),
 }
 
 impl std::fmt::Display for EchoError {
@@ -21,6 +24,7 @@ impl std::fmt::Display for EchoError {
         match self {
             EchoError::UnknownType(t) => write!(f, "unknown message type {t}"),
             EchoError::Decode(e) => write!(f, "can't decode the message: {e}"),
+            EchoError::Parse(e) => write!(f, "can't read the message: {e}"),
         }
     }
 }
@@ -54,14 +58,28 @@ pub fn message_text(msg_type: &str, payload: &[u8]) -> Result<String, EchoError>
 
 /// `payload`, a serialized `msg_type`, decoded by its type name.
 pub(crate) fn decode(msg_type: &str, payload: &[u8]) -> Result<DynamicMessage, EchoError> {
+    DynamicMessage::decode(descriptor(msg_type)?, payload)
+        .map_err(|e| EchoError::Decode(e.to_string()))
+}
+
+/// `text`, a `msg_type` in protobuf text format (`data: 1.5`,
+/// `linear { x: 0.5 }`), serialized; empty text is the empty message.
+pub fn encode_text(msg_type: &str, text: &str) -> Result<Vec<u8>, EchoError> {
+    let msg = DynamicMessage::parse_text_format(descriptor(msg_type)?, text)
+        .map_err(|e| EchoError::Parse(e.to_string()))?;
+    Ok(prost::Message::encode_to_vec(&msg))
+}
+
+/// The descriptor of `msg_type`, Fortress's `ignition.msgs` names read as
+/// `gz.msgs`.
+fn descriptor(msg_type: &str) -> Result<prost_reflect::MessageDescriptor, EchoError> {
     let name = match msg_type.strip_prefix("ignition.msgs.") {
         Some(rest) => format!("gz.msgs.{rest}"),
         None => msg_type.to_string(),
     };
-    let desc = pool()
+    pool()
         .get_message_by_name(&name)
-        .ok_or_else(|| EchoError::UnknownType(msg_type.to_string()))?;
-    DynamicMessage::decode(desc, payload).map_err(|e| EchoError::Decode(e.to_string()))
+        .ok_or_else(|| EchoError::UnknownType(msg_type.to_string()))
 }
 
 /// The longest `bytes` field printed as it is; a longer one (a point
@@ -160,6 +178,27 @@ mod tests {
         assert_eq!(
             EchoError::UnknownType("x".into()).to_string(),
             "unknown message type x"
+        );
+    }
+
+    /// Text format reads back into the message it describes; empty text is
+    /// the empty message; a bad field or type says why.
+    #[test]
+    fn text_encodes_as_its_message() {
+        let bytes = encode_text("gz.msgs.Twist", "linear { x: 0.5 } angular { z: -1 }").unwrap();
+        let twist = msgs::Twist::decode(bytes.as_slice()).unwrap();
+        assert_eq!(twist.linear.unwrap().x, 0.5);
+        assert_eq!(twist.angular.unwrap().z, -1.0);
+        assert_eq!(encode_text("gz.msgs.Empty", ""), Ok(vec![]));
+        let bad = encode_text("gz.msgs.Twist", "nope: 1");
+        assert!(matches!(bad, Err(EchoError::Parse(_))), "{bad:?}");
+        assert!(bad
+            .unwrap_err()
+            .to_string()
+            .starts_with("can't read the message"));
+        assert_eq!(
+            encode_text("gz.msgs.Nope", ""),
+            Err(EchoError::UnknownType("gz.msgs.Nope".into()))
         );
     }
 }

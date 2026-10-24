@@ -12,11 +12,11 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use super::regions::{region, Region};
-use super::{PanelStatus, ShellSystems, ShownPanels, UiCommand};
+use super::{PanelStatus, ShellLayout, ShellSystems, ShownPanels, UiCommand};
 use crate::assets::icons::IconId;
 use crate::panels::{PanelId, PanelRegistry};
 use crate::theme::visuals::Active;
-use crate::theme::{border, ColorRole, Fill, Theme, SPACE};
+use crate::theme::{border, ColorRole, Fill, Stroke, Theme, SPACE};
 use crate::widgets::badge::Badge;
 use crate::widgets::layout::{column, flex_spacer, separator, set_shown, Orientation};
 use crate::widgets::shortcut::shortcut_label;
@@ -26,6 +26,34 @@ use crate::widgets::{activity_button, BadgeKind, Tooltip};
 /// An activity button's panel.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActivityFor(pub PanelId);
+
+/// An activity button's hollow ring: its panel is popped out (§3.2).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct PopRing;
+
+/// The ring's side (§3.2: 7px).
+const RING: f32 = 7.0;
+
+/// The hollow ring, bottom right where a badge would be top right; hidden
+/// until its panel pops out.
+fn pop_ring() -> impl Bundle {
+    (
+        PopRing,
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(SPACE[3]),
+            bottom: px(SPACE[3]),
+            width: px(RING),
+            height: px(RING),
+            border: UiRect::all(px(1.5)),
+            border_radius: crate::widgets::rounded(RING / 2.0),
+            display: Display::None,
+            ..default()
+        },
+        Stroke(ColorRole::AccentText),
+        Pickable::IGNORE,
+    )
+}
 
 /// The Settings button (opens the Settings dialog later; for now it
 /// switches the theme, DECISIONS.md).
@@ -68,7 +96,8 @@ pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry
                 bar.spawn((
                     activity_button(&t, panel.icon, tip, Some((BadgeKind::Count, 0))),
                     ActivityFor(panel.id),
-                ));
+                ))
+                .with_child(pop_ring());
             }
             bar.spawn(flex_spacer());
             bar.spawn((
@@ -100,19 +129,34 @@ pub(crate) fn on_activity(
     }
 }
 
-/// Active state per §3.2's table: a button is active while a host holds
-/// its panel (a slot, the sidebar open or collapsed), and pressed to
-/// AccessKit.
+/// Active state per §3.2's table: a button is active while a slot holds
+/// its panel (the sidebar open or collapsed), and pressed to AccessKit; a
+/// popped-out panel's shows its hollow ring instead (pressed too: its
+/// panel shows).
 pub(crate) fn activity_active(
     hosts: Res<ShownPanels>,
-    mut buttons: Query<(Entity, &ActivityFor, Has<Active>, &mut AccessibilityNode)>,
+    layout: Res<ShellLayout>,
+    mut buttons: Query<(
+        Entity,
+        &ActivityFor,
+        Has<Active>,
+        &mut AccessibilityNode,
+        &Children,
+    )>,
+    mut rings: Query<&mut Node, With<PopRing>>,
     mut commands: Commands,
 ) {
-    if !hosts.is_changed() {
+    if !hosts.is_changed() && !layout.is_changed() {
         return;
     }
-    for (e, a, active, mut access) in &mut buttons {
-        let want = hosts.is_hosted(a.0);
+    for (e, a, active, mut access, children) in &mut buttons {
+        let popped = layout.is_popped(a.0);
+        for &c in children {
+            if let Ok(mut ring) = rings.get_mut(c) {
+                set_shown(&mut ring, popped);
+            }
+        }
+        let want = hosts.is_hosted(a.0) && !popped;
         if want != active {
             if want {
                 commands.entity(e).insert(Active);
@@ -122,7 +166,7 @@ pub(crate) fn activity_active(
         }
         // A toggle button to AccessKit: pressed while its panel is shown
         // (or collapsed with the sidebar).
-        let toggled = if want {
+        let toggled = if want || popped {
             accesskit::Toggled::True
         } else {
             accesskit::Toggled::False

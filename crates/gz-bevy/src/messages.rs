@@ -1,14 +1,15 @@
 //! Client-side system messages (spec §3.6 item 5, §7.5; `.agent/UI_PLAN.md`
-//! §3 item 3; DECISIONS.md D-68): the warnings and errors the client logs
-//! (the connection closing, a service failing, an asset that didn't load,
-//! a bad message), kept for the status bar's message chip and, later, the
-//! message tray and the Console panel.
+//! §3 item 3; DECISIONS.md D-68, D-105): what the client logs (the
+//! connection closing, a service failing, an asset that didn't load, a bad
+//! message, the server's abilities), kept for the status bar's message
+//! chip, the Console panel and, later, the message tray.
 //!
 //! The Gazebo websocket server forwards no log, so these are the client's
 //! own: [`log_layer`] is a `tracing` layer the app installs through
-//! Bevy's `LogPlugin::custom_layer`; it passes the warnings and errors of
-//! this project's crates (`gz_*`, `gzweb`) to [`SystemMessages`] each
-//! frame. Without it the list stays empty.
+//! Bevy's `LogPlugin::custom_layer`; it passes the events of this
+//! project's crates (`gz_*`, `gzweb`) that the log filter lets through
+//! (info and up, by default) to [`SystemMessages`] each frame. Without it
+//! the list stays empty.
 
 use std::collections::VecDeque;
 
@@ -20,15 +21,17 @@ use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender};
 
 /// How bad a message is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessageLevel {
+    Debug,
+    #[default]
     Info,
     Warning,
     Error,
 }
 
 /// One message.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SystemMessage {
     pub level: MessageLevel,
     pub text: String,
@@ -36,6 +39,11 @@ pub struct SystemMessage {
     pub source: String,
     /// When, in real seconds since start.
     pub at: f64,
+    /// And on the local clock (`12:04:31`).
+    pub clock: String,
+    /// Its place in the order messages came in, from 1 ([`SystemMessages::push`]
+    /// numbers it).
+    pub seq: u64,
 }
 
 /// The messages so far, oldest first, at most [`SystemMessages::CAP`].
@@ -46,17 +54,27 @@ pub struct SystemMessages {
     /// included).
     pub warnings: u32,
     pub errors: u32,
+    /// The last number given out ([`SystemMessages::next_seq`]).
+    pub last_seq: u64,
+    /// The latest warning or error, kept apart from the list: info and
+    /// debug lines can push it out of that.
+    latest_problem: Option<SystemMessage>,
 }
 
 impl SystemMessages {
     /// The most kept.
     pub const CAP: usize = 500;
 
-    pub fn push(&mut self, message: SystemMessage) {
+    /// Keeps `message`, numbered next.
+    pub fn push(&mut self, mut message: SystemMessage) {
         match message.level {
             MessageLevel::Warning => self.warnings += 1,
             MessageLevel::Error => self.errors += 1,
-            MessageLevel::Info => {}
+            MessageLevel::Info | MessageLevel::Debug => {}
+        }
+        message.seq = self.next_seq();
+        if message.level >= MessageLevel::Warning {
+            self.latest_problem = Some(message.clone());
         }
         if self.list.len() == Self::CAP {
             self.list.pop_front();
@@ -64,12 +82,16 @@ impl SystemMessages {
         self.list.push_back(message);
     }
 
-    /// The latest warning or error.
+    /// The next number in the order messages come in: the Console numbers
+    /// its own lines from it too, so they interleave with these.
+    pub fn next_seq(&mut self) -> u64 {
+        self.last_seq += 1;
+        self.last_seq
+    }
+
+    /// The latest warning or error, even once the list has let it go.
     pub fn latest_problem(&self) -> Option<&SystemMessage> {
-        self.list
-            .iter()
-            .rev()
-            .find(|m| m.level >= MessageLevel::Warning)
+        self.latest_problem.as_ref()
     }
 }
 
@@ -77,7 +99,7 @@ impl SystemMessages {
 #[derive(Resource)]
 pub struct LogInbox(Receiver<(MessageLevel, String, String)>);
 
-/// Passes this project's warnings and errors on.
+/// Passes this project's messages on.
 struct MessageLayer(Sender<(MessageLevel, String, String)>);
 
 /// The text of an event's `message` field.
@@ -98,13 +120,36 @@ impl Visit for MessageText {
     }
 }
 
-/// A warning or error from one of this project's crates.
+/// An event from one of this project's crates, by its level (trace is
+/// left out).
 fn ours(level: &Level, target: &str) -> Option<MessageLevel> {
-    let mine = ["gz_", "gzweb"].iter().any(|p| target.starts_with(p));
+    if !["gz_", "gzweb"].iter().any(|p| target.starts_with(p)) {
+        return None;
+    }
     match *level {
-        Level::ERROR if mine => Some(MessageLevel::Error),
-        Level::WARN if mine => Some(MessageLevel::Warning),
+        Level::ERROR => Some(MessageLevel::Error),
+        Level::WARN => Some(MessageLevel::Warning),
+        Level::INFO => Some(MessageLevel::Info),
+        Level::DEBUG => Some(MessageLevel::Debug),
         _ => None,
+    }
+}
+
+/// The local wall-clock time, `HH:MM:SS`.
+pub fn clock_now() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let d = js_sys::Date::new_0();
+        format!(
+            "{:02}:{:02}:{:02}",
+            d.get_hours(),
+            d.get_minutes(),
+            d.get_seconds()
+        )
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::Local::now().format("%H:%M:%S").to_string()
     }
 }
 
@@ -140,6 +185,8 @@ pub fn drain_log(
             text,
             source,
             at: time.elapsed_secs_f64(),
+            clock: clock_now(),
+            seq: 0,
         });
     }
 }
@@ -150,8 +197,9 @@ mod tests {
 
     use super::*;
 
-    /// The layer passes this project's warnings and errors, not others'
-    /// or lower levels; the list keeps the newest and counts them all.
+    /// The layer passes this project's messages, not others' or trace;
+    /// the list keeps the newest, numbered, and counts the warnings and
+    /// errors.
     #[test]
     fn the_log_layer_keeps_our_warnings_and_errors() {
         let mut app = App::new();
@@ -164,7 +212,9 @@ mod tests {
             bevy::log::tracing::warn!(target: "gz_bevy::connection", "closed: {}", 1006);
             bevy::log::tracing::error!(target: "gzweb", "boom");
             bevy::log::tracing::warn!(target: "wgpu_core", "not ours");
-            bevy::log::tracing::info!(target: "gz_bevy::connection", "too low");
+            bevy::log::tracing::info!(target: "gz_bevy::connection", "connected");
+            bevy::log::tracing::debug!(target: "gz_ui", "detail");
+            bevy::log::tracing::trace!(target: "gz_ui", "too low");
         });
         app.update();
         let m = app.world().resource::<SystemMessages>();
@@ -177,23 +227,41 @@ mod tests {
             got,
             [
                 (MessageLevel::Warning, "closed: 1006", "gz_bevy::connection"),
-                (MessageLevel::Error, "boom", "gzweb")
+                (MessageLevel::Error, "boom", "gzweb"),
+                (MessageLevel::Info, "connected", "gz_bevy::connection"),
+                (MessageLevel::Debug, "detail", "gz_ui"),
             ]
         );
         assert_eq!((m.warnings, m.errors), (1, 1));
+        let seqs: Vec<u64> = m.list.iter().map(|x| x.seq).collect();
+        assert_eq!(seqs, [1, 2, 3, 4]);
+        let clock = &m.list[0].clock;
+        assert_eq!(clock.len(), 8, "{clock}");
+        assert_eq!(&clock[2..3], ":");
         assert_eq!(m.latest_problem().unwrap().text, "boom");
 
         let mut many = SystemMessages::default();
         for i in 0..SystemMessages::CAP + 2 {
             many.push(SystemMessage {
-                level: MessageLevel::Info,
                 text: i.to_string(),
-                source: String::new(),
-                at: 0.0,
+                ..default()
             });
         }
         assert_eq!(many.list.len(), SystemMessages::CAP);
         assert_eq!(many.list[0].text, "2");
         assert!(many.latest_problem().is_none());
+        // A warning the info lines push out of the list is still the
+        // latest problem.
+        many.push(SystemMessage {
+            level: MessageLevel::Warning,
+            text: "mesh".into(),
+            ..default()
+        });
+        for _ in 0..SystemMessages::CAP {
+            many.push(SystemMessage::default());
+        }
+        assert!(many.list.iter().all(|m| m.level == MessageLevel::Info));
+        assert_eq!(many.latest_problem().unwrap().text, "mesh");
+        assert_eq!(many.warnings, 1);
     }
 }

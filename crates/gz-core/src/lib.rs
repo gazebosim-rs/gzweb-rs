@@ -2,7 +2,8 @@
 //!
 //! - [`frame`]: the `op,topic,type,payload` websocket frame codec.
 //! - [`control`]: simulation control service requests.
-//! - [`echo`]: a topic's message as text, by its type name.
+//! - [`cli`]: the Console's `gz topic` and `gz service` command line.
+//! - [`echo`]: a topic's message as text, by its type name, and back.
 //! - [`fields`]: a message's numbers, by field path (the Plot panel).
 //! - [`fuel`]: Gazebo Fuel's model search (the Assets panel).
 //! - [`insert`]: shapes, lights and models to insert, as SDFormat.
@@ -17,6 +18,7 @@
 //! - [`snapshot`]: the parity-test snapshot format.
 //! - [`topic`]: gz-transport topic-name sanitization and world topics.
 
+pub mod cli;
 pub mod control;
 pub mod echo;
 pub mod fields;

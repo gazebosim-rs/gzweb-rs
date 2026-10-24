@@ -360,6 +360,11 @@ pop-out windows.
   SDFormat, Keyboard, Sliders and Gamepad, arming and X, commands at 10 Hz, the views' fly
   keys and the gizmo standing down while armed; the Joint inspector's command slider (D-88).
   Left: the "Nobody is listening" banner, Apply force…, the activity dot, Topics' Publish.
+- **M7e notes:** the Console (D-105): the client's own log (info and debug too), newest first,
+  filter and level chips, Clear and Pause, the unread badge, and a `gz topic` / `gz service`
+  command line; pop-out windows (D-106): a window is one more `PanelHost`, Pop out on every
+  slot header and Plot's footer, drag, resize, raise, Dock and Close, the activity ring.
+  Left: the windows' places in the workspace (M8), Teleop's activity dot.
 - **M7c notes:** the Assets panel (D-102): shapes and lights as SDFormat, Fuel search with
   thumbnails and paging, a model by URI; a tile or Insert arms placing, a click in the views
   places on the surface under it (`gz_bevy::view::place`), with a preview, Shift for several,

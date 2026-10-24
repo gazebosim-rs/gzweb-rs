@@ -19,14 +19,12 @@ mod view;
 
 use bevy::prelude::*;
 
-use super::{ActionId, HeaderAction, PanelAction, PanelDef, PanelId, RegisterPanel, DATA_GROUP};
+use super::{ActionId, PanelAction, PanelDef, PanelId, RegisterPanel, DATA_GROUP};
 use crate::assets::IconId;
 use crate::shell::{panel_shown, ShellSystems};
 
 /// The Sensors panel's id.
 pub const SENSORS: PanelId = PanelId::new("sensors");
-/// Its header's Pop out (M7e).
-pub(crate) const POP_OUT: ActionId = ActionId::new("pop_out");
 /// Its footer's Show in viewport and Record.
 pub(crate) const SHOW: ActionId = ActionId::new("show_in_viewport");
 pub(crate) const RECORD: ActionId = ActionId::new("record");
@@ -60,7 +58,6 @@ impl Plugin for SensorsPanelPlugin {
             PanelDef::new(SENSORS, "Sensors", IconId::ActivitySensors)
                 .place(DATA_GROUP, 40)
                 .view(systems::view(false, false, false))
-                .header_action(HeaderAction::new(POP_OUT, IconId::PopOut, "Pop out").disabled())
                 .content::<SensorsBody>()
                 .footer_action(PanelAction::new(SHOW, "Show in viewport").disabled())
                 .footer_action(PanelAction::new(RECORD, "Record").disabled()),
