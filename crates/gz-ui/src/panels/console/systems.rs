@@ -498,18 +498,6 @@ pub(super) fn service_replies(
     mut calls: ResMut<CommandState>,
 ) {
     let now = time.elapsed_secs_f64();
-    // A dropped connection ends the calls waiting (the next server's
-    // replies aren't theirs).
-    let ready = status
-        .as_deref()
-        .is_some_and(|s| s.status == gz_core::transport::Status::Ready);
-    if !ready && (!calls.pending.is_empty() || !calls.late.is_empty()) {
-        calls.late.clear();
-        for p in std::mem::take(&mut calls.pending) {
-            let text = format!("{}: the connection dropped", p.service);
-            output.say(&mut log, MessageLevel::Error, text, now);
-        }
-    }
     calls.late.retain(|(_, until)| *until > now);
     for reply in replies.read() {
         // A timed-out call's reply, come late: dropped.
@@ -548,6 +536,19 @@ pub(super) fn service_replies(
             }
         };
         output.say(&mut log, level, text, now);
+    }
+    // A dropped connection ends the calls still waiting, after this
+    // frame's replies (the old server's last): the next server's replies
+    // aren't theirs, nor the late ones'.
+    let ready = status
+        .as_deref()
+        .is_some_and(|s| s.status == gz_core::transport::Status::Ready);
+    if !ready && (!calls.pending.is_empty() || !calls.late.is_empty()) {
+        calls.late.clear();
+        for p in std::mem::take(&mut calls.pending) {
+            let text = format!("{}: the connection dropped", p.service);
+            output.say(&mut log, MessageLevel::Error, text, now);
+        }
     }
     if !calls.pending.iter().any(|p| p.deadline <= now) {
         return;

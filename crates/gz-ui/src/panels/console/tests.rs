@@ -670,6 +670,37 @@ fn the_command_line_calls_services_and_publishes() {
     assert_eq!(dropped.last().unwrap().1, "/wait: the connection dropped");
     app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Ready;
     frames(&mut app, 2);
+    // A call that timed out before a drop leaves no late mark after it:
+    // the next server's reply on that service shows.
+    submit(
+        &mut app,
+        "service -s /slow2 --reqtype gz.msgs.Empty --reptype gz.msgs.Boolean --timeout 0",
+    );
+    frames(&mut app, 1);
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Connecting;
+    frames(&mut app, 2);
+    app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Ready;
+    frames(&mut app, 2);
+    submit(
+        &mut app,
+        "service -s /slow2 --reqtype gz.msgs.Empty --reptype gz.msgs.Boolean",
+    );
+    said(&mut app);
+    app.world_mut().write_message(GzServiceReply {
+        service: "/slow2".into(),
+        msg_type: "gz.msgs.Boolean".into(),
+        payload: msgs::Boolean {
+            data: true,
+            ..default()
+        }
+        .encode_to_vec(),
+    });
+    frames(&mut app, 1);
+    let shown = said(&mut app);
+    assert!(
+        shown.iter().any(|(_, t)| t.ends_with("data: true")),
+        "{shown:?}"
+    );
 
     // Not connected: nothing runs but help.
     app.world_mut().resource_mut::<GzStatus>().status = gz_core::transport::Status::Disconnected;
