@@ -36,6 +36,8 @@ pub(crate) enum ConnectButton {
     Elsewhere,
     /// The card's Connect.
     Connect,
+    /// The card's Cancel, while it was asked for over a world.
+    Cancel,
 }
 
 /// The no-world card.
@@ -96,6 +98,10 @@ pub(super) fn connect_card(theme: &Theme) -> impl Bundle {
                     button(&t, "Connect", ButtonVariant::Normal),
                     ConnectButton::Connect,
                 ));
+                r.spawn((
+                    button(&t, "Cancel", ButtonVariant::Normal),
+                    ConnectButton::Cancel,
+                ));
             });
             c.spawn((text(TypeStyle::SMALL, ColorRole::Text2, ""), CardStatus));
         })),
@@ -110,6 +116,7 @@ pub(crate) fn card_state(
     status: Option<Res<GzStatus>>,
     view: Res<ConnectionView>,
     mut cards: Query<(Entity, &mut Node, Option<&Fading>), With<ConnectCard>>,
+    mut buttons: Query<(&ConnectButton, &mut Node), Without<ConnectCard>>,
     mut lines: Query<&mut Text, With<CardStatus>>,
     mut commands: Commands,
 ) {
@@ -119,7 +126,7 @@ pub(crate) fn card_state(
         return;
     }
     let lost = matches!(phase.0, Phase::Lost { .. });
-    let card = phase.0.no_world() || (lost && view.card_requested);
+    let card = phase.0.no_world() || (lost && view.card_requested) || view.switching;
     for (e, mut node, fading) in &mut cards {
         let shown = node.display != Display::None;
         if card {
@@ -130,6 +137,12 @@ pub(crate) fn card_state(
             set_shown(&mut node, true);
         } else if shown && fading.is_none() {
             commands.entity(e).insert((Fading(fade_secs()), Hiding));
+        }
+    }
+    // Cancel: only over a world, asked for from the World menu.
+    for (b, mut node) in &mut buttons {
+        if *b == ConnectButton::Cancel {
+            set_shown(&mut node, view.switching && !phase.0.no_world());
         }
     }
     let line = card_status(phase.0, status.as_deref());
@@ -290,6 +303,7 @@ pub(crate) fn on_connect_button(
     match which {
         ConnectButton::Retry => crate::shell::connection::retry(&mut out),
         ConnectButton::Elsewhere => view.card_requested = true,
+        ConnectButton::Cancel => view.switching = false,
         ConnectButton::Connect => {
             let url = address(&fields, &inputs).map(|a| normalize_address(&a, page_is_secure()));
             connect_to(url, status.as_deref(), &mut view, &mut out);
@@ -309,6 +323,7 @@ fn connect_to(
     if elsewhere {
         view.connect_elsewhere();
     }
+    view.switching = false;
     out.write(GzReconnect { url });
 }
 

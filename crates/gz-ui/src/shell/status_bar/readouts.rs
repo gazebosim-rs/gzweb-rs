@@ -202,20 +202,48 @@ impl MessageChip {
     }
 }
 
-/// Item 5: the latest warning or error as a status chip, its whole text
-/// and source in the tooltip (the chip clips it). Rebuilt when it
-/// changes; the message tray it opens comes with the menus (M8).
+/// How long a transient confirmation shows (§3.6: 3 s).
+pub(crate) const NOTE_SECS: f64 = 3.0;
+
+/// A transient confirmation ("Saved warehouse_demo.sdf", §3.6): it takes
+/// item 5's slot until `until` (real seconds).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub(crate) struct StatusNote(pub Option<(String, f64)>);
+
+impl StatusNote {
+    /// Shows `text` for [`NOTE_SECS`] from `now`.
+    pub(crate) fn show(&mut self, text: impl Into<String>, now: f64) {
+        self.0 = Some((text.into(), now + NOTE_SECS));
+    }
+}
+
+/// Item 5: a transient confirmation while one shows, else the latest
+/// warning or error as a status chip, its whole text and source in the
+/// tooltip (the chip clips it). Rebuilt when it changes; the message tray
+/// it opens comes with M8d.
 pub(crate) fn message_chip(
     messages: Option<Res<SystemMessages>>,
+    time: Res<Time<Real>>,
+    mut note: ResMut<StatusNote>,
     theme: Res<Theme>,
     slots: Query<(Entity, &StatusItem)>,
     chips: Query<(Entity, &MessageChip)>,
     mut commands: Commands,
 ) {
-    let Some(messages) = messages.filter(|m| m.is_changed()) else {
+    let now = time.elapsed_secs_f64();
+    if note.0.as_ref().is_some_and(|(_, until)| now >= *until) {
+        note.0 = None;
+    }
+    let messages_changed = messages.as_ref().is_some_and(|m| m.is_changed());
+    if !messages_changed && !note.is_changed() {
         return;
-    };
-    let want = MessageChip::of(&messages);
+    }
+    let shown = note.0.as_ref().map(|(text, _)| MessageChip {
+        kind: StatusKind::Done,
+        text: text.clone(),
+        count: String::new(),
+    });
+    let want = shown.or_else(|| messages.as_deref().and_then(MessageChip::of));
     let have = chips.iter().next();
     if have.map(|c| c.1) == want.as_ref() {
         return;
@@ -227,20 +255,20 @@ pub(crate) fn message_chip(
     let Some((slot, _)) = slots.iter().find(|(_, i)| **i == StatusItem::Message) else {
         return;
     };
-    let source = messages
-        .latest_problem()
-        .map(|m| m.source.clone())
-        .unwrap_or_default();
+    let source = match want.kind {
+        StatusKind::Done => String::new(),
+        _ => messages
+            .as_deref()
+            .and_then(SystemMessages::latest_problem)
+            .map(|m| m.source.clone())
+            .unwrap_or_default(),
+    };
     let tip = Tooltip::new(want.text.clone())
         .detail(source)
         .side(TooltipSide::Above);
+    let count = (!want.count.is_empty()).then(|| want.count.clone());
     commands.entity(slot).with_child((
-        status_chip(
-            &theme,
-            want.kind,
-            want.text.clone(),
-            Some(want.count.clone()),
-        ),
+        status_chip(&theme, want.kind, want.text.clone(), count),
         tip,
         want,
     ));

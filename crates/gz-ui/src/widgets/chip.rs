@@ -85,6 +85,8 @@ pub enum StatusKind {
     Info,
     Warning,
     Error,
+    /// A transient confirmation ("Saved warehouse_demo.sdf", §3.6).
+    Done,
 }
 
 impl StatusKind {
@@ -94,6 +96,7 @@ impl StatusKind {
             StatusKind::Info => (ColorRole::Clear, ColorRole::Text2),
             StatusKind::Warning => (ColorRole::WarnSoft, ColorRole::WarnText),
             StatusKind::Error => (ColorRole::DangerSoft, ColorRole::Danger),
+            StatusKind::Done => (ColorRole::AccentSoft, ColorRole::AccentText),
         }
     }
 }
@@ -128,8 +131,14 @@ pub fn status_chip(
         Headless,
         clickable(visuals, Role::Button, label),
         Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
-            if kind != StatusKind::Info {
-                p.spawn(content_icon(IconId::Warning, 13.0, ink));
+            match kind {
+                StatusKind::Info => {}
+                StatusKind::Done => {
+                    p.spawn(content_icon(IconId::Check, 13.0, ink));
+                }
+                StatusKind::Warning | StatusKind::Error => {
+                    p.spawn(content_icon(IconId::Warning, 13.0, ink));
+                }
             }
             p.spawn((
                 text(CHIP_TYPE, ink, message),

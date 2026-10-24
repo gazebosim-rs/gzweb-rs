@@ -207,12 +207,18 @@ fn rows_choose_click_and_close() {
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 2);
     // Opened before the world is live: once it is, the first available
-    // result (Play / pause) is chosen.
+    // result (Save, then) is chosen.
     open(&mut app);
+    let s = app.world().resource::<PaletteState>().clone();
+    assert_ne!(
+        s.results[s.selected.unwrap()].name,
+        "Save",
+        "not while offline"
+    );
     go_live(&mut app, false);
     frames(&mut app, 2);
     let s = app.world().resource::<PaletteState>().clone();
-    assert_eq!(s.results[s.selected.unwrap()].name, "Play / pause");
+    assert_eq!(s.results[s.selected.unwrap()].name, "Save");
     type_query(&mut app, "step");
     let state = app.world().resource::<PaletteState>().clone();
     let step_i = state.results.iter().position(|i| i.name.contains("Step"));

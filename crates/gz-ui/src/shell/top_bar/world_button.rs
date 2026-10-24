@@ -1,6 +1,7 @@
 //! The world menu button (spec §3.1, §7.1): the world's name in `text`
 //! 500, `.sdf` in `text_3` 400, the unsaved dot while the world is dirty
-//! (an edit to undo, §7.1) and a chevron. It opens the World menu in M8.
+//! (an edit to undo, §7.1) and a chevron. It is the World menu's trigger
+//! ([`world_menu`](super::world_menu)).
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
@@ -20,7 +21,7 @@ use crate::widgets::layout::{row, set_shown};
 use crate::widgets::text::set_text;
 use crate::widgets::{clickable, Tooltip};
 
-/// The world menu button (opens the World menu in M8).
+/// The world menu button (the World menu's trigger).
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct WorldButton;
 

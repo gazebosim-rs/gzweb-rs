@@ -56,6 +56,9 @@ pub enum UiCommand {
     ClosePopOut(PanelId),
     /// A press in a pop-out window: it comes to the top.
     RaisePopOut(PanelId),
+    /// The World menu's commands (§7.1), from it, ⌘S, ⇧⌘S and the
+    /// palette.
+    World(super::top_bar::world_menu::WorldCommand),
     /// ⌘K or the search trigger: the command palette (§7.7).
     OpenPalette,
     /// Esc, a run, or a click outside: the palette closes.
@@ -165,6 +168,8 @@ pub(crate) fn shortcut_keys(
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
             "ui.command_palette" => UiCommand::OpenPalette,
+            "file.save" => UiCommand::World(super::top_bar::world_menu::WorldCommand::Save),
+            "file.save_as" => UiCommand::World(super::top_bar::world_menu::WorldCommand::SaveAs),
             "ui.theme_light" => UiCommand::SetTheme(ThemeMode::Light),
             "ui.theme_dark" => UiCommand::SetTheme(ThemeMode::Dark),
             "ui.theme_system" => UiCommand::SetTheme(ThemeMode::System),
@@ -295,6 +300,8 @@ pub(crate) fn apply_ui_commands(
                 }
             }
             UiCommand::MovePopOut { panel, at } => layout.move_popout(panel, at),
+            // `run_world_commands` runs them.
+            UiCommand::World(_) => {}
             UiCommand::OpenPalette => {
                 palette.set_if_neq(super::palette::PaletteOpen(true));
             }

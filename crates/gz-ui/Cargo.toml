@@ -12,6 +12,8 @@ gz-core.workspace = true
 bevy = "0.20"
 # AccessKit node types; the same version Bevy's bevy_a11y uses.
 accesskit = { version = "0.24", default-features = false }
+# The World menu's screenshot as a PNG (Bevy's image loading has it already).
+png = "0.18"
 
 [build-dependencies]
 # Build time only: tokens.json → Rust, icons.json → icon atlas PNGs. None of
