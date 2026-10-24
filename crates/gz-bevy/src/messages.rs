@@ -56,6 +56,9 @@ pub struct SystemMessages {
     pub errors: u32,
     /// The last number given out ([`SystemMessages::next_seq`]).
     pub last_seq: u64,
+    /// The latest warning or error, kept apart from the list: info and
+    /// debug lines can push it out of that.
+    latest_problem: Option<SystemMessage>,
 }
 
 impl SystemMessages {
@@ -70,6 +73,9 @@ impl SystemMessages {
             MessageLevel::Info | MessageLevel::Debug => {}
         }
         message.seq = self.next_seq();
+        if message.level >= MessageLevel::Warning {
+            self.latest_problem = Some(message.clone());
+        }
         if self.list.len() == Self::CAP {
             self.list.pop_front();
         }
@@ -83,12 +89,9 @@ impl SystemMessages {
         self.last_seq
     }
 
-    /// The latest warning or error.
+    /// The latest warning or error, even once the list has let it go.
     pub fn latest_problem(&self) -> Option<&SystemMessage> {
-        self.list
-            .iter()
-            .rev()
-            .find(|m| m.level >= MessageLevel::Warning)
+        self.latest_problem.as_ref()
     }
 }
 
@@ -247,5 +250,18 @@ mod tests {
         assert_eq!(many.list.len(), SystemMessages::CAP);
         assert_eq!(many.list[0].text, "2");
         assert!(many.latest_problem().is_none());
+        // A warning the info lines push out of the list is still the
+        // latest problem.
+        many.push(SystemMessage {
+            level: MessageLevel::Warning,
+            text: "mesh".into(),
+            ..default()
+        });
+        for _ in 0..SystemMessages::CAP {
+            many.push(SystemMessage::default());
+        }
+        assert!(many.list.iter().all(|m| m.level == MessageLevel::Info));
+        assert_eq!(many.latest_problem().unwrap().text, "mesh");
+        assert_eq!(many.warnings, 1);
     }
 }
