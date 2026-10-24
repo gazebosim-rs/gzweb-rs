@@ -56,9 +56,13 @@ pub(crate) struct ConsoleState {
     pub chip: LevelChip,
     /// Paused: the lines after this one wait (they are still kept).
     pub paused_at: Option<u64>,
-    /// Clear: the lines up to this one are gone from the panel (the
-    /// status bar's chip keeps its own).
+    /// Clear: the log's lines up to this one are gone from the panel (the
+    /// status bar's chip keeps its own). While paused that's the pause's
+    /// line, so the held-back ones still come on Resume.
     pub cleared_through: u64,
+    /// And the command line's lines up to this one (all of them at the
+    /// time: Pause doesn't hold them back).
+    pub output_cleared: u64,
     /// How many warnings and errors the log had counted when they were
     /// last seen (the Console showed) or cleared: the ones since are
     /// unread, even those the list has let go.
@@ -115,9 +119,14 @@ pub(crate) fn lines<'a>(
         .list
         .iter()
         .chain(&output.lines)
-        .filter(|m| m.seq > state.cleared_through)
-        // Pause holds the log back, not the command line's answers.
-        .filter(|m| m.source == SOURCE || state.paused_at.is_none_or(|p| m.seq <= p))
+        .filter(|m| {
+            if m.source == SOURCE {
+                // Pause holds the log back, not the command line's answers.
+                m.seq > state.output_cleared
+            } else {
+                m.seq > state.cleared_through && state.paused_at.is_none_or(|p| m.seq <= p)
+            }
+        })
         .collect();
     all.sort_by_key(|m| std::cmp::Reverse(m.seq));
     all

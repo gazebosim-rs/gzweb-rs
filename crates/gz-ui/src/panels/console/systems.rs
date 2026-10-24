@@ -115,7 +115,7 @@ pub(super) fn console_status(
 /// hold, newest first.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct BuiltRows {
-    key: Option<(u64, Option<u64>)>,
+    key: Option<(u64, u64, Option<u64>)>,
     seqs: Vec<u64>,
 }
 
@@ -142,7 +142,7 @@ pub(super) fn sync_rows(
         return;
     }
     let all = lines(&log, &output, &state);
-    let key = Some((state.cleared_through, state.paused_at));
+    let key = Some((state.cleared_through, state.output_cleared, state.paused_at));
     let seqs: Vec<u64> = all.iter().map(|m| m.seq).collect();
     let by_seq: HashMap<u64, bool> = all.iter().map(|m| (m.seq, matches(m, &state))).collect();
     if fresh || built.key != key {
@@ -241,6 +241,7 @@ pub(super) fn on_action(
     }
     if ev.action == CLEAR {
         state.cleared_through = state.paused_at.unwrap_or(log.last_seq);
+        state.output_cleared = log.last_seq;
         state.seen = (log.warnings, log.errors);
     } else if ev.action == PAUSE {
         state.paused_at = match state.paused_at {
@@ -487,10 +488,11 @@ pub(super) fn apply_recall(
 }
 
 /// A reply to the command line's service call says what came back; a
-/// call with no reply in time says so.
+/// call with no reply in time, or whose connection dropped, says so.
 pub(super) fn service_replies(
     mut replies: MessageReader<GzServiceReply>,
     time: Res<Time<Real>>,
+    status: Option<Res<GzStatus>>,
     mut log: ResMut<SystemMessages>,
     mut output: ResMut<ConsoleOutput>,
     mut calls: ResMut<CommandState>,
@@ -534,6 +536,19 @@ pub(super) fn service_replies(
             }
         };
         output.say(&mut log, level, text, now);
+    }
+    // A dropped connection ends the calls still waiting, after this
+    // frame's replies (the old server's last): the next server's replies
+    // aren't theirs, nor the late ones'.
+    let ready = status
+        .as_deref()
+        .is_some_and(|s| s.status == gz_core::transport::Status::Ready);
+    if !ready && (!calls.pending.is_empty() || !calls.late.is_empty()) {
+        calls.late.clear();
+        for p in std::mem::take(&mut calls.pending) {
+            let text = format!("{}: the connection dropped", p.service);
+            output.say(&mut log, MessageLevel::Error, text, now);
+        }
     }
     if !calls.pending.iter().any(|p| p.deadline <= now) {
         return;

@@ -10,7 +10,7 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui_widgets::SliderValue;
 use gz_bevy::connection::GzStatus;
-use gz_bevy::joint_state::{JointStateWanted, JointStates};
+use gz_bevy::joint_state::{JointStateWanted, JointStateWants, JointStates};
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::{GzEntity, GzIndex};
 
@@ -69,7 +69,7 @@ impl Plugin for JointInspectorPlugin {
 fn want_joint_states(
     inspected: Res<Inspected>,
     sdf: Option<Res<SdfExtras>>,
-    mut wanted: ResMut<JointStateWanted>,
+    mut wants: ResMut<JointStateWants>,
 ) {
     if !inspected.is_changed() && !sdf.as_ref().is_some_and(|s| s.is_changed()) {
         return;
@@ -84,7 +84,12 @@ fn want_joint_states(
             .and_then(|w| w.model(m))
             .and_then(|m| m.joint_state_topic.clone())
     });
-    wanted.set_if_neq(JointStateWanted { model, topic });
+    // Before Teleop's (D-104): the joint shown is the one to read.
+    let want = model.map(|m| JointStateWanted {
+        model: Some(m),
+        topic,
+    });
+    wants.set(0, "joint_inspector", want);
 }
 
 /// A link's scene path from its SDFormat name (`world` has none).

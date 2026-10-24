@@ -21,7 +21,8 @@ const HOLDER: Holder = "joint_state";
 /// How many joint states a second the inspector needs.
 pub const JOINT_STATE_RATE: u32 = 10;
 
-/// The model whose joint states are wanted, if any.
+/// The model whose joint states are wanted, if any: the winner of the
+/// [`JointStateWants`].
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct JointStateWanted {
     /// Its scene path.
@@ -29,6 +30,45 @@ pub struct JointStateWanted {
     /// The `<topic>` its JointStatePublisher sets, used as is; else the
     /// default ([`joint_state_topic`]).
     pub topic: Option<String>,
+}
+
+/// Who wants which model's joint states: one want each, by holder and
+/// rank. The lowest-ranked want with a model is [`JointStateWanted`], so
+/// one holder letting go (or changing its mind) never takes another's
+/// away, and a holder writing the same want again changes nothing.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct JointStateWants(Vec<(u8, &'static str, JointStateWanted)>);
+
+impl JointStateWants {
+    /// `holder`'s want (none: it lets go), at `rank` (lower wins).
+    pub fn set(&mut self, rank: u8, holder: &'static str, want: Option<JointStateWanted>) {
+        let at = self.0.iter().position(|(_, h, _)| *h == holder);
+        match (at, want.filter(|w| w.model.is_some())) {
+            (Some(i), Some(w)) if self.0[i].2 == w => {}
+            (Some(i), Some(w)) => self.0[i] = (rank, holder, w),
+            (Some(i), None) => {
+                self.0.remove(i);
+            }
+            (None, Some(w)) => self.0.push((rank, holder, w)),
+            (None, None) => {}
+        }
+    }
+
+    /// The want that wins.
+    pub fn winner(&self) -> JointStateWanted {
+        self.0
+            .iter()
+            .min_by_key(|(rank, ..)| *rank)
+            .map(|(_, _, w)| w.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// [`JointStateWanted`] is the winning want.
+fn resolve_wants(wants: Res<JointStateWants>, mut wanted: ResMut<JointStateWanted>) {
+    if wants.is_changed() {
+        wanted.set_if_neq(wants.winner());
+    }
 }
 
 /// One joint's state, from its first axis.
@@ -64,11 +104,14 @@ impl Plugin for JointStatePlugin {
     fn build(&self, app: &mut App) {
         TopicsPlugin::ensure(app);
         app.init_resource::<JointStateWanted>()
+            .init_resource::<JointStateWants>()
             .init_resource::<JointStates>()
             .add_systems(
                 Update,
                 (
-                    subscribe_joint_states.before(sync_subscriptions),
+                    (resolve_wants, subscribe_joint_states)
+                        .chain()
+                        .before(sync_subscriptions),
                     read_joint_states,
                 ),
             );
@@ -143,6 +186,35 @@ mod tests {
     use super::*;
     use crate::connection::GzCommand;
 
+    /// The lowest-ranked want with a model wins; a holder letting go
+    /// leaves the others'; the same want again changes nothing.
+    #[test]
+    fn wants_resolve_by_rank() {
+        let w = |m: &str| JointStateWanted {
+            model: Some(m.into()),
+            topic: None,
+        };
+        let mut wants = JointStateWants::default();
+        assert_eq!(wants.winner(), JointStateWanted::default());
+        wants.set(1, "teleop", Some(w("amr")));
+        assert_eq!(wants.winner(), w("amr"));
+        wants.set(0, "inspector", Some(w("cart")));
+        assert_eq!(wants.winner(), w("cart"));
+        let before = wants.clone();
+        wants.set(0, "inspector", Some(w("cart")));
+        assert_eq!(wants, before);
+        wants.set(1, "teleop", None);
+        assert_eq!(wants.winner(), w("cart"));
+        wants.set(0, "inspector", Some(JointStateWanted::default()));
+        assert_eq!(
+            wants.winner(),
+            JointStateWanted::default(),
+            "no model: no want"
+        );
+        wants.set(2, "nobody", None);
+        assert_eq!(wants, JointStateWants::default());
+    }
+
     fn app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -155,6 +227,17 @@ mod tests {
             })
             .add_plugins(JointStatePlugin);
         app
+    }
+
+    /// A holder's want, as the inspector or Teleop would set it.
+    fn want(app: &mut App, model: Option<&str>, topic: Option<&str>) {
+        let w = model.map(|m| JointStateWanted {
+            model: Some(m.into()),
+            topic: topic.map(str::to_string),
+        });
+        app.world_mut()
+            .resource_mut::<JointStateWants>()
+            .set(0, "test", w);
     }
 
     fn sent(app: &mut App) -> Vec<GzCommand> {
@@ -171,7 +254,7 @@ mod tests {
         let mut app = app();
         app.update();
         assert!(sent(&mut app).is_empty(), "nothing wanted");
-        app.world_mut().resource_mut::<JointStateWanted>().model = Some("arm".into());
+        want(&mut app, Some("arm"), None);
         app.update();
         let topic = "/world/w/model/arm/joint_state".to_string();
         assert_eq!(
@@ -213,7 +296,7 @@ mod tests {
             })
         );
         // Unwanted: unsubscribed, forgotten.
-        app.world_mut().resource_mut::<JointStateWanted>().model = None;
+        want(&mut app, None, None);
         app.update();
         assert_eq!(sent(&mut app), [GzCommand::Unsubscribe(topic)]);
         assert!(app.world().resource::<JointStates>().joints.is_empty());
@@ -222,10 +305,7 @@ mod tests {
     #[test]
     fn a_publishers_own_topic_is_used_as_is() {
         let mut app = app();
-        *app.world_mut().resource_mut::<JointStateWanted>() = JointStateWanted {
-            model: Some("arm".into()),
-            topic: Some("/arm/joints".into()),
-        };
+        want(&mut app, Some("arm"), Some("/arm/joints"));
         app.update();
         assert_eq!(
             sent(&mut app)[0],
@@ -236,7 +316,7 @@ mod tests {
     #[test]
     fn a_reconnect_or_a_new_world_subscribes_again() {
         let mut app = app();
-        app.world_mut().resource_mut::<JointStateWanted>().model = Some("arm".into());
+        want(&mut app, Some("arm"), None);
         app.update();
         sent(&mut app);
         // Down: the transport has dropped its subscriptions; nothing to
