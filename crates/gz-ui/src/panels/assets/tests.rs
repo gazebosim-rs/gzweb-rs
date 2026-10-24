@@ -343,6 +343,37 @@ fn esc_or_the_tile_again_disarms() {
     assert!(armed(&app).is_some());
     activate(&mut app, t);
     assert_eq!(armed(&app), None);
+
+    // An Esc that closes the command palette leaves placing armed.
+    activate(&mut app, t);
+    app.world_mut().write_message(UiCommand::OpenPalette);
+    frames(&mut app, 3);
+    let field = {
+        let world = app.world_mut();
+        let takers: Vec<Entity> = world
+            .query_filtered::<Entity, With<crate::widgets::focus::TakesEscape>>()
+            .iter(world)
+            .collect();
+        let parents: Vec<(Entity, Entity)> = world
+            .query_filtered::<(Entity, &ChildOf), With<crate::widgets::text_field::TextFieldInput>>(
+            )
+            .iter(world)
+            .map(|(e, p)| (e, p.parent()))
+            .collect();
+        let under = |mut e: Entity| loop {
+            if takers.contains(&e) {
+                return true;
+            }
+            match world.get::<ChildOf>(e) {
+                Some(p) => e = p.parent(),
+                None => return false,
+            }
+        };
+        parents.into_iter().find(|(_, p)| under(*p)).unwrap().0
+    };
+    focused_key(&mut app, field, KeyCode::Escape);
+    frames(&mut app, 2);
+    assert!(armed(&app).is_some(), "the palette took that Esc");
 }
 
 /// A refused insert shows in `danger_soft` until dismissed.

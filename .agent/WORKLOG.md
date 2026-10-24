@@ -1790,6 +1790,42 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Rows:** every held line keeps a row, shown or hidden by the chip and
   filter, so typing in the filter no longer rebuilds them.
 
+## 2026-10-24: M8a command palette (D-107)
+
+- **Palette:** ⌘K or the top bar's search; a 44px field; results under
+  Commands, Entities, Topics, Panels and Settings, fuzzy-ranked, with
+  the Gazebo GUI plugins' names as keywords; ↑/↓, Enter, click, Esc and
+  a press outside; unavailable commands dimmed with their reason; the
+  results follow the world while open. `gzweb --palette QUERY`.
+- **Running:** a `shortcuts.json` command is a `RunBinding`, which
+  `shortcut_keys` and gz-bevy's `key_input` read beside their keys;
+  shown panels' actions trigger `PanelActionActivated`; an entity is
+  selected and focused; a topic echoes in Topics. `sim.reset`,
+  `ui.command_palette` and the `ui.theme_*` bindings now do something.
+- **Live check** (debug build, :9013 `diff_drive`): the palette open
+  empty, and on "veh" listing `vehicle_blue`, `vehicle_green` and their
+  topics. Typing and running by hand not tried.
+
+## 2026-10-24: PR #52 review fixes
+
+- **⇧⌘R on the web** (Ctrl+Shift+R too) is the browser's hard reload,
+  which still hands the key to the page: it would have reset the shared
+  world. `sim.reset` is `web: null` with `web_alt` ⌥⇧R; the reload
+  chords are in `web_reserved`.
+- **Keys stay in the palette:** a modal tab group, and the field takes
+  the keys back after a press on the card that runs nothing; it takes
+  Esc as a menu does (`TakesEscape`), so an armed placement stays armed.
+- **↑ / ↓** leave the caret at the end; new results scroll to the top
+  and the chosen row is revealed once laid out; a ↑/↓ choice is kept by
+  what it runs (two `left_wheel`s).
+- **Enter** with nothing to run leaves the palette open.
+- **Accessibility:** the chosen row is selected to AccessKit; the list
+  is named "Results".
+- **Refresh** watches what the items read of the status, not each
+  stats message.
+- **More commands:** the overlays without keys; the layout commands
+  work offline; Play says it waits for the clock; more Gazebo names.
+
 ## 2026-10-24: review of fixes merged without one (#48, #49, #51)
 
 - **Joint states:** Teleop's want could take the Joint inspector's away

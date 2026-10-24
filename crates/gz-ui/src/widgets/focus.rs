@@ -114,6 +114,11 @@ pub(crate) struct Hiding;
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MenuTakesEscape(pub bool);
 
+/// Something menu-like that closes on Esc (the command palette): with
+/// focus in it, it takes the Esc as an open menu does.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct TakesEscape;
+
 /// The last press was a pointer's (a mouse button or a touch), not a
 /// key's: focus that moves now moved because of it (a click, or a menu
 /// item chosen with the mouse handing focus back to its trigger).
@@ -207,12 +212,14 @@ pub(crate) fn hide_undisplayed(
 }
 
 /// Notes whether an Esc pressed this frame goes to an open menu: focus is
-/// inside a visible menu popup when the key arrives. Runs before Bevy
-/// dispatches keys (the menu closes on them).
+/// inside a visible menu popup (or something else that [`TakesEscape`])
+/// when the key arrives. Runs before Bevy dispatches keys (the menu
+/// closes on them).
 pub(crate) fn menu_escape(
     keys: Res<ButtonInput<KeyCode>>,
     focus: Res<InputFocus>,
     popups: Query<&Visibility, With<MenuPopup>>,
+    takers: Query<(), With<TakesEscape>>,
     parents: Query<&ChildOf>,
     mut taken: ResMut<MenuTakesEscape>,
 ) {
@@ -221,7 +228,9 @@ pub(crate) fn menu_escape(
         && focus.get().is_some_and(|e| {
             std::iter::once(e)
                 .chain(parents.iter_ancestors(e))
-                .any(|a| popups.get(a).is_ok_and(|v| *v != Visibility::Hidden))
+                .any(|a| {
+                    takers.contains(a) || popups.get(a).is_ok_and(|v| *v != Visibility::Hidden)
+                })
         });
     taken.set_if_neq(MenuTakesEscape(in_menu));
 }

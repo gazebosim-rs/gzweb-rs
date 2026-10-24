@@ -485,7 +485,7 @@ Row of five layout preset thumbnails (52×36, radius 6, active = `accent_soft` w
 Translate step (m), rotate step (deg), scale step (reserved), space: World / Local.
 
 ### 7.7 Command palette (⌘K)
-Centered, 560 wide, top offset 15% of window. Search input 44 tall. Results grouped: Commands, Entities, Topics, Panels, Settings. Each result: icon, name, path/hint in `text_3`, shortcut at right. Every action in this spec MUST be reachable here, including every Gazebo GUI plugin by name.
+Centered, 560 wide, top offset 15% of window. Search input 44 tall. Results grouped: Commands, Entities, Topics, Panels, Settings. Each result: icon, name, path/hint in `text_3`, shortcut at right. Every action in this spec MUST be reachable here, including every Gazebo GUI plugin by name. As built (D-107): a command runs as its key would; an unavailable one is dimmed with its reason; the shown panels' actions are commands; the World menu's and the workspaces' commands join with M8b and M8c.
 
 ### 7.8 Workspace switcher (status bar)
 Opens upward. Items: Build Alt+1 · Run Alt+2 · Debug Alt+3 · Review Alt+4 (current checked) · separator · Save current layout · Manage… (opens the Workspaces panel).

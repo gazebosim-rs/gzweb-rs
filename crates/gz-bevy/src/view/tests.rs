@@ -2284,6 +2284,28 @@ fn overlay_keys_toggle_the_overlays() {
     }
 }
 
+/// A run binding does what its key does (the palette, D-107); a held
+/// action's binding does nothing, and an id that isn't one is ignored.
+#[test]
+fn a_run_binding_acts_as_its_key() {
+    use crate::overlays::Overlays;
+    use crate::view::controls::RunBinding;
+    let mut r = rig(default_view());
+    let run = |r: &mut Rig, id: &str| {
+        r.app.world_mut().write_message(RunBinding(id.into()));
+        r.frames(1);
+    };
+    run(&mut r, "overlay.grid");
+    assert!(r.app.world().resource::<Overlays>().grid);
+    run(&mut r, "overlay.grid");
+    assert!(!r.app.world().resource::<Overlays>().grid);
+    let before = r.pivot();
+    run(&mut r, "view.fly_forward");
+    run(&mut r, "nope");
+    r.frames(2);
+    assert_eq!(r.pivot(), before);
+}
+
 #[test]
 fn the_start_view_applies_once_the_world_has_loaded() {
     use crate::overlays::{Overlay, Overlays};

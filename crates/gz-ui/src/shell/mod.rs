@@ -24,6 +24,7 @@ pub(crate) mod connection;
 pub(crate) mod host;
 pub(crate) mod inspector;
 pub(crate) mod layout;
+pub(crate) mod palette;
 pub(crate) mod panel_status;
 pub(crate) mod popout;
 pub(crate) mod regions;
@@ -45,6 +46,7 @@ pub use layout::{
     Edges, PopOut, ShellLayout, Side, Slot, COLLAPSED_BAR_W, DEFAULT_SPLIT, INSPECTOR_START_W,
     MIN_SLOT_H, MIN_WINDOW, POPOUT_MIN, POPOUT_SIZE, SIDEBAR_START_W, STARTUP_FRAMES, STARTUP_SECS,
 };
+pub use palette::StartPalette;
 pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
 pub use popout::StartPopOuts;
 pub use top_bar::tools::Tool;
@@ -115,6 +117,8 @@ impl Default for ShellPlugin {
 impl Plugin for ShellPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<UiCommand>()
+            .add_message::<gz_bevy::view::controls::RunBinding>()
+            .add_message::<gz_bevy::overlays::OverlayCommand>()
             .add_message::<GzCommand>()
             .add_message::<GzReconnect>()
             .init_resource::<PanelRegistry>()
@@ -161,6 +165,7 @@ impl Plugin for ShellPlugin {
         top_bar::build(app);
         sidebar::build(app);
         popout::build(app);
+        palette::build(app);
         inspector::build(app);
         status_bar::build(app);
         viewport::build(app);
