@@ -1886,3 +1886,12 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Flags:** `gzweb --menu workspace`.
 - **Live check** (debug build, :9013 `diff_drive`): the switcher opens.
 - **Tests:** workspace 879 → 890 passing.
+- **Review fixes:** a file it can't parse is kept apart (`.bad`), one
+  it can't read or a newer version's isn't written over, unknown
+  workspaces are kept, writes are whole; a theme asked for isn't saved;
+  the start flags go over the saved layout; an unsaved workspace starts
+  as its default (Build as the app starts); a saved grid outlasts the
+  scene's flag (`overlays::KeepGrid`); a view mid-animation is saved
+  where it ends, with its axis view; the tray closes without its chip;
+  Alt+1–4 wait out an edit; the tray counts its rows.
+- **Tests:** workspace 890 → 899 passing.

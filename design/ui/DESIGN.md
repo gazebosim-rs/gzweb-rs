@@ -479,7 +479,7 @@ Checkbox items: Grid G · Collisions C · Inertia I · Center of mass · Joints 
 Row of five layout preset thumbnails (52×36, radius 6, active = `accent_soft` with `accent_ring`), separator, Maximize ⇧Space, Close view ⌘W, separator, checkbox Link cameras, checkbox Shared selection (on).
 
 ### 7.5 Message tray (status bar chip)
-560 wide, opens upward from the chip. Header: "System messages", counts, Open console ›, Clear. Rows: 8px level dot, message, time mono 11. As built (D-110): warnings and errors only; Clear drops them from the tray and the chip, not the Console.
+560 wide, opens upward from the chip. Header: "System messages", counts, Open console ›, Clear. Rows: 8px level dot, message, time mono 11. As built (D-110): warnings and errors only, counted as listed; Clear drops them from the tray and the chip, not the Console.
 
 ### 7.6 Snap popover
 Translate step (m), rotate step (deg), scale step (reserved), space: World / Local. As built (D-108): World only until the gizmo has local axes.
@@ -515,7 +515,7 @@ A workspace stores: active activity panel, sidebar open + width, inspector open 
 | Debug Alt+3 | Topics | shown | Single perspective; Plot in the second slot or popped out (Q1) |
 | Review Alt+4 | Plot | collapsed | Single, playback timeline visible |
 
-Storage: desktop `~/.gz/ui/workspaces.json` (use the platform config dir); web: browser storage (IndexedDB or `localStorage`). Unsaved changes to a workspace show "modified" in the Workspaces panel; switching keeps the modifications in memory until app exit unless saved. As built (D-110): `gz/ui/workspaces.json` in the config dir, `localStorage` on the web; the app starts as before, counted as Build; the current workspace and the theme persist on change; cameras save free; a workspace's theme waits.
+Storage: desktop `~/.gz/ui/workspaces.json` (use the platform config dir); web: browser storage (IndexedDB or `localStorage`). Unsaved changes to a workspace show "modified" in the Workspaces panel; switching keeps the modifications in memory until app exit unless saved. As built (D-110): `gz/ui/workspaces.json` in the config dir, `localStorage` on the web; the app starts in the workspace it was left in (Build unsaved as before; the start flags go over it); the current workspace and the theme persist on change; cameras save free; a theme asked for isn't saved; a file it can't parse is kept apart, a newer version's never written over; a workspace's theme waits.
 
 ---
 
