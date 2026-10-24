@@ -21,6 +21,7 @@ pub(crate) mod activity_bar;
 pub(crate) mod collapsed_bar;
 pub(crate) mod commands;
 pub(crate) mod connection;
+pub(crate) mod context_menu;
 pub(crate) mod host;
 pub(crate) mod inspector;
 pub(crate) mod layout;
@@ -167,6 +168,7 @@ impl Plugin for ShellPlugin {
         sidebar::build(app);
         popout::build(app);
         palette::build(app);
+        context_menu::build(app);
         inspector::build(app);
         status_bar::build(app);
         viewport::build(app);

@@ -982,6 +982,33 @@ fn enter_selects_the_cursor_row_and_a_right_click_doesnt() {
     assert_eq!(selected(&app), [amr]);
 }
 
+/// A right press on a row opens the context menu for its entity, selected
+/// first (§7.9).
+#[test]
+fn a_right_press_on_a_row_opens_the_context_menu() {
+    use bevy::picking::events::PointerPress;
+    use bevy::picking::pointer::PointerButton;
+    let (mut app, _) = live_tree();
+    let krate = entity(&mut app, "crate_01");
+    let r = row(&mut app, "crate_01");
+    app.world_mut().trigger(PointerPress {
+        entity: r,
+        pointer: pointer(),
+        button: PointerButton::Secondary,
+        hit: hit(),
+        count: 1,
+    });
+    frames(&mut app, 3);
+    assert_eq!(selected(&app), [krate]);
+    let world = app.world_mut();
+    let menu = world
+        .query::<&crate::shell::context_menu::ContextMenu>()
+        .iter(world)
+        .next()
+        .map(|m| (m.subject, m.view));
+    assert_eq!(menu, Some((krate, None)));
+}
+
 #[test]
 fn the_footer_needs_a_model_and_isolate_forgets_a_gone_world() {
     use super::footer::FooterButton::{HideOthers, Isolate};

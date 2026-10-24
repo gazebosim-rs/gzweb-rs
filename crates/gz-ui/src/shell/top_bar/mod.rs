@@ -27,19 +27,34 @@ use crate::widgets::layout::{flex_spacer, row, separator, Orientation, BAR_SEPAR
 #[derive(Resource, Clone, Debug, PartialEq, Eq)]
 pub struct StartMenu(pub String);
 
-/// Opens a [`StartMenu`]'s menu once the world is live.
+/// Opens a [`StartMenu`]'s menu once the world is live (the context
+/// menu once something is selected, in the first view).
+#[allow(clippy::too_many_arguments)]
 fn apply_start_menu(
     start: Option<Res<StartMenu>>,
     phase: Res<super::CurrentPhase>,
+    selection: Option<Res<gz_bevy::view::Selection>>,
+    cameras: Query<Entity, With<gz_bevy::camera::MainCamera>>,
     menus: Query<(Entity, &Children), With<crate::widgets::menu::Menu>>,
     worlds: Query<(), With<world_button::WorldButton>>,
     snaps: Query<(), With<tools::SnapTrigger>>,
+    mut contexts: MessageWriter<gz_bevy::view::EntityContext>,
     mut commands: Commands,
 ) {
     let Some(start) = start else {
         return;
     };
     if phase.0 != super::Phase::Live {
+        return;
+    }
+    if start.0 == "context" {
+        if let Some(entity) = selection.and_then(|s| s.entities.first().copied()) {
+            contexts.write(gz_bevy::view::EntityContext {
+                entity,
+                view: cameras.iter().next(),
+            });
+            commands.remove_resource::<StartMenu>();
+        }
         return;
     }
     let menu = menus.iter().find(|(_, children)| {
@@ -97,6 +112,7 @@ pub(crate) fn top_bar(theme: &Theme, map: &InputMap) -> impl Bundle {
 }
 
 pub(crate) fn build(app: &mut App) {
+    app.add_message::<gz_bevy::view::EntityContext>();
     if !app.is_plugin_added::<gz_bevy::world_save::WorldSavePlugin>() {
         app.add_plugins(gz_bevy::world_save::WorldSavePlugin);
     }

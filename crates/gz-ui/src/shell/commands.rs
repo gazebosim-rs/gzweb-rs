@@ -10,6 +10,7 @@ use gz_bevy::edit::edits_allowed;
 use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::model_edits::{EditModels, ModelEdit};
 
 use super::layout::{ShellLayout, Side, Slot};
 use super::sidebar::body::ActionButton;
@@ -136,7 +137,8 @@ impl Shortcuts<'_, '_> {
     }
 }
 
-/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub), the
+/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z, ⌘C ⌘V ⌘D and Delete (D-109; none
+/// mid-drag or mid-scrub), the
 /// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓), ⇧⌘R (Reset, on a live world), ⌘K,
 /// the themes and the panels' own shortcuts; and [`RunBinding`]s of the
 /// same (the command palette, D-107).
@@ -148,6 +150,7 @@ pub(crate) fn shortcut_keys(
     mut runs: MessageReader<RunBinding>,
     mut out: MessageWriter<UiCommand>,
     mut undo: MessageWriter<UndoCommand>,
+    mut edits: MessageWriter<EditModels>,
     mut layout: MessageWriter<LayoutCommand>,
     mut sim: MessageWriter<GzCommand>,
 ) {
@@ -176,6 +179,17 @@ pub(crate) fn shortcut_keys(
             "sim.reset" => {
                 if phase.as_deref().is_some_and(|p| p.0 == super::Phase::Live) {
                     sim.write(GzCommand::Reset);
+                }
+                continue;
+            }
+            "edit.copy" | "edit.paste" | "edit.duplicate" | "edit.delete" => {
+                if !shortcuts.editing() {
+                    edits.write(EditModels(match id.as_str() {
+                        "edit.copy" => ModelEdit::Copy,
+                        "edit.paste" => ModelEdit::Paste,
+                        "edit.duplicate" => ModelEdit::Duplicate,
+                        _ => ModelEdit::Delete,
+                    }));
                 }
                 continue;
             }

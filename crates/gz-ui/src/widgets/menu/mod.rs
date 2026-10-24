@@ -13,6 +13,11 @@
 //! trailing shortcut mono 11 `text_3`; the current choice in `accent_soft`
 //! / `accent_text`. A disabled item dims all of it: the icon, shortcut and
 //! checkbox keep their colours ([`OwnInk`]) but take the 40% opacity.
+//!
+//! A submenu ([`submenu`]) is a menu inside a menu's popup: a row like an
+//! item, with a chevron, whose popup opens to its right on hover, a click,
+//! Enter or →; ← or Esc closes it alone, and choosing in it closes the
+//! whole stack (DECISIONS.md D-109).
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
@@ -50,6 +55,8 @@ pub enum MenuSide {
     Left,
     /// Above (status-bar menus), flipping below.
     Above,
+    /// Right of a submenu's row, flipping left.
+    Right,
 }
 
 impl MenuSide {
@@ -59,8 +66,14 @@ impl MenuSide {
             MenuSide::Below => (PopoverSide::Bottom, PopoverAlign::Start),
             MenuSide::Left => (PopoverSide::Left, PopoverAlign::Start),
             MenuSide::Above => (PopoverSide::Top, PopoverAlign::Start),
+            MenuSide::Right => (PopoverSide::Right, PopoverAlign::Start),
         };
-        let gap = SPACE[2];
+        // A submenu sits against its row, over the menu's padding.
+        let gap = if self == MenuSide::Right {
+            SPACE[3]
+        } else {
+            SPACE[2]
+        };
         let at = |side: PopoverSide, align| PopoverPlacement { side, align, gap };
         Popover {
             // Preferred, flipped, shifted, and both: a menu clipped below
@@ -155,6 +168,7 @@ where
 pub(crate) fn on_menu_event(
     mut ev: On<MenuEvent>,
     menus: Query<&Children, With<Menu>>,
+    items: Query<(), With<MenuItem>>,
     mut popups: Query<&mut Visibility, With<MenuPopupOf>>,
     triggers: Query<(), With<MenuTrigger>>,
     mut focus: ResMut<InputFocus>,
@@ -168,7 +182,10 @@ pub(crate) fn on_menu_event(
     let (Some(popup), Some(trigger)) = (popup, trigger) else {
         return;
     };
-    ev.propagate(false);
+    // A choice in a submenu closes the menus it is in too; a submenu
+    // losing focus to its parent closes alone.
+    let chosen = items.contains(ev.original_event_target());
+    ev.propagate(chosen && matches!(ev.event().action, MenuAction::CloseAll));
     let open = popups.get(popup).is_ok_and(|v| *v == Visibility::Visible);
     match ev.event().action {
         MenuAction::Open(nav) => open_popup(&mut commands, popup, nav),
@@ -287,6 +304,155 @@ pub fn menu_item(theme: &Theme, props: MenuItemProps) -> impl Bundle {
             }
         })),
     )
+}
+
+/// A submenu's row (the trigger of its [`Menu`]).
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct SubmenuRow;
+
+/// A submenu: a row like an item (`label`, optional icon, a chevron) that
+/// opens `items` to its right.
+pub(crate) fn submenu<F>(
+    theme: &Theme,
+    label: &str,
+    leading: Option<IconId>,
+    items: F,
+) -> impl Bundle
+where
+    F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
+{
+    let icon_px = theme.s.icon_sm;
+    let text_label = label.to_string();
+    let row = (
+        Node {
+            // The full width of the menu.
+            flex_grow: 1.0,
+            ..item_node(theme)
+        },
+        SubmenuRow,
+        MenuLabel(label.to_string()),
+        HoverOnFocus,
+        Hovered::default(),
+        TabIndex(0),
+        Visuals::new(ColorRole::Clear, ColorRole::Text),
+        Fill(ColorRole::Clear),
+        a11y(Role::MenuItem, label),
+        Children::spawn(SpawnWith(move |p: &mut ChildSpawner| {
+            if let Some(id) = leading {
+                p.spawn((icon(id, icon_px, ColorRole::Text2), Content, OwnInk));
+            }
+            p.spawn((text(TypeStyle::BODY, ColorRole::Text, text_label), Content));
+            p.spawn(flex_spacer());
+            p.spawn((
+                icon(IconId::ChevronRight, icon_px, ColorRole::Text3),
+                Content,
+                OwnInk,
+            ));
+        })),
+    );
+    menu(theme, MenuSide::Right, row, items)
+}
+
+/// The [`Menu`] a submenu row opens, and its popup.
+fn submenu_of(
+    row: Entity,
+    parents: &Query<&ChildOf>,
+    menus: &Query<&Children, With<Menu>>,
+    popups: &Query<&Visibility, With<MenuPopupOf>>,
+) -> Option<(Entity, Entity, bool)> {
+    let root = parents.get(row).ok()?.parent();
+    let popup = menus.get(root).ok()?.iter().find(|c| popups.contains(*c))?;
+    let open = popups.get(popup).is_ok_and(|v| *v == Visibility::Visible);
+    Some((root, popup, open))
+}
+
+/// Hovering a submenu's row opens it; hovering another row of the same
+/// menu closes it (the row hovered takes the keys, so the menu stays).
+#[allow(clippy::type_complexity)]
+pub(crate) fn hover_submenus(
+    hovered: Query<(Entity, &Hovered), (Changed<Hovered>, Or<(With<MenuItem>, With<SubmenuRow>)>)>,
+    rows: Query<Entity, With<SubmenuRow>>,
+    parents: Query<&ChildOf>,
+    menus: Query<&Children, With<Menu>>,
+    popups: Query<&Visibility, With<MenuPopupOf>>,
+    mut focus: ResMut<InputFocus>,
+    mut commands: Commands,
+) {
+    for (e, h) in &hovered {
+        if !h.get() {
+            continue;
+        }
+        // The popup this row is in.
+        let Some(card) = parents.iter_ancestors(e).find(|a| popups.contains(*a)) else {
+            continue;
+        };
+        for row in &rows {
+            let Some((root, popup, open)) = submenu_of(row, &parents, &menus, &popups) else {
+                continue;
+            };
+            let sibling = parents.iter_ancestors(row).find(|a| popups.contains(*a)) == Some(card);
+            if !sibling {
+                continue;
+            }
+            if row == e && !open {
+                commands.trigger(MenuEvent {
+                    source: root,
+                    action: MenuAction::Open(NavAction::First),
+                });
+            } else if row != e && open {
+                commands.entity(popup).try_insert(Visibility::Hidden);
+                focus.set(e, FocusCause::Navigated);
+            }
+        }
+    }
+}
+
+/// → on a submenu's row opens it; ← in a submenu closes it, back on its
+/// row.
+pub(crate) fn on_submenu_keys(
+    mut ev: On<FocusedInput<KeyboardInput>>,
+    rows: Query<(), With<SubmenuRow>>,
+    parents: Query<&ChildOf>,
+    menus: Query<&Children, With<Menu>>,
+    popups: Query<&Visibility, With<MenuPopupOf>>,
+    mut focus: ResMut<InputFocus>,
+    mut commands: Commands,
+) {
+    if ev.input.state != ButtonState::Pressed {
+        return;
+    }
+    let focused = ev.focused_entity;
+    match ev.input.key_code {
+        KeyCode::ArrowRight if rows.contains(focused) => {
+            if let Some((root, ..)) = submenu_of(focused, &parents, &menus, &popups) {
+                ev.propagate(false);
+                commands.trigger(MenuEvent {
+                    source: root,
+                    action: MenuAction::Open(NavAction::First),
+                });
+            }
+        }
+        KeyCode::ArrowLeft => {
+            // The nearest open submenu holding the focus, and its row.
+            let popup = parents
+                .iter_ancestors(focused)
+                .find(|a| popups.contains(*a));
+            let Some(popup) = popup else { return };
+            let Some(root) = parents.get(popup).ok().map(|p| p.parent()) else {
+                return;
+            };
+            let row = menus
+                .get(root)
+                .ok()
+                .and_then(|c| c.iter().find(|c| rows.contains(*c)));
+            if let Some(row) = row {
+                ev.propagate(false);
+                commands.entity(popup).try_insert(Visibility::Hidden);
+                focus.set(row, FocusCause::Navigated);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// An item's trailing shortcut: mono 11 `text_3`, dimmed with the item.
@@ -488,6 +654,8 @@ pub(crate) fn on_menu_typing(
 pub(crate) fn build(app: &mut App) {
     app.add_observer(on_check_item_activate)
         .add_observer(on_menu_typing)
+        .add_observer(on_submenu_keys)
+        .add_systems(Update, hover_submenus)
         .add_systems(
             Update,
             menu_checkbox_system.in_set(crate::GzUiSystems::Visuals),
