@@ -228,7 +228,8 @@ file the user asked for (a download in the browser, the working
 directory natively). `gz_core::insert` writes shapes, lights and model
 includes as SDFormat and the `create` request's message; `gz_bevy::fuel`
 searches Fuel; `gz_bevy::view::place` turns a click in the views into a
-place while the UI arms one (D-102).
+place while the UI arms one (D-102). `gz_core::sensor` reads a lidar scan and a PNG's
+size (the Sensors panel, D-103); `SdfWanted` is a set of holders.
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In

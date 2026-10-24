@@ -1633,3 +1633,27 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   preview follows a theme change.
 - **Tests:** workspace 780 → 801 passing; coverage 98.1% lines. check.sh
   passes.
+
+## 2026-10-24: M7d Sensors (D-103)
+
+- **Sensors:** the selected model's sensors (nested models' too) with
+  their type badges and rates; each sensor's topic from its `<topic>`
+  (or Gazebo's derived one) among the server's; the chosen one's
+  preview, held only while the panel shows: camera frames (PNG, decoded
+  on the async compute pool, the last dimmed until a new sensor's
+  first), a lidar's scan from above (`crate::raster`, now shared with
+  Plot), or the message as text; "Waiting for first message…" and "No
+  data for 3.2 s". `gz_core::sensor` decodes a scan's middle ring and a
+  PNG's size.
+- **SDFormat wanted by holders:** `SdfWanted` is a set (the Scene panel,
+  the Sensors panel), so one doesn't turn the other's off.
+- **Inspector:** View in Sensors shows that sensor; Echo topic and Plot
+  work once the sensor's topic is known.
+- **`gzweb --sensors [NAME]`**, with `--select MODEL`.
+- **Live check** (debug build, Jetty `sensors_demo` in a second container
+  on :9012): `camera_with_lidar`'s camera streaming (light) and its
+  lidar's scan (dark).
+- **Teleop** isn't in yet: the websocket server takes no publications
+  (D-88), so it waits on that decision.
+- **Tests:** workspace 801 → 808 passing; coverage 98.1% lines. check.sh
+  passes. Not tried by hand.
