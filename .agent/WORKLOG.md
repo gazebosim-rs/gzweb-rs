@@ -1532,6 +1532,15 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Native clipboard:** gzweb turns on Bevy's `system_clipboard`, so
   Copy (and the text fields) reach the system clipboard natively too;
   `deny.toml` allows BSL-1.0 for the two Windows-only crates under it.
+- **Review fixes (PR #46):** the echo prints a long `bytes` field as its
+  size and cuts lines at 2,000 characters (a point cloud's data was one
+  1 MB line); Copy copies the whole message, and is unavailable in a
+  browser off https or localhost (Bevy's web clipboard throws there);
+  rates redraw when measured (`GzTraffic::measured`), not on every
+  arrival, and the list recomputes only when its inputs change; a key
+  move scrolls its row into view; `GzWebPlugin` adds `TopicsPlugin`
+  only if it isn't there; BSL-1.0 is an exception for the two crates,
+  not a global allowance.
 - **Flaky test fixed:** a hidden view's cube camera could stay on when
   its scene spawned in the frame the reveal reached 0 (one long frame);
   the camera is now checked every frame. It failed about one run in four

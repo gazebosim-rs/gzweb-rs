@@ -170,8 +170,6 @@ pub fn sync_subscriptions(
 pub struct Traffic {
     /// Messages since start.
     pub total: u64,
-    /// When the last arrived (`Time<Real>` seconds).
-    pub last_at: f64,
     /// Messages a second over the last full second; `None` before one.
     pub rate: Option<f32>,
     /// The window being measured: its start and the total then.
@@ -183,6 +181,9 @@ pub struct Traffic {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct GzTraffic {
     pub topics: HashMap<String, Traffic>,
+    /// How many times a rate was measured: what shows rates redraws when
+    /// this moves, not on every arrival.
+    pub measured: u64,
 }
 
 impl GzTraffic {
@@ -196,7 +197,6 @@ impl GzTraffic {
             }),
         };
         t.total += 1;
-        t.last_at = now;
     }
 
     pub fn rate(&self, topic: &str) -> Option<f32> {
@@ -212,6 +212,7 @@ impl GzTraffic {
             if dt >= RATE_WINDOW {
                 t.rate = Some(((t.total - total) as f64 / dt) as f32);
                 t.window = (now, t.total);
+                self.measured += 1;
             }
         }
     }
@@ -234,7 +235,7 @@ pub fn measure_rates(time: Res<Time<Real>>, mut traffic: ResMut<GzTraffic>) {
 
 /// The topic list, shared subscriptions and rates. Added by
 /// [`GzWebPlugin`](crate::GzWebPlugin) and by every plugin that holds
-/// topics, whichever comes first.
+/// topics, whichever comes first ([`TopicsPlugin::ensure`]).
 pub struct TopicsPlugin;
 
 impl Plugin for TopicsPlugin {
@@ -357,8 +358,10 @@ mod tests {
         assert_eq!(traffic.rate("/a"), None);
         traffic.measure(0.5);
         assert_eq!(traffic.rate("/a"), None, "not a full second yet");
+        assert_eq!(traffic.measured, 0);
         traffic.measure(1.0);
         assert_eq!(traffic.rate("/a"), Some(5.0));
+        assert_eq!(traffic.measured, 1);
         traffic.measure(2.0);
         assert_eq!(traffic.rate("/a"), Some(0.0), "quiet since");
         assert_eq!(traffic.topics["/a"].total, 5);

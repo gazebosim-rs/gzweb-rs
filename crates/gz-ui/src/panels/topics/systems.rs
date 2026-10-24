@@ -11,11 +11,12 @@ use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::Checked;
 use bevy::ui_widgets::{Activate, ValueChange};
+use gz_bevy::clipboard::clipboard_available;
 use gz_bevy::connection::{GzCommand, GzPublish};
 use gz_bevy::topics::{GzSubscriptions, GzTopics, GzTraffic, Holder};
 use gz_core::echo::message_text;
 
-use super::model::{clip_lines, rate_label, Echo, TopicsState, ECHO_HZ};
+use super::model::{clip_lines, rate_label, Echo, TopicChip, TopicsState, ECHO_HZ};
 use super::view::{
     topic_row, ChipChoice, EchoClose, EchoPart, EchoSection, NoMatches, RowRate, TopicFilter,
     TopicList, TopicRow, TopicRows,
@@ -26,7 +27,7 @@ use crate::shell::{
     CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
 };
 use crate::theme::visuals::Active;
-use crate::theme::Theme;
+use crate::theme::{Theme, SPACE};
 use crate::widgets::layout::set_shown;
 use crate::widgets::text::set_text;
 
@@ -71,7 +72,8 @@ pub(super) fn topics_status(
     let count = (phase.0 == Phase::Live && n > 0)
         .then(|| format!("{n} topic{}", if n == 1 { "" } else { "s" }));
     status.set_count(TOPICS, count);
-    status.set_action_enabled(TOPICS, COPY, echo.text.is_some());
+    let copy = echo.full.is_some() && clipboard_available();
+    status.set_action_enabled(TOPICS, COPY, copy);
 }
 
 /// A [`TopicsStart`]: opens the panel at once, and echoes its topic once
@@ -130,10 +132,10 @@ pub(super) fn hold_echo(
 ) {
     let live = phase.0 == Phase::Live && hosts.is_shown(TOPICS);
     let want = echo.topic.as_deref().filter(|_| live);
-    let held: Vec<String> = subs.held_by(HOLDER).map(str::to_string).collect();
-    if held.iter().map(String::as_str).eq(want) {
+    if subs.bypass_change_detection().held_by(HOLDER).eq(want) {
         return;
     }
+    let held: Vec<String> = subs.held_by(HOLDER).map(str::to_string).collect();
     for topic in &held {
         subs.release(HOLDER, topic);
     }
@@ -176,11 +178,12 @@ pub(super) fn read_echo(
     let Some(payload) = echo.bypass_change_detection().pending.take() else {
         return;
     };
-    let text = match message_text(&echo.msg_type, &payload) {
-        Ok(text) => clip_lines(&text),
-        Err(e) => e.to_string(),
+    let (text, full) = match message_text(&echo.msg_type, &payload) {
+        Ok(text) => (clip_lines(&text), Some(text)),
+        Err(e) => (e.to_string(), None),
     };
     echo.text = Some(text);
+    echo.full = full;
     echo.drawn_at = now;
 }
 
@@ -202,11 +205,19 @@ pub(super) fn sync_rows(
     lists: Query<(Entity, Ref<TopicRows>)>,
     mut no_matches: Query<&mut Node, With<NoMatches>>,
     mut built: ResMut<BuiltRows>,
+    mut measured: Local<u64>,
     mut commands: Commands,
 ) {
     let Ok((list, added)) = lists.single() else {
         return;
     };
+    // Rates change which topics are quiet, and only the Quiet chip lists
+    // by rate.
+    let rates = std::mem::replace(&mut *measured, src.traffic.measured) != src.traffic.measured
+        && src.state.chip == TopicChip::Quiet;
+    if !added.is_added() && !src.topics.is_changed() && !src.state.is_changed() && !rates {
+        return;
+    }
     let visible = src.state.visible(&src.topics, &src.traffic);
     if !added.is_added() && visible == built.0 {
         return;
@@ -232,10 +243,13 @@ pub(super) fn sync_rows(
 pub(super) fn row_states(
     src: RowSources,
     mut rates: Query<(&RowRate, &mut Text)>,
+    added: Query<(), Added<RowRate>>,
     rows: Query<(Entity, &TopicRow, Has<Active>)>,
+    mut measured: Local<u64>,
     mut commands: Commands,
 ) {
-    if src.traffic.is_changed() {
+    let fresh = std::mem::replace(&mut *measured, src.traffic.measured) != src.traffic.measured;
+    if fresh || !added.is_empty() {
         for (r, mut text) in &mut rates {
             set_text(&mut text, &rate_label(src.traffic.rate(&r.0)));
         }
@@ -261,8 +275,10 @@ pub(super) fn echo_section(
     mut sections: Query<&mut Node, With<EchoSection>>,
     mut parts: Query<(&EchoPart, &mut Text, &mut Node), Without<EchoSection>>,
     added: Query<(), Added<EchoSection>>,
+    mut measured: Local<u64>,
 ) {
-    if !src.echo.is_changed() && !src.traffic.is_changed() && added.is_empty() {
+    let fresh = std::mem::replace(&mut *measured, src.traffic.measured) != src.traffic.measured;
+    if !src.echo.is_changed() && !fresh && added.is_empty() {
         return;
     }
     let echo = &*src.echo;
@@ -278,14 +294,15 @@ pub(super) fn echo_section(
         (None, false) => "Waiting for first message…",
         (Some(_), false) => "",
     };
+    let meta = format!("{} · {rate}", echo.msg_type);
     for (part, mut text, mut node) in &mut parts {
         let want = match part {
-            EchoPart::Title => topic.clone(),
-            EchoPart::Meta => format!("{} · {rate}", echo.msg_type),
-            EchoPart::Status => status.to_string(),
-            EchoPart::Message => echo.text.clone().unwrap_or_default(),
+            EchoPart::Title => topic.as_str(),
+            EchoPart::Meta => meta.as_str(),
+            EchoPart::Status => status,
+            EchoPart::Message => echo.text.as_deref().unwrap_or_default(),
         };
-        set_text(&mut text, &want);
+        set_text(&mut text, want);
         if *part == EchoPart::Status {
             set_shown(&mut node, !status.is_empty());
         }
@@ -388,12 +405,16 @@ pub(super) fn on_echo_close(
 /// echoed one, Home and End the first and last, and Esc stops the echo.
 pub(super) fn on_list_key(
     mut ev: On<FocusedInput<KeyboardInput>>,
-    lists: Query<(), With<TopicList>>,
+    mut lists: Query<(&mut ScrollPosition, &ComputedNode), With<TopicList>>,
+    theme: Res<Theme>,
     built: Res<BuiltRows>,
     topics: Res<GzTopics>,
     mut echo: ResMut<Echo>,
 ) {
-    if !lists.contains(ev.focused_entity) || ev.input.state != ButtonState::Pressed {
+    let Ok((mut scroll, list)) = lists.get_mut(ev.focused_entity) else {
+        return;
+    };
+    if ev.input.state != ButtonState::Pressed {
         return;
     }
     let rows = &built.0;
@@ -413,9 +434,29 @@ pub(super) fn on_list_key(
     };
     ev.propagate(false);
     match target {
-        Some(i) => echo_topic(&mut echo, &topics, &rows[i]),
+        Some(i) => {
+            echo_topic(&mut echo, &topics, &rows[i]);
+            reveal_row(&mut scroll, list, theme.s.tree_row_h, i);
+        }
         None => *echo = Echo::default(),
     }
+}
+
+/// Scrolls the list just enough to show row `i` (rows are `row_h` tall,
+/// under the list's padding).
+#[allow(clippy::cast_precision_loss)]
+fn reveal_row(scroll: &mut ScrollPosition, list: &ComputedNode, row_h: f32, i: usize) {
+    let pad = SPACE[4];
+    let view = list.size().y * list.inverse_scale_factor;
+    let top = pad + i as f32 * row_h;
+    let y = if top < scroll.y + pad {
+        top - pad
+    } else if top + row_h > scroll.y + view - pad {
+        top + row_h + pad - view
+    } else {
+        return;
+    };
+    scroll.y = y.max(0.0);
 }
 
 /// Copy puts the echoed message on the clipboard.
@@ -427,7 +468,7 @@ pub(super) fn on_action(
     if ev.panel != TOPICS || ev.action != COPY {
         return;
     }
-    let (Some(text), Some(mut clipboard)) = (&echo.text, clipboard) else {
+    let (Some(text), Some(mut clipboard)) = (&echo.full, clipboard) else {
         return;
     };
     if let Err(e) = clipboard.set_text(text.as_str()) {

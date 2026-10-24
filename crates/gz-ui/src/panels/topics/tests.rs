@@ -14,7 +14,9 @@ use gz_core::msgs;
 use gz_core::transport::Status;
 use prost::Message as _;
 
-use super::model::{clip_lines, is_model, is_sensor, rate_label, Echo, TopicChip, ECHO_LINES};
+use super::model::{
+    clip_lines, is_model, is_sensor, rate_label, Echo, TopicChip, ECHO_LINES, ECHO_LINE_CHARS,
+};
 use super::view::{ChipChoice, EchoPart, EchoSection, NoMatches, TopicList, TopicRow};
 use super::{COPY, NO_PUBLISH, NO_SERVICES, PLOT_FIELD, PUBLISH, PUBLISH_FOOTER, SERVICES, TOPICS};
 use crate::panels::{ActionId, PanelView};
@@ -483,4 +485,91 @@ fn labels_and_long_messages() {
     assert_eq!(cut.lines().count(), ECHO_LINES + 1);
     assert!(cut.ends_with("… 3 more lines"));
     assert_eq!(clip_lines("a\nb\n"), "a\nb");
+    let wide = format!("ranges: [{}]", "1, ".repeat(ECHO_LINE_CHARS));
+    let cut = clip_lines(&wide);
+    let more = wide.chars().count() - ECHO_LINE_CHARS;
+    assert!(
+        cut.ends_with(&format!(" … {more} more characters")),
+        "{cut}"
+    );
+    assert_eq!(cut.lines().count(), 1);
+}
+
+/// The echo shows a long message clipped; Copy copies all of it.
+#[test]
+fn copy_copies_the_whole_message() {
+    let mut app = live_topics();
+    app.init_resource::<Clipboard>();
+    set_topics(&mut app, &[("/poses", "gz.msgs.Pose_V")]);
+    let r = row(&mut app, "/poses");
+    app.world_mut().trigger(Activate { entity: r });
+    frames(&mut app, 2);
+    let poses = msgs::PoseV {
+        pose: (0..100)
+            .map(|i| msgs::Pose {
+                name: format!("p{i}"),
+                position: Some(msgs::Vector3d {
+                    x: 1.0,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    app.world_mut().write_message(GzPublish {
+        topic: "/poses".into(),
+        msg_type: "gz.msgs.Pose_V".into(),
+        payload: poses.encode_to_vec(),
+    });
+    frames(&mut app, 2);
+    assert!(echo_part(&mut app, EchoPart::Message).ends_with("more lines"));
+    let copy = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &ActionButton)>()
+            .iter(world)
+            .find(|(_, b)| b.action == COPY)
+            .unwrap()
+            .0
+    };
+    app.world_mut().trigger(Activate { entity: copy });
+    frames(&mut app, 1);
+    let mut read = app.world_mut().resource_mut::<Clipboard>().fetch_text();
+    let copied = read.poll_result().unwrap().unwrap();
+    assert!(
+        copied.lines().count() > ECHO_LINES,
+        "{}",
+        copied.lines().count()
+    );
+    assert!(copied.contains("name: \"p99\""));
+    assert!(!copied.contains("more lines"));
+}
+
+/// A key move scrolls the list to show the echoed row.
+#[test]
+fn a_key_move_shows_its_row() {
+    let mut app = live_topics();
+    let names: Vec<(String, &str)> = (0..100)
+        .map(|i| (format!("/t{i:03}"), "gz.msgs.Clock"))
+        .collect();
+    let list: Vec<(&str, &str)> = names.iter().map(|(n, t)| (n.as_str(), *t)).collect();
+    set_topics(&mut app, &list);
+    frames(&mut app, 2);
+    let list = find::<TopicList>(&mut app);
+    let y = |app: &mut App| app.world().get::<ScrollPosition>(list).unwrap().y;
+    assert_eq!(y(&mut app), 0.0);
+    focused_key(&mut app, list, KeyCode::End);
+    frames(&mut app, 2);
+    // Again, now the echo section has taken its share of the height.
+    focused_key(&mut app, list, KeyCode::End);
+    frames(&mut app, 2);
+    let end = y(&mut app);
+    assert!(end > 1000.0, "{end}");
+    focused_key(&mut app, list, KeyCode::ArrowUp);
+    frames(&mut app, 2);
+    assert_eq!(y(&mut app), end, "still in view: no scroll");
+    focused_key(&mut app, list, KeyCode::Home);
+    frames(&mut app, 2);
+    assert_eq!(y(&mut app), 0.0);
 }

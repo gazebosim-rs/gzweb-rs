@@ -48,6 +48,20 @@ pub(crate) const NO_PUBLISH: &str = "The Gazebo websocket server doesn't take pu
 /// Why Services is unavailable.
 pub(crate) const NO_SERVICES: &str = "The Gazebo websocket server doesn't list services";
 
+/// Why Copy is unavailable in a browser without the clipboard.
+pub(crate) const NO_CLIPBOARD: &str = "Copy needs the page on https or localhost";
+
+/// Copy: enabled once there is a message, where the clipboard can be
+/// written.
+fn copy_action() -> PanelAction {
+    let copy = PanelAction::new(COPY, "Copy");
+    if gz_bevy::clipboard::clipboard_available() {
+        copy.disabled()
+    } else {
+        copy.unavailable(NO_CLIPBOARD)
+    }
+}
+
 /// How the panel starts, for a capture (`gzweb --echo TOPIC`, D-99): the
 /// panel opens in the primary slot and echoes `echo` once the server
 /// lists it; then the resource is removed.
@@ -80,7 +94,7 @@ impl Plugin for TopicsPanelPlugin {
                 )
                 .content::<TopicsBody>()
                 .footer_action(PanelAction::new(PLOT_FIELD, "Plot field").disabled())
-                .footer_action(PanelAction::new(COPY, "Copy").disabled())
+                .footer_action(copy_action())
                 .footer_action(
                     PanelAction::new(PUBLISH_FOOTER, "Publish…").unavailable(NO_PUBLISH),
                 ),

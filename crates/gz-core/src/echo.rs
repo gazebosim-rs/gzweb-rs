@@ -5,7 +5,7 @@
 use std::sync::OnceLock;
 
 use prost_reflect::text_format::FormatOptions;
-use prost_reflect::{DescriptorPool, DynamicMessage};
+use prost_reflect::{DescriptorPool, DynamicMessage, ReflectMessage, Value};
 
 /// Why a message can't be shown as text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,9 +54,39 @@ pub fn message_text(msg_type: &str, payload: &[u8]) -> Result<String, EchoError>
     let desc = pool()
         .get_message_by_name(&name)
         .ok_or_else(|| EchoError::UnknownType(msg_type.to_string()))?;
-    let msg =
+    let mut msg =
         DynamicMessage::decode(desc, payload).map_err(|e| EchoError::Decode(e.to_string()))?;
+    shorten_bytes(&mut msg);
     Ok(msg.to_text_format_with_options(&FormatOptions::new().pretty(true)))
+}
+
+/// The longest `bytes` field printed as it is; a longer one (a point
+/// cloud's data, an image's pixels) prints as its size.
+pub const BYTES_SHOWN: usize = 64;
+
+/// Replaces each `bytes` value longer than [`BYTES_SHOWN`], at any depth,
+/// with `<N bytes>`.
+fn shorten_bytes(msg: &mut DynamicMessage) {
+    let fields: Vec<_> = msg.descriptor().fields().filter(|f| !f.is_map()).collect();
+    for field in fields {
+        if !msg.has_field(&field) {
+            continue;
+        }
+        match msg.get_field_mut(&field) {
+            Value::List(items) => items.iter_mut().for_each(shorten_value),
+            value => shorten_value(value),
+        }
+    }
+}
+
+fn shorten_value(value: &mut Value) {
+    match value {
+        Value::Bytes(b) if b.len() > BYTES_SHOWN => {
+            *b = format!("<{} bytes>", b.len()).into_bytes().into();
+        }
+        Value::Message(m) => shorten_bytes(m),
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -99,6 +129,28 @@ mod tests {
             message_text("gz.msgs.Nope", &bytes),
             Err(EchoError::UnknownType("gz.msgs.Nope".into()))
         );
+        let cloud = msgs::PointCloudPacked {
+            data: vec![7; 300_000],
+            header: Some(msgs::Header {
+                data: vec![msgs::header::Map {
+                    key: "frame_id".into(),
+                    value: vec!["lidar".into()],
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let text = message_text("gz.msgs.PointCloudPacked", &cloud.encode_to_vec()).unwrap();
+        assert!(text.contains("data: \"<300000 bytes>\""), "{text}");
+        assert!(text.contains("lidar"), "{text}");
+        assert!(text.len() < 1000, "{}", text.len());
+        let short = msgs::PointCloudPacked {
+            data: vec![b'a'; BYTES_SHOWN],
+            ..Default::default()
+        };
+        let text = message_text("gz.msgs.PointCloudPacked", &short.encode_to_vec()).unwrap();
+        assert!(text.contains(&"a".repeat(BYTES_SHOWN)), "{text}");
+
         let bad = message_text("gz.msgs.WorldStatistics", &[0xff]);
         assert!(matches!(bad, Err(EchoError::Decode(_))), "{bad:?}");
         assert_eq!(

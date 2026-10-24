@@ -40,10 +40,18 @@ allow = [
   "Unlicense",
   "Unicode-3.0",
   "CDLA-Permissive-2.0",
-  # clipboard-win and error-code, under arboard (Bevy's system_clipboard).
-  "BSL-1.0",
 ]
 confidence-threshold = 0.9
+
+# Windows' clipboard, under arboard (Bevy's system_clipboard): BSL-1.0
+# for these two crates only.
+[[licenses.exceptions]]
+crate = "clipboard-win"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+crate = "error-code"
+allow = ["BSL-1.0"]
 
 [[licenses.clarify]]
 crate = "gz-parity"

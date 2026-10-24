@@ -7,6 +7,7 @@
 pub mod assets;
 pub mod backend;
 pub mod camera;
+pub mod clipboard;
 pub mod collada;
 pub mod connection;
 pub mod driver;
@@ -133,6 +134,8 @@ pub struct GzWebPlugin {
 
 impl Plugin for GzWebPlugin {
     fn build(&self, app: &mut App) {
+        // A panel or the joint states may have added it already.
+        topics::TopicsPlugin::ensure(app);
         app.insert_resource(self.config.clone())
             .insert_resource(ClearColor(camera::CLEAR_COLOR))
             // gzweb's colour until the scene sets one, at full fill strength
@@ -154,7 +157,6 @@ impl Plugin for GzWebPlugin {
             .init_asset_loader::<mesh_file::SceneFileLoader>()
             .init_asset_loader::<stl::StlLoader>()
             .add_plugins(heightmap::TerrainMaterialPlugin)
-            .add_plugins(topics::TopicsPlugin)
             .add_systems(
                 Startup,
                 (connection::connect, spawn::spawn_root, camera::spawn_camera),

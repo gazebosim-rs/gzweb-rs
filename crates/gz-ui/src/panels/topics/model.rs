@@ -80,8 +80,6 @@ pub(crate) struct TopicsState {
     /// The filter text: names that contain it, ignoring case.
     pub filter: String,
     pub chip: TopicChip,
-    /// The list's scroll offset.
-    pub scroll: f32,
 }
 
 impl TopicsState {
@@ -132,14 +130,32 @@ pub(crate) const ECHO_LINES: usize = 400;
 /// fast topic is unreadable anyway).
 pub(crate) const ECHO_HZ: f64 = 10.0;
 
-/// `text` cut to [`ECHO_LINES`] lines, saying how many it left out.
+/// The longest line the echo shows: a long repeated field prints on one
+/// line ("ranges: [ … ]").
+pub(crate) const ECHO_LINE_CHARS: usize = 2000;
+
+/// `text` cut to [`ECHO_LINES`] lines of at most [`ECHO_LINE_CHARS`]
+/// characters, saying what it left out.
 pub(crate) fn clip_lines(text: &str) -> String {
     let total = text.lines().count();
-    if total <= ECHO_LINES {
-        return text.trim_end().to_string();
+    let mut out = String::new();
+    for (i, line) in text.lines().take(ECHO_LINES).enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match line.char_indices().nth(ECHO_LINE_CHARS) {
+            Some((cut, _)) => {
+                let more = line[cut..].chars().count();
+                out.push_str(&line[..cut]);
+                out.push_str(&format!(" … {more} more characters"));
+            }
+            None => out.push_str(line),
+        }
     }
-    let kept: Vec<&str> = text.lines().take(ECHO_LINES).collect();
-    format!("{}\n… {} more lines", kept.join("\n"), total - ECHO_LINES)
+    if total > ECHO_LINES {
+        out.push_str(&format!("\n… {} more lines", total - ECHO_LINES));
+    }
+    out.trim_end().to_string()
 }
 
 /// The echoed topic: what it last said, as text.
@@ -149,8 +165,11 @@ pub(crate) struct Echo {
     pub topic: Option<String>,
     /// Its message type, from the topic list.
     pub msg_type: String,
-    /// The last message as text, once one arrived (what Copy copies).
+    /// The last message as text, once one arrived, clipped to show
+    /// ([`clip_lines`]).
     pub text: Option<String>,
+    /// The same, whole: what Copy copies.
+    pub full: Option<String>,
     /// The topic left the server's list; the last message stays.
     pub ended: bool,
     /// The newest message not yet drawn, and when the text was last drawn
