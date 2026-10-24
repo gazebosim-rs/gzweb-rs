@@ -1872,3 +1872,17 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   its models; ⇧D doesn't fly on the web; the undo chip follows its
   edit's serial.
 - **Tests:** workspace 861 → 879 passing.
+
+## 2026-10-24: M8d message tray and workspaces (D-110)
+
+- **Message tray:** the problem chip opens it; problems newest first,
+  counts, Open console ›, Clear (`SystemMessages::clear_problems`).
+- **Workspaces:** Build, Run, Debug, Review; Alt+1–4, the status bar's
+  switcher, the palette; a switch keeps what it leaves; §8's defaults;
+  each view's camera (`ViewOp::Restore`) and overlays.
+- **Persistence:** Save current layout; `gz/ui/workspaces.json` in the
+  config dir or `localStorage`; current workspace and theme on change;
+  read at start (not over `--theme`; none for captures).
+- **Flags:** `gzweb --menu workspace`.
+- **Live check** (debug build, :9013 `diff_drive`): the switcher opens.
+- **Tests:** workspace 879 → 890 passing.
