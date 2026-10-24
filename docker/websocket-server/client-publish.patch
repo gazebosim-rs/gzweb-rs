@@ -1,14 +1,17 @@
 diff --git a/src/systems/websocket_server/WebsocketServer.cc b/src/systems/websocket_server/WebsocketServer.cc
-index 1951dda..1abc0a0 100644
+index 1951dda..2e3c74f 100644
 --- a/src/systems/websocket_server/WebsocketServer.cc
 +++ b/src/systems/websocket_server/WebsocketServer.cc
-@@ -648,6 +648,23 @@ void WebsocketServer::OnDisconnect(int _socketId)
- 
-   this->connections.erase(_socketId);
- 
+@@ -641,6 +641,26 @@ void WebsocketServer::OnConnect(int _socketId)
+ //////////////////////////////////////////////////
+ void WebsocketServer::OnDisconnect(int _socketId)
+ {
 +  // The client's publishers go with it. A drive it commanded (a
 +  // gz.msgs.Twist topic) gets a last, empty (zero) command, so a robot
-+  // doesn't keep driving after a closed tab or a dropped connection.
++  // doesn't keep driving after its client goes. This runs before the
++  // subscription lock is taken: a publication reaches the server's own
++  // subscribers at once, on this thread, and
++  // OnWebsocketSubscribedMessage takes that lock.
 +  for (auto it = this->clientPublishers.begin();
 +       it != this->clientPublishers.end();)
 +  {
@@ -23,10 +26,10 @@ index 1951dda..1abc0a0 100644
 +      ++it;
 +  }
 +
-   // Somewhat slow operation.
-   for (std::map<std::string, std::set<int>>::iterator iter =
-        this->topicConnections.begin(); iter != this->topicConnections.end();
-@@ -672,13 +689,20 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+   std::lock_guard<std::mutex> mainLock(this->subscriptionMutex);
+   // Skip invalid sockets
+   if (this->connections.find(_socketId) == this->connections.end())
+@@ -672,13 +692,20 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
    // Frame: operation,topic,type,payload
    std::vector<std::string> frameParts;
  
@@ -52,7 +55,7 @@ index 1951dda..1abc0a0 100644
    {
      svcEnd = _msg.find(',', reqPrefix.size());
      if (svcEnd != std::string::npos)
-@@ -688,7 +712,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+@@ -688,7 +715,7 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
    if (typeEnd != std::string::npos)
    {
      frameParts = {
@@ -61,7 +64,7 @@ index 1951dda..1abc0a0 100644
          _msg.substr(reqPrefix.size(), svcEnd - reqPrefix.size()),
          _msg.substr(svcEnd + 1, typeEnd - svcEnd - 1),
          _msg.substr(typeEnd + 1)};
-@@ -1089,6 +1113,62 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
+@@ -1089,6 +1116,62 @@ void WebsocketServer::OnMessage(int _socketId, const std::string _msg)
    {
      this->OnRequest(_socketId, frameParts);
    }
