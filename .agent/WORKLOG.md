@@ -1843,3 +1843,8 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Live check** (debug build, :9013 `diff_drive`): both menus open on
   the live world. Saving by hand not tried (tested against a reply).
 - **Tests:** workspace 847 → 856 passing.
+- **Review fixes (#54):** gimbal lock in `sdf_pose`; the dialog keeps
+  the keys; loaded poses survive a reconnect and forget a deleted model
+  or another world; ⇧⌘S prevented in the browser; typed names keep their
+  last part; "last saved" forgets another world; type-to-search in the
+  World menu; long Undo labels end in "…"; hides aren't saved (D-108).
