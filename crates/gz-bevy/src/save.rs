@@ -1,15 +1,21 @@
-//! Saving a file the user asked for (the Plot panel's Export CSV): the
-//! browser downloads it; natively it is written to the working directory.
+//! Saving a file the user asked for (the Plot panel's Export CSV, the
+//! World menu's Save and its screenshot): the browser downloads it;
+//! natively it is written to the working directory.
 
 /// Saves `contents` as `name` and says where it went: the path written
 /// natively, the name downloaded in the browser.
 pub fn save_text(name: &str, mime: &str, contents: &str) -> Result<String, String> {
-    imp::save_text(name, mime, contents)
+    imp::save_bytes(name, mime, contents.as_bytes())
+}
+
+/// [`save_text`], for bytes (a PNG).
+pub fn save_bytes(name: &str, mime: &str, contents: &[u8]) -> Result<String, String> {
+    imp::save_bytes(name, mime, contents)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
-    pub fn save_text(name: &str, _mime: &str, contents: &str) -> Result<String, String> {
+    pub fn save_bytes(name: &str, _mime: &str, contents: &[u8]) -> Result<String, String> {
         let dir = std::env::current_dir().map_err(|e| e.to_string())?;
         let path = dir.join(name);
         std::fs::write(&path, contents).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -32,13 +38,14 @@ mod imp {
     const REVOKE_MS: i32 = 10_000;
 
     /// Through a Blob URL and a clicked `<a download>` in the page.
-    pub fn save_text(name: &str, mime: &str, contents: &str) -> Result<String, String> {
+    pub fn save_bytes(name: &str, mime: &str, contents: &[u8]) -> Result<String, String> {
         let window = web_sys::window().ok_or("no window")?;
         let document = window.document().ok_or("no document")?;
-        let parts = js_sys::Array::of1(&JsValue::from_str(contents));
+        let bytes = js_sys::Uint8Array::from(contents);
+        let parts = js_sys::Array::of1(&bytes);
         let options = BlobPropertyBag::new();
         options.set_type(mime);
-        let blob = Blob::new_with_str_sequence_and_options(&parts, &options).map_err(js)?;
+        let blob = Blob::new_with_u8_array_sequence_and_options(&parts, &options).map_err(js)?;
         let url = Url::create_object_url_with_blob(&blob).map_err(js)?;
         let a: HtmlAnchorElement = document
             .create_element("a")
@@ -78,5 +85,9 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "a,b\n1,2\n");
         std::fs::remove_file(&path).unwrap();
         assert!(save_text("no/such/dir/x.csv", "text/csv", "").is_err());
+        let png = format!("gz-bevy-save-test-{}.png", std::process::id());
+        let path = save_bytes(&png, "image/png", &[0x89, b'P', 0]).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), [0x89, b'P', 0]);
+        std::fs::remove_file(&path).unwrap();
     }
 }

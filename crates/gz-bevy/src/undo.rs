@@ -157,6 +157,23 @@ impl UndoStack {
         self.saved != Some(self.done.len())
     }
 
+    /// The world was saved as it is now: not dirty until the next edit
+    /// (or an undo past this point).
+    pub fn mark_saved(&mut self) {
+        self.saved = Some(self.done.len());
+    }
+
+    /// Where the user last put the entity at scene `path` (in its
+    /// parent's frame), if an edit still on the stack moved it.
+    pub fn placed_pose(&self, path: &str) -> Option<Transform> {
+        self.done.iter().rev().find_map(|e| {
+            e.steps.iter().rev().find_map(|s| match s {
+                Step::Pose { path: p, after, .. } if p == path => Some(*after),
+                _ => None,
+            })
+        })
+    }
+
     /// What ⌘Z would undo.
     pub fn undo_label(&self) -> Option<&str> {
         self.done.last().map(|e| e.label.as_str())
