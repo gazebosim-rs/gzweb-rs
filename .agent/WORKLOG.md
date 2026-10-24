@@ -1866,4 +1866,9 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Live check** (debug build, :9013 `diff_drive`): the menu opens on
   `vehicle_blue`. Deleting, duplicating and aligning by hand not tried
   (tested against server replies).
-- **Tests:** workspace 861 → 877 passing.
+- **Review fixes (#55):** ↓ moves past a submenu's row; Delete again
+  while one is under way does nothing; `remove` by id; undo waits for a
+  model it's bringing back, which keeps its pose as loaded; Align holds
+  its models; ⇧D doesn't fly on the web; the undo chip follows its
+  edit's serial.
+- **Tests:** workspace 861 → 879 passing.
