@@ -194,8 +194,10 @@
       "id": "sim.reset",
       "label": "Reset world",
       "keys": "mod+shift+R",
+      "web": null,
+      "web_alt": "alt+shift+R",
       "scope": "global",
-      "note": "not undoable (DECISIONS.md D-89: the server can't put a world back); forgets the moves on the undo stack"
+      "note": "not undoable (DECISIONS.md D-89: the server can't put a world back); forgets the moves on the undo stack. Not mod+shift+R in the browser: that is its hard reload, which still delivers the key first (DECISIONS.md D-107)"
     },
     {
       "id": "teleop.stop",
@@ -389,7 +391,7 @@
     }
   ],
   "web_reserved": {
-    "note": "Browsers do not deliver these to the page (Chrome unless installed as a PWA). Bindings using them MUST declare web: null and a web_alt.",
+    "note": "Browsers do not deliver these to the page (Chrome unless installed as a PWA), or act on them as the page gets them (reload). Bindings using them MUST declare web: null and a web_alt.",
     "keys": [
       "mod+W",
       "mod+N",
@@ -399,7 +401,9 @@
       "mod+1..9",
       "mod+shift+W",
       "mod+Q",
-      "mod+D (bookmarks)"
+      "mod+D (bookmarks)",
+      "mod+R (reload: delivered, then the page goes)",
+      "mod+shift+R (hard reload: delivered, then the page goes)"
     ],
     "prevent_default_when_canvas_focused": [
       "mod+K",

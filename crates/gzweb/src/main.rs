@@ -31,6 +31,8 @@
 //!   `--select MODEL` for its drive; DECISIONS.md D-104).
 //! - `--console` starts the full UI with the Console panel open
 //!   (DECISIONS.md D-105).
+//! - `--palette QUERY` opens the command palette with QUERY typed
+//!   (DECISIONS.md D-107).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
@@ -83,6 +85,8 @@ struct Args {
     console: bool,
     /// `--pop-out`.
     pop_out: Vec<String>,
+    /// `--palette`.
+    palette: Option<String>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -97,7 +101,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -216,6 +220,7 @@ fn parse_args(
     let mut teleop = false;
     let mut console = false;
     let mut pop_out = vec![];
+    let mut palette = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -287,6 +292,7 @@ fn parse_args(
             }
             "--teleop" => teleop = true,
             "--console" => console = true,
+            "--palette" => palette = Some(value()?),
             "--pop-out" => {
                 pop_out = value()?
                     .split(',')
@@ -370,6 +376,9 @@ fn parse_args(
     if !pop_out.is_empty() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--pop-out needs --ui full".into());
     }
+    if palette.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--palette needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -416,6 +425,7 @@ fn parse_args(
         teleop,
         console,
         pop_out,
+        palette,
         layout,
         no_vsync,
     })))
@@ -492,6 +502,7 @@ fn command() -> Result<Command, String> {
         teleop: false,
         console: false,
         pop_out: vec![],
+        palette: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -717,6 +728,9 @@ fn main() -> AppExit {
         }
         if !args.pop_out.is_empty() {
             app.insert_resource(gz_ui::shell::StartPopOuts(args.pop_out));
+        }
+        if let Some(query) = args.palette {
+            app.insert_resource(gz_ui::shell::StartPalette(query));
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -999,6 +1013,14 @@ mod tests {
         assert_eq!(
             parse(&["--pop-out", "plot", "--ui", "minimal"], None).unwrap_err(),
             "--pop-out needs --ui full"
+        );
+        assert_eq!(
+            run_args(&["--palette", "grid"], None).palette.as_deref(),
+            Some("grid")
+        );
+        assert_eq!(
+            parse(&["--palette", "grid", "--ui", "minimal"], None).unwrap_err(),
+            "--palette needs --ui full"
         );
         assert_eq!(
             parse(&["--console", "--ui", "minimal"], None).unwrap_err(),

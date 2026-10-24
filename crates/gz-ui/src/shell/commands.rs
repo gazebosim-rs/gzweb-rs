@@ -5,9 +5,10 @@
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use gz_bevy::connection::GzCommand;
 use gz_bevy::edit::edits_allowed;
 use gz_bevy::undo::UndoCommand;
-use gz_bevy::view::controls::{ActiveScopes, ViewRouting};
+use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
 use gz_bevy::view::input::InputMap;
 
 use super::layout::{ShellLayout, Side, Slot};
@@ -39,8 +40,8 @@ pub enum UiCommand {
     SwapSlots,
     CloseSecondary,
     SetTool(Tool),
-    /// The theme command: Settings for now (⌘K, which will list "Theme:
-    /// light / dark / follow system", is M8; DECISIONS.md).
+    /// The theme commands: the command palette's "Theme: light / dark /
+    /// follow system" (D-107), and Settings.
     SetTheme(ThemeMode),
     ToggleTheme,
     /// A splitter double-click.
@@ -55,6 +56,10 @@ pub enum UiCommand {
     ClosePopOut(PanelId),
     /// A press in a pop-out window: it comes to the top.
     RaisePopOut(PanelId),
+    /// ⌘K or the search trigger: the command palette (§7.7).
+    OpenPalette,
+    /// Esc, a run, or a click outside: the palette closes.
+    ClosePalette,
     /// A pop-out header drag: the window's top-left corner, in the
     /// viewport area.
     MovePopOut {
@@ -129,16 +134,22 @@ impl Shortcuts<'_, '_> {
 }
 
 /// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub), the
-/// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓) and the panels'
-/// own shortcuts.
+/// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓), ⇧⌘R (Reset, on a live world), ⌘K,
+/// the themes and the panels' own shortcuts; and [`RunBinding`]s of the
+/// same (the command palette, D-107).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn shortcut_keys(
     shortcuts: Shortcuts,
     panels: Res<PanelRegistry>,
+    phase: Option<Res<super::CurrentPhase>>,
+    mut runs: MessageReader<RunBinding>,
     mut out: MessageWriter<UiCommand>,
     mut undo: MessageWriter<UndoCommand>,
     mut layout: MessageWriter<LayoutCommand>,
+    mut sim: MessageWriter<GzCommand>,
 ) {
-    for id in shortcuts.pressed() {
+    let ran: Vec<String> = runs.read().map(|r| r.0.clone()).collect();
+    for id in shortcuts.pressed().into_iter().chain(ran) {
         let views = match id.as_str() {
             "view.maximize" => Some(LayoutCommand::Maximize(None)),
             "view.close" => Some(LayoutCommand::Close(None)),
@@ -153,6 +164,16 @@ pub(crate) fn shortcut_keys(
         let cmd = match id.as_str() {
             "ui.sidebar" => UiCommand::ToggleSidebar,
             "ui.inspector" => UiCommand::ToggleInspector,
+            "ui.command_palette" => UiCommand::OpenPalette,
+            "ui.theme_light" => UiCommand::SetTheme(ThemeMode::Light),
+            "ui.theme_dark" => UiCommand::SetTheme(ThemeMode::Dark),
+            "ui.theme_system" => UiCommand::SetTheme(ThemeMode::System),
+            "sim.reset" => {
+                if phase.as_deref().is_some_and(|p| p.0 == super::Phase::Live) {
+                    sim.write(GzCommand::Reset);
+                }
+                continue;
+            }
             "edit.undo" | "edit.redo" => {
                 if !shortcuts.editing() {
                     undo.write(if id == "edit.undo" {
@@ -227,6 +248,7 @@ pub(crate) fn apply_ui_commands(
     mut layout: ResMut<ShellLayout>,
     mut tool: ResMut<Tool>,
     mut theme: ResMut<Theme>,
+    mut palette: ResMut<super::palette::PaletteOpen>,
     status: Option<Res<gz_bevy::connection::GzStatus>>,
 ) {
     for cmd in commands.read() {
@@ -273,6 +295,12 @@ pub(crate) fn apply_ui_commands(
                 }
             }
             UiCommand::MovePopOut { panel, at } => layout.move_popout(panel, at),
+            UiCommand::OpenPalette => {
+                palette.set_if_neq(super::palette::PaletteOpen(true));
+            }
+            UiCommand::ClosePalette => {
+                palette.set_if_neq(super::palette::PaletteOpen(false));
+            }
             UiCommand::ResizePopOut {
                 panel,
                 start,

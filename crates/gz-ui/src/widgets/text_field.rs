@@ -63,6 +63,19 @@ pub fn filter_field(
     )
 }
 
+/// A search field `height` tall (§7.7: the command palette's is 44):
+/// Geist 13, with `placeholder` in `text_3` while it's empty.
+pub(crate) fn search_field(height: f32, placeholder: impl Into<String>) -> impl Bundle {
+    let placeholder = placeholder.into();
+    field(
+        height,
+        TypeStyle::BODY,
+        placeholder.clone(),
+        String::new(),
+        Some(placeholder),
+    )
+}
+
 /// A command line (§3.3: the Console's footer input, mono 12): as tall as
 /// a panel's filter, with `placeholder` in `text_3` while it's empty.
 pub(crate) fn command_field(
