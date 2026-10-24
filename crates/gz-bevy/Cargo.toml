@@ -18,6 +18,8 @@ tobj = { version = "4.0.5", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gz-core = { workspace = true, features = ["native"] }
+# The local time a message came (on the web, `js_sys::Date`).
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tungstenite = "0.26"
 ureq = "3"
 
