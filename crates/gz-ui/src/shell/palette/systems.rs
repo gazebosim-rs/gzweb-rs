@@ -420,8 +420,8 @@ pub(crate) fn query_text(
 
 /// A new query (or the palette opening) ranks the items again and
 /// chooses the first available result; so does a change to what they
-/// come from (a world loading while it's open), keeping the chosen one
-/// where it still is.
+/// come from (a world loading while it's open), which keeps a result
+/// chosen with ↑ or ↓ where it still is.
 pub(crate) fn refresh_results(
     open: Res<PaletteOpen>,
     mut sources: Sources,
@@ -436,10 +436,13 @@ pub(crate) fn refresh_results(
     if !new_query && results == state.results {
         return;
     }
+    if new_query {
+        state.moved = false;
+    }
     let kept = state
         .selected
         .and_then(|i| state.results.get(i))
-        .filter(|_| !new_query)
+        .filter(|_| state.moved)
         .and_then(|was| {
             results
                 .iter()
@@ -562,6 +565,7 @@ pub(crate) fn on_field_key(
     let next = step(&state.results, state.selected, by);
     if state.selected != next {
         state.selected = next;
+        state.moved = true;
     }
 }
 

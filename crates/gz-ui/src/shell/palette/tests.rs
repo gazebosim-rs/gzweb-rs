@@ -205,8 +205,13 @@ fn the_palette_finds_and_runs_commands() {
 fn rows_choose_click_and_close() {
     let mut app = shell_app((1440, 900), 1.0);
     frames(&mut app, 2);
-    go_live(&mut app, false);
+    // Opened before the world is live: once it is, the first available
+    // result (Play / pause) is chosen.
     open(&mut app);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    let s = app.world().resource::<PaletteState>().clone();
+    assert_eq!(s.results[s.selected.unwrap()].name, "Play / pause");
     type_query(&mut app, "step");
     let state = app.world().resource::<PaletteState>().clone();
     let step_i = state.results.iter().position(|i| i.name.contains("Step"));

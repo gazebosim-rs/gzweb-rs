@@ -40,6 +40,9 @@ pub(crate) struct PaletteState {
     built: bool,
     /// Where focus was before the palette took it.
     return_focus: Option<Entity>,
+    /// ↑ or ↓ chose the result: a refresh keeps it (else the first
+    /// available is chosen again).
+    moved: bool,
 }
 
 pub(crate) fn build(app: &mut App) {
