@@ -133,10 +133,6 @@ where
     T: Bundle,
     F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
 {
-    let popup_node = Node {
-        position_type: PositionType::Absolute,
-        ..panel_node(theme)
-    };
     (
         Menu,
         Node {
@@ -146,20 +142,31 @@ where
         observe(on_menu_event),
         children![
             (trigger, MenuTrigger, bevy::ui_widgets::MenuButton),
-            (
-                MenuPopupOf,
-                MenuPopup::default(),
-                popup_node,
-                Fill(ColorRole::Surface),
-                Stroke(ColorRole::Line),
-                elevation::MENU.shadow(),
-                side.popover(),
-                Visibility::Hidden,
-                GlobalZIndex(900),
-                OverrideClip,
-                Children::spawn(SpawnWith(items)),
-            ),
+            popup(theme, side, items),
         ],
+    )
+}
+
+/// A [`Menu`]'s popup, hidden until opened, holding what `items` spawns.
+fn popup<F>(theme: &Theme, side: MenuSide, items: F) -> impl Bundle
+where
+    F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
+{
+    (
+        MenuPopupOf,
+        MenuPopup::default(),
+        Node {
+            position_type: PositionType::Absolute,
+            ..panel_node(theme)
+        },
+        Fill(ColorRole::Surface),
+        Stroke(ColorRole::Line),
+        elevation::MENU.shadow(),
+        side.popover(),
+        Visibility::Hidden,
+        GlobalZIndex(900),
+        OverrideClip,
+        Children::spawn(SpawnWith(items)),
     )
 }
 
@@ -311,7 +318,8 @@ pub fn menu_item(theme: &Theme, props: MenuItemProps) -> impl Bundle {
 pub(crate) struct SubmenuRow;
 
 /// A submenu: a row like an item (`label`, optional icon, a chevron) that
-/// opens `items` to its right.
+/// opens `items` to its right. The row isn't a `MenuButton` (whose arrow
+/// keys open its menu): ↑ and ↓ move past it like any item.
 pub(crate) fn submenu<F>(
     theme: &Theme,
     label: &str,
@@ -350,7 +358,50 @@ where
             ));
         })),
     );
-    menu(theme, MenuSide::Right, row, items)
+    (
+        Menu,
+        Node {
+            flex_shrink: 0.0,
+            ..default()
+        },
+        observe(on_menu_event),
+        children![(row, MenuTrigger), popup(theme, MenuSide::Right, items)],
+    )
+}
+
+/// Opens the submenu of the row `row`.
+fn open_submenu(
+    row: Entity,
+    parents: &Query<&ChildOf>,
+    menus: &Query<&Children, With<Menu>>,
+    popups: &Query<&Visibility, With<MenuPopupOf>>,
+    commands: &mut Commands,
+) -> bool {
+    let Some((root, _, open)) = submenu_of(row, parents, menus, popups) else {
+        return false;
+    };
+    if !open {
+        commands.trigger(MenuEvent {
+            source: root,
+            action: MenuAction::Open(NavAction::First),
+        });
+    }
+    true
+}
+
+/// A click on a submenu's row opens it.
+pub(crate) fn on_submenu_click(
+    mut ev: On<PointerClick>,
+    rows: Query<(), With<SubmenuRow>>,
+    parents: Query<&ChildOf>,
+    menus: Query<&Children, With<Menu>>,
+    popups: Query<&Visibility, With<MenuPopupOf>>,
+    mut commands: Commands,
+) {
+    let row = ev.event_target();
+    if rows.contains(row) && open_submenu(row, &parents, &menus, &popups, &mut commands) {
+        ev.propagate(false);
+    }
 }
 
 /// The [`Menu`] a submenu row opens, and its popup.
@@ -407,8 +458,8 @@ pub(crate) fn hover_submenus(
     }
 }
 
-/// → on a submenu's row opens it; ← in a submenu closes it, back on its
-/// row.
+/// →, Enter or Space on a submenu's row opens it; ← in a submenu closes
+/// it, back on its row.
 pub(crate) fn on_submenu_keys(
     mut ev: On<FocusedInput<KeyboardInput>>,
     rows: Query<(), With<SubmenuRow>>,
@@ -423,13 +474,11 @@ pub(crate) fn on_submenu_keys(
     }
     let focused = ev.focused_entity;
     match ev.input.key_code {
-        KeyCode::ArrowRight if rows.contains(focused) => {
-            if let Some((root, ..)) = submenu_of(focused, &parents, &menus, &popups) {
+        KeyCode::ArrowRight | KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space
+            if rows.contains(focused) =>
+        {
+            if open_submenu(focused, &parents, &menus, &popups, &mut commands) {
                 ev.propagate(false);
-                commands.trigger(MenuEvent {
-                    source: root,
-                    action: MenuAction::Open(NavAction::First),
-                });
             }
         }
         KeyCode::ArrowLeft => {
@@ -675,6 +724,7 @@ pub(crate) fn build(app: &mut App) {
     app.add_observer(on_check_item_activate)
         .add_observer(on_menu_typing)
         .add_observer(on_submenu_keys)
+        .add_observer(on_submenu_click)
         .add_systems(Update, hover_submenus)
         .add_systems(
             Update,

@@ -478,9 +478,14 @@ pub(crate) fn models_edited(
     let now = time.elapsed_secs_f64();
     for e in edited.read() {
         let Ok(text) = &e.result else { continue };
-        let undoes = undo.as_deref().and_then(UndoStack::undo_label);
+        let undo = undo.as_deref();
+        let undoes = undo
+            .and_then(UndoStack::undo_serial)
+            .zip(undo.and_then(UndoStack::undo_label));
         match (e.edit, undoes) {
-            (ModelEdit::Delete, Some(l)) => note.show_undo(text.clone(), l.to_string(), now),
+            (ModelEdit::Delete, Some((n, l))) => {
+                note.show_undo(text.clone(), (n, l.to_string()), now);
+            }
             _ => note.show(text.clone(), now),
         }
     }

@@ -212,10 +212,10 @@ pub(crate) const UNDO_NOTE_SECS: f64 = 5.0;
 
 /// A transient confirmation ("Saved warehouse_demo.sdf", §3.6): it takes
 /// item 5's slot until `until` (real seconds). An undo chip ("Deleted cart
-/// · Undo", §7.1) also holds the edit it undoes, and goes once that isn't
-/// the one ⌘Z would undo.
+/// · Undo", §7.1) also holds the edit it undoes (its serial and label),
+/// and goes once that isn't the one ⌘Z would undo.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct StatusNote(pub Option<(String, f64)>, pub Option<String>);
+pub(crate) struct StatusNote(pub Option<(String, f64)>, pub Option<(u64, String)>);
 
 impl StatusNote {
     /// Shows `text` for [`NOTE_SECS`] from `now`.
@@ -225,8 +225,8 @@ impl StatusNote {
     }
 
     /// Shows `text` with an Undo for the edit `undoes` ([`UndoStack`]'s
-    /// label) for [`UNDO_NOTE_SECS`].
-    pub(crate) fn show_undo(&mut self, text: impl Into<String>, undoes: String, now: f64) {
+    /// serial and label) for [`UNDO_NOTE_SECS`].
+    pub(crate) fn show_undo(&mut self, text: impl Into<String>, undoes: (u64, String), now: f64) {
         self.0 = Some((text.into(), now + UNDO_NOTE_SECS));
         self.1 = Some(undoes);
     }
@@ -267,8 +267,8 @@ pub(crate) fn message_chip(
     let now = time.elapsed_secs_f64();
     let undone = note
         .1
-        .as_deref()
-        .is_some_and(|l| undo.as_deref().and_then(UndoStack::undo_label) != Some(l));
+        .as_ref()
+        .is_some_and(|(n, _)| undo.as_deref().and_then(UndoStack::undo_serial) != Some(*n));
     if undone || note.0.as_ref().is_some_and(|(_, until)| now >= *until) {
         *note = StatusNote::default();
     }
@@ -306,7 +306,7 @@ pub(crate) fn message_chip(
             .unwrap_or_default(),
     };
     let tip = match &note.1 {
-        Some(l) if want.kind == StatusKind::Done => Tooltip::new(format!("Undo {l}")),
+        Some((_, l)) if want.kind == StatusKind::Done => Tooltip::new(format!("Undo {l}")),
         _ => Tooltip::new(want.text.clone()).detail(source),
     }
     .side(TooltipSide::Above);

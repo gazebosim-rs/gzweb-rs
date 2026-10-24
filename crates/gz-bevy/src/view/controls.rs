@@ -256,6 +256,7 @@ impl Plugin for ViewerControls {
             .init_resource::<super::model_edits::EditJobs>()
             .init_resource::<super::model_edits::SelectWhenSpawned>()
             .add_message::<crate::edit::SetPose>()
+            .init_resource::<crate::edit::Held>()
             .add_message::<crate::undo::Record>()
             .init_resource::<super::place::Placing>()
             .init_resource::<super::place::PlaceHover>()

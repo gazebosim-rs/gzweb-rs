@@ -83,12 +83,16 @@ pub struct ModelsEdited {
     pub result: Result<String, String>,
 }
 
-/// A model as an edit takes it: its name, its pose in the world, and its
-/// bounds' size along the world's axes.
+/// A model as an edit takes it: its entity and id, its name, its pose in
+/// the world and as loaded (for Save, D-108), and its bounds' size along
+/// the world's axes.
 #[derive(Clone, Debug, PartialEq)]
 struct Taken {
+    entity: Entity,
+    id: u32,
     name: String,
     pose: Transform,
+    loaded: Option<Transform>,
     size: Vec3,
 }
 
@@ -106,9 +110,14 @@ impl ModelClipboard {
     }
 }
 
-/// The edits waiting for the server's SDFormat, with when they asked.
+/// The edits waiting for the server's SDFormat, with when they asked; and
+/// the models a delete is under way for (waiting, or removed and not yet
+/// gone), which another Delete leaves alone.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct EditJobs(Vec<(ModelEdit, Vec<Taken>, f64)>);
+pub struct EditJobs {
+    waiting: Vec<(ModelEdit, Vec<Taken>, f64)>,
+    deleting: Vec<(Entity, f64)>,
+}
 
 /// The copies asked for, to select once they appear, until a time; the
 /// first to appear replaces the selection, the rest join it.
@@ -184,6 +193,7 @@ fn spawn_copies(
                 name: name.clone(),
                 sdf: model.sdf.clone(),
                 pose,
+                loaded: None,
             },
             after: true,
         });
@@ -228,6 +238,7 @@ pub(crate) fn request_model_edits(
     scene: ViewScene,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     models: Models,
+    loaded: Option<Res<crate::world_save::LoadedPoses>>,
     mut clipboard: ResMut<ModelClipboard>,
     mut jobs: ResMut<EditJobs>,
     mut pending: ResMut<SelectWhenSpawned>,
@@ -236,6 +247,11 @@ pub(crate) fn request_model_edits(
     mut done: MessageWriter<ModelsEdited>,
 ) {
     let now = time.elapsed_secs_f64();
+    // A delete's models are gone, or its remove went unheeded.
+    if !jobs.deleting.is_empty() {
+        jobs.deleting
+            .retain(|(e, at)| models.contains(*e) && now - at < 2.0 * EDIT_TIMEOUT_SECS);
+    }
     for EditModels(edit) in asks.read() {
         let fail = |why: &str| ModelsEdited {
             edit: *edit,
@@ -276,6 +292,8 @@ pub(crate) fn request_model_edits(
             continue;
         };
         let to_root = root_at.affine().inverse();
+        let deleting = |e: &Entity| jobs.deleting.iter().any(|(d, _)| d == e);
+        let mut picked = 0;
         let taken: Vec<Taken> = scene
             .selection
             .entities
@@ -285,24 +303,38 @@ pub(crate) fn request_model_edits(
                 if parent.parent() != root || g.kind != NodeKind::Model {
                     return None;
                 }
+                picked += 1;
+                if *edit == ModelEdit::Delete && deleting(e) {
+                    return None;
+                }
                 let b = gz_bounds(&scene, &to_root, *e)?;
                 Some(Taken {
+                    entity: *e,
+                    id: g.id,
                     name: g.name.clone(),
                     pose: *t,
+                    loaded: loaded.as_deref().and_then(|l| l.0.get(&g.path).copied()),
                     size: b.max - b.min,
                 })
             })
             .collect();
-        if taken.is_empty() {
+        if picked == 0 {
             done.write(fail("Select a model"));
             continue;
+        }
+        // Already on their way out (Delete pressed again).
+        if taken.is_empty() {
+            continue;
+        }
+        if *edit == ModelEdit::Delete {
+            jobs.deleting.extend(taken.iter().map(|t| (t.entity, now)));
         }
         out.write(GzCommand::Request {
             service: generate_service(&world),
             msg_type: "gz.msgs.SdfGeneratorConfig".into(),
             payload: generate_request(),
         });
-        jobs.0.push((*edit, taken, now));
+        jobs.waiting.push((*edit, taken, now));
     }
 }
 
@@ -327,11 +359,11 @@ pub(crate) fn finish_model_edits(
     let world = status.as_deref().and_then(|s| s.world.clone());
     let service = world.as_deref().map(generate_service);
     for reply in replies.read() {
-        if Some(&reply.service) != service.as_ref() || jobs.0.is_empty() {
+        if Some(&reply.service) != service.as_ref() || jobs.waiting.is_empty() {
             continue;
         }
         let world = world.as_deref().unwrap_or_default();
-        let (edit, taken, _) = jobs.0.remove(0);
+        let (edit, taken, _) = jobs.waiting.remove(0);
         let sdf = msgs::StringMsg::decode(reply.payload.as_slice())
             .map(|m| m.data)
             .unwrap_or_default();
@@ -343,6 +375,7 @@ pub(crate) fn finish_model_edits(
                         name: t.name.clone(),
                         sdf: model_sdf(&sdf, &t.name)?,
                         pose: t.pose,
+                        loaded: t.loaded,
                     },
                     t.size,
                 ))
@@ -370,8 +403,8 @@ pub(crate) fn finish_model_edits(
             ),
             ModelEdit::Delete => {
                 let named: Vec<String> = copies.iter().map(|(m, _)| m.name.clone()).collect();
-                for (m, _) in &copies {
-                    out.write(remove_request(world, &m.name));
+                for ((m, _), t) in copies.iter().zip(&taken) {
+                    out.write(remove_request(world, &m.name, Some(t.id)));
                 }
                 records.write(Record {
                     verb: edit.verb(),
@@ -389,17 +422,25 @@ pub(crate) fn finish_model_edits(
                 format!("{} {}", edit.done(), names(&named))
             }
         });
+        // A delete that failed can be asked again.
+        if edit == ModelEdit::Delete && result.is_err() {
+            jobs.deleting
+                .retain(|(e, _)| !taken.iter().any(|t| t.entity == *e));
+        }
         done.write(ModelsEdited { edit, result });
     }
-    let late: Vec<ModelEdit> = jobs
-        .0
+    let late: Vec<(ModelEdit, Vec<Entity>)> = jobs
+        .waiting
         .iter()
         .filter(|(.., at)| now - at > EDIT_TIMEOUT_SECS)
-        .map(|(e, ..)| *e)
+        .map(|(e, taken, _)| (*e, taken.iter().map(|t| t.entity).collect()))
         .collect();
     if !late.is_empty() {
-        jobs.0.retain(|(.., at)| now - at <= EDIT_TIMEOUT_SECS);
-        for edit in late {
+        jobs.waiting
+            .retain(|(.., at)| now - at <= EDIT_TIMEOUT_SECS);
+        for (edit, entities) in late {
+            // A delete that never went can be asked again.
+            jobs.deleting.retain(|(e, _)| !entities.contains(e));
             done.write(ModelsEdited {
                 edit,
                 result: Err("The server didn't answer".into()),

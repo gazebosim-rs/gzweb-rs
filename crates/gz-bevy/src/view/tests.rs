@@ -3476,6 +3476,9 @@ fn align_lines_the_selection_up_with_the_first() {
     assert!((poses[0].pose.translation - Vec3::new(0.0, -3.0, 0.0)).length() < 1e-4);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].verb, "align");
+    // Held, so the stream's older poses don't pull it back meanwhile.
+    let now = r.app.world().resource::<Time<Real>>().elapsed_secs_f64();
+    assert!(r.app.world().resource::<crate::edit::Held>().holds(b, now));
     assert!(matches!(
         records[0].changes[..],
         [Change::Pose { entity, .. }] if entity == b
@@ -3611,15 +3614,8 @@ fn model_edits_go_through_the_worlds_sdformat() {
         assert!((f.pose.unwrap().position.unwrap().y - y).abs() < 1e-4);
         assert_eq!(records[0].verb, "paste");
     }
-    // Delete: removed, kept for undo.
-    let (sent, records, done) = run(&mut r, ModelEdit::Delete);
-    assert_eq!(service(&sent[0]), "/world/w/remove");
-    assert!(matches!(
-        &records[0].changes[..],
-        [Change::Exists { model, after: false }] if model.name == "a" && model.sdf.contains("<link")
-    ));
-    assert_eq!(done[0].result, Ok("Deleted a".into()));
-    // A reply without the model fails.
+    // A reply without the model fails, and the model can be deleted
+    // again.
     drain(&mut r);
     r.app
         .world_mut()
@@ -3638,6 +3634,26 @@ fn model_edits_go_through_the_worlds_sdformat() {
     let (sent, _, done) = drain(&mut r);
     assert!(sent.is_empty());
     assert_eq!(done[0].result, Err("no model a in the world".into()));
+    // Delete: removed by its id, kept for undo with its pose as loaded.
+    let (sent, records, done) = run(&mut r, ModelEdit::Delete);
+    assert_eq!(service(&sent[0]), "/world/w/remove");
+    let GzCommand::Request { payload, .. } = &sent[0] else {
+        unreachable!()
+    };
+    let removed = msgs::Entity::decode(payload.as_slice()).unwrap();
+    assert_eq!((removed.name.as_str(), removed.id), ("a", 3));
+    assert!(matches!(
+        &records[0].changes[..],
+        [Change::Exists { model, after: false }] if model.name == "a" && model.sdf.contains("<link")
+    ));
+    assert_eq!(done[0].result, Ok("Deleted a".into()));
+    // Delete again before it's gone: nothing more (one edit, one remove).
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    let (sent, records, done) = drain(&mut r);
+    assert!(sent.is_empty() && records.is_empty() && done.is_empty());
     // Not without edits.
     r.app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
     r.app

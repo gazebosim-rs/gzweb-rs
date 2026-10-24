@@ -139,10 +139,12 @@ pub fn create_copy_request(world: &str, sdf: &str, name: &str, pose: &Transform)
     }
 }
 
-/// The `remove` request for the top-level model `name`.
-pub fn remove_request(world: &str, name: &str) -> GzCommand {
+/// The `remove` request for the top-level model `name`, by its `id` when
+/// known (gz-sim finds a name's first model, maybe a nested one).
+pub fn remove_request(world: &str, name: &str, id: Option<u32>) -> GzCommand {
     let msg = msgs::Entity {
         name: name.to_string(),
+        id: id.map_or(0, u64::from),
         r#type: msgs::entity::Type::Model as i32,
         ..Default::default()
     };

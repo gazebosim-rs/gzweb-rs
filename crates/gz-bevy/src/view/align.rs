@@ -8,7 +8,7 @@ use bevy::prelude::*;
 
 use super::{Bounds, Skip, ViewScene};
 use crate::connection::GzStatus;
-use crate::edit::{edits_allowed, movable, HasPlane, SetPose};
+use crate::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use crate::spawn::{GzEntity, GzWorldRoot};
 use crate::undo::{Change, Record};
 
@@ -93,9 +93,12 @@ type Movers<'w, 's> = Query<
 
 /// Runs [`AlignModels`]: on a server that takes edits, with two or more
 /// movable models selected (the first is where the rest line up).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn align_models(
     mut asks: MessageReader<AlignModels>,
+    time: Res<Time<Real>>,
     status: Option<Res<GzStatus>>,
+    mut held: Option<ResMut<Held>>,
     scene: ViewScene,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     mut movers: Movers,
@@ -142,6 +145,10 @@ pub(crate) fn align_models(
                 entity: *e,
                 pose: *t,
             });
+            // The stream's older poses don't pull it back.
+            if let Some(held) = held.as_deref_mut() {
+                held.release(*e, time.elapsed_secs_f64());
+            }
             changes.push(Change::Pose {
                 entity: *e,
                 before,

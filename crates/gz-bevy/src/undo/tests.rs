@@ -328,7 +328,8 @@ fn a_reconnect_forgets_the_hides_and_a_restart_the_moves() {
     assert!(stack(&app).is_dirty());
     app.world_mut().resource_mut::<GzStatus>().sim = Some(stats(3));
     app.update();
-    assert_eq!(*stack(&app), UndoStack::default());
+    let s = stack(&app);
+    assert!(s.undo_label().is_none() && s.redo_label().is_none() && !s.is_dirty());
     // Another server is another world: cleared.
     run(&mut app, moved(cart, 1.0, 2.0, false));
     app.world_mut().resource_mut::<GzStatus>().url = "ws://other".into();
@@ -346,6 +347,7 @@ fn a_delete_or_a_spawn_is_undone_through_the_server() {
         name: "cart".into(),
         sdf: "<sdf version=\"1.9\"><model name=\"cart\"/></sdf>".into(),
         pose: Transform::from_xyz(1.0, 2.0, 0.0),
+        loaded: None,
     };
     let requests = |app: &mut App| -> Vec<(String, Vec<u8>)> {
         app.world_mut()
@@ -435,6 +437,7 @@ fn a_delete_waits_for_a_server_that_takes_edits() {
                 name: "cart".into(),
                 sdf: String::new(),
                 pose: Transform::IDENTITY,
+                loaded: None,
             },
             after: false,
         }],
@@ -446,4 +449,49 @@ fn a_delete_waits_for_a_server_that_takes_edits() {
     app.update();
     let stack = app.world().resource::<UndoStack>();
     assert_eq!(stack.undo_label(), Some("delete cart"));
+}
+
+/// Undoing a delete brings the model's pose as loaded back for Save; a
+/// move of it waits until the model is back, then undoes.
+#[test]
+fn a_move_waits_for_its_model_to_come_back() {
+    use crate::world_save::LoadedPoses;
+    let mut app = app(Some(true));
+    app.init_resource::<LoadedPoses>();
+    let cart = spawn(&mut app, "cart");
+    run(&mut app, dragged(cart, 0.0, 4.0));
+    app.world_mut().write_message(Record {
+        verb: "delete",
+        named: true,
+        changes: vec![Change::Exists {
+            model: ModelCopy {
+                name: "cart".into(),
+                sdf: String::new(),
+                pose: Transform::from_xyz(4.0, 0.0, 0.0),
+                loaded: Some(Transform::from_xyz(9.0, 0.0, 0.0)),
+            },
+            after: false,
+        }],
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    app.world_mut().entity_mut(cart).despawn();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    assert_eq!(
+        app.world().resource::<LoadedPoses>().0.get("cart"),
+        Some(&Transform::from_xyz(9.0, 0.0, 0.0))
+    );
+    assert_eq!(stack(&app).undo_label(), Some("move cart"));
+    // Not back yet: the move stays.
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    assert_eq!(stack(&app).undo_label(), Some("move cart"));
+    // Back: it undoes.
+    spawn(&mut app, "cart");
+    app.update();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    assert_eq!(stack(&app).undo_label(), None);
 }

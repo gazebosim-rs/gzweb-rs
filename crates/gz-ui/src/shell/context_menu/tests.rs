@@ -197,7 +197,68 @@ fn hide_hides_the_selection() {
     let undo = app.world().resource::<UndoStack>();
     assert_eq!(undo.undo_label(), Some("hide 2 entities"));
     open(&mut app, cart);
-    assert!(all_text(&mut app).contains("Show"));
+    let (hide, _) = item(&mut app, ContextItem::Hide);
+    let label = app
+        .world()
+        .get::<crate::widgets::menu::MenuLabel>(hide)
+        .unwrap()
+        .0
+        .clone();
+    assert_eq!(label, "Show");
+}
+
+fn row_named(app: &mut App, name: &str) -> Entity {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(Entity, &crate::widgets::menu::MenuLabel), With<SubmenuRow>>()
+        .iter(world)
+        .find(|(_, l)| l.0 == name)
+        .unwrap()
+        .0
+}
+
+fn press_in(app: &mut App, key_code: KeyCode) {
+    let window = find::<Window>(app);
+    app.world_mut()
+        .write_message(bevy::input::keyboard::KeyboardInput {
+            key_code,
+            logical_key: bevy::input::keyboard::Key::Unidentified(
+                bevy::input::keyboard::NativeKey::Unidentified,
+            ),
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window,
+        });
+    frames(app, 2);
+}
+
+/// ↓ moves past a submenu's row like any item; →, Enter or a click opens
+/// it, ← closes it alone.
+#[test]
+fn the_arrows_move_past_a_submenu_row() {
+    use bevy::input_focus::{FocusCause, InputFocus};
+    let (mut app, cart, _) = live();
+    open(&mut app, cart);
+    let (delete, _) = item(&mut app, ContextItem::Edit(ModelEdit::Delete));
+    let (align, show) = (row_named(&mut app, "Align"), row_named(&mut app, "Show"));
+    app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(delete, FocusCause::Navigated);
+    press_in(&mut app, KeyCode::ArrowDown);
+    assert_eq!(focused(&app), Some(align));
+    press_in(&mut app, KeyCode::ArrowDown);
+    assert_eq!(focused(&app), Some(show));
+    assert_eq!(popups_shown(&mut app), 1, "nothing opened on the way");
+    press_in(&mut app, KeyCode::ArrowRight);
+    assert_eq!(popups_shown(&mut app), 2);
+    press_in(&mut app, KeyCode::ArrowLeft);
+    assert_eq!(popups_shown(&mut app), 1);
+    assert_eq!(focused(&app), Some(show));
+    assert_eq!(menus(&mut app), 1, "the menu stays");
+    click(&mut app, show);
+    frames(&mut app, 2);
+    assert_eq!(popups_shown(&mut app), 2);
 }
 
 /// Hovering Align opens its submenu over the menu; with two models
@@ -298,6 +359,7 @@ fn a_delete_shows_an_undo_chip() {
                 name: "cart".into(),
                 sdf: String::new(),
                 pose: Transform::IDENTITY,
+                loaded: None,
             },
             after: false,
         }],
