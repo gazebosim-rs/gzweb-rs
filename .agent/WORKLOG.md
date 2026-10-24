@@ -1657,3 +1657,32 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   (D-88), so it waits on that decision.
 - **Tests:** workspace 801 → 808 passing; coverage 98.1% lines. check.sh
   passes. Not tried by hand.
+
+## 2026-10-24: M7d Teleop (D-104)
+
+- **Server:** `docker/websocket-server/client-publish.patch` adds a
+  `pub_in` operation to the websocket server (raw publish through a
+  gz-transport publisher, its payload kept whole); `Dockerfile.gazebo`
+  applies it after binary-requests.patch. Built as
+  `gz-websocket-jetty-pub`.
+- **Client:** the publish probe (an empty `gz.msgs.Empty` on
+  `/gzweb/publish_probe`, then the topic list), `GzStatus::publishes`,
+  `Transport::set_publishing` (whole `pub_in` payloads), and
+  `GzCommand::Publish` going out only to a server that publishes.
+- **Teleop panel:** targets from the SDFormat's drives and joint
+  controllers (`gz_core::sdf` reads their topics) and the server's Twist
+  topics; Keyboard (pad and keys), Sliders, Gamepad; arming, X and Stop;
+  the Twist at 10 Hz (`gz_core::teleop`); `DriveArmed` stands the fly
+  keys and the gizmo down. The Joint inspector's command slider.
+- **Copy** goes through `CopyText`: the Topics tests wrote the real
+  clipboard (the workspace build has `system_clipboard`) and two of them
+  raced on it.
+- **`gzweb --teleop`.**
+- **Live check** (debug build, the new image with `diff_drive` on
+  :9013): the probe says the server publishes; a scratch client's
+  `pub_in` of a Twist on `/model/vehicle_blue/cmd_vel` drove the vehicle
+  (odometry rising at its 0.5 m/s limit); a capture of the panel with
+  `vehicle_blue` selected. Driving from the panel is tested, not tried
+  by hand.
+- **Tests:** workspace 808 → 820 passing; coverage 98.0% lines. check.sh
+  passes.

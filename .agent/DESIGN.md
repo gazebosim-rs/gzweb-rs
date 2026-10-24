@@ -167,7 +167,8 @@ it with `strtok` on `,` (`gz::common::split`), which merges empty fields:
 - `throttle` with rate 0 divides by zero (a `1.0 / 0` period cast to
   nanoseconds, undefined behaviour);
 - there is no `adv` or `pub_in` handler, so publishing from the client does
-  nothing;
+  nothing (the image's patched server adds `pub_in`, D-104; the client
+  probes for it and publishes only there);
 - `image` is only honoured for `gz.msgs.Image` topics;
 - `ignition.msgs.*` request types are rejected (the reply is an empty
   `gz.msgs.Boolean`);

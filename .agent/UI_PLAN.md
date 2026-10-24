@@ -354,8 +354,12 @@ pop-out windows.
 - **M7d notes (Sensors):** the Sensors panel (D-103): the selected model's sensors, their
   topics from the SDFormat and the server's list, the chosen one's camera frames (decoded off
   the main thread), lidar scan from above or message as text, only while shown; stale and
-  waiting states; the Sensor inspector's Echo topic and Plot. Teleop: waiting on a publish
-  path (D-88: the websocket server has no `pub` handler).
+  waiting states; the Sensor inspector's Echo topic and Plot.
+- **M7d notes (Teleop):** the websocket server's `pub_in` patch and the client's probe for it
+  (`GzStatus::publishes`), the Teleop panel (D-104): drives and joint controllers from the
+  SDFormat, Keyboard, Sliders and Gamepad, arming and X, commands at 10 Hz, the views' fly
+  keys and the gizmo standing down while armed; the Joint inspector's command slider (D-88).
+  Left: the "Nobody is listening" banner, Apply force…, the activity dot, Topics' Publish.
 - **M7c notes:** the Assets panel (D-102): shapes and lights as SDFormat, Fuel search with
   thumbnails and paging, a model by URI; a tile or Insert arms placing, a click in the views
   places on the surface under it (`gz_bevy::view::place`), with a preview, Shift for several,
