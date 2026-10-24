@@ -87,6 +87,7 @@ impl Plugin for SensorsPanelPlugin {
                 )
                     .chain(),
                 (
+                    super::topics::refresh_topics,
                     systems::sync_rows,
                     systems::row_states,
                     systems::preview_parts,

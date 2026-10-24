@@ -63,8 +63,9 @@ impl SensorList {
     }
 }
 
-/// A camera frame being decoded off the main thread, and the newest frame
-/// waiting for it.
+/// A camera frame being decoded on the task pool (off the main thread
+/// natively; on the web the pool runs on it, between frames), and the
+/// newest frame waiting for it.
 #[derive(Resource, Default)]
 pub(crate) struct Decoding {
     task: Option<Task<Option<Image>>>,
@@ -118,8 +119,12 @@ impl ListSources<'_, '_> {
         self.selection.as_ref().is_some_and(Res::is_changed)
             || self.topics.is_changed()
             || self.sdf.as_ref().is_some_and(Res::is_changed)
-            || self.status.as_ref().is_some_and(Res::is_changed)
             || !self.changed.is_empty()
+    }
+
+    /// The world's name (the sensors' derived topics start with it).
+    fn world(&self) -> Option<&str> {
+        self.status.as_deref().and_then(|s| s.world.as_deref())
     }
 
     /// The top-level model `e` is in.
@@ -137,11 +142,7 @@ impl ListSources<'_, '_> {
 
     /// `model`'s sensors, in the scene's order.
     fn entries(&self, model: Entity) -> Vec<SensorEntry> {
-        let world = self
-            .status
-            .as_deref()
-            .and_then(|s| s.world.clone())
-            .unwrap_or_default();
+        let world = self.world().unwrap_or_default().to_string();
         let extras = self.sdf.as_deref().and_then(|s| s.extras.as_ref());
         let mut out = vec![];
         let mut stack = vec![model];
@@ -179,11 +180,18 @@ impl ListSources<'_, '_> {
     }
 }
 
-/// The selected model's sensors, when what they come from changes.
-pub(super) fn collect(src: ListSources, mut list: ResMut<SensorList>) {
-    if !src.changed() && !list.is_added() {
+/// The selected model's sensors, when what they come from changes (the
+/// status only for the world's name, not each of its stats).
+pub(super) fn collect(
+    src: ListSources,
+    mut list: ResMut<SensorList>,
+    mut world: Local<Option<String>>,
+) {
+    let new_world = src.world() != world.as_deref();
+    if !src.changed() && !new_world && !list.is_added() {
         return;
     }
+    *world = src.world().map(str::to_string);
     let any = src.sensors.iter().any(|s| !s.0.is_empty());
     let model = src
         .selection
@@ -322,27 +330,37 @@ pub(super) fn start_preview(
         .as_ref()
         .and_then(|k| list.find(k))
         .and_then(|e| e.topic.clone());
-    let chosen = state.chosen.is_some();
-    if preview.topic == topic && (chosen || preview.topic.is_none()) {
-        return;
-    }
     let msg_type = topic
         .as_deref()
         .and_then(|t| topics.get(t))
         .map(|t| t.msg_type.clone())
         .unwrap_or_default();
+    // The same topic once its type is known (a `<topic>` the server
+    // lists later) starts again, as a camera's frames say.
+    let chosen = state.chosen.is_some();
+    if preview.topic == topic && preview.msg_type == msg_type && (chosen || topic.is_none()) {
+        return;
+    }
     preview.start(topic, &msg_type);
 }
 
-/// Holds the previewed topic while the panel shows on a live world.
+/// Holds the previewed topic while the panel shows on a live world. A
+/// topic whose type becomes known is let go for a frame and held again,
+/// so it is subscribed again as its type says (a camera's `image`).
 pub(super) fn hold_preview(
     hosts: Res<ShownPanels>,
     phase: Res<CurrentPhase>,
     preview: Res<Preview>,
     mut subs: ResMut<GzSubscriptions>,
+    mut held_type: Local<String>,
 ) {
     let live = phase.0 == Phase::Live && hosts.is_shown(SENSORS);
-    let want = preview.topic.as_deref().filter(|_| live);
+    let mut want = preview.topic.as_deref().filter(|_| live);
+    let held = subs.bypass_change_detection().held_by(HOLDER).eq(want);
+    if held && want.is_some() && *held_type != preview.msg_type {
+        want = None;
+    }
+    *held_type = preview.msg_type.clone();
     if subs.bypass_change_detection().held_by(HOLDER).eq(want) {
         return;
     }
@@ -409,7 +427,7 @@ pub(super) fn read_preview(
     }
 }
 
-/// Decodes the newest frame off the main thread, one at a time, and shows
+/// Decodes the newest frame on the task pool, one at a time, and shows
 /// each decoded one.
 pub(super) fn finish_decode(
     mut decoding: ResMut<Decoding>,

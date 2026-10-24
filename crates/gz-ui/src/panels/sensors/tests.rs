@@ -406,3 +406,31 @@ fn a_start_shows_its_sensor() {
     assert_eq!(chosen(&app).as_deref(), Some("lidar"));
     assert!(!app.world().contains_resource::<SensorsStart>());
 }
+
+/// A `<topic>` the server lists only later: the list is asked for again
+/// while the panel shows, and once the topic's type is known the preview
+/// starts again as a camera's and subscribes again.
+#[test]
+fn a_topic_listed_later_previews_as_its_type() {
+    let (mut app, w) = live_sensors();
+    *app.world_mut().resource_mut::<GzTopics>() = topics(&[]);
+    select(&mut app, vec![w.robot], vec![]);
+    assert_eq!(app.world().resource::<Preview>().kind, PreviewKind::Text);
+    frames(&mut app, 50);
+    let asked = sent(&mut app)
+        .into_iter()
+        .filter(|c| *c == GzCommand::RefreshTopics)
+        .count();
+    assert!(asked >= 1, "the list is asked for again");
+    *app.world_mut().resource_mut::<GzTopics>() = topics(&[("/camera", "gz.msgs.Image")]);
+    frames(&mut app, 3);
+    assert_eq!(app.world().resource::<Preview>().kind, PreviewKind::Image);
+    let subs = sent(&mut app);
+    let unsub = subs
+        .iter()
+        .position(|c| *c == GzCommand::Unsubscribe("/camera".into()));
+    let sub = subs
+        .iter()
+        .position(|c| *c == GzCommand::Subscribe("/camera".into()));
+    assert!(unsub.is_some() && sub > unsub, "{subs:?}");
+}
