@@ -2,7 +2,6 @@
 //! list's refresh, the echo's subscription and text, and the body's rows
 //! and echo in place (DECISIONS.md D-99).
 
-use bevy::clipboard::Clipboard;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
@@ -21,13 +20,14 @@ use super::view::{
     topic_row, ChipChoice, EchoClose, EchoPart, EchoSection, NoMatches, RowRate, TopicFilter,
     TopicList, TopicRow, TopicRows,
 };
-use super::{TopicsStart, COPY, TOPICS};
-use crate::panels::{PanelActionActivated, PanelView};
+use super::{TopicsStart, COPY, PLOT_FIELD, TOPICS};
+use crate::panels::{PanelActionActivated, PanelId, PanelRegistry, PanelView, PlotPick, PLOT};
 use crate::shell::{
-    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShownPanels, Slot, UiCommand,
+    CurrentPhase, PanelStatus, Phase, SetPanelStatus, ShellSystems, ShownPanels, Slot, UiCommand,
 };
 use crate::theme::visuals::Active;
 use crate::theme::{Theme, SPACE};
+use crate::widgets::clipboard::CopyText;
 use crate::widgets::layout::set_shown;
 use crate::widgets::text::set_text;
 
@@ -56,12 +56,14 @@ pub(super) fn view(phase: Phase, topics: usize) -> PanelView {
     }
 }
 
-/// The view, the header's count ("12 topics") and Copy, which needs a
-/// message.
+/// The view, the header's count ("12 topics"), Copy, which needs a
+/// message, and Plot field, which needs an echoed topic and the Plot
+/// panel.
 pub(super) fn topics_status(
     phase: Res<CurrentPhase>,
     topics: Res<GzTopics>,
     echo: Res<Echo>,
+    panels: Res<PanelRegistry>,
     mut status: ResMut<PanelStatus>,
 ) {
     if !phase.is_changed() && !topics.is_changed() && !echo.is_changed() {
@@ -74,11 +76,13 @@ pub(super) fn topics_status(
     status.set_count(TOPICS, count);
     let copy = echo.full.is_some() && clipboard_available();
     status.set_action_enabled(TOPICS, COPY, copy);
+    let plot = echo.topic.is_some() && panels.get(PLOT).is_some();
+    status.set_action_enabled(TOPICS, PLOT_FIELD, plot);
 }
 
 /// A [`TopicsStart`]: opens the panel at once, and echoes its topic once
 /// the server lists it.
-pub(super) fn apply_start(
+pub(crate) fn apply_start(
     start: Option<Res<TopicsStart>>,
     topics: Res<GzTopics>,
     mut echo: ResMut<Echo>,
@@ -100,9 +104,35 @@ pub(super) fn apply_start(
     }
 }
 
-/// Asks for the topic list every [`REFRESH_SECS`] while the panel shows
-/// and the world is live, so topics that start or end show.
-pub(super) fn refresh_topics(
+/// The panels that read the topic list (Topics, Sensors, Teleop): one
+/// [`refresh_topics`] runs while any of them shows.
+#[derive(Resource, Clone, Debug, Default)]
+pub(crate) struct TopicListReaders(Vec<PanelId>);
+
+/// Asks for the topic list while `panel` shows, with one refresh for all
+/// such panels.
+pub(crate) fn refresh_while_shown(app: &mut App, panel: PanelId) {
+    if !app.world().contains_resource::<TopicListReaders>() {
+        app.init_resource::<TopicListReaders>().add_systems(
+            Update,
+            refresh_topics
+                .run_if(
+                    |readers: Res<TopicListReaders>, hosts: Option<Res<ShownPanels>>| {
+                        hosts.is_some_and(|h| readers.0.iter().any(|p| h.is_shown(*p)))
+                    },
+                )
+                .in_set(ShellSystems::Panels),
+        );
+    }
+    app.world_mut()
+        .resource_mut::<TopicListReaders>()
+        .0
+        .push(panel);
+}
+
+/// Asks for the topic list every [`REFRESH_SECS`] while the world is
+/// live, so topics that start or end show.
+fn refresh_topics(
     time: Res<Time<Real>>,
     phase: Res<CurrentPhase>,
     mut last: Local<Option<f64>>,
@@ -459,19 +489,27 @@ fn reveal_row(scroll: &mut ScrollPosition, list: &ComputedNode, row_h: f32, i: u
     scroll.y = y.max(0.0);
 }
 
-/// Copy puts the echoed message on the clipboard.
+/// Copy puts the echoed message on the clipboard; Plot field opens the
+/// Plot panel's picker on the echoed topic.
 pub(super) fn on_action(
     ev: On<PanelActionActivated>,
     echo: Res<Echo>,
-    clipboard: Option<ResMut<Clipboard>>,
+    mut copies: MessageWriter<CopyText>,
+    mut picks: MessageWriter<PlotPick>,
 ) {
-    if ev.panel != TOPICS || ev.action != COPY {
+    if ev.panel != TOPICS {
         return;
     }
-    let (Some(text), Some(mut clipboard)) = (&echo.full, clipboard) else {
+    if ev.action == PLOT_FIELD {
+        if let Some(topic) = &echo.topic {
+            picks.write(PlotPick(topic.clone()));
+        }
         return;
-    };
-    if let Err(e) = clipboard.set_text(text.as_str()) {
-        warn!("copy the message: {e:?}");
+    }
+    if ev.action != COPY {
+        return;
+    }
+    if let Some(text) = &echo.full {
+        copies.write(CopyText(text.clone()));
     }
 }

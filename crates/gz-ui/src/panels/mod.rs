@@ -53,7 +53,7 @@ mod assets;
 mod console;
 mod plot;
 mod scene;
-mod sensors;
+pub(crate) mod sensors;
 mod teleop;
 mod topics;
 
@@ -64,12 +64,12 @@ use bevy::prelude::*;
 
 use crate::assets::IconId;
 use crate::registry::{self, ui_id, Registered, Registry};
-pub use assets::{AssetsPanelPlugin, ASSETS};
+pub use assets::{AssetsPanelPlugin, AssetsStart, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleUnread, CONSOLE};
-pub use plot::{PlotCharts, PlotPanelPlugin, PLOT};
+pub use plot::{PlotCharts, PlotPanelPlugin, PlotPick, PlotStart, PLOT};
 pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
-pub use sensors::{SensorsPanelPlugin, SENSORS};
-pub use teleop::{TeleopPanelPlugin, TELEOP};
+pub use sensors::{SensorsPanelPlugin, SensorsStart, ViewSensor, SENSORS};
+pub use teleop::{TeleopPanelPlugin, TeleopStart, TELEOP};
 pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
 
 ui_id! {
@@ -201,6 +201,10 @@ pub struct HeaderAction {
     pub enabled: bool,
     /// What a disabled action's tooltip says (none: "Not available yet").
     pub why: Option<&'static str>,
+    /// A toggle's icon and tooltip while it is on (Pause shows Resume),
+    /// which its panel's systems set
+    /// ([`SetPanelStatus::set_action_on`](crate::shell::SetPanelStatus::set_action_on)).
+    pub on: Option<(IconId, &'static str)>,
 }
 
 impl HeaderAction {
@@ -212,6 +216,22 @@ impl HeaderAction {
             binding: None,
             enabled: true,
             why: None,
+            on: None,
+        }
+    }
+
+    /// A toggle: while its panel says it is on, it shows `icon` and
+    /// `tooltip` instead (and is pressed, to AccessKit).
+    pub fn toggle(mut self, icon: IconId, tooltip: &'static str) -> Self {
+        self.on = Some((icon, tooltip));
+        self
+    }
+
+    /// Its icon and tooltip, on or off.
+    pub(crate) fn look(&self, on: bool) -> (IconId, &'static str) {
+        match self.on {
+            Some(look) if on => look,
+            _ => (self.icon, self.tooltip),
         }
     }
 

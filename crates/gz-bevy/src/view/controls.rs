@@ -79,8 +79,8 @@ impl ViewerControls {
         match mode {
             UiMode::None => Vec::new(),
             // The full UI routes viewport keys by hover and focus
-            // (`ViewRouting`); W A S D stay the fly keys until Teleop (M7)
-            // can take them while armed.
+            // (`ViewRouting`); W A S D are the fly keys, except while an
+            // armed Teleop drives with them (`DriveArmed`).
             UiMode::Minimal | UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
         }
     }
@@ -240,6 +240,10 @@ impl Plugin for ViewerControls {
             .init_resource::<Overlays>()
             .init_resource::<Selection>()
             .init_resource::<Marquee>()
+            .init_resource::<super::DriveArmed>()
+            .add_message::<super::place::PlaceAt>()
+            .init_resource::<super::place::Placing>()
+            .init_resource::<super::place::PlaceHover>()
             .init_resource::<BoxSelectTool>()
             .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
@@ -262,6 +266,7 @@ impl Plugin for ViewerControls {
                     fly_input,
                     super::select::prune_selection,
                     apply_view_commands,
+                    super::place::place_hover,
                     apply_overlay_commands,
                     crate::overlays::view_layers,
                 )
@@ -471,9 +476,13 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
 /// selects what was under the press; a marquee selects what it covers.
 /// Shift adds; ⌘/Ctrl toggles, except for the ⌘/Ctrl+drag marquee it
 /// started, which (like the Box select tool's plain drag) replaces.
-fn released(drag: Drag, shift: bool, command: bool) -> Option<ViewOp> {
+fn released(drag: Drag, shift: bool, command: bool, placing: bool) -> Option<ViewOp> {
     match drag.gesture {
         _ if !drag.selects => None,
+        _ if placing && !drag.moved => Some(ViewOp::Place {
+            at: drag.start,
+            keep: shift,
+        }),
         _ if !drag.moved => Some(ViewOp::Select {
             at: drag.start,
             mode: SelectMode::from_keys(shift, command),
@@ -503,6 +512,7 @@ pub fn mouse_input(
     box_tool: Res<BoxSelectTool>,
     selecting: Res<SelectInViews>,
     gizmo: Option<Res<super::gizmo::GizmoState>>,
+    placing: Res<super::place::Placing>,
     mut out: MessageWriter<ViewCommand>,
 ) {
     // A drag stays with its view; anything else goes to the one under the
@@ -542,7 +552,7 @@ pub fn mouse_input(
             marquee.0 = None;
         }
         if drag.button == MouseButton::Left {
-            if let Some(op) = released(drag, held.shift, command) {
+            if let Some(op) = released(drag, held.shift, command, placing.0) {
                 send(&mut out, op);
             }
         }
@@ -558,9 +568,12 @@ pub fn mouse_input(
                 button == MouseButton::Left && map.holding(&keys, &scopes, Action::PanHold);
             let gesture = match button {
                 MouseButton::Left if pan_hold => Gesture::Camera(DragAction::Pan),
-                MouseButton::Left if selecting.0 && (box_tool.0 || command) => Gesture::Marquee {
-                    by_command: !box_tool.0,
-                },
+                // Placing, a left drag moves the camera and a click places.
+                MouseButton::Left if selecting.0 && !placing.0 && (box_tool.0 || command) => {
+                    Gesture::Marquee {
+                        by_command: !box_tool.0,
+                    }
+                }
                 MouseButton::Left => Gesture::Camera(target.camera.drag_action),
                 MouseButton::Right => Gesture::Camera(DragAction::Pan),
                 _ => Gesture::Camera(DragAction::Zoom),
@@ -790,8 +803,13 @@ pub fn fly_input(
     scopes: Res<ActiveScopes>,
     routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
+    driving: Option<Res<super::DriveArmed>>,
     mut out: MessageWriter<ViewCommand>,
 ) {
+    // An armed Teleop drives with these keys instead.
+    if driving.is_some_and(|d| d.0) {
+        return;
+    }
     let scopes = routing.key_scopes(&scopes.0);
     let dir: Vec3 = map
         .held(&keys, &scopes)

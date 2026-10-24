@@ -223,7 +223,43 @@ pub struct ModelExtras {
     /// The `<topic>` its JointStatePublisher sets, if any (else it
     /// publishes on the default topic).
     pub joint_state_topic: Option<String>,
+    /// The topic its drive (DiffDrive, MecanumDrive, AckermannSteering,
+    /// TrackedVehicle) takes `gz.msgs.Twist` commands on: its `<topic>`, or
+    /// `/model/<name>/cmd_vel`.
+    pub drive_topic: Option<String>,
+    /// Its JointPositionControllers: each joint and the topic it takes
+    /// `gz.msgs.Double` positions on (its plugin's `<topic>`,
+    /// `/model/<name>/<sub_topic>`, or
+    /// `/model/<name>/joint/<first joint>/<index>/cmd_pos`; a plugin's
+    /// joints share it).
+    pub joint_controllers: Vec<(String, String)>,
 }
+
+/// A plugin is one of these when its `name` ends with, or its `filename`
+/// holds, the system's name.
+fn plugin_is(p: Node, names: &[(&str, &str)]) -> bool {
+    names.iter().any(|(class, file)| {
+        p.attribute("name").is_some_and(|n| n.ends_with(class))
+            || p.attribute("filename").is_some_and(|f| f.contains(file))
+    })
+}
+
+/// A topic as gz-transport reads one: rooted.
+fn rooted(topic: &str) -> String {
+    if topic.starts_with('/') {
+        topic.to_string()
+    } else {
+        format!("/{topic}")
+    }
+}
+
+/// The drive plugins, as (class, file name part).
+const DRIVES: &[(&str, &str)] = &[
+    ("DiffDrive", "diff-drive"),
+    ("MecanumDrive", "mecanum-drive"),
+    ("AckermannSteering", "ackermann-steering"),
+    ("TrackedVehicle", "tracked-vehicle"),
+];
 
 /// A world's links' and models' extras by path.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -388,6 +424,52 @@ fn read_model(model: Node, parent: &str, out: &mut WorldExtras) {
                 .find_map(|p| text(p, "topic"))
                 .filter(|t| !t.is_empty())
                 .map(str::to_string),
+            drive_topic: children(model, "plugin")
+                .find(|p| plugin_is(*p, DRIVES))
+                .map(|p| match text(p, "topic").filter(|t| !t.is_empty()) {
+                    Some(t) => rooted(t),
+                    None => format!("/model/{name}/cmd_vel"),
+                }),
+            joint_controllers: children(model, "plugin")
+                .filter(|p| {
+                    plugin_is(
+                        *p,
+                        &[("JointPositionController", "joint-position-controller")],
+                    )
+                })
+                // One topic per plugin, as gz-sim names it: `<topic>`, else
+                // `/model/<model>/<sub_topic>`, else from the first joint;
+                // it moves all the plugin's joints. One that takes
+                // `gz.msgs.Actuators` (`use_actuator_msg`, with the
+                // `actuator_number` gz-sim needs for it) isn't commanded.
+                .filter(|p| {
+                    !(flag(*p, "use_actuator_msg", false) && text(*p, "actuator_number").is_some())
+                })
+                .flat_map(|p| {
+                    let joints: Vec<&str> = children(p, "joint_name")
+                        .filter_map(|j| j.text())
+                        .map(str::trim)
+                        .filter(|j| !j.is_empty())
+                        .collect();
+                    let index = text(p, "joint_index").unwrap_or("0");
+                    let topic = text(p, "topic")
+                        .filter(|t| !t.is_empty())
+                        .map(rooted)
+                        .or_else(|| {
+                            text(p, "sub_topic")
+                                .filter(|t| !t.is_empty())
+                                .map(|t| format!("/model/{name}/{}", t.trim_start_matches('/')))
+                        })
+                        .or_else(|| {
+                            let first = joints.first()?;
+                            Some(format!("/model/{name}/joint/{first}/{index}/cmd_pos"))
+                        });
+                    joints
+                        .iter()
+                        .filter_map(|j| Some((j.to_string(), topic.clone()?)))
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
         },
     );
     // A pose that belongs to `owner` (a link), in that link's frame.

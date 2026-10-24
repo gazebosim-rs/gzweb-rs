@@ -47,6 +47,13 @@ pub fn message_text(msg_type: &str, payload: &[u8]) -> Result<String, EchoError>
     if payload.starts_with(PNG) {
         return Ok(format!("PNG image, {} bytes", payload.len()));
     }
+    let mut msg = decode(msg_type, payload)?;
+    shorten_bytes(&mut msg);
+    Ok(msg.to_text_format_with_options(&FormatOptions::new().pretty(true)))
+}
+
+/// `payload`, a serialized `msg_type`, decoded by its type name.
+pub(crate) fn decode(msg_type: &str, payload: &[u8]) -> Result<DynamicMessage, EchoError> {
     let name = match msg_type.strip_prefix("ignition.msgs.") {
         Some(rest) => format!("gz.msgs.{rest}"),
         None => msg_type.to_string(),
@@ -54,10 +61,7 @@ pub fn message_text(msg_type: &str, payload: &[u8]) -> Result<String, EchoError>
     let desc = pool()
         .get_message_by_name(&name)
         .ok_or_else(|| EchoError::UnknownType(msg_type.to_string()))?;
-    let mut msg =
-        DynamicMessage::decode(desc, payload).map_err(|e| EchoError::Decode(e.to_string()))?;
-    shorten_bytes(&mut msg);
-    Ok(msg.to_text_format_with_options(&FormatOptions::new().pretty(true)))
+    DynamicMessage::decode(desc, payload).map_err(|e| EchoError::Decode(e.to_string()))
 }
 
 /// The longest `bytes` field printed as it is; a longer one (a point

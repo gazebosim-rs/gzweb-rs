@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use bevy::clipboard::Clipboard;
+use crate::widgets::clipboard::CopyText;
 use bevy::input::keyboard::KeyCode;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -18,7 +18,9 @@ use super::model::{
     clip_lines, is_model, is_sensor, rate_label, Echo, TopicChip, ECHO_LINES, ECHO_LINE_CHARS,
 };
 use super::view::{ChipChoice, EchoPart, EchoSection, NoMatches, TopicList, TopicRow};
-use super::{COPY, NO_PUBLISH, NO_SERVICES, PLOT_FIELD, PUBLISH, PUBLISH_FOOTER, SERVICES, TOPICS};
+use super::{
+    COPY, NO_PLOT, NO_PUBLISH, NO_SERVICES, PLOT_FIELD, PUBLISH, PUBLISH_FOOTER, SERVICES, TOPICS,
+};
 use crate::panels::{ActionId, PanelView};
 use crate::shell::sidebar::body::{ActionButton, BodyView, NOT_YET};
 use crate::shell::{Slot, UiCommand};
@@ -181,7 +183,7 @@ fn the_topics_panel_follows_the_connection() {
     let mut want = vec![
         (PUBLISH, true, no(NO_PUBLISH)),
         (SERVICES, true, no(NO_SERVICES)),
-        (PLOT_FIELD, true, no(NOT_YET)),
+        (PLOT_FIELD, true, no(NO_PLOT)),
         (COPY, true, no(NOT_YET)),
         (PUBLISH_FOOTER, true, no(NO_PUBLISH)),
     ];
@@ -284,7 +286,6 @@ fn the_list_filters_by_name_and_kind() {
 #[test]
 fn a_row_echoes_its_topic_while_the_panel_shows() {
     let mut app = live_topics();
-    app.init_resource::<Clipboard>();
     sent(&mut app);
     let stats = "/stats".to_string();
     let r = row(&mut app, &stats);
@@ -331,8 +332,12 @@ fn a_row_echoes_its_topic_while_the_panel_shows() {
     };
     app.world_mut().trigger(Activate { entity: copy });
     frames(&mut app, 1);
-    let mut read = app.world_mut().resource_mut::<Clipboard>().fetch_text();
-    assert_eq!(read.poll_result().unwrap().unwrap(), "iterations: 42");
+    let copied: Vec<CopyText> = app
+        .world_mut()
+        .resource_mut::<Messages<CopyText>>()
+        .drain()
+        .collect();
+    assert_eq!(copied, [CopyText("iterations: 42".into())]);
 
     app.world_mut().write_message(UiCommand::ToggleSidebar);
     frames(&mut app, 2);
@@ -499,7 +504,6 @@ fn labels_and_long_messages() {
 #[test]
 fn copy_copies_the_whole_message() {
     let mut app = live_topics();
-    app.init_resource::<Clipboard>();
     set_topics(&mut app, &[("/poses", "gz.msgs.Pose_V")]);
     let r = row(&mut app, "/poses");
     app.world_mut().trigger(Activate { entity: r });
@@ -535,8 +539,13 @@ fn copy_copies_the_whole_message() {
     };
     app.world_mut().trigger(Activate { entity: copy });
     frames(&mut app, 1);
-    let mut read = app.world_mut().resource_mut::<Clipboard>().fetch_text();
-    let copied = read.poll_result().unwrap().unwrap();
+    let copied = app
+        .world_mut()
+        .resource_mut::<Messages<CopyText>>()
+        .drain()
+        .next()
+        .unwrap()
+        .0;
     assert!(
         copied.lines().count() > ECHO_LINES,
         "{}",
@@ -572,4 +581,39 @@ fn a_key_move_shows_its_row() {
     focused_key(&mut app, list, KeyCode::Home);
     frames(&mut app, 2);
     assert_eq!(y(&mut app), 0.0);
+}
+
+/// Plot field, once a topic is echoed, opens the Plot panel's picker on
+/// it in the second slot.
+#[test]
+fn plot_field_picks_the_echoed_topic() {
+    let mut app = live_topics();
+    let disabled = |app: &mut App| {
+        actions(app)
+            .into_iter()
+            .find(|a| a.0 == PLOT_FIELD)
+            .unwrap()
+            .1
+    };
+    assert!(disabled(&mut app));
+    let r = row(&mut app, "/stats");
+    app.world_mut().trigger(Activate { entity: r });
+    frames(&mut app, 2);
+    assert!(!disabled(&mut app));
+    let plot = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &ActionButton)>()
+            .iter(world)
+            .find(|(_, b)| b.action == PLOT_FIELD)
+            .unwrap()
+            .0
+    };
+    app.world_mut().trigger(Activate { entity: plot });
+    frames(&mut app, 3);
+    let layout = app.world().resource::<crate::shell::ShellLayout>();
+    assert_eq!(
+        (layout.primary, layout.secondary),
+        (Some(TOPICS), Some(crate::panels::PLOT))
+    );
 }

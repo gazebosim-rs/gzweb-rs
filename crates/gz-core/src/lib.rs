@@ -3,6 +3,11 @@
 //! - [`frame`]: the `op,topic,type,payload` websocket frame codec.
 //! - [`control`]: simulation control service requests.
 //! - [`echo`]: a topic's message as text, by its type name.
+//! - [`fields`]: a message's numbers, by field path (the Plot panel).
+//! - [`fuel`]: Gazebo Fuel's model search (the Assets panel).
+//! - [`insert`]: shapes, lights and models to insert, as SDFormat.
+//! - [`sensor`]: lidar scans and camera frames, for the Sensors panel.
+//! - [`teleop`]: the Teleop panel's velocity and joint commands.
 //! - [`transport`]: sans-IO client state machine for the gz websocket protocol.
 //! - `net` (feature `native`): blocking `ws://`/`wss://` connect.
 //! - [`scene`]: gzweb's rules for turning a `gz.msgs.Scene` into a node tree.
@@ -14,12 +19,17 @@
 
 pub mod control;
 pub mod echo;
+pub mod fields;
 pub mod frame;
+pub mod fuel;
+pub mod insert;
 #[cfg(feature = "native")]
 pub mod net;
 pub mod scene;
 pub mod sdf;
+pub mod sensor;
 pub mod snapshot;
+pub mod teleop;
 pub mod topic;
 pub mod transport;
 pub mod uri;

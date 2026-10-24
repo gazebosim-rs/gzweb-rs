@@ -167,7 +167,8 @@ it with `strtok` on `,` (`gz::common::split`), which merges empty fields:
 - `throttle` with rate 0 divides by zero (a `1.0 / 0` period cast to
   nanoseconds, undefined behaviour);
 - there is no `adv` or `pub_in` handler, so publishing from the client does
-  nothing;
+  nothing (the image's patched server adds `pub_in`, D-104; the client
+  probes for it and publishes only there);
 - `image` is only honoured for `gz.msgs.Image` topics;
 - `ignition.msgs.*` request types are rejected (the reply is an empty
   `gz.msgs.Boolean`);
@@ -222,7 +223,14 @@ logged, not queued. Parts of the app subscribe through
 `Subscribe` directly, so two holders of one topic share it (D-97); the
 app subscribing a world topic the client takes itself taps it.
 `GzTopics` keeps the server's topic list and `GzTraffic` each received
-topic's count and rate.
+topic's count and rate. `gz_core::fields` reads a message's numbers by
+field path (the Plot panel, D-100); `gz_bevy::save::save_text` saves a
+file the user asked for (a download in the browser, the working
+directory natively). `gz_core::insert` writes shapes, lights and model
+includes as SDFormat and the `create` request's message; `gz_bevy::fuel`
+searches Fuel; `gz_bevy::view::place` turns a click in the views into a
+place while the UI arms one (D-102). `gz_core::sensor` reads a lidar scan and a PNG's
+size (the Sensors panel, D-103); `SdfWanted` is a set of holders.
 Messages on subscribed topics other than the world's own pose, scene and
 stats topics arrive as `GzPublish`; every service reply as
 `GzServiceReply`. In

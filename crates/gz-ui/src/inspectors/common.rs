@@ -863,6 +863,8 @@ pub(crate) mod fixture {
         <plugin filename="gz-sim-diff-drive-system" name="gz::sim::systems::DiffDrive"/>
         <plugin filename="gz-sim-joint-state-publisher-system"
                 name="gz::sim::systems::JointStatePublisher"><topic>/cart/joints</topic></plugin>
+        <plugin filename="gz-sim-joint-position-controller-system"
+                name="gz::sim::systems::JointPositionController"><joint_name>slide</joint_name></plugin>
         <link name="base">
           <kinematic>true</kinematic>
           <inertial><mass>2.5</mass><inertia><ixx>0.1</ixx><iyy>0.2</iyy><izz>0.3</izz></inertia></inertial>

@@ -345,6 +345,27 @@ pop-out windows.
   `gzweb --echo` (D-99), on the system clipboard natively too (`system_clipboard`; BSL-1.0
   allowed in `deny.toml`). Left: Plot field (M7b); Publish and Services until a server takes
   publications and lists services.
+- **M7b notes:** the Plot panel (D-100): numeric fields by path (`gz_core::fields`), series
+  that record while closed at their stamps or the sim clock, charts of up to four series drawn
+  on the CPU (anti-aliased 2 px lines, gridlines, y ticks), the window chips, Pause (a header
+  toggle, D-101), the crosshair readout, the inline field picker (Add field…, +, Topics' Plot
+  field), Export CSV, `gzweb --plot`. Left: Pop out (M7e); the inspector's Plot actions (joint
+  position and velocity, a sensor's output) with M7d's joints.
+- **M7d notes (Sensors):** the Sensors panel (D-103): the selected model's sensors, their
+  topics from the SDFormat and the server's list, the chosen one's camera frames (decoded on the
+  task pool, off the main thread natively), lidar scan from above or message as text, only while shown; stale and
+  waiting states; the Sensor inspector's Echo topic and Plot.
+- **M7d notes (Teleop):** the websocket server's `pub_in` patch and the client's probe for it
+  (`GzStatus::publishes`), the Teleop panel (D-104): drives and joint controllers from the
+  SDFormat, Keyboard, Sliders and Gamepad, arming and X, commands at 10 Hz, the views' fly
+  keys and the gizmo standing down while armed; the Joint inspector's command slider (D-88).
+  Left: the "Nobody is listening" banner, Apply force…, the activity dot, Topics' Publish.
+- **M7c notes:** the Assets panel (D-102): shapes and lights as SDFormat, Fuel search with
+  thumbnails and paging, a model by URI; a tile or Insert arms placing, a click in the views
+  places on the surface under it (`gz_bevy::view::place`), with a preview, Shift for several,
+  Esc to stop; each place a `create` (verified live on Jetty: a box, and a Fuel pallet the
+  server downloaded); each insert's row until it shows in the scene. Left: drag a shape into a
+  model as a link (M9); the mock's header +.
 - Assets (shapes and lights via `/create`; Fuel search and insert), Topics (list, echo, publish),
   Plot (charts per §3.3 rules), Sensors (camera image via the websocket `image` op; lidar
   top-down), Teleop (keyboard, sliders, gamepad via gilrs; joints; X e-stop), Console (§3 item 3).
@@ -354,7 +375,8 @@ pop-out windows.
 - The panels' §3.3.1 states from their data (D-58: each writes its `PanelView`): Topics
   done in M7a (D-99); Sensors "Select a model with sensors" vs "No sensors in
   this world" (needs the world's sensors in the scene model and M5's selection); Assets
-  "Fuel is unreachable" + Retry (a `PanelAction` it handles); Plot's Add field… enabled.
+  "Fuel is unreachable" + Retry (M7c, D-102: in the Fuel tab); Plot's Add field… enabled
+  (M7b, D-100).
   Topics' Publish and Services stay unavailable on the stock server (D-99).
 - Footers (PR #33 review, N10): done in M7a (D-98): `PanelDef::footer_action` and
   `footer_content`, drawn by the shell under every state; Console's command input is footer

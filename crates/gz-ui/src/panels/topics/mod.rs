@@ -12,8 +12,8 @@
 //! ten times a second. A topic that leaves the server's list says "Topic
 //! ended" and keeps its last message.
 //!
-//! The footer copies the message; Plot field waits for the Plot panel
-//! (M7b). Publish and Services are unavailable: the Gazebo websocket
+//! The footer copies the message, and Plot field opens the Plot panel's
+//! picker on the echoed topic (D-100). Publish and Services are unavailable: the Gazebo websocket
 //! server takes no publications and lists no services.
 //!
 //! The panel contract (DECISIONS.md D-58): what the user set is
@@ -22,7 +22,15 @@
 
 mod model;
 mod systems;
+
+pub(super) use systems::refresh_while_shown;
 mod view;
+
+/// A message cut to show (the Sensors panel's text preview too).
+pub(crate) use model::clip_lines;
+
+/// A [`TopicsStart`]'s system, for a panel that opens beside it.
+pub(crate) use systems::apply_start as apply_topics_start;
 
 use bevy::prelude::*;
 
@@ -36,13 +44,15 @@ pub const TOPICS: PanelId = PanelId::new("topics");
 pub(crate) const PUBLISH: ActionId = ActionId::new("publish");
 /// Its header's Services.
 pub(crate) const SERVICES: ActionId = ActionId::new("services");
-/// Its footer's Plot field (M7b).
+/// Its footer's Plot field: the Plot panel's picker on the echoed topic.
 pub(crate) const PLOT_FIELD: ActionId = ActionId::new("plot_field");
 /// Its footer's Copy: the echoed message.
 pub(crate) const COPY: ActionId = ActionId::new("copy");
 /// Its footer's Publish….
 pub(crate) const PUBLISH_FOOTER: ActionId = ActionId::new("publish_footer");
 
+/// Why Plot field is unavailable.
+pub(crate) const NO_PLOT: &str = "Echo a topic to plot one of its fields";
 /// Why Publish is unavailable.
 pub(crate) const NO_PUBLISH: &str = "The Gazebo websocket server doesn't take publications";
 /// Why Services is unavailable.
@@ -80,6 +90,7 @@ pub struct TopicsPanelPlugin;
 impl Plugin for TopicsPanelPlugin {
     fn build(&self, app: &mut App) {
         gz_bevy::topics::TopicsPlugin::ensure(app);
+        refresh_while_shown(app, TOPICS);
         app.register_panel(
             PanelDef::new(TOPICS, "Topics", IconId::ActivityTopics)
                 .place(DATA_GROUP, 20)
@@ -93,12 +104,13 @@ impl Plugin for TopicsPanelPlugin {
                         .unavailable(NO_SERVICES),
                 )
                 .content::<TopicsBody>()
-                .footer_action(PanelAction::new(PLOT_FIELD, "Plot field").disabled())
+                .footer_action(PanelAction::new(PLOT_FIELD, "Plot field").unavailable(NO_PLOT))
                 .footer_action(copy_action())
                 .footer_action(
                     PanelAction::new(PUBLISH_FOOTER, "Publish…").unavailable(NO_PUBLISH),
                 ),
         )
+        .add_message::<crate::panels::PlotPick>()
         .init_resource::<model::TopicsState>()
         .init_resource::<model::Echo>()
         .init_resource::<systems::TopicsScroll>()
@@ -114,7 +126,6 @@ impl Plugin for TopicsPanelPlugin {
                 )
                     .chain(),
                 (
-                    systems::refresh_topics,
                     systems::filter_text,
                     systems::keep_scroll,
                     systems::sync_rows,

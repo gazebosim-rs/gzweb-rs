@@ -36,10 +36,35 @@ pub struct SdfExtras {
     pending: Option<String>,
 }
 
-/// The world's SDFormat is wanted beyond the overlays (the UI's scene tree
-/// sets it while it shows, for the joints).
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct SdfWanted(pub bool);
+/// The world's SDFormat is wanted beyond the overlays, by these holders
+/// (the UI's scene tree while it shows, for the joints; the Sensors panel,
+/// for the sensors' topics).
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+pub struct SdfWanted(pub(crate) HashSet<&'static str>);
+
+impl SdfWanted {
+    /// Whether anything wants it.
+    pub fn any(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    /// Whether `holder` wants it.
+    pub fn by(&self, holder: &str) -> bool {
+        self.0.contains(holder)
+    }
+}
+
+/// Setting a holder's want on `ResMut<SdfWanted>`, marking it changed
+/// only on a change.
+pub fn want_sdf(wanted: &mut ResMut<SdfWanted>, holder: &'static str, on: bool) {
+    if wanted.bypass_change_detection().by(holder) != on {
+        if on {
+            wanted.0.insert(holder);
+        } else {
+            wanted.0.remove(holder);
+        }
+    }
+}
 
 /// Asks for the world's SDFormat when an overlay (or [`SdfWanted`]) needs
 /// it and the world
@@ -63,7 +88,7 @@ pub fn request_extras(
         }
         return;
     }
-    let needed = overlays.need_sdf() || wanted.is_some_and(|w| w.0);
+    let needed = overlays.need_sdf() || wanted.is_some_and(|w| w.any());
     if !needed || state.pending.is_some() {
         return;
     }

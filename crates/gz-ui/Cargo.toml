@@ -27,6 +27,8 @@ png = "0.18"
 serde_json.workspace = true
 # Topic messages for the Topics panel's tests.
 prost.workspace = true
+# Camera frames for the Sensors panel's tests.
+png = "0.18"
 
 [lints]
 workspace = true

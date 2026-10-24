@@ -24,6 +24,18 @@
 //!   tree filtered or with every row open (DECISIONS.md D-70).
 //! - `--echo TOPIC` starts the full UI with the Topics panel open,
 //!   echoing TOPIC once the server lists it (DECISIONS.md D-99).
+//! - `--sensors [NAME]` starts the full UI with the Sensors panel open,
+//!   showing the sensor NAME of the model `--select` picks (DECISIONS.md
+//!   D-103).
+//! - `--teleop` starts the full UI with the Teleop panel open (with
+//!   `--select MODEL` for its drive; DECISIONS.md D-104).
+//! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
+//!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
+//!   (DECISIONS.md D-102).
+//! - `--plot TOPIC:FIELD[,FIELD…]` (repeatable) starts the full UI with
+//!   the Plot panel open, a chart of each TOPIC's FIELDs once the server
+//!   lists it (DECISIONS.md D-100); `--plot TOPIC` opens its picker on
+//!   TOPIC's fields. With `--echo`, Plot opens under Topics.
 //! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
 //!   full UI's viewport in that layout (DECISIONS.md D-90).
 //! - `--no-vsync` presents frames as fast as they render, to measure.
@@ -55,6 +67,14 @@ struct Args {
     scene: Option<gz_ui::panels::SceneTreeStart>,
     /// `--echo`.
     topics: Option<gz_ui::panels::TopicsStart>,
+    /// `--plot`.
+    plot: Option<gz_ui::panels::PlotStart>,
+    /// `--assets`.
+    assets: Option<gz_ui::panels::AssetsStart>,
+    /// `--sensors`.
+    sensors: Option<gz_ui::panels::SensorsStart>,
+    /// `--teleop`.
+    teleop: bool,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -68,6 +88,8 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
+                     [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
+                     [--sensors [NAME]] [--teleop] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -180,11 +202,15 @@ fn parse_args(
     let mut start = gz_bevy::view::StartView::default();
     let mut scene = gz_ui::panels::SceneTreeStart::default();
     let mut topics = None;
+    let mut plot = gz_ui::panels::PlotStart::default();
+    let mut assets = None;
+    let mut sensors = None;
+    let mut teleop = false;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
 
-    let mut args = args.into_iter();
+    let mut args = args.into_iter().peekable();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or(format!("{arg} needs a value"));
         let mut millis = || -> Result<f64, String> {
@@ -244,6 +270,30 @@ fn parse_args(
             "--scene-filter" => scene.filter = value()?,
             "--scene-expand" => scene.expand_all = true,
             "--echo" => topics = Some(gz_ui::panels::TopicsStart { echo: value()? }),
+            "--teleop" => teleop = true,
+            "--sensors" => {
+                // The name is optional: the next argument unless it's a flag.
+                let name = args.peek().filter(|a| !a.starts_with("--")).cloned();
+                if name.is_some() {
+                    args.next();
+                }
+                sensors = Some(gz_ui::panels::SensorsStart { sensor: name });
+            }
+            "--assets" => {
+                assets = Some(value()?.parse().map_err(|e| format!("--assets: {e}"))?);
+            }
+            "--plot" => {
+                let v = value()?;
+                // A field's name can hold `::` (scoped names); a topic can't.
+                match v.split_once(':') {
+                    None if !v.is_empty() => plot.pick = Some(v),
+                    Some((topic, fields)) if !topic.is_empty() && !fields.is_empty() => {
+                        let fields = fields.split(',').map(str::trim).map(str::to_string);
+                        plot.charts.push((topic.to_string(), fields.collect()));
+                    }
+                    _ => return Err(format!("--plot wants TOPIC[:FIELD,…], not {v}")),
+                }
+            }
             "--no-vsync" => no_vsync = true,
             "--layout" => {
                 layout = Some(value()?.parse().map_err(|e| format!("--layout: {e}"))?);
@@ -276,6 +326,19 @@ fn parse_args(
     }
     if topics.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--echo needs --ui full".into());
+    }
+    let plot = (plot != gz_ui::panels::PlotStart::default()).then_some(plot);
+    if plot.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--plot needs --ui full".into());
+    }
+    if assets.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--assets needs --ui full".into());
+    }
+    if sensors.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--sensors needs --ui full".into());
+    }
+    if teleop && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--teleop needs --ui full".into());
     }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
@@ -317,6 +380,10 @@ fn parse_args(
         start,
         scene,
         topics,
+        plot,
+        assets,
+        sensors,
+        teleop,
         layout,
         no_vsync,
     })))
@@ -387,6 +454,10 @@ fn command() -> Result<Command, String> {
         start: None,
         scene: None,
         topics: None,
+        plot: None,
+        assets: None,
+        sensors: None,
+        teleop: false,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -594,6 +665,18 @@ fn main() -> AppExit {
         }
         if let Some(topics) = args.topics {
             app.insert_resource(topics);
+        }
+        if let Some(plot) = args.plot {
+            app.insert_resource(plot);
+        }
+        if let Some(assets) = args.assets {
+            app.insert_resource(assets);
+        }
+        if let Some(sensors) = args.sensors {
+            app.insert_resource(sensors);
+        }
+        if args.teleop {
+            app.insert_resource(gz_ui::panels::TeleopStart);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -835,6 +918,73 @@ mod tests {
         let a = run_args(&["--echo", "/stats", "--ui", "full"], None);
         assert_eq!(a.topics.unwrap().echo, "/stats");
         assert!(run_args(&[], None).topics.is_none());
+        let a = run_args(
+            &[
+                "--plot",
+                "/odom:twist.linear.x, twist.angular.z",
+                "--plot",
+                "/stats:real_time_factor",
+            ],
+            None,
+        );
+        assert_eq!(
+            a.plot.unwrap().charts,
+            [
+                (
+                    "/odom".to_string(),
+                    vec!["twist.linear.x".to_string(), "twist.angular.z".to_string()]
+                ),
+                ("/stats".to_string(), vec!["real_time_factor".to_string()]),
+            ]
+        );
+        assert!(run_args(&[], None).plot.is_none());
+        assert!(run_args(&["--assets", "fuel:pallet"], None)
+            .assets
+            .is_some());
+        assert!(run_args(&[], None).assets.is_none());
+        let a = run_args(&["--sensors", "camera", "--ui", "full"], None);
+        assert_eq!(a.sensors.unwrap().sensor.as_deref(), Some("camera"));
+        let a = run_args(&["--sensors", "--ui", "full"], None);
+        assert_eq!(a.sensors.unwrap().sensor, None);
+        assert_eq!(
+            parse(&["--sensors", "--ui", "minimal"], None).unwrap_err(),
+            "--sensors needs --ui full"
+        );
+        assert!(run_args(&["--teleop"], None).teleop);
+        assert_eq!(
+            parse(&["--teleop", "--ui", "minimal"], None).unwrap_err(),
+            "--teleop needs --ui full"
+        );
+        assert_eq!(
+            parse(&["--assets", "nope"], None).unwrap_err(),
+            "--assets: not a tab (shapes, lights, fuel, local): nope"
+        );
+        assert_eq!(
+            parse(&["--assets", "shapes:box"], None).unwrap_err(),
+            "--assets: only the Fuel tab takes a query"
+        );
+        assert_eq!(
+            parse(&["--assets", "lights", "--ui", "minimal"], None).unwrap_err(),
+            "--assets needs --ui full"
+        );
+        let a = run_args(&["--plot", "/m/pose:pose[v::chassis].position.z"], None);
+        assert_eq!(
+            a.plot.unwrap().charts,
+            [(
+                "/m/pose".to_string(),
+                vec!["pose[v::chassis].position.z".to_string()]
+            )]
+        );
+        let a = run_args(&["--plot", "/odom"], None);
+        assert_eq!(a.plot.unwrap().pick.as_deref(), Some("/odom"));
+        assert_eq!(
+            parse(&["--plot", "/odom:"], None).unwrap_err(),
+            "--plot wants TOPIC[:FIELD,…], not /odom:"
+        );
+        assert_eq!(
+            parse(&["--plot", "/a:x", "--ui", "minimal"], None).unwrap_err(),
+            "--plot needs --ui full"
+        );
         assert_eq!(
             parse(&["--echo", "/stats", "--ui", "minimal"], None).unwrap_err(),
             "--echo needs --ui full"

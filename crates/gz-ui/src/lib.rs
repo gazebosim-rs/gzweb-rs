@@ -32,6 +32,7 @@ pub mod format;
 pub mod gallery;
 pub mod inspectors;
 pub mod panels;
+pub(crate) mod raster;
 pub(crate) mod registry;
 pub mod shell;
 pub mod theme;
@@ -106,6 +107,8 @@ impl Plugin for GzUiPlugin {
             .init_resource::<icons::IconAtlas>()
             .init_resource::<brand::Logos>()
             .init_resource::<focus::TextFocus>()
+            .add_message::<widgets::clipboard::CopyText>()
+            .add_systems(Update, widgets::clipboard::copy_text)
             .configure_sets(
                 Update,
                 (GzUiSystems::Behaviour, GzUiSystems::Visuals).chain(),
