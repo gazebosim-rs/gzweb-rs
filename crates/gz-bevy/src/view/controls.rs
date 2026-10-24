@@ -235,6 +235,7 @@ struct Tap {
 impl Plugin for ViewerControls {
     fn build(&self, app: &mut App) {
         app.add_message::<ViewCommand>()
+            .add_message::<RunBinding>()
             .add_message::<GzCommand>()
             .add_message::<OverlayCommand>()
             .init_resource::<Overlays>()
@@ -661,8 +662,15 @@ pub fn mouse_input(
     }
 }
 
+/// Run a binding as its key would (the command palette, D-107): its
+/// shortcut's action, in the view that has the keys. Every reader of key
+/// bindings reads these too, each acting on the ids it owns.
+#[derive(Message, Debug, Clone, PartialEq, Eq)]
+pub struct RunBinding(pub String);
+
 /// Viewport and sim keys → [`ViewCommand`]s, [`OverlayCommand`]s and
-/// [`GzCommand`]s, including the Space tap.
+/// [`GzCommand`]s, including the Space tap; and [`RunBinding`]s of the
+/// same.
 #[allow(clippy::too_many_arguments)]
 pub fn key_input(
     windows: Query<&Window>,
@@ -676,6 +684,7 @@ pub fn key_input(
     status: Option<Res<GzStatus>>,
     steps: Option<Res<StepsPerClick>>,
     mut focus_lost: MessageReader<KeyboardFocusLost>,
+    mut runs: MessageReader<RunBinding>,
     mut state: ResMut<ControlState>,
     mut overlay_out: MessageWriter<OverlayCommand>,
     mut view_out: MessageWriter<ViewCommand>,
@@ -687,6 +696,12 @@ pub fn key_input(
         .just_pressed(&keys, &scopes)
         .filter_map(|b| b.action)
         .collect();
+    // A run binding is a tap: held actions (pan, fly) need a held key.
+    fired.extend(
+        runs.read()
+            .filter_map(|r| map.binding(&r.0).and_then(|b| b.action))
+            .filter(|a| !matches!(a, Action::PanHold | Action::Fly(_))),
+    );
 
     // Losing focus releases every key; that release is no tap (alt-tab
     // right after pressing Space mustn't toggle the sim).
