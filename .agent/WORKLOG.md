@@ -1718,3 +1718,26 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   hours after a scratch client left it driving.
 - **Merged** M7c's CI fixes (clipboard-win 5.4.3).
 - **Tests:** workspace 820 → 825 passing.
+
+## 2026-10-24: PR #49 re-review fixes
+
+- **Server freeze:** OnDisconnect published the zero Twist while holding
+  `subscriptionMutex`; the server's own subscriber on that topic (a
+  client echoing or plotting cmd_vel) runs on the same thread and takes
+  the lock, so the server hung. The zeros now go out before the lock.
+  Live check on the rebuilt `gz-websocket-jetty-pub` (diff_drive,
+  :9013): one client watched `/model/vehicle_blue/cmd_vel`, another
+  drove and left without a zero; the watcher got the zero and a new
+  client then connected and read the vehicle stopped.
+- **X** stops wherever the keys are (only not while typing) and zeroes
+  the sliders, like Stop; the drive keys keep their routing.
+- **Latch:** only the mode's own input holds re-arming off, so a resting
+  stick doesn't block the pad.
+- **Joints:** Teleop wants its target's joint states while it shows
+  (deferring to the Joint inspector), so its sliders start at the live
+  positions; `use_actuator_msg` is read as gz-sim does (a bool, with an
+  `actuator_number`).
+- **One topic refresh** for Topics, Sensors and Teleop.
+- **Tests:** focus routing, X from another panel, a resting stick, a
+  reconnect through Disconnected (and to another world), Teleop's joint
+  states and the single refresh.
