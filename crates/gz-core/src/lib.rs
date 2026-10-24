@@ -3,6 +3,7 @@
 //! - [`frame`]: the `op,topic,type,payload` websocket frame codec.
 //! - [`control`]: simulation control service requests.
 //! - [`echo`]: a topic's message as text, by its type name.
+//! - [`fields`]: a message's numbers, by field path (the Plot panel).
 //! - [`transport`]: sans-IO client state machine for the gz websocket protocol.
 //! - `net` (feature `native`): blocking `ws://`/`wss://` connect.
 //! - [`scene`]: gzweb's rules for turning a `gz.msgs.Scene` into a node tree.
@@ -14,6 +15,7 @@
 
 pub mod control;
 pub mod echo;
+pub mod fields;
 pub mod frame;
 #[cfg(feature = "native")]
 pub mod net;
