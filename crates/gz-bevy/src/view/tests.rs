@@ -303,6 +303,16 @@ fn plane_visual() -> GzVisual {
     })
 }
 
+fn box_visual() -> GzVisual {
+    GzVisual(VisualDesc {
+        proto_type: "box".into(),
+        geometry: GeometryDesc::Box {
+            size: [1.0, 1.0, 1.0],
+        },
+        ..plane_visual().0
+    })
+}
+
 fn assert_near(a: Vec3, b: Vec3, eps: f32) {
     assert!((a - b).length() < eps, "{a} vs {b}");
 }
@@ -3733,4 +3743,422 @@ fn a_pose_read_mid_animation_is_its_end() {
     r.op(ViewOp::Orbit(Vec2::new(40.0, 0.0)));
     r.op(ViewOp::Restore(mid));
     assert_eq!(r.view().snapped, Some(SnapView::Top));
+}
+
+/// Two Gazebo models, each a link with a cube visual that has a material;
+/// (rig, model a, link a, mesh a, model b, mesh b).
+fn two_editable_models() -> (Rig, Entity, Entity, Entity, Entity, Entity) {
+    use crate::spawn::GzEntity;
+    use gz_core::scene::NodeKind;
+    let (mut r, a, b) = two_models();
+    r.app.init_resource::<Assets<StandardMaterial>>();
+    let world = r.app.world_mut();
+    let gz = |name: &str, kind| GzEntity {
+        name: name.into(),
+        id: 0,
+        kind,
+        path: name.into(),
+    };
+    world.entity_mut(a).insert(gz("a", NodeKind::Model));
+    world.entity_mut(b).insert(gz("b", NodeKind::Model));
+    let link_of = |world: &World, m: Entity| world.get::<Children>(m).unwrap()[0];
+    let (la, lb) = (link_of(world, a), link_of(world, b));
+    let mesh_of = |world: &World, l: Entity| world.get::<Children>(l).unwrap()[0];
+    let (ma, mb) = (mesh_of(world, la), mesh_of(world, lb));
+    for (l, m) in [(la, ma), (lb, mb)] {
+        world.entity_mut(l).insert(gz("link", NodeKind::Link));
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        world
+            .entity_mut(m)
+            .insert((MeshMaterial3d(material), box_visual()));
+    }
+    r.app.update();
+    (r, a, la, ma, b, mb)
+}
+
+fn editing(r: &Rig) -> Option<Entity> {
+    r.app.world().resource::<editing::EditingModel>().model()
+}
+
+fn edit(r: &mut Rig, cmd: editing::EditCommand) {
+    r.app.world_mut().write_message(cmd);
+    r.app.update();
+    r.app.update();
+}
+
+/// A double click with Translate or Rotate edits the model; then a click
+/// picks its link, the other model can't be picked, and its meshes are
+/// faded; Done puts their materials back.
+#[test]
+fn editing_picks_the_models_links_and_dims_the_rest() {
+    let (mut r, a, la, ma, _, mb) = two_editable_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    // Navigate: a double click only selects.
+    click(&mut r, pa, &[]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None);
+    r.app.insert_resource(gizmo::TransformTool::Translate);
+    r.app.update();
+    click(&mut r, pb, &[]);
+    click(&mut r, pa, &[]);
+    click(&mut r, pa, &[]);
+    r.app.update();
+    assert_eq!(editing(&r), Some(a));
+    assert_eq!(selected(&r), [], "entering clears the selection");
+    let original = |r: &Rig, m: Entity| {
+        r.app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(m)
+            .unwrap()
+            .0
+            .clone()
+    };
+    let before_b = r
+        .app
+        .world()
+        .get::<editing::Dimmed>(mb)
+        .map(|d| d.original.clone())
+        .expect("b is dimmed");
+    assert_ne!(original(&r, mb), before_b);
+    assert!(r.app.world().get::<editing::Dimmed>(ma).is_none());
+    let faded = r
+        .app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&original(&r, mb))
+        .unwrap()
+        .base_color
+        .alpha();
+    assert!((faded - editing::DIMMED_OPACITY).abs() < 1e-3, "{faded}");
+    // Its link picks; b is empty space.
+    r.app.update();
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [la]);
+    click(&mut r, pb, &[]);
+    assert_eq!(selected(&r), []);
+    edit(&mut r, editing::EditCommand::Done);
+    assert_eq!(editing(&r), None);
+    assert_eq!(original(&r, mb), before_b);
+    assert!(r.app.world().get::<editing::Dimmed>(mb).is_none());
+}
+
+/// Entering pauses a running sim and turns the views' joints and frames
+/// on; Done puts them back and resumes. A paused sim stays paused.
+#[test]
+fn editing_pauses_and_shows_joints_and_frames() {
+    use crate::overlays::{Overlay, OverlaySet};
+    let (mut r, a, ..) = two_editable_models();
+    let camera = r.camera;
+    r.app
+        .world_mut()
+        .entity_mut(camera)
+        .insert(OverlaySet::default());
+    r.set_sim(Some(false));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(r.sent().contains(&GzCommand::Pause));
+    let set = *r.app.world().get::<OverlaySet>(camera).unwrap();
+    assert!(set.is_on(Overlay::Joints) && set.is_on(Overlay::Frames));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+    let set = *r.app.world().get::<OverlaySet>(camera).unwrap();
+    assert!(!set.is_on(Overlay::Joints) && !set.is_on(Overlay::Frames));
+    // Entered before the stats: the first running ones pause it.
+    r.set_sim(None);
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(!r.sent().contains(&GzCommand::Pause));
+    r.set_sim(Some(false));
+    r.app.update();
+    assert!(r.sent().contains(&GzCommand::Pause));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+    // Paused: it stays paused after Done.
+    r.set_sim(Some(true));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    edit(&mut r, editing::EditCommand::Done);
+    let sent = r.sent();
+    assert!(!sent.contains(&GzCommand::Pause) && !sent.contains(&GzCommand::Play));
+}
+
+/// While editing, the selection holds the model's parts only; a model
+/// that goes ends the editing; only a top-level model can be edited.
+#[test]
+fn editing_limits_the_selection_and_ends_with_its_model() {
+    let (mut r, a, la, _, b, _) = two_editable_models();
+    edit(&mut r, editing::EditCommand::Enter(la));
+    assert_eq!(editing(&r), None, "a link isn't a model");
+    edit(&mut r, editing::EditCommand::Enter(a));
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a, la, b];
+    r.app.update();
+    assert_eq!(selected(&r), [la]);
+    r.app.world_mut().entity_mut(a).despawn();
+    r.app.update();
+    assert_eq!(editing(&r), None);
+}
+
+/// How many frames [`editing::EditingModel`] was changed in.
+#[derive(Resource, Default)]
+struct EditChanges(usize);
+
+fn count_edit_changes(editing: Res<editing::EditingModel>, mut n: ResMut<EditChanges>) {
+    if editing.is_changed() {
+        n.0 += 1;
+    }
+}
+
+/// With stats coming, idle frames don't mark the editing changed, editing
+/// or not: what reads it as changed (the dimming, the tree) works only
+/// when it does change.
+#[test]
+fn idle_frames_leave_the_editing_unchanged() {
+    let (mut r, a, ..) = two_editable_models();
+    r.app
+        .init_resource::<EditChanges>()
+        .add_systems(PostUpdate, count_edit_changes);
+    r.set_sim(Some(false));
+    r.frames(3);
+    r.app.world_mut().resource_mut::<EditChanges>().0 = 0;
+    r.frames(5);
+    assert_eq!(r.app.world().resource::<EditChanges>().0, 0);
+    edit(&mut r, editing::EditCommand::Enter(a));
+    r.set_sim(Some(true));
+    r.frames(2);
+    r.app.world_mut().resource_mut::<EditChanges>().0 = 0;
+    r.frames(5);
+    assert_eq!(r.app.world().resource::<EditChanges>().0, 0);
+}
+
+/// Entering another model while one is edited moves to it: the sim stays
+/// paused (no Play, though the stats still say paused), and Done resumes
+/// it as the first would have.
+#[test]
+fn editing_another_model_keeps_the_sim_paused() {
+    let (mut r, a, _, _, b, _) = two_editable_models();
+    r.set_sim(Some(false));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(r.sent().contains(&GzCommand::Pause));
+    r.set_sim(Some(true));
+    edit(&mut r, editing::EditCommand::Enter(b));
+    assert_eq!(editing(&r), Some(b));
+    let sent = r.sent();
+    assert!(!sent.contains(&GzCommand::Play) && !sent.contains(&GzCommand::Pause));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+}
+
+/// Done turns off only what entering turned on: overlays the user changed
+/// while editing stay as they are. A view that comes while editing shows
+/// joints and frames too, and a workspace's copy of a view leaves them
+/// out.
+#[test]
+fn done_keeps_the_overlays_changed_while_editing() {
+    use crate::overlays::{Overlay, OverlaySet};
+    let (mut r, a, ..) = two_editable_models();
+    let camera = r.camera;
+    let mut joints = OverlaySet::default();
+    joints.set(Overlay::Joints, true);
+    r.app.world_mut().entity_mut(camera).insert(joints);
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let set = |r: &Rig, e: Entity| *r.app.world().get::<OverlaySet>(e).unwrap();
+    assert!(set(&r, camera).is_on(Overlay::Frames));
+    let own = r
+        .app
+        .world()
+        .resource::<editing::EditingModel>()
+        .own(camera, &set(&r, camera));
+    assert_eq!(own, joints, "a workspace saves the view's own");
+    {
+        let mut s = r.app.world_mut().get_mut::<OverlaySet>(camera).unwrap();
+        s.set(Overlay::Collisions, true);
+    }
+    let other = r.app.world_mut().spawn(OverlaySet::default()).id();
+    r.frames(2);
+    let s = set(&r, other);
+    assert!(
+        s.is_on(Overlay::Joints) && s.is_on(Overlay::Frames),
+        "{s:?}"
+    );
+    edit(&mut r, editing::EditCommand::Done);
+    let s = set(&r, camera);
+    assert!(
+        s.is_on(Overlay::Joints) && s.is_on(Overlay::Collisions),
+        "{s:?}"
+    );
+    assert!(!s.is_on(Overlay::Frames));
+    assert_eq!(set(&r, other), OverlaySet::default());
+}
+
+/// While editing, the camera still pivots on the dimmed models: only
+/// picking skips them.
+#[test]
+fn the_pivot_lands_on_a_dimmed_model() {
+    let (mut r, a, ..) = two_editable_models();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    r.op(ViewOp::PivotAt {
+        at: pb,
+        orbit: true,
+    });
+    // On b's cube (0.5 m about (0, 3, 0.5)), not the ground behind it.
+    let pivot = gz_to_bevy().inverse() * r.pivot();
+    let off = (pivot - Vec3::new(0.0, 3.0, 0.5)).abs();
+    assert!(off.max_element() < 0.5 + 1e-3 && pivot.z > 0.01, "{pivot}");
+}
+
+/// A right click, or a camera drag, between two clicks: no double click.
+#[test]
+fn only_two_clicks_in_a_row_are_a_double_click() {
+    let (mut r, ..) = two_editable_models();
+    r.app.insert_resource(gizmo::TransformTool::Translate);
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    r.drag(MouseButton::Right, pa, &[]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None, "a right click between");
+    r.drag(MouseButton::Left, pa, &[pa + Vec2::new(40.0, 0.0)]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None, "an orbit between");
+}
+
+/// [`two_editable_models`] on a server that takes edits, with the gizmo
+/// and undo.
+fn editable_gizmo_rig() -> (Rig, Entity, Entity) {
+    let (mut r, a, _, _, b, _) = two_editable_models();
+    {
+        let mut status = r.app.world_mut().resource_mut::<GzStatus>();
+        status.status = gz_core::transport::Status::Ready;
+        status.world = Some("w".into());
+        status.edits = Some(true);
+    }
+    r.app
+        .insert_resource(gizmo::TransformTool::Translate)
+        .init_resource::<gizmo::Snap>()
+        .init_resource::<gizmo::GizmoState>()
+        .add_plugins((crate::edit::EditPlugin, crate::undo::UndoPlugin))
+        .add_systems(Update, gizmo::gizmo_input.before(controls::mouse_input));
+    r.app.update();
+    (r, a, b)
+}
+
+/// The first click selects the model and brings the gizmo: a second on a
+/// handle is still the double click, not the gizmo's.
+#[test]
+fn a_double_click_on_a_gizmo_handle_edits_the_model() {
+    let (mut r, a, _) = editable_gizmo_rig();
+    let p = arrow_point(&r, 0, 0.3);
+    click(&mut r, p, &[]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, p, &[]);
+    r.app.update();
+    assert_eq!(editing(&r), Some(a));
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+}
+
+/// Undo and redo wait while a model is edited.
+#[test]
+fn undo_waits_while_editing() {
+    let (mut r, a, b) = editable_gizmo_rig();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
+    r.app.update();
+    let (from, to) = (arrow_point(&r, 0, 0.8), arrow_point(&r, 0, 1.6));
+    r.drag(MouseButton::Left, from, &[to]);
+    r.app.update();
+    let x = |r: &Rig| r.app.world().get::<Transform>(a).unwrap().translation.x;
+    let moved = x(&r);
+    assert!(moved > 0.1, "{moved}");
+    edit(&mut r, editing::EditCommand::Enter(b));
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(x(&r), moved);
+    edit(&mut r, editing::EditCommand::Done);
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(x(&r), 0.0);
+}
+
+/// A faded material follows its own: a change to it (a texture combined
+/// in, say) reaches the copy. A heightmap's terrain fades too.
+#[test]
+fn faded_copies_follow_their_materials_and_terrain_fades() {
+    use crate::heightmap::TerrainMaterial;
+    let (mut r, a, _, _, b, mb) = two_editable_models();
+    r.app
+        .add_message::<AssetEvent<StandardMaterial>>()
+        .init_resource::<Assets<TerrainMaterial>>();
+    let lb = r.app.world().get::<Children>(b).unwrap()[0];
+    let terrain = {
+        let world = r.app.world_mut();
+        let m = world
+            .resource_mut::<Assets<TerrainMaterial>>()
+            .add(TerrainMaterial::default());
+        world
+            .spawn((MeshMaterial3d(m), box_visual(), ChildOf(lb)))
+            .id()
+    };
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let shown = |r: &Rig| {
+        r.app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(mb)
+            .unwrap()
+            .0
+            .clone()
+    };
+    let original = r
+        .app
+        .world()
+        .get::<editing::Dimmed>(mb)
+        .unwrap()
+        .original
+        .clone();
+    {
+        let mut materials = r.app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+        materials.get_mut(&original).unwrap().emissive = LinearRgba::RED;
+    }
+    r.app
+        .world_mut()
+        .write_message(AssetEvent::Modified { id: original.id() });
+    r.app.update();
+    let copy = r
+        .app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&shown(&r))
+        .cloned()
+        .unwrap();
+    assert_eq!(copy.emissive, LinearRgba::RED);
+    assert!((copy.base_color.alpha() - editing::DIMMED_OPACITY).abs() < 1e-3);
+    let faded = r
+        .app
+        .world()
+        .get::<MeshMaterial3d<TerrainMaterial>>(terrain)
+        .unwrap()
+        .0
+        .clone();
+    let alpha = r
+        .app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .get(&faded)
+        .unwrap()
+        .base
+        .base_color
+        .alpha();
+    assert!((alpha - editing::DIMMED_OPACITY).abs() < 1e-3, "{alpha}");
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r
+        .app
+        .world()
+        .get::<editing::Dimmed<TerrainMaterial>>(terrain)
+        .is_none());
 }

@@ -436,8 +436,18 @@ workspaces, the switcher and persistence, **M8e** the Workspaces panel.
   `apply_ui_commands` (`PanelRegistry::resolve`); restoring uses the same.
 
 ### M9 — Model editing (§6.6)
+In four PRs: **M9a** entering and leaving (pause, dimming, the pill, the selection and tree
+limits, Esc), **M9b** the Parts tab and inserting links, joints, visuals, collisions and
+sensors, **M9c** validation, write-back (remove and create the edited SDFormat, as undoing a
+delete does) and the session as one undo step, **M9d** the inspectors' quick actions (Add
+visual / collision / sensor, Reparent).
+
 - Sim pause, dimming, EDITING pill, Parts tab, link/joint/visual/collision/sensor insertion,
   validation, write-back.
+- **M9a notes:** `gz_bevy::view::editing` (D-112): `EditCommand`, `EditingModel`, picks of the
+  model's parts, faded materials, the selection limit; the pill, the hint, the tree's dimmed
+  rows, Edit model in the inspector and the context menu, a double click with a transform
+  tool, Esc; `gzweb --edit`. Left: link moves (the gizmo moves top-level models), M9b–d.
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

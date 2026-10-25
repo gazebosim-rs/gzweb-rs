@@ -21,6 +21,7 @@ use bevy::prelude::*;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::overlays::{KeepGrid, Overlay, OverlaySet};
 use gz_bevy::spawn::GzIndex;
+use gz_bevy::view::editing::EditingModel;
 use gz_bevy::view::{SnapView, ViewCamera, ViewCommand, ViewId, ViewOp, ViewPose};
 use serde::{Deserialize, Serialize};
 
@@ -522,6 +523,7 @@ pub(crate) struct LayoutState<'w, 's> {
     panels: Res<'w, PanelRegistry>,
     cameras: Query<'w, 's, CameraParts, With<MainCamera>>,
     beneath: ResMut<'w, Beneath>,
+    editing: Option<Res<'w, EditingModel>>,
 }
 
 /// What the Workspaces panel stands in for while it's in a slot: the
@@ -644,12 +646,17 @@ impl LayoutState<'_, '_> {
             views: cams
                 .into_iter()
                 .filter(|(_, id, ..)| id.0 < preset.count())
-                .map(|(_, _, v, t, p, set)| {
+                .map(|(e, _, v, t, p, set)| {
                     let pose = ViewPose::of(v, t, p);
+                    // Without the joints and frames editing a model shows.
+                    let own = |s: &OverlaySet| match self.editing.as_deref() {
+                        Some(editing) => overlay_ids(&editing.own(e, s)),
+                        None => overlay_ids(s),
+                    };
                     SavedView {
                         pose: Some(pose.into()),
                         snap: pose.snapped.map(snap_id),
-                        overlays: set.map(overlay_ids),
+                        overlays: set.map(own),
                     }
                 })
                 .collect(),
@@ -812,6 +819,7 @@ pub(crate) fn apply_pending_views(
     mut cameras: Query<(Entity, &ViewId, Option<&mut OverlaySet>), With<MainCamera>>,
     index: Option<Res<GzIndex>>,
     mut views: MessageWriter<ViewCommand>,
+    mut editing: Option<ResMut<EditingModel>>,
     mut commands: Commands,
 ) {
     if pending.0.is_empty() {
@@ -846,6 +854,10 @@ pub(crate) fn apply_pending_views(
                 if set.is_on(o) != on {
                     set.set(o, on);
                 }
+            }
+            // A model being edited shows its joints and frames here again.
+            if let Some(editing) = editing.as_mut().filter(|e| e.model().is_some()) {
+                editing.relight(view);
             }
         }
         false

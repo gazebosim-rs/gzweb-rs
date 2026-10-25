@@ -20,6 +20,7 @@
 
 pub mod align;
 pub mod controls;
+pub mod editing;
 pub mod gizmo;
 pub mod input;
 pub mod model_edits;
@@ -176,6 +177,8 @@ pub struct StartView {
     pub overlays: Vec<crate::overlays::Overlay>,
     /// Top-level model names.
     pub select: Vec<String>,
+    /// Edit the first of them (`gzweb --edit`; §6.6).
+    pub edit: bool,
 }
 
 /// Applies [`StartView`] when the first scene has arrived, then removes
@@ -189,6 +192,7 @@ pub fn apply_start_view(
     mut selection: ResMut<Selection>,
     mut view_out: MessageWriter<ViewCommand>,
     mut overlay_out: MessageWriter<crate::overlays::OverlayCommand>,
+    mut edit_out: MessageWriter<editing::EditCommand>,
     mut commands: Commands,
 ) {
     let Some(start) = start else { return };
@@ -220,6 +224,9 @@ pub fn apply_start_view(
             .flat_map(|es| es.iter().filter(top).copied())
             .collect();
         select(&mut selection.reborrow(), SelectMode::Replace, &picked);
+        if let Some(model) = picked.first().filter(|_| start.edit) {
+            edit_out.write(editing::EditCommand::Enter(*model));
+        }
     }
     commands.remove_resource::<StartView>();
 }
@@ -343,6 +350,11 @@ pub enum ViewOp {
     /// Put the camera where a workspace saved it (§8): its pose, pivot,
     /// projection and axis view; free.
     Restore(ViewPose),
+    /// A double click at `at` with Translate or Rotate (spec §6.6): edit
+    /// the model under it ([`editing::EditCommand::Enter`]).
+    EditAt {
+        at: Vec2,
+    },
 }
 
 /// Where a view's camera is, as a workspace saves it (spec §8): its pose
@@ -1042,13 +1054,38 @@ pub struct ViewScene<'w, 's> {
     parents: Query<'w, 's, &'static ChildOf>,
     roots: Query<'w, 's, Entity, With<GzWorldRoot>>,
     skip: Query<'w, 's, (), With<NoViewPick>>,
+    editing: Option<Res<'w, editing::EditingModel>>,
 }
 
 impl ViewScene<'_, '_> {
-    /// The nearest visible mesh on the ray.
+    /// The model being edited, if one is.
+    fn editing(&self) -> Option<Entity> {
+        self.editing
+            .as_deref()
+            .and_then(editing::EditingModel::model)
+    }
+
+    /// The nearest visible mesh on the ray: what the camera pivots on and
+    /// focus frames, dimmed models too.
     fn hit(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
         let skip = &self.skip;
         let filter = |e: Entity| !skip.contains(e);
+        let settings = MeshRayCastSettings::default().with_filter(&filter);
+        self.ray_cast
+            .cast_ray(ray, &settings)
+            .first()
+            .map(|(e, hit)| (*e, hit.point))
+    }
+
+    /// The nearest visible mesh on the ray that can be picked: in the
+    /// model being edited, if one is (the others are see-through).
+    fn pick(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
+        let skip = &self.skip;
+        let parents = &self.parents;
+        let editing = self.editing();
+        let filter = |e: Entity| {
+            !skip.contains(e) && editing.is_none_or(|m| editing::is_under(parents, e, m))
+        };
         let settings = MeshRayCastSettings::default().with_filter(&filter);
         self.ray_cast
             .cast_ray(ray, &settings)
@@ -1331,6 +1368,7 @@ pub fn apply_view_commands(
     mut scene: ViewScene,
     mut placed: MessageWriter<place::PlaceAt>,
     mut contexts: MessageWriter<EntityContext>,
+    mut edits: MessageWriter<editing::EditCommand>,
     time: Res<Time<Real>>,
     linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
@@ -1356,6 +1394,15 @@ pub fn apply_view_commands(
                         normal: place::to_gazebo(n),
                         keep,
                     });
+                }
+                continue;
+            }
+            if let ViewOp::EditAt { at } = cmd.op {
+                // In a model already, the pick is a link of it.
+                if scene.editing().is_none() {
+                    if let Some(e) = select::pick_at(&mut scene, (&t, &p), f.size, at) {
+                        edits.write(editing::EditCommand::Enter(e));
+                    }
                 }
                 continue;
             }
@@ -1476,7 +1523,7 @@ fn apply(
         }
         // Placed, and the context menu asked for, by `apply_view_commands`,
         // which writes the result.
-        ViewOp::Place { .. } | ViewOp::Context { .. } => {}
+        ViewOp::Place { .. } | ViewOp::Context { .. } | ViewOp::EditAt { .. } => {}
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
             select(&mut scene.selection.reborrow(), mode, &picked);

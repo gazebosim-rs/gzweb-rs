@@ -16,7 +16,9 @@ use gz_core::msgs;
 use prost::Message as _;
 
 use super::model::*;
-use super::systems::{local_model, Ghost, NOT_CONNECTED, NO_EDITS, SEARCH_PROMPT, UNREACHABLE};
+use super::systems::{
+    local_model, Ghost, EDITING, NOT_CONNECTED, NO_EDITS, SEARCH_PROMPT, UNREACHABLE,
+};
 use super::view::{
     AssetsNote, Dismiss, FuelButton, FuelInsert, FuelMessage, InsertRows, LocalInsert, RowBar,
     TabChoice, TabPane, Tile,
@@ -191,6 +193,10 @@ fn inserting_needs_a_live_world_that_takes_edits() {
     frames(&mut app, 2);
     assert_eq!(note(&mut app), None);
     assert!(!app.world().entity(t).contains::<InteractionDisabled>());
+    // Nor while a model is edited (§6.6).
+    edit_a_model(&mut app);
+    assert_eq!(note(&mut app).as_deref(), Some(EDITING));
+    assert!(app.world().entity(t).contains::<InteractionDisabled>());
 }
 
 /// The tabs pick what shows.

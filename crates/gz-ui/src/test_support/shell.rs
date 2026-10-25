@@ -94,6 +94,15 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
             (
                 gz_bevy::view::select::prune_selection,
                 apply_view_commands,
+                (
+                    gz_bevy::view::editing::run_edit_commands,
+                    gz_bevy::view::editing::pause_when_known,
+                    gz_bevy::view::editing::light_new_views,
+                    gz_bevy::view::editing::end_editing_when_gone,
+                    gz_bevy::view::editing::limit_selection,
+                    gz_bevy::view::editing::dim_others::<StandardMaterial>,
+                )
+                    .chain(),
                 apply_overlay_commands,
             )
                 .chain()
@@ -398,4 +407,37 @@ pub(crate) fn send(app: &mut App, op: gz_bevy::view::ViewOp) {
         .unwrap();
     world.write_message(ViewCommand { view, op });
     frames(app, 2);
+}
+
+/// Edits a new top-level model `edited` (in a world root of its own if
+/// there's none yet), returning it.
+pub(crate) fn edit_a_model(app: &mut App) -> Entity {
+    use gz_bevy::spawn::{GzEntity, GzWorldRoot};
+    use gz_bevy::view::editing::EditCommand;
+    let world = app.world_mut();
+    let root = world
+        .query_filtered::<Entity, With<GzWorldRoot>>()
+        .iter(world)
+        .next()
+        .unwrap_or_else(|| {
+            world
+                .spawn((Transform::default(), Visibility::default(), GzWorldRoot))
+                .id()
+        });
+    let model = world
+        .spawn((
+            GzEntity {
+                name: "edited".into(),
+                id: 0,
+                kind: gz_core::scene::NodeKind::Model,
+                path: "edited".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(root),
+        ))
+        .id();
+    world.write_message(EditCommand::Enter(model));
+    frames(app, 3);
+    model
 }

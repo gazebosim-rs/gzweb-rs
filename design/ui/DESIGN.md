@@ -452,6 +452,8 @@ Entering: Model inspector › Edit model, context menu › Edit model, or double
 - The Link inspector gains quick actions Add visual / Add collision / Add sensor; the Joint inspector gains Reparent.
 - Done: validates (every link has inertia or is static; joints have both ends), writes the model, resumes the sim. Every edit is undoable individually; Undo after Done reverts the whole editing session as one step.
 
+As built (D-112, M9a): entering, the dimming (other models unpickable, their meshes at 25%), the selection limited to the model's parts, the Scene tree's open model and dimmed rows, the EDITING pill with Done, the status bar's "sim paused while editing", the joints and frames turned on, and Esc. Parts, validation and write-back follow (M9b, M9c).
+
 ### 6.4 Selection model
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 

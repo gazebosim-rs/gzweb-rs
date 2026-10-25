@@ -9,8 +9,10 @@ use gz_bevy::connection::GzCommand;
 use gz_bevy::edit::edits_allowed;
 use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
+use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::model_edits::{EditModels, ModelEdit};
+use gz_bevy::view::Selection;
 
 use super::layout::{ShellLayout, Side, Slot};
 use super::sidebar::body::ActionButton;
@@ -137,6 +139,15 @@ impl Shortcuts<'_, '_> {
     }
 }
 
+/// What Esc reads and writes while a model is edited: the tool, the
+/// editing, the selection and the leaving.
+type EditKeys<'w> = (
+    Res<'w, Tool>,
+    Option<Res<'w, EditingModel>>,
+    ResMut<'w, Selection>,
+    MessageWriter<'w, EditCommand>,
+);
+
 /// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z, ⌘C ⌘V ⌘D and Delete (D-109; none
 /// mid-drag or mid-scrub), Alt+1–4 (the workspaces, D-110), the
 /// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓), ⇧⌘R (Reset, on a live world), ⌘K,
@@ -154,9 +165,12 @@ pub(crate) fn shortcut_keys(
     mut workspaces: MessageWriter<super::workspaces::WorkspaceCommand>,
     mut layout: MessageWriter<LayoutCommand>,
     mut sim: MessageWriter<GzCommand>,
+    (tool, editing, mut selection, mut edit_out): EditKeys,
 ) {
     let ran: Vec<String> = runs.read().map(|r| r.0.clone()).collect();
-    for id in shortcuts.pressed().into_iter().chain(ran) {
+    let keyed = shortcuts.pressed();
+    let pressed = keyed.len();
+    for (i, id) in keyed.into_iter().chain(ran).enumerate() {
         let views = match id.as_str() {
             "view.maximize" => Some(LayoutCommand::Maximize(None)),
             "view.close" => Some(LayoutCommand::Close(None)),
@@ -210,6 +224,21 @@ pub(crate) fn shortcut_keys(
                     } else {
                         UndoCommand::Redo
                     });
+                }
+                continue;
+            }
+            // Editing a model, Esc in Navigate clears the selection, then
+            // leaves (§6.6; one step per Esc, §6.3). Not ⌘K's Navigate
+            // tool: that only picks the tool.
+            "tool.navigate"
+                if i < pressed
+                    && *tool == Tool::Navigate
+                    && editing.as_deref().is_some_and(|e| e.model().is_some()) =>
+            {
+                if selection.is_empty() {
+                    edit_out.write(EditCommand::Done);
+                } else {
+                    *selection = Selection::default();
                 }
                 continue;
             }

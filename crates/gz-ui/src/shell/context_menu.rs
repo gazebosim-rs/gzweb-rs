@@ -11,8 +11,8 @@
 //! top-level models ([`EditModels`]), Align on two or more of them
 //! ([`AlignModels`]): those need a server that takes edits. Show › turns
 //! the overlays on or off in the view (they draw for every entity). The
-//! server can't rename a model, and Apply force… and Edit model wait, so
-//! those say why.
+//! server can't rename a model, and Apply force… waits, so those say
+//! why. Edit model edits the model in place (§6.6, D-112).
 
 use bevy::input_focus::tab_navigation::NavAction;
 use bevy::input_focus::InputFocus;
@@ -27,6 +27,7 @@ use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::undo::UndoStack;
 use gz_bevy::undo::{Change, Record};
 use gz_bevy::view::align::{AlignEdge, AlignModels};
+use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::model_edits::{EditModels, ModelClipboard, ModelEdit, ModelsEdited};
 use gz_bevy::view::{CameraMode, EntityContext, SelectMode, Selection, ViewCommand, ViewOp};
@@ -94,6 +95,8 @@ pub(crate) struct MenuState {
     pub(crate) movers: usize,
     /// The overlays on where it opened.
     pub(crate) overlays: Overlays,
+    /// The subject is the model being edited.
+    pub(crate) edited: bool,
 }
 
 /// Why an item can't run now, if it can't.
@@ -101,7 +104,8 @@ fn unavailable(item: ContextItem, s: &MenuState) -> Option<&'static str> {
     const NO_EDITS: &str = "This server doesn't take edits";
     match item {
         ContextItem::Rename => Some("The server can't rename a model"),
-        ContextItem::ApplyForce | ContextItem::EditModel => Some("Not yet"),
+        ContextItem::ApplyForce => Some("Not yet"),
+        ContextItem::EditModel if s.edited => Some("Editing it now"),
         ContextItem::Edit(ModelEdit::Copy) if !s.model => Some("Only a model copies"),
         ContextItem::Edit(ModelEdit::Paste) if !s.copied => Some("Nothing copied"),
         ContextItem::Edit(ModelEdit::Duplicate | ModelEdit::Delete) if !s.model => {
@@ -235,6 +239,7 @@ pub(crate) fn open_context_menu(
     subjects: Subjects,
     roots: Query<Entity, With<GzWorldRoot>>,
     open: Query<Entity, With<ContextMenu>>,
+    editing: Option<Res<EditingModel>>,
     mut commands: Commands,
 ) {
     let Some(ask) = asks.read().last() else {
@@ -278,6 +283,7 @@ pub(crate) fn open_context_menu(
             .and_then(|v| sets.get(v).ok().map(|s| s.0))
             .or(overlays.as_deref().copied())
             .unwrap_or_default(),
+        edited: editing.and_then(|e| e.model()) == Some(ask.entity),
     };
     let mut menu_root = Entity::PLACEHOLDER;
     let holder = commands
@@ -372,6 +378,7 @@ pub(crate) fn on_context_item(
     mut edits: MessageWriter<EditModels>,
     mut aligns: MessageWriter<AlignModels>,
     mut records: MessageWriter<Record>,
+    mut editing: MessageWriter<EditCommand>,
 ) {
     let Ok(item) = items.get(ev.entity) else {
         return;
@@ -462,7 +469,10 @@ pub(crate) fn on_context_item(
             });
         }
         ContextItem::Inspect => layout.show(Side::Inspector, true),
-        ContextItem::Rename | ContextItem::ApplyForce | ContextItem::EditModel => {}
+        ContextItem::EditModel => {
+            editing.write(EditCommand::Enter(subject));
+        }
+        ContextItem::Rename | ContextItem::ApplyForce => {}
     }
 }
 
@@ -494,6 +504,7 @@ pub(crate) fn models_edited(
 pub(crate) fn build(app: &mut App) {
     app.add_message::<EntityContext>()
         .add_message::<EditModels>()
+        .add_message::<EditCommand>()
         .add_message::<ModelsEdited>()
         .add_message::<AlignModels>()
         .add_observer(on_context_item)

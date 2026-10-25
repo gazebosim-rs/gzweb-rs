@@ -151,6 +151,40 @@ fn a_views_camera_comes_back() {
     assert!(set.is_on(Overlay::Joints));
 }
 
+/// A switch while a model is edited keeps the joints and frames editing
+/// shows out of the workspace left, and the views keep them on.
+#[test]
+fn a_switch_while_editing_leaves_editings_overlays_out() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    edit_a_model(&mut app);
+    let set = |app: &mut App| {
+        let world = app.world_mut();
+        *world
+            .query_filtered::<&OverlaySet, With<MainCamera>>()
+            .iter(world)
+            .next()
+            .unwrap()
+    };
+    assert!(set(&mut app).is_on(Overlay::Joints));
+    alt(&mut app, KeyCode::Digit2);
+    frames(&mut app, 2);
+    let left = workspaces(&app).list[0].left.clone().unwrap();
+    assert_eq!(left.views[0].overlays.as_deref(), Some(&[][..]));
+    assert!(set(&mut app).is_on(Overlay::Joints), "still editing");
+    alt(&mut app, KeyCode::Digit1);
+    frames(&mut app, 2);
+    assert!(set(&mut app).is_on(Overlay::Frames), "still editing");
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    frames(&mut app, 2);
+    let s = set(&mut app);
+    assert!(
+        !s.is_on(Overlay::Joints) && !s.is_on(Overlay::Frames),
+        "{s:?}"
+    );
+}
+
 fn stored(app: &App) -> Option<WorkspaceFile> {
     match &app.world().resource::<WorkspaceStore>().at {
         StoreAt::Memory(Some(text)) => Some(serde_json::from_str(text).unwrap()),

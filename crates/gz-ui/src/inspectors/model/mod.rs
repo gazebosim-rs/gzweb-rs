@@ -12,7 +12,7 @@ use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors, GzWorldRoot};
 use gz_core::scene::NodeKind;
 
 use super::common::{
-    breadcrumb, crumb, definition_group, links, pose_editable, pose_group, quick_action,
+    breadcrumb, crumb, definition_group, links_with, pose_editable, pose_group, quick_action,
     quick_action_node, quick_actions, title_row, EntityAction, PoseFrame,
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
@@ -122,6 +122,10 @@ fn build_model(
     });
     let counts = parts(model, &path, &children, &entities, sdf.as_deref());
     let editable = pose_editable(status.as_deref(), model, &nodes, &roots);
+    // Only a top-level model is edited in place (§6.6).
+    let top = nodes
+        .get(model)
+        .is_ok_and(|(_, p, _)| roots.contains(p.parent()));
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -166,7 +170,7 @@ fn build_model(
                 None => vec![("—".into(), String::new())],
             };
             definition_group(b, "Plugins", plugins);
-            links(
+            links_with(
                 b,
                 &[
                     &format!("Links {}", counts.links),
@@ -175,6 +179,11 @@ fn build_model(
                     "Edit model",
                     "All components",
                 ],
+                if top {
+                    &[("Edit model", EntityAction::EditModel)]
+                } else {
+                    &[]
+                },
             );
         })));
 }

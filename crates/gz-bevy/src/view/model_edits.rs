@@ -261,6 +261,11 @@ pub(crate) fn request_model_edits(
             done.write(fail("Not connected"));
             continue;
         };
+        // The model's parts are what's selected; Done writes it back.
+        if scene.editing().is_some() {
+            done.write(fail("Not while editing a model"));
+            continue;
+        }
         if edit.edits() && !edits_allowed(status.as_deref()) {
             done.write(fail("This server doesn't take edits"));
             continue;

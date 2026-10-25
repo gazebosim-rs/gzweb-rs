@@ -410,6 +410,7 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(on_header_button)
         .add_observer(crate::inspectors::common::on_dismiss)
         .add_observer(crate::inspectors::common::on_pose_commit)
+        .add_message::<gz_bevy::view::editing::EditCommand>()
         .add_observer(crate::inspectors::common::on_entity_action)
         .add_observer(crate::inspectors::common::on_select_path)
         .add_systems(

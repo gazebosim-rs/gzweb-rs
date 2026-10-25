@@ -88,7 +88,12 @@ pub struct TreeRowSpec {
     pub hidden: bool,
     /// It has a visibility toggle (entities that draw something).
     pub hideable: bool,
+    /// Outside the model being edited (§6.6): the row at 40%.
+    pub dimmed: bool,
 }
+
+/// A dimmed row's opacity (§6.6: other roots dim while a model is edited).
+pub(crate) const DIMMED_ROW_OPACITY: f32 = 0.4;
 
 /// The row's caret was clicked: `expanded` is what the row asks for. The
 /// tree's owner answers by writing the row's [`TreeRowSpec`].
@@ -306,7 +311,8 @@ pub(crate) struct RowParts<'w, 's> {
 impl RowParts<'_, '_> {
     /// Every part from `spec` and the row's selection and hover.
     fn paint(&mut self, row: Entity, spec: &TreeRowSpec, selected: bool, hovered: bool) {
-        let alpha = if spec.hidden { 0.5 } else { 1.0 };
+        let alpha = if spec.hidden { 0.5 } else { 1.0 }
+            * if spec.dimmed { DIMMED_ROW_OPACITY } else { 1.0 };
         if let Ok(mut a) = self.access.get_mut(row) {
             let node = &a.0;
             let level = spec.depth as usize + 1;

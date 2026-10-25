@@ -99,6 +99,7 @@ impl Plugin for ScenePanelPlugin {
                         systems::entity_count,
                         systems::header_actions,
                         systems::apply_start,
+                        systems::expand_edited,
                     ),
                 )
                     .chain(),
