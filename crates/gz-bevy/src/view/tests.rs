@@ -4162,3 +4162,114 @@ fn faded_copies_follow_their_materials_and_terrain_fades() {
         .get::<editing::Dimmed<TerrainMaterial>>(terrain)
         .is_none());
 }
+
+/// Parts added while editing: a link spawns under the model, selected; a
+/// sensor joins its link's; the extras get them; undo and redo take the
+/// last back and put it back; Done drops them, the extras the server's
+/// again.
+#[test]
+fn parts_join_the_edited_model_until_done() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::{GzEntity, GzSensors};
+    use editing::parts::{EditParts, PartCommand, PartsDiscarded};
+    use gz_core::insert::Shape;
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let add = |r: &mut Rig, part: Part| {
+        r.app.world_mut().write_message(PartCommand::Add(part));
+        r.app.update();
+        r.app.update();
+    };
+    add(
+        &mut r,
+        Part::Link {
+            name: "link_1".into(),
+            shape: Shape::Box,
+            pose: Pose {
+                pos: [1.0, 0.0, 0.25],
+                quat: [0.0, 0.0, 0.0, 1.0],
+            },
+        },
+    );
+    let link = |r: &mut Rig| {
+        let world = r.app.world_mut();
+        world
+            .query::<(Entity, &GzEntity, &ChildOf)>()
+            .iter(world)
+            .find(|(_, g, _)| g.path == "a/link_1")
+            .map(|(e, _, p)| (e, p.parent()))
+    };
+    let (l1, parent) = link(&mut r).expect("the link");
+    assert_eq!(parent, a);
+    assert_eq!(selected(&r), [l1]);
+    let t = r.app.world().get::<Transform>(l1).unwrap().translation;
+    assert_eq!(t, Vec3::new(1.0, 0.0, 0.25));
+    add(
+        &mut r,
+        Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        },
+    );
+    let sensors = |r: &Rig| r.app.world().get::<GzSensors>(la).map_or(0, |s| s.0.len());
+    assert_eq!(sensors(&r), 1);
+    let extras = |r: &Rig| r.app.world().resource::<SdfExtras>().extras.clone();
+    let e = extras(&r).expect("the draft's");
+    assert!(e.link("a/link_1").is_some());
+    assert_eq!(e.link("a/base").unwrap().sensors[0].name, "imu_1");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(sensors(&r), 0);
+    assert!(extras(&r).unwrap().link("a/base").is_none());
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), None, "the server's: none yet");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Redo);
+    r.app.update();
+    r.app.update();
+    assert!(link(&mut r).is_some());
+    assert_eq!(
+        r.app
+            .world()
+            .resource::<EditParts>()
+            .draft
+            .undo_label()
+            .as_deref(),
+        Some("add link_1")
+    );
+    // A reply while editing gets the draft's parts too.
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(extras(&r).unwrap().link("a/link_1").is_some());
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .clear();
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), Some(gz_core::sdf::WorldExtras::default()));
+    let dropped: Vec<PartsDiscarded> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .drain()
+        .collect();
+    assert_eq!(dropped, [PartsDiscarded(1)]);
+}

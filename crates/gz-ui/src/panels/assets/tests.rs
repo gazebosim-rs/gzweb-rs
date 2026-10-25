@@ -120,7 +120,8 @@ fn a_start_names_a_tab() {
     assert!("fuel:pallet".parse::<AssetsStart>().is_ok());
     assert!("Lights".parse::<AssetsStart>().is_ok());
     assert!("shapes:x".parse::<AssetsStart>().is_err());
-    assert!("parts".parse::<AssetsStart>().is_err());
+    assert!("parts".parse::<AssetsStart>().is_ok());
+    assert!("parts:x".parse::<AssetsStart>().is_err());
 }
 
 // Through the shell.
@@ -193,10 +194,14 @@ fn inserting_needs_a_live_world_that_takes_edits() {
     frames(&mut app, 2);
     assert_eq!(note(&mut app), None);
     assert!(!app.world().entity(t).contains::<InteractionDisabled>());
-    // Nor while a model is edited (§6.6).
+    // Nor while a model is edited (§6.6), but a shape adds a link to it.
     edit_a_model(&mut app);
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Lights;
+    frames(&mut app, 2);
     assert_eq!(note(&mut app).as_deref(), Some(EDITING));
-    assert!(app.world().entity(t).contains::<InteractionDisabled>());
+    let light = tile(&mut app, &Insertable::Light(LightKind::Point));
+    assert!(app.world().entity(light).contains::<InteractionDisabled>());
+    assert!(!app.world().entity(t).contains::<InteractionDisabled>());
 }
 
 /// The tabs pick what shows.
@@ -270,6 +275,7 @@ fn a_tile_arms_and_a_place_inserts() {
         point: [1.0, 2.0, 0.0],
         normal: [0.0, 0.0, 1.0],
         keep: true,
+        hit: None,
     });
     frames(&mut app, 2);
     assert_eq!(armed(&app), Some(boxed.clone()), "Shift keeps it");
@@ -277,6 +283,7 @@ fn a_tile_arms_and_a_place_inserts() {
         point: [3.0, 2.0, 0.0],
         normal: [0.0, 0.0, 1.0],
         keep: false,
+        hit: None,
     });
     frames(&mut app, 2);
     assert_eq!(armed(&app), None);
@@ -393,6 +400,7 @@ fn a_refused_insert_can_be_dismissed() {
         point: [0.0; 3],
         normal: [0.0, 0.0, 1.0],
         keep: false,
+        hit: None,
     });
     frames(&mut app, 2);
     app.world_mut().write_message(GzServiceReply {
@@ -507,6 +515,7 @@ fn fuel_searches_and_inserts() {
         point: [0.0; 3],
         normal: [0.0, 0.0, 1.0],
         keep: false,
+        hit: None,
     });
     frames(&mut app, 2);
     let world = app.world_mut();
@@ -581,4 +590,265 @@ fn a_start_opens_on_its_tab() {
     let state = app.world().resource::<AssetsState>();
     assert_eq!((state.tab, state.query.as_str()), (AssetTab::Fuel, "box"));
     assert!(!app.world().contains_resource::<AssetsStart>());
+}
+
+// The Parts tab (§6.6).
+
+/// The panel open, editing the model `edited` with links `a` (at the
+/// origin) and `b` (2 m along X); (app, model, a, b).
+fn editing_parts() -> (App, Entity, Entity, Entity) {
+    use gz_bevy::overlays::extras::SdfExtras;
+    let mut app = live_assets();
+    app.init_resource::<SdfExtras>();
+    let model = edit_a_model(&mut app);
+    let link = |app: &mut App, name: &str, x: f32| {
+        app.world_mut()
+            .spawn((
+                gz_bevy::spawn::GzEntity {
+                    name: name.into(),
+                    id: 0,
+                    kind: gz_core::scene::NodeKind::Link,
+                    path: format!("edited/{name}"),
+                },
+                Transform::from_xyz(x, 0.0, 0.0),
+                Visibility::default(),
+                ChildOf(model),
+            ))
+            .id()
+    };
+    let (a, b) = (link(&mut app, "a", 0.0), link(&mut app, "b", 2.0));
+    frames(&mut app, 2);
+    (app, model, a, b)
+}
+
+fn part_tile(app: &mut App, tool: PartTool) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &super::parts::PartTile)>()
+        .iter(world)
+        .find(|(_, t)| t.0 == tool)
+        .unwrap()
+        .0
+}
+
+fn place(app: &mut App, point: [f64; 3], hit: Option<Entity>, keep: bool) {
+    app.world_mut().write_message(PlaceAt {
+        point,
+        normal: [0.0, 0.0, 1.0],
+        keep,
+        hit,
+    });
+    frames(app, 3);
+}
+
+/// The entity `path` names, and its parent.
+fn at_path(app: &mut App, path: &str) -> Option<(Entity, Entity)> {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &gz_bevy::spawn::GzEntity, &ChildOf)>()
+        .iter(world)
+        .find(|(_, g, _)| g.path == path)
+        .map(|(e, _, p)| (e, p.parent()))
+}
+
+fn status_note(app: &App) -> Option<String> {
+    app.world()
+        .resource::<crate::shell::status_bar::readouts::StatusNote>()
+        .0
+        .as_ref()
+        .map(|(t, _)| t.clone())
+}
+
+fn parts_state(app: &App) -> PartsState {
+    app.world().resource::<AssetsState>().parts.clone()
+}
+
+/// The Parts tab shows while a model is edited, and entering opens it;
+/// leaving goes back to Shapes.
+#[test]
+fn the_parts_tab_is_for_editing() {
+    let mut app = live_assets();
+    let parts_tab = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query::<(&TabChoice, &Node)>()
+            .iter(world)
+            .find(|(t, _)| t.0 == AssetTab::Parts)
+            .map(|(_, n)| n.display != Display::None)
+            .unwrap()
+    };
+    assert!(!parts_tab(&mut app));
+    edit_a_model(&mut app);
+    assert!(parts_tab(&mut app));
+    assert_eq!(app.world().resource::<AssetsState>().tab, AssetTab::Parts);
+    assert_eq!(note(&mut app), None, "the tab has its own hint");
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    frames(&mut app, 3);
+    assert!(!parts_tab(&mut app));
+    assert_eq!(app.world().resource::<AssetsState>().tab, AssetTab::Shapes);
+}
+
+/// Link arms placing; a click adds a link there, resting on the surface,
+/// and selects it; Shift keeps it armed. A shape from the Shapes tab adds
+/// a link of its shape.
+#[test]
+fn a_click_adds_a_link() {
+    let (mut app, model, ..) = editing_parts();
+    let t = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, t);
+    assert!(app.world().resource::<Placing>().0);
+    assert!(app
+        .world()
+        .entity(t)
+        .contains::<crate::theme::visuals::Active>());
+    place(&mut app, [1.0, 2.0, 0.0], None, true);
+    let (link, parent) = at_path(&mut app, "edited/link_1").expect("a link");
+    assert_eq!(parent, model);
+    let at = app.world().get::<Transform>(link).unwrap().translation;
+    assert!(at.distance(Vec3::new(1.0, 2.0, 0.25)) < 1e-4, "{at}");
+    assert_eq!(
+        app.world().resource::<gz_bevy::view::Selection>().entities,
+        [link]
+    );
+    assert_eq!(parts_state(&app).armed, Some(PartTool::Link), "Shift");
+    place(&mut app, [3.0, 0.0, 0.0], None, false);
+    assert!(at_path(&mut app, "edited/link_2").is_some());
+    assert_eq!(parts_state(&app).armed, None);
+    // A sphere from the Shapes tab.
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Shapes;
+    frames(&mut app, 2);
+    let sphere = tile(&mut app, &Insertable::Shape(Shape::Sphere));
+    activate(&mut app, sphere);
+    place(&mut app, [0.0, 3.0, 0.0], None, false);
+    let (l3, _) = at_path(&mut app, "edited/link_3").expect("a sphere link");
+    let visual = app.world().get::<Children>(l3).unwrap()[0];
+    let shape = &app
+        .world()
+        .get::<gz_bevy::spawn::GzVisual>(visual)
+        .unwrap()
+        .0
+        .geometry;
+    assert!(matches!(shape, gz_core::scene::GeometryDesc::Sphere { .. }));
+    let creates = sent(&mut app)
+        .into_iter()
+        .filter(|c| matches!(c, GzCommand::Request { service, .. } if service.ends_with("/create")))
+        .count();
+    assert_eq!(creates, 0, "nothing goes into the world");
+}
+
+/// Visual goes on the link clicked; a click off the model's links says
+/// so.
+#[test]
+fn a_visual_goes_on_the_link_clicked() {
+    let (mut app, _, a, _) = editing_parts();
+    let t = part_tile(&mut app, PartTool::Visual);
+    activate(&mut app, t);
+    place(&mut app, [0.0, 0.0, 0.0], None, true);
+    assert_eq!(status_note(&app).as_deref(), Some(super::parts::NOT_A_LINK));
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    let (_, parent) = at_path(&mut app, "edited/a/visual_1").expect("a visual");
+    assert_eq!(parent, a);
+}
+
+/// A joint takes the parent link, then the child; one that would give
+/// the child a second parent says why. Collisions and sensors go on the
+/// link; Plugin names one.
+#[test]
+fn joints_collisions_sensors_and_plugins() {
+    use gz_bevy::overlays::extras::SdfExtras;
+    let (mut app, _, a, b) = editing_parts();
+    let t = part_tile(&mut app, PartTool::Joint);
+    activate(&mut app, t);
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    assert_eq!(parts_state(&app).parent, Some(a));
+    assert!(all_text(&mut app).contains(JOINT_CHILD_HINT));
+    place(&mut app, [2.0, 0.0, 0.0], Some(b), false);
+    let extras = |app: &App| {
+        app.world()
+            .resource::<SdfExtras>()
+            .extras
+            .clone()
+            .unwrap_or_default()
+    };
+    let j = extras(&app).link("edited/b").unwrap().joints[0].clone();
+    assert_eq!((j.parent.as_str(), j.child.as_str()), ("a", "b"));
+    assert_eq!(j.name, "joint_1");
+    assert_eq!(parts_state(&app).armed, None);
+    // b has its parent now.
+    activate(&mut app, t);
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    place(&mut app, [2.0, 0.0, 0.0], Some(b), false);
+    assert_eq!(
+        status_note(&app).as_deref(),
+        Some("b has a parent joint already")
+    );
+    app.world_mut()
+        .write_message(bevy::input::keyboard::KeyboardInput {
+            key_code: KeyCode::Escape,
+            logical_key: bevy::input::keyboard::Key::Escape,
+            state: bevy::input::ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+    frames(&mut app, 2);
+    assert_eq!(parts_state(&app), PartsState::default(), "Esc");
+    // A collision and an IMU on a.
+    let c = part_tile(&mut app, PartTool::Collision);
+    activate(&mut app, c);
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    app.world_mut().resource_mut::<AssetsState>().parts.sensor = gz_core::parts::SensorKind::Imu;
+    let s = part_tile(&mut app, PartTool::Sensor);
+    activate(&mut app, s);
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    let link = extras(&app).link("edited/a").cloned().unwrap();
+    assert_eq!(link.collisions[0].name, "collision_1");
+    assert_eq!(link.sensors[0].name, "imu_1");
+    let sensors = app.world().get::<gz_bevy::spawn::GzSensors>(a).unwrap();
+    assert_eq!(sensors.0[0].ty, "imu");
+    // A plugin.
+    let p = part_tile(&mut app, PartTool::Plugin);
+    activate(&mut app, p);
+    assert!(
+        !app.world().resource::<Placing>().0,
+        "a plugin isn't placed"
+    );
+    {
+        let mut st = app.world_mut().resource_mut::<AssetsState>();
+        st.parts.plugin_file = "gz-sim-joint-state-publisher-system".into();
+        st.parts.plugin_name = "gz::sim::systems::JointStatePublisher".into();
+    }
+    let add = find::<super::parts::PluginAdd>(&mut app);
+    activate(&mut app, add);
+    frames(&mut app, 2);
+    assert_eq!(
+        extras(&app).model("edited").unwrap().plugins,
+        ["gz::sim::systems::JointStatePublisher"]
+    );
+}
+
+/// Undo takes the last part back, and the World menu names it; leaving
+/// says the parts weren't kept.
+#[test]
+fn undo_takes_a_part_back_and_done_drops_them() {
+    let (mut app, ..) = editing_parts();
+    let t = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, t);
+    place(&mut app, [1.0, 0.0, 0.0], None, true);
+    place(&mut app, [2.0, 0.0, 0.0], None, false);
+    assert!(all_text(&mut app).contains("Undo add link_2"));
+    app.world_mut()
+        .write_message(gz_bevy::undo::UndoCommand::Undo);
+    frames(&mut app, 3);
+    assert!(at_path(&mut app, "edited/link_2").is_none());
+    assert!(at_path(&mut app, "edited/link_1").is_some());
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    frames(&mut app, 3);
+    assert!(at_path(&mut app, "edited/link_1").is_none());
+    assert_eq!(
+        status_note(&app).as_deref(),
+        Some("1 part not kept: writing parts to the model comes later")
+    );
 }

@@ -44,8 +44,8 @@
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
-//!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
-//!   (DECISIONS.md D-102).
+//!   on TAB (shapes, lights, fuel, local, or parts while `--edit` edits a
+//!   model), the Fuel tab searching QUERY (DECISIONS.md D-102, D-113).
 //! - `--plot TOPIC:FIELD[,FIELD…]` (repeatable) starts the full UI with
 //!   the Plot panel open, a chart of each TOPIC's FIELDs once the server
 //!   lists it (DECISIONS.md D-100); `--plot TOPIC` opens its picker on
@@ -1113,7 +1113,7 @@ mod tests {
         );
         assert_eq!(
             parse(&["--assets", "nope"], None).unwrap_err(),
-            "--assets: not a tab (shapes, lights, fuel, local): nope"
+            "--assets: not a tab (shapes, lights, fuel, local, parts): nope"
         );
         assert_eq!(
             parse(&["--assets", "shapes:box"], None).unwrap_err(),

@@ -152,6 +152,7 @@ pub(super) fn build_assets(
             spawn_tiles(c, &t, AssetTab::Lights, &state, &lights);
             spawn_fuel(c, &t, &state);
             spawn_local(c, &t, &state);
+            super::parts::spawn_parts(c, &t, &state);
             c.spawn((
                 InsertRows,
                 AccessibilityNode(accesskit::Node::new(Role::List)),

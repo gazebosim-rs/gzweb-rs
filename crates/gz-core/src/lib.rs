@@ -7,6 +7,8 @@
 //! - [`fields`]: a message's numbers, by field path (the Plot panel).
 //! - [`fuel`]: Gazebo Fuel's model search (the Assets panel).
 //! - [`insert`]: shapes, lights and models to insert, as SDFormat.
+//! - [`parts`]: links, joints, visuals, collisions, sensors and plugins
+//!   added to a model being edited, as SDFormat.
 //! - [`sensor`]: lidar scans and camera frames, for the Sensors panel.
 //! - [`teleop`]: the Teleop panel's velocity and joint commands.
 //! - [`transport`]: sans-IO client state machine for the gz websocket protocol.
@@ -29,6 +31,7 @@ pub mod fuel;
 pub mod insert;
 #[cfg(feature = "native")]
 pub mod net;
+pub mod parts;
 pub mod scene;
 pub mod sdf;
 pub mod sensor;

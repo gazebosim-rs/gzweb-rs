@@ -229,6 +229,10 @@ mod tests;
 pub(crate) fn build(app: &mut App) {
     app.add_message::<EditCommand>()
         .init_resource::<EditingModel>()
+        .init_resource::<gz_bevy::view::editing::parts::EditParts>()
+        .add_message::<gz_bevy::view::editing::parts::PartCommand>()
+        .add_message::<gz_bevy::view::editing::parts::PartsDiscarded>()
+        .add_message::<gz_bevy::undo::UndoCommand>()
         .add_systems(
             Update,
             editing_pill_state.in_set(crate::shell::ShellSystems::Readouts),

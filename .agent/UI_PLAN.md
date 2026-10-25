@@ -448,6 +448,11 @@ visual / collision / sensor, Reparent).
   model's parts, faded materials, the selection limit; the pill, the hint, the tree's dimmed
   rows, Edit model in the inspector and the context menu, a double click with a transform
   tool, Esc; `gzweb --edit`. Left: link moves (the gizmo moves top-level models), M9b–d.
+- **M9b notes:** the Parts tab (D-113): `gz_core::parts` (each part's SDFormat, the draft
+  and its undo), `gz_bevy::view::editing::parts` (the parts' entities and sensors, the
+  extras with the draft's parts); Link, Visual, Collision and Sensor by a click, a joint by
+  two with its rubber band, Plugin by name; a Shapes tile adds a link while editing; undo and
+  redo take parts back. Left: M9c writes the draft back (Done drops it until then), M9d.
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

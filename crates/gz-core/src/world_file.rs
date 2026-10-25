@@ -8,7 +8,7 @@ use crate::scene::Pose;
 
 /// A number as SDFormat writes it: up to six decimals, no trailing zeros,
 /// never "-0".
-fn number(v: f64) -> String {
+pub(crate) fn number(v: f64) -> String {
     let s = format!("{v:.6}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     match s {

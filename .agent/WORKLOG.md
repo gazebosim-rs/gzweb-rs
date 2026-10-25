@@ -1944,3 +1944,22 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   and get through the gizmo's handle; faded copies follow their
   materials, terrain fades; undo, redo and inserting refuse while
   editing. Workspace 927 → 937 passing.
+
+## 2026-10-25: M9b the Parts tab (D-113)
+
+- **Parts:** `gz_core::parts`: links, joints, visuals, collisions,
+  sensors and plugins as SDFormat elements; what's shown of each is its
+  element parsed; joint rules; the draft and its undo.
+- **gz-bevy:** `view::editing::parts`: a part's entities (links,
+  visuals) and sensors, the extras with the draft's parts (kept across a
+  reply), undo and redo while editing, the draft dropped on Done.
+  `PlaceAt` carries the mesh clicked.
+- **Parts tab:** six tiles and the shape, joint and sensor selects; a
+  click adds a link, or a visual, collision or sensor on the link
+  clicked; a joint's two clicks with its rubber band; Plugin's fields;
+  a Shapes tile adds a link while editing; the World menu names the
+  draft's undo; Done says the parts weren't kept.
+- **Live check** (debug build, :9013 `diff_drive`, `--select vehicle_blue
+  --edit --assets parts`): the tab beside the pill. The capture paused
+  the sim; a Play request resumed it.
+- **Tests:** workspace 937 → 950 passing.

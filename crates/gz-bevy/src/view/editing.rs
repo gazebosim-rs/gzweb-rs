@@ -8,6 +8,8 @@
 //! and resumes the sim if entering paused it. The UI draws the EDITING pill and limits the Scene
 //! tree; adding parts and writing the model back come later.
 
+pub mod parts;
+
 use std::collections::HashMap;
 
 use bevy::ecs::message::MessageCursor;
