@@ -1933,3 +1933,14 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   --edit`): the pill, the dimming, the tree, the pause and the hint. The
   capture left the sim paused; a Play request resumed it.
 - **Tests:** workspace 919 → 927 passing.
+- **Review fixes:** the editing no longer marks itself changed every
+  frame (the tree's open row stays closed when closed, the dimming
+  scans only on a change); a dimmed tree row opens no menu; entering
+  another model keeps the sim paused; Done turns off only the joints and
+  frames it turned on, new views get them, and workspaces leave them
+  out; Edit model only for a top-level model in the inspector, and
+  unavailable on the edited one; the camera pivots on dimmed models;
+  ⌘K's Navigate isn't Esc; double clicks start over after anything else
+  and get through the gizmo's handle; faded copies follow their
+  materials, terrain fades; undo, redo and inserting refuse while
+  editing. Workspace 927 → 937 passing.
