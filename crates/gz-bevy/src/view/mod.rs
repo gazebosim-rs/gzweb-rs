@@ -18,9 +18,12 @@
 //! tracking) can follow an entity, moving with it, or track it, turning to
 //! keep it in view ([`modes`], DECISIONS.md D-60).
 
+pub mod align;
 pub mod controls;
+pub mod editing;
 pub mod gizmo;
 pub mod input;
+pub mod model_edits;
 pub mod modes;
 pub mod outline;
 pub mod place;
@@ -174,6 +177,8 @@ pub struct StartView {
     pub overlays: Vec<crate::overlays::Overlay>,
     /// Top-level model names.
     pub select: Vec<String>,
+    /// Edit the first of them (`gzweb --edit`; §6.6).
+    pub edit: bool,
 }
 
 /// Applies [`StartView`] when the first scene has arrived, then removes
@@ -187,6 +192,7 @@ pub fn apply_start_view(
     mut selection: ResMut<Selection>,
     mut view_out: MessageWriter<ViewCommand>,
     mut overlay_out: MessageWriter<crate::overlays::OverlayCommand>,
+    mut edit_out: MessageWriter<editing::EditCommand>,
     mut commands: Commands,
 ) {
     let Some(start) = start else { return };
@@ -218,6 +224,9 @@ pub fn apply_start_view(
             .flat_map(|es| es.iter().filter(top).copied())
             .collect();
         select(&mut selection.reborrow(), SelectMode::Replace, &picked);
+        if let Some(model) = picked.first().filter(|_| start.edit) {
+            edit_out.write(editing::EditCommand::Enter(*model));
+        }
     }
     commands.remove_resource::<StartView>();
 }
@@ -332,6 +341,79 @@ pub enum ViewOp {
         to: Vec2,
         mode: SelectMode,
     },
+    /// A right click at `at` (no drag): the model under it is the
+    /// subject of a context menu ([`EntityContext`]), selected first
+    /// unless it already is.
+    Context {
+        at: Vec2,
+    },
+    /// Put the camera where a workspace saved it (§8): its pose, pivot,
+    /// projection and axis view; free.
+    Restore(ViewPose),
+    /// A double click at `at` with Translate or Rotate (spec §6.6): edit
+    /// the model under it ([`editing::EditCommand::Enter`]).
+    EditAt {
+        at: Vec2,
+    },
+}
+
+/// Where a view's camera is, as a workspace saves it (spec §8): its pose
+/// and pivot (Bevy's world frame), the orthographic view height when
+/// orthographic, and the axis view it sits in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub pivot: Vec3,
+    pub ortho: Option<f32>,
+    pub snapped: Option<SnapView>,
+}
+
+impl ViewPose {
+    /// Where the camera is going: a running animation's end, else its
+    /// pose now.
+    pub fn of(view: &ViewCamera, t: &Transform, p: &Projection) -> Self {
+        let (mut view, mut t, mut p) = (view.clone(), *t, p.clone());
+        finish(&mut view, &mut t, &mut p);
+        Self {
+            translation: t.translation,
+            rotation: t.rotation,
+            pivot: view.pivot,
+            ortho: ortho_height(&p),
+            snapped: view.snapped,
+        }
+    }
+}
+
+/// Puts the camera at `pose` ([`ViewOp::Restore`]).
+fn restore(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, pose: ViewPose) {
+    view.snapped = pose.snapped;
+    view.mode = CameraMode::Free;
+    view.pivot = pose.pivot;
+    t.translation = pose.translation;
+    t.rotation = pose.rotation.normalize();
+    match pose.ortho {
+        Some(height) => {
+            let depth = depth_of(t, view.pivot).max(MIN_DISTANCE);
+            *p = Projection::Orthographic(OrthographicProjection {
+                near: depth,
+                far: view.perspective.far,
+                ..OrthographicProjection::default_3d()
+            });
+            set_ortho_height(p, height);
+        }
+        None => *p = Projection::Perspective(view.perspective.clone()),
+    }
+}
+
+/// A right click on a model in a view, or on an entity's row in the
+/// Scene tree (§7.9): the full UI opens the entity context menu for it at
+/// the pointer.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityContext {
+    pub entity: Entity,
+    /// The view's camera, when a view asked (not the Scene tree).
+    pub view: Option<Entity>,
 }
 
 /// A [`ViewOp`] for the view on camera entity `view`.
@@ -972,10 +1054,19 @@ pub struct ViewScene<'w, 's> {
     parents: Query<'w, 's, &'static ChildOf>,
     roots: Query<'w, 's, Entity, With<GzWorldRoot>>,
     skip: Query<'w, 's, (), With<NoViewPick>>,
+    editing: Option<Res<'w, editing::EditingModel>>,
 }
 
 impl ViewScene<'_, '_> {
-    /// The nearest visible mesh on the ray.
+    /// The model being edited, if one is.
+    fn editing(&self) -> Option<Entity> {
+        self.editing
+            .as_deref()
+            .and_then(editing::EditingModel::model)
+    }
+
+    /// The nearest visible mesh on the ray: what the camera pivots on and
+    /// focus frames, dimmed models too.
     fn hit(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
         let skip = &self.skip;
         let filter = |e: Entity| !skip.contains(e);
@@ -986,18 +1077,48 @@ impl ViewScene<'_, '_> {
             .map(|(e, hit)| (*e, hit.point))
     }
 
-    /// The nearest mesh on the ray, else where it meets the ground, within
-    /// `far`, and the surface's normal there, facing the ray's origin.
-    fn surface_hit(&mut self, ray: Ray3d, far: f32) -> Option<(Vec3, Vec3)> {
+    /// The nearest visible mesh on the ray that can be picked: in the
+    /// model being edited, if one is (the others are see-through).
+    fn pick(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
         let skip = &self.skip;
-        let filter = |e: Entity| !skip.contains(e);
+        let parents = &self.parents;
+        let editing = self.editing();
+        let filter = |e: Entity| {
+            !skip.contains(e) && editing.is_none_or(|m| editing::is_under(parents, e, m))
+        };
         let settings = MeshRayCastSettings::default().with_filter(&filter);
-        if let Some((_, hit)) = self.ray_cast.cast_ray(ray, &settings).first() {
-            let n = hit.normal.normalize_or(Vec3::Y);
+        self.ray_cast
+            .cast_ray(ray, &settings)
+            .first()
+            .map(|(e, hit)| (*e, hit.point))
+    }
+
+    /// The nearest mesh on the ray, else where it meets the ground, within
+    /// `far`, the surface's normal there, facing the ray's origin, and the
+    /// mesh (none for the ground). While a model is edited, its own meshes
+    /// come first: the others are see-through, so a click reaches its
+    /// links through them.
+    fn surface_hit(&mut self, ray: Ray3d, far: f32) -> Option<(Vec3, Vec3, Option<Entity>)> {
+        let skip = &self.skip;
+        let parents = &self.parents;
+        let editing = self.editing();
+        let mut cast = |inside: Option<Entity>| {
+            let filter = |e: Entity| {
+                !skip.contains(e) && inside.is_none_or(|m| editing::is_under(parents, e, m))
+            };
+            let settings = MeshRayCastSettings::default().with_filter(&filter);
+            self.ray_cast
+                .cast_ray(ray, &settings)
+                .first()
+                .map(|(e, hit)| (*e, hit.point, hit.normal))
+        };
+        let hit = editing.and_then(|m| cast(Some(m))).or_else(|| cast(None));
+        if let Some((e, point, normal)) = hit {
+            let n = normal.normalize_or(Vec3::Y);
             let n = if n.dot(*ray.direction) > 0.0 { -n } else { n };
-            return Some((hit.point, n));
+            return Some((point, n, Some(e)));
         }
-        ground_point(ray, far).map(|p| (p, Vec3::Y))
+        ground_point(ray, far).map(|p| (p, Vec3::Y, None))
     }
 
     /// What ⇧F and ⇧T follow: the first selected entity, else the
@@ -1254,11 +1375,14 @@ type ViewMoves<'w, 's> = Query<
 /// Applies [`ViewCommand`]s, then advances animations, carries linked
 /// moves to the other views, and publishes the first view's pivot as
 /// [`GzCameraTarget`]. Idle frames change nothing.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_view_commands(
     mut commands: MessageReader<ViewCommand>,
     mut views: ViewMoves,
     mut scene: ViewScene,
     mut placed: MessageWriter<place::PlaceAt>,
+    mut contexts: MessageWriter<EntityContext>,
+    mut edits: MessageWriter<editing::EditCommand>,
     time: Res<Time<Real>>,
     linked: Option<Res<LinkedViews>>,
     mut target: ResMut<GzCameraTarget>,
@@ -1278,11 +1402,33 @@ pub fn apply_view_commands(
             };
             let f = frame(camera);
             if let ViewOp::Place { at, keep } = cmd.op {
-                if let Some((p, n)) = place::surface_at(&mut scene, (&t, &p), f.size, at) {
+                if let Some((p, n, hit)) = place::surface_at(&mut scene, (&t, &p), f.size, at) {
                     placed.write(place::PlaceAt {
                         point: place::to_gazebo(p),
                         normal: place::to_gazebo(n),
                         keep,
+                        hit,
+                    });
+                }
+                continue;
+            }
+            if let ViewOp::EditAt { at } = cmd.op {
+                // In a model already, the pick is a link of it.
+                if scene.editing().is_none() {
+                    if let Some(e) = select::pick_at(&mut scene, (&t, &p), f.size, at) {
+                        edits.write(editing::EditCommand::Enter(e));
+                    }
+                }
+                continue;
+            }
+            if let ViewOp::Context { at } = cmd.op {
+                if let Some(e) = select::pick_at(&mut scene, (&t, &p), f.size, at) {
+                    if !scene.selection.entities.contains(&e) {
+                        select(&mut scene.selection.reborrow(), SelectMode::Replace, &[e]);
+                    }
+                    contexts.write(EntityContext {
+                        entity: e,
+                        view: Some(cmd.view),
                     });
                 }
                 continue;
@@ -1381,6 +1527,7 @@ fn apply(
             | ViewOp::Track { .. }
             | ViewOp::Select { .. }
             | ViewOp::SelectRect { .. }
+            | ViewOp::Context { .. }
     ) {
         finish(view, t, p);
     }
@@ -1389,13 +1536,15 @@ fn apply(
             let picked = select::pick_at(scene, (t, p), f.size, at);
             select(&mut scene.selection.reborrow(), mode, picked.as_slice());
         }
-        // Placed by `apply_view_commands`, which writes the result.
-        ViewOp::Place { .. } => {}
+        // Placed, and the context menu asked for, by `apply_view_commands`,
+        // which writes the result.
+        ViewOp::Place { .. } | ViewOp::Context { .. } | ViewOp::EditAt { .. } => {}
         ViewOp::SelectRect { from, to, mode } => {
             let picked = scene.models_in_rect((t, p), f.size, from, to);
             select(&mut scene.selection.reborrow(), mode, &picked);
         }
         ViewOp::SetDragAction(action) => view.drag_action = action,
+        ViewOp::Restore(pose) => restore(view, t, p, pose),
         ViewOp::PivotAt { at, orbit } => {
             view.pivot = scene.pivot(ray(p, t, at), orbit, view, t, p);
         }

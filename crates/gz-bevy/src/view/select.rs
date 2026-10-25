@@ -115,10 +115,18 @@ pub struct BoxSelectTool(pub bool);
 
 impl ViewScene<'_, '_> {
     /// The top-level model the mesh under `ray` belongs to, if it is in
-    /// the Gazebo tree. A model of only plane visuals (the ground) is empty
-    /// space, as for a marquee and focus.
+    /// the Gazebo tree; while a model is edited, its link (or nested model)
+    /// instead (spec §6.6). A model of only plane visuals (the ground) is
+    /// empty space, as for a marquee and focus.
     pub(super) fn model_under(&mut self, ray: Ray3d) -> Option<Entity> {
-        let (hit, _) = self.hit(ray)?;
+        let (hit, _) = self.pick(ray)?;
+        if let Some(model) = self.editing() {
+            let part = super::editing::part_of(&self.parents, hit, model)?;
+            return self
+                .bounds_of(part, Skip::RUNAWAY_AND_PLANES)
+                .is_some()
+                .then_some(part);
+        }
         let model = self.model_of(hit);
         let parent = self.parents.get(model).ok()?.parent();
         let solid = self.bounds_of(model, Skip::RUNAWAY_AND_PLANES).is_some();
@@ -126,8 +134,9 @@ impl ViewScene<'_, '_> {
     }
 
     /// The top-level models whose bounds, as `camera` sees them, overlap
-    /// the screen rectangle between `a` and `b`. Hidden models, ground
-    /// planes and what has run away don't count, as for focus.
+    /// the screen rectangle between `a` and `b` (while a model is edited,
+    /// its links and nested models). Hidden models, ground planes and what
+    /// has run away don't count, as for focus.
     pub(super) fn models_in_rect(
         &self,
         camera: (&Transform, &Projection),
@@ -136,7 +145,7 @@ impl ViewScene<'_, '_> {
         b: Vec2,
     ) -> Vec<Entity> {
         let rect = Rect::from_corners(a, b);
-        let Some(root) = self.roots.iter().next() else {
+        let Some(root) = self.editing().or_else(|| self.roots.iter().next()) else {
             return Vec::new();
         };
         let Ok((.., Some(children), _, _)) = self.nodes.get(root) else {

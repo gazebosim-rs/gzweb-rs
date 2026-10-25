@@ -164,7 +164,7 @@ Board: `W2 — Activity panels`. Every panel shares this shell:
 | **Sensors** | Sensor list for the selected model (type badge, name, rate). Selected sensor preview: camera image, or lidar top-down scan. Footer: Show in viewport, Record. As built (D-103): other sensors' messages show as text; Show in viewport and Record wait. | ImageDisplay, PointCloud |
 | **Teleop** | Target select (model · topic), mode segmented control (Keyboard, Sliders, Gamepad), WASD pad (40px keys, pressed = accent_soft), linear/angular sliders with values, max speed fields. Joints section: one slider per joint. Footer: **Stop · Space** (danger text), Apply force… As built (D-104): driving needs the patched websocket server's `pub_in`; a pad key, a slider or the stick arms; a disarm (X, Stop, a new target or mode, hiding) sends the robot a zero and holds until the input lets go, and the server zeroes a client's drives when it disconnects; the subscriber banner, Apply force… and the activity dot wait. | Teleop, KeyPublisher, JointPositionController, ApplyForceTorque |
 | **Console** | Filter input, level chips (All, Error, Warn, Info, Debug), log rows (8px level dot, message, `source · time` mono 11). Footer: command input (mono 12). As built (D-105): the client's own log (Gazebo forwards none); header Clear and Pause; the command line runs `gz topic` (-l, -i, -e, -p) and `gz service -s`. | gz log output |
-| **Workspaces** | Workspace cards (layout thumbnail 72×44, name, description, ⌘1–4), current layout summary, Save / Save as new / Reset. Footer note on sync location. | GUI config save/load |
+| **Workspaces** | Workspace cards (layout thumbnail 72×44, name, description, ⌘1–4), current layout summary, Save / Save as new / Reset. Footer note on sync location. As built (D-111): Alt+1–4 (§11); the user's own workspaces join with Delete; Save as new… names one in a row under the buttons; Import waits for a file picker, Export saves `gz-workspaces.json`. | GUI config save/load |
 
 Charts MUST follow: 2px lines, `line_soft` gridlines, `line` baseline, axis labels mono 10–11 `text_2`, legend always present for 2+ series, series colors in fixed order `chart_1`, `chart_2`, `chart_3`, `chart_4` (blue, purple, teal, dark orange; orange is last so a two-series plot never looks like a warning), y-axis linear with labeled ticks, live crosshair tooltip on hover. Text never takes the series color. A series keeps its color when others are removed.
 
@@ -452,6 +452,10 @@ Entering: Model inspector › Edit model, context menu › Edit model, or double
 - The Link inspector gains quick actions Add visual / Add collision / Add sensor; the Joint inspector gains Reparent.
 - Done: validates (every link has inertia or is static; joints have both ends), writes the model, resumes the sim. Every edit is undoable individually; Undo after Done reverts the whole editing session as one step.
 
+As built (D-112, M9a): entering, the dimming (other models unpickable, their meshes at 25%), the selection limited to the model's parts, the Scene tree's open model and dimmed rows, the EDITING pill with Done, the status bar's "sim paused while editing", the joints and frames turned on, and Esc. Parts, validation and write-back follow (M9b, M9c).
+
+As built (D-113, M9b): the Parts tab, its six tiles and the shape, joint and sensor selects; a click adds a link where it lands, or a visual, collision or sensor to the link clicked; a joint's two clicks with its rubber band; Plugin's fields; a Shapes tile adding a link while editing; each part undoable. Clicks stand in for drops (D-102's placing). Until M9c the parts are a draft: Done drops them.
+
 ### 6.4 Selection model
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 
@@ -479,7 +483,7 @@ Checkbox items: Grid G · Collisions C · Inertia I · Center of mass · Joints 
 Row of five layout preset thumbnails (52×36, radius 6, active = `accent_soft` with `accent_ring`), separator, Maximize ⇧Space, Close view ⌘W, separator, checkbox Link cameras, checkbox Shared selection (on).
 
 ### 7.5 Message tray (status bar chip)
-560 wide, opens upward from the chip. Header: "System messages", counts, Open console ›, Clear. Rows: 8px level dot, message, time mono 11.
+560 wide, opens upward from the chip. Header: "System messages", counts, Open console ›, Clear. Rows: 8px level dot, message, time mono 11. As built (D-110): warnings and errors only, counted as listed; Clear drops them from the tray and the chip, not the Console.
 
 ### 7.6 Snap popover
 Translate step (m), rotate step (deg), scale step (reserved), space: World / Local. As built (D-108): World only until the gizmo has local axes.
@@ -488,10 +492,10 @@ Translate step (m), rotate step (deg), scale step (reserved), space: World / Loc
 Centered, 560 wide, top offset 15% of window. Search input 44 tall. Results grouped: Commands, Entities, Topics, Panels, Settings. Each result: icon, name, path/hint in `text_3`, shortcut at right. Every action in this spec MUST be reachable here, including every Gazebo GUI plugin by name. As built (D-107): a command runs as its key would; an unavailable one is dimmed with its reason; the shown panels' actions are commands; the World menu's and the workspaces' commands join with M8b and M8c.
 
 ### 7.8 Workspace switcher (status bar)
-Opens upward. Items: Build Alt+1 · Run Alt+2 · Debug Alt+3 · Review Alt+4 (current checked) · separator · Save current layout · Manage… (opens the Workspaces panel).
+Opens upward. Items: Build Alt+1 · Run Alt+2 · Debug Alt+3 · Review Alt+4 (current checked) · separator · Save current layout · Manage… (opens the Workspaces panel). As built (D-110, D-111): the user's own workspaces list after the four; Manage… opens the Workspaces panel.
 
 ### 7.9 Entity context menu (viewport and tree)
-Focus F · Follow ⇧F · Track ⇧T · Move camera to · separator · Rename F2 · Hide / Show · Copy ⌘C · Paste ⌘V · Duplicate ⌘D · Delete · separator · Align › (2+ selected: X/Y/Z min/center/max, like Gazebo's AlignTool) · Show › (collisions, inertia, CoM, joints, frames for this entity) · Apply force… · Edit model (models only) · separator · Inspect.
+Focus F · Follow ⇧F · Track ⇧T · Move camera to · separator · Rename F2 · Hide / Show · Copy ⌘C · Paste ⌘V · Duplicate ⌘D · Delete · separator · Align › (2+ selected: X/Y/Z min/center/max, like Gazebo's AlignTool) · Show › (collisions, inertia, CoM, joints, frames for this entity) · Apply force… · Edit model (models only) · separator · Inspect. As built (D-109): Copy, Paste, Duplicate and Delete act on top-level models through `generate_world_sdf`, `create` and `remove`, undoable; Rename (no server support), Apply force… and Edit model are unavailable; Show › toggles the view's overlays for every entity.
 
 ### 7.11 Pop-out window
 A panel popped out floats over the viewport area: `surface`, 1px `line`, radius 12, shadow `elevation.menu`, min 320×240, draggable by its 36px header, resizable at edges, clamped to the viewport area. Header: drag grip, title, meta text, **Dock** (returns to the slot it came from) and **Close**. Pop-outs render inside the Bevy window on every platform (no OS windows), stack by last-focused, and persist in the workspace. As built (D-106): every slot header has Pop out; a window is one more panel host; opening a popped-out panel brings its window to the top; persisting waits for the workspaces (M8).
@@ -515,7 +519,7 @@ A workspace stores: active activity panel, sidebar open + width, inspector open 
 | Debug Alt+3 | Topics | shown | Single perspective; Plot in the second slot or popped out (Q1) |
 | Review Alt+4 | Plot | collapsed | Single, playback timeline visible |
 
-Storage: desktop `~/.gz/ui/workspaces.json` (use the platform config dir); web: browser storage (IndexedDB or `localStorage`). Unsaved changes to a workspace show "modified" in the Workspaces panel; switching keeps the modifications in memory until app exit unless saved.
+Storage: desktop `~/.gz/ui/workspaces.json` (use the platform config dir); web: browser storage (IndexedDB or `localStorage`). Unsaved changes to a workspace show "modified" in the Workspaces panel; switching keeps the modifications in memory until app exit unless saved. As built (D-110): `gz/ui/workspaces.json` in the config dir, `localStorage` on the web; the app starts in the workspace it was left in (Build unsaved as before; the start flags go over it); the current workspace and the theme persist on change; cameras save free; a theme asked for isn't saved; a file it can't parse is kept apart, a newer version's never written over; a workspace's theme waits. "modified" (D-111) compares all but the cameras' poses; Reset puts back the layout as saved, then §8's default.
 
 ---
 

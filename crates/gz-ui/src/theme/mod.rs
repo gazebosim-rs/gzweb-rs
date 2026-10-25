@@ -40,6 +40,17 @@ pub enum ThemeMode {
     Dark,
 }
 
+impl ThemeMode {
+    /// Its name, as [`FromStr`](std::str::FromStr) reads it.
+    pub fn id(self) -> &'static str {
+        match self {
+            ThemeMode::System => "system",
+            ThemeMode::Light => "light",
+            ThemeMode::Dark => "dark",
+        }
+    }
+}
+
 impl std::str::FromStr for ThemeMode {
     type Err = String;
 

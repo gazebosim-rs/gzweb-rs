@@ -9,7 +9,10 @@ use gz_bevy::connection::GzCommand;
 use gz_bevy::edit::edits_allowed;
 use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
+use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::model_edits::{EditModels, ModelEdit};
+use gz_bevy::view::Selection;
 
 use super::layout::{ShellLayout, Side, Slot};
 use super::sidebar::body::ActionButton;
@@ -94,8 +97,10 @@ pub(crate) struct Shortcuts<'w, 's> {
     marquee: Option<Res<'w, gz_bevy::view::Marquee>>,
     /// So does a gizmo drag (its Esc puts the selection back, D-84).
     gizmo: Option<Res<'w, gz_bevy::view::gizmo::GizmoState>>,
-    /// And placing: Esc stops it (D-102).
+    /// And placing: Esc stops it (D-102), and a part armed that isn't
+    /// placed (a plugin).
     placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
+    assets: Option<Res<'w, crate::panels::AssetsState>>,
     scrubs: Query<'w, 's, (), With<crate::widgets::number_field::Scrub>>,
 }
 
@@ -123,7 +128,8 @@ impl Shortcuts<'_, '_> {
         let esc_taken = self.menu_esc.0
             || self.marquee.as_ref().is_some_and(|m| m.0.is_some())
             || self.gizmo.as_ref().is_some_and(|g| g.takes_escape())
-            || self.placing.as_ref().is_some_and(|p| p.0);
+            || self.placing.as_ref().is_some_and(|p| p.0)
+            || self.assets.as_ref().is_some_and(|a| a.takes_escape());
         map.just_pressed(&self.keys, &scopes)
             .filter(|b| {
                 !(esc_taken
@@ -136,7 +142,17 @@ impl Shortcuts<'_, '_> {
     }
 }
 
-/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z (not mid-drag or mid-scrub), the
+/// What Esc reads and writes while a model is edited: the tool, the
+/// editing, the selection and the leaving.
+type EditKeys<'w> = (
+    Res<'w, Tool>,
+    Option<Res<'w, EditingModel>>,
+    ResMut<'w, Selection>,
+    MessageWriter<'w, EditCommand>,
+);
+
+/// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z, ⌘C ⌘V ⌘D and Delete (D-109; none
+/// mid-drag or mid-scrub), Alt+1–4 (the workspaces, D-110), the
 /// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓), ⇧⌘R (Reset, on a live world), ⌘K,
 /// the themes and the panels' own shortcuts; and [`RunBinding`]s of the
 /// same (the command palette, D-107).
@@ -148,11 +164,16 @@ pub(crate) fn shortcut_keys(
     mut runs: MessageReader<RunBinding>,
     mut out: MessageWriter<UiCommand>,
     mut undo: MessageWriter<UndoCommand>,
+    mut edits: MessageWriter<EditModels>,
+    mut workspaces: MessageWriter<super::workspaces::WorkspaceCommand>,
     mut layout: MessageWriter<LayoutCommand>,
     mut sim: MessageWriter<GzCommand>,
+    (tool, editing, mut selection, mut edit_out): EditKeys,
 ) {
     let ran: Vec<String> = runs.read().map(|r| r.0.clone()).collect();
-    for id in shortcuts.pressed().into_iter().chain(ran) {
+    let keyed = shortcuts.pressed();
+    let pressed = keyed.len();
+    for (i, id) in keyed.into_iter().chain(ran).enumerate() {
         let views = match id.as_str() {
             "view.maximize" => Some(LayoutCommand::Maximize(None)),
             "view.close" => Some(LayoutCommand::Close(None)),
@@ -179,6 +200,26 @@ pub(crate) fn shortcut_keys(
                 }
                 continue;
             }
+            "edit.copy" | "edit.paste" | "edit.duplicate" | "edit.delete" => {
+                if !shortcuts.editing() {
+                    edits.write(EditModels(match id.as_str() {
+                        "edit.copy" => ModelEdit::Copy,
+                        "edit.paste" => ModelEdit::Paste,
+                        "edit.duplicate" => ModelEdit::Duplicate,
+                        _ => ModelEdit::Delete,
+                    }));
+                }
+                continue;
+            }
+            "ui.workspace_1" | "ui.workspace_2" | "ui.workspace_3" | "ui.workspace_4" => {
+                // Not under an edit: the switch would move its camera
+                // or close its field.
+                if !shortcuts.editing() {
+                    let n = usize::from(id.as_bytes()[id.len() - 1] - b'1');
+                    workspaces.write(super::workspaces::WorkspaceCommand::Switch(n));
+                }
+                continue;
+            }
             "edit.undo" | "edit.redo" => {
                 if !shortcuts.editing() {
                     undo.write(if id == "edit.undo" {
@@ -186,6 +227,21 @@ pub(crate) fn shortcut_keys(
                     } else {
                         UndoCommand::Redo
                     });
+                }
+                continue;
+            }
+            // Editing a model, Esc in Navigate clears the selection, then
+            // leaves (§6.6; one step per Esc, §6.3). Not ⌘K's Navigate
+            // tool: that only picks the tool.
+            "tool.navigate"
+                if i < pressed
+                    && *tool == Tool::Navigate
+                    && editing.as_deref().is_some_and(|e| e.model().is_some()) =>
+            {
+                if selection.is_empty() {
+                    edit_out.write(EditCommand::Done);
+                } else {
+                    *selection = Selection::default();
                 }
                 continue;
             }

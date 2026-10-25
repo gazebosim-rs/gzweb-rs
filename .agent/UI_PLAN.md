@@ -392,9 +392,9 @@ pop-out windows.
   so their data lives in always-on resources and only the view is gated.
 
 ### M8 — Menus, command palette, workspaces, persistence
-In four PRs: **M8a** the command palette and its commands, **M8b** the World menu and the
+In five PRs: **M8a** the command palette and its commands, **M8b** the World menu and the
 Snap popover, **M8c** the entity context menu (with Align), **M8d** the message tray,
-workspaces, the switcher and persistence.
+workspaces, the switcher and persistence, **M8e** the Workspaces panel.
 
 - **M8a notes:** the command palette (D-107): `shortcuts.json` commands that run as their key
   would (`RunBinding`, read by `shortcut_keys` and gz-bevy's `key_input`), the shown panels'
@@ -406,6 +406,20 @@ workspaces, the switcher and persistence.
   with "Use current poses", Export screenshot, Connect to server… over the world, Undo and
   Redo by name, the status bar's "Saved …" note; the Snap popover. Left: New, Open, Revert and
   Import (no server support), video, Local snap space.
+- **M8c notes:** the entity context menu (D-109) from a view's right click or a tree row;
+  Copy, Paste, Duplicate and Delete of top-level models (`gz_bevy::view::model_edits`, undoable,
+  Delete's 5 s Undo chip, ⌘C ⌘V ⌘D Delete, the palette); Align › (`gz_bevy::view::align`); Show ›;
+  submenus in the menu widget. Left: Rename (no server support), Apply force…, Edit model,
+  per-entity overlays, copying lights and links, undoing Assets inserts.
+- **M8d notes:** the message tray (D-110); the four workspaces (`gz_ui::shell::workspaces`):
+  Alt+1–4, the status bar's switcher and the palette switch, a switch keeps what it leaves,
+  Save current layout, `workspaces.json` / `localStorage` with the current workspace and the
+  theme, cameras put back by `ViewOp::Restore`. Left: the Workspaces panel (M8e: cards,
+  Save as new, Reset, "modified"), a workspace's own theme, saving a followed camera.
+- **M8e notes:** the Workspaces panel (D-111): cards with thumbnails, the current layout's
+  summary, Save to …, Save as new… (the user's own workspaces, in the switcher and ⌘K, kept in
+  `workspaces.json`), Reset (as saved, then §8's default), "modified", Delete, Export. Left:
+  Import (no file picker), a workspace's own theme, saving a followed camera.
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.
@@ -422,8 +436,23 @@ workspaces, the switcher and persistence.
   `apply_ui_commands` (`PanelRegistry::resolve`); restoring uses the same.
 
 ### M9 — Model editing (§6.6)
+In four PRs: **M9a** entering and leaving (pause, dimming, the pill, the selection and tree
+limits, Esc), **M9b** the Parts tab and inserting links, joints, visuals, collisions and
+sensors, **M9c** validation, write-back (remove and create the edited SDFormat, as undoing a
+delete does) and the session as one undo step, **M9d** the inspectors' quick actions (Add
+visual / collision / sensor, Reparent).
+
 - Sim pause, dimming, EDITING pill, Parts tab, link/joint/visual/collision/sensor insertion,
   validation, write-back.
+- **M9a notes:** `gz_bevy::view::editing` (D-112): `EditCommand`, `EditingModel`, picks of the
+  model's parts, faded materials, the selection limit; the pill, the hint, the tree's dimmed
+  rows, Edit model in the inspector and the context menu, a double click with a transform
+  tool, Esc; `gzweb --edit`. Left: link moves (the gizmo moves top-level models), M9b–d.
+- **M9b notes:** the Parts tab (D-113): `gz_core::parts` (each part's SDFormat, the draft
+  and its undo), `gz_bevy::view::editing::parts` (the parts' entities and sensors, the
+  extras with the draft's parts); Link, Visual, Collision and Sensor by a click, a joint by
+  two with its rubber band, Plugin by name; a Shapes tile adds a link while editing; undo and
+  redo take parts back. Left: M9c writes the draft back (Done drops it until then), M9d.
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

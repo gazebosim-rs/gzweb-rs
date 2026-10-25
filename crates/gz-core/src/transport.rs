@@ -31,10 +31,16 @@
 //! - an empty field the server indexes (the topic of `sub`/`image`/`unsub`/
 //!   `throttle`, the service, type or payload of `req`) is an out-of-bounds
 //!   read, which crashes it (on Jetty, the whole simulation);
-//! - `throttle` with rate 0 divides by zero.
+//! - `throttle` with rate 0 divides by zero;
+//! - the parser gets what one read from the socket holds (4096 bytes at
+//!   most) as one frame: a frame longer than [`MAX_FRAME`] always reaches
+//!   it in pieces, each read as a frame of its own (the request is lost),
+//!   and so can a shorter one that shares a read with the frame before it
+//!   or arrives over several (a slow link). Only the server can fix that.
 //!
 //! [`Transport`] refuses all of these with [`SendError::Unsendable`], except
-//! for a server that takes binary requests (patched, gazebosim/gz-sim#4093:
+//! a `req` payload's commas and zeros for a server that takes binary
+//! requests (patched, gazebosim/gz-sim#4093:
 //! it keeps the frame's length and a `req`'s payload after its third comma
 //! whole). [`Transport::probe_binary_requests`] finds out, and
 //! [`Transport::set_binary_requests`] then lets `req` payloads hold any
@@ -562,6 +568,20 @@ impl Transport {
     }
 }
 
+/// The longest frame the server can take whole, in bytes (measured on
+/// Jetty): its websocket (libwebsockets, with its default receive buffer)
+/// hands the parser what one 4096-byte read holds, so a longer frame is
+/// always lost in pieces (or a piece read as a request). A shorter one
+/// only arrives whole when it has a read to itself: frames sent close
+/// together, or over a slow link, can be cut too. See the module docs.
+pub const MAX_FRAME: usize = 4088;
+
+/// How long a frame is: its op, topic, type and payload, and the commas
+/// between them.
+pub fn frame_len(op: &str, topic: &str, msg_type: &str, payload_len: usize) -> usize {
+    op.len() + topic.len() + msg_type.len() + payload_len + 3
+}
+
 /// Refuses frames the server would drop or crash on (see the module docs);
 /// `binary`: a `req` to a server that keeps its payload whole, any bytes
 /// and empty included.
@@ -588,6 +608,11 @@ fn check_frame(
     }
     if op == "pub_in" && msg_type.is_empty() {
         return Err(SendError::Unsendable("empty message type"));
+    }
+    if frame_len(op, topic, msg_type, payload.len()) > MAX_FRAME {
+        return Err(SendError::Unsendable(
+            "longer than the server takes whole (MAX_FRAME)",
+        ));
     }
     Ok(())
 }
@@ -1142,5 +1167,23 @@ mod tests {
         // The next message is treated as the proto definitions again.
         t.on_message(b"protos again");
         assert_eq!(drain_out(&mut t), ["topics-types,,,", "worlds,,,"]);
+    }
+
+    /// A frame the server can't take whole (longer than [`MAX_FRAME`]) is
+    /// refused; one at the limit goes.
+    #[test]
+    fn a_frame_longer_than_the_server_takes_is_refused() {
+        let mut t = connected();
+        t.set_binary_requests(true);
+        let (service, ty) = ("/world/w/create", "gz.msgs.EntityFactory");
+        let room = MAX_FRAME - frame_len("req", service, ty, 0);
+        drain_out(&mut t);
+        assert_eq!(t.request(service, ty, &vec![b'x'; room]), Ok(()));
+        assert_eq!(drain_out(&mut t).len(), 1);
+        assert!(matches!(
+            t.request(service, ty, &vec![b'x'; room + 1]),
+            Err(SendError::Unsendable(_))
+        ));
+        assert!(drain_out(&mut t).is_empty());
     }
 }

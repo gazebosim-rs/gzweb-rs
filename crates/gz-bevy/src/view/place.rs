@@ -3,7 +3,7 @@
 //! release that doesn't drag) places instead of selecting: a [`PlaceAt`]
 //! names the surface point under it, the nearest mesh or else the
 //! ground, and the surface's normal there, in Gazebo's world coordinates,
-//! and whether Shift asked to place more. Drags still move the camera.
+//! the mesh it's on, and whether Shift asked to place more. Drags still move the camera.
 //! [`PlaceHover`] follows the point under the pointer, for a preview.
 
 use bevy::prelude::*;
@@ -21,18 +21,21 @@ pub struct Placing(pub bool);
 
 /// A click placed at `point` on a surface facing `normal` (Gazebo world
 /// coordinates; the ground's is +Z); `keep`: Shift was held, so placing
-/// goes on.
+/// goes on; `hit`: the mesh clicked (none for the ground), so a part goes
+/// on the link it is in.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct PlaceAt {
     pub point: [f64; 3],
     pub normal: [f64; 3],
     pub keep: bool,
+    pub hit: Option<Entity>,
 }
 
 /// While placing, the surface point under the pointer and its normal
-/// (Bevy world coordinates), if it is over a view.
+/// (Bevy world coordinates), if it is over a view, and the mesh it's on
+/// (none for the ground).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct PlaceHover(pub Option<(Vec3, Vec3)>);
+pub struct PlaceHover(pub Option<(Vec3, Vec3, Option<Entity>)>);
 
 /// A Bevy world point in Gazebo's coordinates.
 pub fn to_gazebo(p: Vec3) -> [f64; 3] {
@@ -41,13 +44,13 @@ pub fn to_gazebo(p: Vec3) -> [f64; 3] {
 }
 
 /// The surface point under `at` in the view whose camera is `camera`,
-/// and its normal.
+/// its normal, and the mesh it's on.
 pub(super) fn surface_at(
     scene: &mut ViewScene,
     camera: (&Transform, &Projection),
     size: Vec2,
     at: Vec2,
-) -> Option<(Vec3, Vec3)> {
+) -> Option<(Vec3, Vec3, Option<Entity>)> {
     let ray = viewport_ray(camera.1, camera.0, size, at)?;
     scene.surface_hit(ray, PLACE_FAR)
 }

@@ -10,6 +10,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
 use bevy::input_focus::{FocusedInput, InputFocus, InputFocusVisible};
+use bevy::picking::events::PointerPress;
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui::Checked;
@@ -17,6 +19,7 @@ use bevy::ui_widgets::{Activate, ValueChange};
 use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::{SdfExtras, SdfWanted};
 use gz_bevy::spawn::{GzEntity, GzIndex, GzSensors};
+use gz_bevy::view::editing::EditingModel;
 use gz_bevy::view::input::{InputMap, KeyMods, Platform};
 use gz_bevy::view::{select, select_parts};
 use gz_bevy::view::{SelectMode, Selection};
@@ -218,6 +221,25 @@ pub(super) fn rebuild_model(mut sources: SceneSources, mut model: ResMut<TreeMod
     }
 }
 
+/// Entering a model's editing opens its row (§6.6).
+pub(super) fn expand_edited(
+    editing: Option<Res<EditingModel>>,
+    model: Res<TreeModel>,
+    mut state: ResMut<TreeState>,
+) {
+    let Some(editing) = editing.filter(|e| e.is_changed()) else {
+        return;
+    };
+    let Some(edited) = editing.model() else {
+        return;
+    };
+    if let Some(n) = model.nodes.iter().find(|n| n.entity == Some(edited)) {
+        if !state.expanded.contains(&n.key) {
+            state.expanded.insert(n.key.clone());
+        }
+    }
+}
+
 /// A [`SceneTreeStart`](super::SceneTreeStart), once there is a tree: the
 /// filter on the first one; every row open, as rows arrive, until the tree
 /// has more than the world (a world that starts empty gets its models
@@ -342,8 +364,12 @@ pub(super) fn place_rows(
     };
     let visibility = !pool.shown.is_empty();
     // The model too: a row's name or kind can change with its place.
-    let repaint =
-        src.rows.is_changed() || src.model.is_changed() || src.selection.is_changed() || visibility;
+    let editing = src.editing.as_ref().is_some_and(Res::is_changed);
+    let repaint = src.rows.is_changed()
+        || src.model.is_changed()
+        || src.selection.is_changed()
+        || visibility
+        || editing;
     if !repaint && !pos.is_changed() && !computed.is_changed() {
         return;
     }
@@ -563,9 +589,36 @@ pub(super) fn on_visibility(
     });
 }
 
+/// A right press on a row opens its entity's context menu (§7.9; the
+/// world, joints and sensors have none), selecting it first unless it is.
+pub(super) fn on_row_context(
+    mut ev: On<PointerPress>,
+    slots: Query<&TreeSlot>,
+    rows: Res<TreeRows>,
+    model: Res<TreeModel>,
+    mut selection: ResMut<Selection>,
+    mut out: MessageWriter<gz_bevy::view::EntityContext>,
+    (editing, parents): (Option<Res<EditingModel>>, Query<&ChildOf>),
+) {
+    if ev.button != PointerButton::Secondary {
+        return;
+    }
+    let Some((_, row)) = row_of(&slots, &rows, ev.event_target()) else {
+        return;
+    };
+    ev.propagate(false);
+    // Editing a model, the rows outside it have no menu (§6.6).
+    if !super::view::in_edited(&model, row, editing.as_deref(), &parents) {
+        return;
+    }
+    if let Some(entity) = model.node(row).entity {
+        crate::shell::context_menu::tree_context(entity, &mut selection, &mut out);
+    }
+}
+
 /// A row click moves the tree's cursor there and selects it
-/// ([`select_row`]); a right or middle click doesn't (a context menu comes
-/// in M5).
+/// ([`select_row`]); a right or middle click doesn't (a right press opens
+/// the context menu, [`on_row_context`]).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn on_row_activate(
     ev: On<Activate>,
@@ -577,12 +630,16 @@ pub(super) fn on_row_activate(
     map: Option<Res<InputMap>>,
     mut state: ResMut<TreeState>,
     mut selection: ResMut<Selection>,
+    (editing, parents): (Option<Res<EditingModel>>, Query<&ChildOf>),
 ) {
     let others = [MouseButton::Right, MouseButton::Middle];
     if mouse.any_pressed(others) || mouse.any_just_released(others) {
         return;
     }
-    if let Some((i, _)) = row_of(&slots, &rows, ev.entity) {
+    // Editing a model, the rows outside it are inert (§6.6).
+    let found = row_of(&slots, &rows, ev.entity)
+        .filter(|(i, _)| super::view::in_edited(&model, rows.0[*i], editing.as_deref(), &parents));
+    if let Some((i, _)) = found {
         let platform = map.map_or(Platform::current(), |m| m.platform);
         let held = KeyMods::held(&keys);
         select_row(

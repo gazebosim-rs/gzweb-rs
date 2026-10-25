@@ -30,6 +30,7 @@ fn spec() -> TreeRowSpec {
         expanded: Some(false),
         hidden: false,
         hideable: true,
+        dimmed: false,
     }
 }
 
@@ -158,6 +159,7 @@ fn a_spec_change_repaints_every_part() {
         expanded: Some(true),
         hidden: true,
         hideable: true,
+        dimmed: false,
     };
     frames(&mut app, 2);
     let w = app.world();

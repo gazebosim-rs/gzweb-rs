@@ -1,13 +1,14 @@
 //! Saving a world (spec §7.1; DECISIONS.md D-108): the SDFormat the
 //! server generates (`generate_world_sdf`), with its top-level models put
 //! back at their authored poses (where they were loaded or last placed),
-//! not where physics has taken them.
+//! not where physics has taken them; and one model's SDFormat, to copy it
+//! (D-109).
 
 use crate::scene::Pose;
 
 /// A number as SDFormat writes it: up to six decimals, no trailing zeros,
 /// never "-0".
-fn number(v: f64) -> String {
+pub(crate) fn number(v: f64) -> String {
     let s = format!("{v:.6}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     match s {
@@ -109,6 +110,65 @@ pub fn with_model_poses(sdf: &str, poses: &[(&str, Pose)]) -> Result<String, Str
         out.replace_range(range, &text);
     }
     Ok(out)
+}
+
+/// Whether text node `n` of `sdf` is only an indent between elements:
+/// blank, written as it reads (no entity, no CDATA), with an element and
+/// no other text beside it (comments and blanks aside), and not kept by
+/// `xml:space="preserve"`.
+fn indent(sdf: &str, n: roxmltree::Node) -> bool {
+    let Some(text) = n.text().filter(|_| n.is_text()) else {
+        return false;
+    };
+    if !text.trim().is_empty() || sdf[n.range()] != *text {
+        return false;
+    }
+    let preserved = n.ancestors().any(|a| {
+        a.attributes()
+            .any(|at| at.name() == "space" && at.value() == "preserve")
+    });
+    // Past comments and other blanks, to an element or text, if any.
+    let skip = |s: &roxmltree::Node| {
+        s.is_comment() || (s.is_text() && s.text().is_some_and(|t| t.trim().is_empty()))
+    };
+    let before = std::iter::successors(n.prev_sibling(), |s| s.prev_sibling()).find(|s| !skip(s));
+    let after = std::iter::successors(n.next_sibling(), |s| s.next_sibling()).find(|s| !skip(s));
+    let not_text = |s: Option<roxmltree::Node>| s.is_none_or(|s| s.is_element());
+    !preserved && not_text(before) && not_text(after) && (before.is_some() || after.is_some())
+}
+
+/// The top-level model `name` of `sdf` (a world's SDFormat) as an
+/// SDFormat document of its own, to `create` a copy of it from (DECISIONS.md
+/// D-109): its element as written, in an `<sdf>` of the world's version.
+pub fn model_sdf(sdf: &str, name: &str) -> Result<String, String> {
+    let doc = roxmltree::Document::parse(sdf).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    let world = root
+        .children()
+        .find(|n| n.has_tag_name("world"))
+        .ok_or("no <world> in the SDFormat")?;
+    let model = world
+        .children()
+        .find(|n| n.has_tag_name("model") && n.attribute("name") == Some(name))
+        .ok_or_else(|| format!("no model {name} in the world"))?;
+    let version = root.attribute("version").unwrap_or("1.9");
+    // Compact, so more fits in a frame the server takes whole
+    // (`transport::MAX_FRAME`): comments go, and so do the indents
+    // between elements.
+    let range = model.range();
+    let mut gaps: Vec<std::ops::Range<usize>> = model
+        .descendants()
+        .filter(|n| n.is_comment() || indent(sdf, *n))
+        .map(|n| n.range())
+        .collect();
+    gaps.sort_by_key(|r| std::cmp::Reverse(r.start));
+    let mut element = sdf[range.clone()].to_string();
+    for gap in gaps {
+        element.replace_range(gap.start - range.start..gap.end - range.start, "");
+    }
+    Ok(format!(
+        "<?xml version=\"1.0\"?><sdf version=\"{version}\">{element}</sdf>"
+    ))
 }
 
 #[cfg(test)]
@@ -217,5 +277,61 @@ mod tests {
         assert!(roxmltree::Document::parse(&out).is_ok());
         assert!(with_model_poses("<sdf/>", &[]).is_err());
         assert!(with_model_poses("not xml", &[]).is_err());
+    }
+
+    /// A model comes out whole, in an `<sdf>` of the world's version; a
+    /// nested model of the same name or a missing one doesn't.
+    #[test]
+    fn a_model_comes_out_as_its_own_document() {
+        let sdf = r#"<sdf version="1.10"><world name="w">
+  <model name="outer"><model name="cart"><link name="n"/></model></model>
+  <model name="cart"><static>true</static><link name="l"/></model>
+</world></sdf>"#;
+        assert_eq!(
+            model_sdf(sdf, "cart").unwrap(),
+            r#"<?xml version="1.0"?><sdf version="1.10"><model name="cart"><static>true</static><link name="l"/></model></sdf>"#
+        );
+        assert!(model_sdf(sdf, "gone")
+            .unwrap_err()
+            .contains("no model gone"));
+        assert!(model_sdf("<sdf/>", "cart").is_err());
+    }
+
+    /// A model comes out compact: the indents between its elements and its
+    /// comments go, its text stays.
+    #[test]
+    fn a_model_comes_out_compact() {
+        let sdf = "<sdf version=\"1.9\"><world name=\"w\">\n  <model name=\"cart\">\n    \
+                   <!-- a cart -->\n    <pose>1 2 3 0 0 0</pose>\n    <link name=\"l\">\n      \
+                   <visual name=\"v\"><material><script><name> a b </name></script>\
+                   </material></visual>\n    </link>\n  </model>\n</world></sdf>";
+        assert_eq!(
+            model_sdf(sdf, "cart").unwrap(),
+            "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"cart\"><pose>1 2 3 0 0 0\
+             </pose><link name=\"l\"><visual name=\"v\"><material><script><name> a b </name>\
+             </script></material></visual></link></model></sdf>"
+        );
+    }
+
+    /// Blank text that means something stays: an element's only text, an
+    /// entity, `xml:space="preserve"`, a space between text and comments.
+    #[test]
+    fn compacting_keeps_blank_text_that_matters() {
+        let model = |inner: &str| {
+            format!("<sdf version=\"1.9\"><world name=\"w\"><model name=\"m\">{inner}</model></world></sdf>")
+        };
+        for kept in [
+            "<a> </a>",
+            "<a>&#32;</a>",
+            "<a xml:space=\"preserve\"><b/> <c/></a>",
+            "<a>p<!--c--> <!--d-->q</a>",
+            "<a> <![CDATA[ ]]> </a>",
+        ] {
+            let out = model_sdf(&model(kept), "m").unwrap();
+            let want = kept.replace("<!--c-->", "").replace("<!--d-->", "");
+            assert!(out.contains(&want), "{kept}: {out}");
+        }
+        let out = model_sdf(&model("<a>\n  <b/>\n  <!-- c -->\n  <c/>\n</a>"), "m").unwrap();
+        assert!(out.contains("<a><b/><c/></a>"), "{out}");
     }
 }

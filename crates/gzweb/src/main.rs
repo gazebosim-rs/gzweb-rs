@@ -31,15 +31,21 @@
 //!   `--select MODEL` for its drive; DECISIONS.md D-104).
 //! - `--console` starts the full UI with the Console panel open
 //!   (DECISIONS.md D-105).
+//! - `--workspaces` starts the full UI with the Workspaces panel open
+//!   (DECISIONS.md D-111).
+//! - `--edit` (with `--select MODEL`) edits that model in place once the
+//!   world is live (DECISIONS.md D-112).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
-//! - `--menu world|snap` opens the World menu or the Snap popover once the
-//!   world is live (DECISIONS.md D-108).
+//! - `--menu world|snap|context|workspace` opens the World menu or the
+//!   Snap popover once the world is live (DECISIONS.md D-108), the entity
+//!   context menu for the `--select`ed model (D-109), or the workspace
+//!   switcher (D-110).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
-//!   on TAB (shapes, lights, fuel, local), the Fuel tab searching QUERY
-//!   (DECISIONS.md D-102).
+//!   on TAB (shapes, lights, fuel, local, or parts while `--edit` edits a
+//!   model), the Fuel tab searching QUERY (DECISIONS.md D-102, D-113).
 //! - `--plot TOPIC:FIELD[,FIELD…]` (repeatable) starts the full UI with
 //!   the Plot panel open, a chart of each TOPIC's FIELDs once the server
 //!   lists it (DECISIONS.md D-100); `--plot TOPIC` opens its picker on
@@ -67,6 +73,8 @@ struct Args {
     /// `--ui gallery`: the widget gallery instead of a world.
     gallery: bool,
     theme: ThemeMode,
+    /// `--theme` or `?theme=` was given (it wins over the saved theme).
+    theme_set: bool,
     /// `--window WxH`.
     window: Option<(u32, u32)>,
     /// `--view`, `--overlays`.
@@ -85,6 +93,8 @@ struct Args {
     teleop: bool,
     /// `--console`.
     console: bool,
+    /// `--workspaces`.
+    workspaces: bool,
     /// `--pop-out`.
     pop_out: Vec<String>,
     /// `--palette`.
@@ -103,9 +113,9 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
-                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
+                     [--select MODEL,…] [--edit] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap] \
+                     [--sensors [NAME]] [--teleop] [--console] [--workspaces] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -213,6 +223,7 @@ fn parse_args(
     let mut capture_at_ms = None;
     let mut gallery = false;
     let mut theme = ThemeMode::System;
+    let mut theme_set = false;
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
@@ -223,6 +234,7 @@ fn parse_args(
     let mut sensors = None;
     let mut teleop = false;
     let mut console = false;
+    let mut workspaces = false;
     let mut pop_out = vec![];
     let mut palette = None;
     let mut menu = None;
@@ -257,7 +269,10 @@ fn parse_args(
                     })?;
                 }
             }
-            "--theme" => theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?,
+            "--theme" => {
+                theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?;
+                theme_set = true;
+            }
             "--no-hud" => hud = false,
             "--window" => window = Some(parse_window(&value()?)?),
             "--capture-at-ms" => capture_at_ms = Some(millis()?),
@@ -280,6 +295,7 @@ fn parse_args(
                         .push(name.parse().map_err(|e| format!("--overlays: {e}"))?);
                 }
             }
+            "--edit" => start.edit = true,
             "--select" => start.select.extend(
                 value()?
                     .split(',')
@@ -297,11 +313,14 @@ fn parse_args(
             }
             "--teleop" => teleop = true,
             "--console" => console = true,
+            "--workspaces" => workspaces = true,
             "--palette" => palette = Some(value()?),
             "--menu" => {
                 let m = value()?;
-                if !["world", "snap"].contains(&m.as_str()) {
-                    return Err(format!("--menu: no menu '{m}' (world, snap)"));
+                if !["world", "snap", "context", "workspace"].contains(&m.as_str()) {
+                    return Err(format!(
+                        "--menu: no menu '{m}' (world, snap, context, workspace)"
+                    ));
                 }
                 menu = Some(m);
             }
@@ -385,6 +404,9 @@ fn parse_args(
     if console && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--console needs --ui full".into());
     }
+    if workspaces && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--workspaces needs --ui full".into());
+    }
     if !pop_out.is_empty() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--pop-out needs --ui full".into());
     }
@@ -400,6 +422,12 @@ fn parse_args(
     // Only the full UI shows (and selects) a selection.
     if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
         return Err("--select needs --ui full".into());
+    }
+    if start
+        .as_ref()
+        .is_some_and(|s| s.edit && s.select.is_empty())
+    {
+        return Err("--edit needs --select MODEL".into());
     }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
@@ -430,6 +458,7 @@ fn parse_args(
         http_mirror,
         gallery,
         theme,
+        theme_set,
         window,
         start,
         scene,
@@ -439,6 +468,7 @@ fn parse_args(
         sensors,
         teleop,
         console,
+        workspaces,
         pop_out,
         palette,
         menu,
@@ -479,6 +509,8 @@ fn command() -> Result<Command, String> {
         bevy::log::warn!("?ui: {e}");
         UiMode::Minimal
     });
+    let theme: Option<ThemeMode> =
+        get("theme").and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             url: web_url(
@@ -505,9 +537,8 @@ fn command() -> Result<Command, String> {
         snapshot: None,
         http_mirror: get("http_mirror"),
         gallery: is_gallery(get("ui").as_deref()),
-        theme: get("theme")
-            .and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok())
-            .unwrap_or_default(),
+        theme: theme.unwrap_or_default(),
+        theme_set: theme.is_some(),
         window: None,
         start: None,
         scene: None,
@@ -517,6 +548,7 @@ fn command() -> Result<Command, String> {
         sensors: None,
         teleop: false,
         console: false,
+        workspaces: false,
         pop_out: vec![],
         palette: None,
         menu: None,
@@ -740,6 +772,9 @@ fn main() -> AppExit {
         if args.teleop {
             app.insert_resource(gz_ui::panels::TeleopStart);
         }
+        if args.workspaces {
+            app.insert_resource(gz_ui::panels::WorkspacesStart);
+        }
         if args.console {
             app.insert_resource(gz_ui::panels::ConsoleStart);
         }
@@ -754,6 +789,14 @@ fn main() -> AppExit {
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
+        }
+        // The workspaces persist (spec §8), except for captures, which
+        // start as the app does; a theme asked for wins over the saved one.
+        if args.snapshot.is_none() {
+            if let Some(mut store) = gz_ui::shell::WorkspaceStore::platform() {
+                store.theme = !args.theme_set;
+                app.insert_resource(store);
+            }
         }
     }
     if let Some(req) = args.snapshot {
@@ -972,6 +1015,12 @@ mod tests {
         assert!(USAGE.contains("--view") && USAGE.contains("--overlays"));
         let a = run_args(&["--select", " amr_01,,crate ", "--ui", "full"], None);
         assert_eq!(a.start.unwrap().select, ["amr_01", "crate"]);
+        let e = run_args(&["--select", "amr_01", "--edit", "--ui", "full"], None);
+        assert!(e.start.unwrap().edit);
+        assert_eq!(
+            parse(&["--edit", "--ui", "full"], None).unwrap_err(),
+            "--edit needs --select MODEL"
+        );
         assert_eq!(
             parse(&["--select", "amr_01", "--ui", "minimal"], None).unwrap_err(),
             "--select needs --ui full"
@@ -1026,6 +1075,7 @@ mod tests {
         );
         assert!(run_args(&["--teleop"], None).teleop);
         assert!(run_args(&["--console"], None).console);
+        assert!(run_args(&["--workspaces"], None).workspaces);
         assert_eq!(
             run_args(&["--pop-out", "plot, console"], None).pop_out,
             ["plot", "console"]
@@ -1046,6 +1096,10 @@ mod tests {
             run_args(&["--menu", "snap"], None).menu.as_deref(),
             Some("snap")
         );
+        assert_eq!(
+            run_args(&["--menu", "context"], None).menu.as_deref(),
+            Some("context")
+        );
         assert!(parse(&["--menu", "edit"], None)
             .unwrap_err()
             .starts_with("--menu: no menu"));
@@ -1059,7 +1113,7 @@ mod tests {
         );
         assert_eq!(
             parse(&["--assets", "nope"], None).unwrap_err(),
-            "--assets: not a tab (shapes, lights, fuel, local): nope"
+            "--assets: not a tab (shapes, lights, fuel, local, parts): nope"
         );
         assert_eq!(
             parse(&["--assets", "shapes:box"], None).unwrap_err(),
@@ -1121,7 +1175,10 @@ mod tests {
         assert_eq!(shot.mode, Mode::Capture);
         let d = run_args(&[], None);
         assert!(!d.gallery);
-        assert_eq!(d.theme, ThemeMode::System);
+        assert_eq!((d.theme, d.theme_set), (ThemeMode::System, false));
+        // An explicit system theme still wins over the saved one.
+        let s = run_args(&["--theme", "system"], None);
+        assert_eq!((s.theme, s.theme_set), (ThemeMode::System, true));
         assert_eq!(
             parse(&["--ui", "gallery", "--snapshot", "o.json"], None).unwrap_err(),
             "--snapshot doesn't apply to --ui gallery (use --screenshot)"

@@ -155,6 +155,11 @@ impl Overlays {
         }
     }
 
+    /// Turns `o` on or off.
+    pub fn set(&mut self, o: Overlay, on: bool) {
+        *self.flag(o) = on;
+    }
+
     fn flag(&mut self, o: Overlay) -> &mut bool {
         match o {
             Overlay::Grid => &mut self.grid,
@@ -238,16 +243,27 @@ impl OverlayCommand {
     }
 }
 
+/// On a view whose grid a workspace set before the scene came: the
+/// scene's `grid` flag leaves that view's grid, once.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeepGrid;
+
 /// The views' own overlay sets.
 pub type ViewOverlays<'w, 's> = Query<
     'w,
     's,
-    (Entity, &'static mut OverlaySet, &'static Camera),
+    (
+        Entity,
+        &'static mut OverlaySet,
+        &'static Camera,
+        Has<KeepGrid>,
+    ),
     With<crate::view::ViewCamera>,
 >;
 
 /// Applies [`OverlayCommand`]s to the views' sets, turns every view's grid
-/// on or off when the scene's [`GzGrid`] changes, and keeps the
+/// on or off when the scene's [`GzGrid`] changes (but a [`KeepGrid`]
+/// view's, once), and keeps the
 /// [`Overlays`] resource what any showing view has on. Without view sets
 /// (no views to keep them on) the commands change the resource itself.
 pub fn apply_overlay_commands(
@@ -255,6 +271,7 @@ pub fn apply_overlay_commands(
     mut views: ViewOverlays,
     mut union: ResMut<Overlays>,
     grid: Res<GzGrid>,
+    mut cmds: Commands,
 ) {
     if views.is_empty() {
         for c in commands.read() {
@@ -270,7 +287,14 @@ pub fn apply_overlay_commands(
         return;
     }
     if grid.is_changed() {
-        for (_, mut set, _) in &mut views {
+        for (e, mut set, _, keep) in &mut views {
+            if keep {
+                // The resource's start isn't the scene's flag.
+                if !grid.is_added() {
+                    cmds.entity(e).remove::<KeepGrid>();
+                }
+                continue;
+            }
             if set.grid != grid.visible {
                 set.grid = grid.visible;
             }
@@ -278,7 +302,7 @@ pub fn apply_overlay_commands(
     }
     for c in commands.read() {
         let all_on = union.is_on(c.overlay);
-        for (e, mut set, _) in &mut views {
+        for (e, mut set, ..) in &mut views {
             if c.view.is_some_and(|v| v != e) {
                 continue;
             }
@@ -292,8 +316,8 @@ pub fn apply_overlay_commands(
     }
     let any = views
         .iter()
-        .filter(|(_, _, camera)| camera.is_active)
-        .fold(Overlays::default(), |acc, (_, set, _)| acc.or(set.0));
+        .filter(|(_, _, camera, _)| camera.is_active)
+        .fold(Overlays::default(), |acc, (_, set, ..)| acc.or(set.0));
     union.set_if_neq(any);
 }
 

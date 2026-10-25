@@ -21,8 +21,11 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::save::save_bytes;
 use gz_bevy::spawn::GzIndex;
 use gz_bevy::undo::{UndoCommand, UndoStack};
+use gz_bevy::view::editing::parts::EditParts;
+use gz_bevy::view::editing::EditingModel;
 use gz_bevy::view::input::InputMap;
 use gz_bevy::world_save::{SaveWorld, WorldSaved};
+use gz_core::parts::Draft;
 
 use super::save_dialog::{DialogMode, SaveDialog};
 use super::world_button::world_button;
@@ -256,6 +259,7 @@ pub(crate) fn world_menu_states(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     undo: Option<Res<UndoStack>>,
+    (editing, parts): (Option<Res<EditingModel>>, Option<Res<EditParts>>),
     last: Res<LastSaved>,
     mut headers: Query<(&WorldHeader, &mut Text, &mut Ink)>,
     items: Query<(Entity, &WorldItem, &Children, Has<InteractionDisabled>)>,
@@ -267,6 +271,8 @@ pub(crate) fn world_menu_states(
         || status.as_ref().is_some_and(Res::is_changed)
         || index.as_ref().is_some_and(Res::is_changed)
         || undo.as_ref().is_some_and(Res::is_changed)
+        || editing.as_ref().is_some_and(Res::is_changed)
+        || parts.as_ref().is_some_and(Res::is_changed)
         || last.is_changed()
         || !added.is_empty();
     if !changed {
@@ -296,7 +302,11 @@ pub(crate) fn world_menu_states(
         set_text(&mut t, &want);
         ink.set_if_neq(Ink(role));
     }
-    let undo = undo.as_deref();
+    // While a model is edited they take its parts back and put them back
+    // (§6.6); the world's edits wait (M9c makes the session one step).
+    let editing = editing.as_deref().is_some_and(|e| e.model().is_some());
+    let draft = parts.as_deref().filter(|_| editing).map(|p| &p.draft);
+    let undo = undo.as_deref().filter(|_| !editing);
     for (e, item, children, disabled) in &items {
         let (label, ..) = item.parts();
         let (enabled, label) = match item {
@@ -304,11 +314,17 @@ pub(crate) fn world_menu_states(
             | WorldItem::SaveAs
             | WorldItem::ExportSdf
             | WorldItem::ExportScreenshot => (live, label.to_string()),
-            WorldItem::Undo => match undo.and_then(UndoStack::undo_label) {
+            WorldItem::Undo => match draft
+                .and_then(Draft::undo_label)
+                .or_else(|| undo.and_then(UndoStack::undo_label).map(str::to_string))
+            {
                 Some(l) => (true, fit_label(&format!("Undo {l}"))),
                 None => (false, label.to_string()),
             },
-            WorldItem::Redo => match undo.and_then(UndoStack::redo_label) {
+            WorldItem::Redo => match draft
+                .and_then(Draft::redo_label)
+                .or_else(|| undo.and_then(UndoStack::redo_label).map(str::to_string))
+            {
                 Some(l) => (true, fit_label(&format!("Redo {l}"))),
                 None => (false, label.to_string()),
             },

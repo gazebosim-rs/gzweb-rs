@@ -514,18 +514,30 @@ impl InputMap {
 
     /// [`Trigger::Held`] bindings in `scopes` with a key down. Shift is
     /// allowed; Ctrl, Alt and ⌘ mean a command chord, so nothing is held.
+    /// Nor is a key the held modifiers make another binding's chord (⇧D,
+    /// the web's Duplicate, isn't D's fly right).
     pub fn held<'a>(
         &'a self,
         keys: &'a ButtonInput<KeyCode>,
         scopes: &'a [Scope],
     ) -> impl Iterator<Item = &'a Binding> + 'a {
-        let command = KeyMods::held(keys).command();
+        let mods = KeyMods::held(keys);
+        let command = mods.command();
+        let chorded = move |key: KeyCode| {
+            mods != KeyMods::default()
+                && self.live(scopes).any(|o| {
+                    o.trigger != Trigger::Held
+                        && o.chords(self.platform)
+                            .iter()
+                            .any(|c| c.key == key && c.matches(mods, self.platform))
+                })
+        };
         self.live(scopes).filter(move |b| {
             !command
                 && b.trigger == Trigger::Held
                 && b.chords(self.platform)
                     .iter()
-                    .any(|c| key_event(keys, c.key, false))
+                    .any(|c| key_event(keys, c.key, false) && !chorded(c.key))
         })
     }
 
@@ -1274,6 +1286,20 @@ mod tests {
         );
         // Out of scope: nothing.
         assert_eq!(map.held(&keys, &[Scope::Viewport]).count(), 0);
+        keys.reset_all();
+
+        // On the web ⇧D is Duplicate (in the full UI's text scope), not
+        // D's fly right; ⇧A still flies.
+        let web = InputMap {
+            platform: Platform::Web,
+            ..map
+        };
+        let full = [Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text];
+        keys.press(KeyCode::ShiftLeft);
+        keys.press(KeyCode::KeyD);
+        assert_eq!(web.held(&keys, &full).count(), 0);
+        keys.press(KeyCode::KeyA);
+        assert_eq!(web.held(&keys, &full).filter_map(|b| b.action).count(), 1);
     }
 
     #[test]

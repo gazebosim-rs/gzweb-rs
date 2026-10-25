@@ -303,6 +303,16 @@ fn plane_visual() -> GzVisual {
     })
 }
 
+fn box_visual() -> GzVisual {
+    GzVisual(VisualDesc {
+        proto_type: "box".into(),
+        geometry: GeometryDesc::Box {
+            size: [1.0, 1.0, 1.0],
+        },
+        ..plane_visual().0
+    })
+}
+
 fn assert_near(a: Vec3, b: Vec3, eps: f32) {
     assert!((a - b).length() < eps, "{a} vs {b}");
 }
@@ -2411,6 +2421,40 @@ fn a_click_selects_the_model_under_it_and_empty_space_clears() {
     assert_eq!(selected(&r), []);
 }
 
+/// A right click on a model asks for its context menu, selecting it
+/// unless it already is (a selection it's in stays); on empty space, or
+/// after a right drag (a pan), nothing.
+#[test]
+fn a_right_click_asks_for_the_context_menu() {
+    use crate::view::EntityContext;
+    let (mut r, a, b) = two_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    let asked = |r: &mut Rig| -> Vec<Entity> {
+        r.app
+            .world_mut()
+            .resource_mut::<Messages<EntityContext>>()
+            .drain()
+            .map(|c| c.entity)
+            .collect()
+    };
+    r.drag(MouseButton::Right, pa, &[]);
+    r.app.update();
+    assert_eq!(asked(&mut r), [a]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, pb, &[KeyCode::ShiftLeft]);
+    r.drag(MouseButton::Right, pb, &[]);
+    r.app.update();
+    assert_eq!(asked(&mut r), [b]);
+    assert_eq!(selected(&r), [a, b], "a selection it's in stays");
+    r.drag(MouseButton::Right, Vec2::new(400.0, 5.0), &[]);
+    r.app.update();
+    assert!(asked(&mut r).is_empty());
+    r.drag(MouseButton::Right, pa, &[Vec2::new(60.0, 0.0)]);
+    r.app.update();
+    assert!(asked(&mut r).is_empty(), "a pan");
+}
+
 #[test]
 fn shift_adds_and_ctrl_toggles() {
     let (mut r, a, b) = two_models();
@@ -2443,9 +2487,9 @@ fn a_drag_past_the_slop_orbits_and_selects_nothing() {
     r.drag(MouseButton::Left, pa, &[pa + Vec2::new(20.0, 0.0)]);
     assert_eq!(selected(&r), []);
     assert_ne!(r.transform(), before, "it orbited");
-    // A right click never selects.
+    // A right click selects the model it opens the context menu for.
     r.drag(MouseButton::Right, pa, &[]);
-    assert_eq!(selected(&r), []);
+    assert_eq!(selected(&r), [a]);
 }
 
 #[test]
@@ -3385,4 +3429,1048 @@ fn placing_turns_a_click_into_a_place() {
     click(&mut r, pa, &[]);
     assert_eq!(selected(&r), [a]);
     assert!(drain(&mut r).is_empty());
+}
+
+/// Align moves the rest of the selection along a world axis so their
+/// bounds line up with the first's, as one edit; with nothing to move, or
+/// on a server that doesn't take edits, nothing happens.
+#[test]
+fn align_lines_the_selection_up_with_the_first() {
+    use crate::connection::GzStatus;
+    use crate::edit::SetPose;
+    use crate::undo::{Change, Record};
+    use crate::view::align::{AlignEdge, AlignModels};
+    let (mut r, a, b) = two_models();
+    for (e, name) in [(a, "a"), (b, "b")] {
+        r.app
+            .world_mut()
+            .entity_mut(e)
+            .insert(crate::spawn::GzEntity {
+                name: name.into(),
+                id: 3,
+                kind: gz_core::scene::NodeKind::Model,
+                path: name.into(),
+            });
+    }
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    click(&mut r, pa, &[]);
+    click(&mut r, pb, &[KeyCode::ShiftLeft]);
+    let align = |r: &mut Rig, axis, edge| {
+        r.app.world_mut().write_message(AlignModels { axis, edge });
+        r.app.update();
+        let poses: Vec<SetPose> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<SetPose>>()
+            .drain()
+            .collect();
+        let records: Vec<Record> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<Record>>()
+            .drain()
+            .collect();
+        (poses, records)
+    };
+    // Not without edits.
+    let (poses, _) = align(&mut r, 1, AlignEdge::Min);
+    assert!(poses.is_empty());
+    r.app.insert_resource(GzStatus {
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let (poses, records) = align(&mut r, 1, AlignEdge::Min);
+    assert_eq!(poses.len(), 1);
+    assert_eq!(poses[0].entity, b);
+    assert!((poses[0].pose.translation - Vec3::new(0.0, -3.0, 0.0)).length() < 1e-4);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].verb, "align");
+    // Held, so the stream's older poses don't pull it back meanwhile.
+    let now = r.app.world().resource::<Time<Real>>().elapsed_secs_f64();
+    assert!(r.app.world().resource::<crate::edit::Held>().holds(b, now));
+    assert!(matches!(
+        records[0].changes[..],
+        [Change::Pose { entity, .. }] if entity == b
+    ));
+    // Already lined up: nothing to do.
+    r.app.update();
+    let (poses, records) = align(&mut r, 0, AlignEdge::Center);
+    assert!(poses.is_empty() && records.is_empty());
+}
+
+/// Delete, Duplicate, Copy and Paste ask for the world's SDFormat, then
+/// remove the models or create copies of them (named by the client,
+/// beside them), as edits; a copy is selected once it appears.
+#[test]
+fn model_edits_go_through_the_worlds_sdformat() {
+    use crate::connection::{GzServiceReply, GzStatus};
+    use crate::undo::{Change, Record};
+    use crate::view::model_edits::{EditModels, ModelEdit, ModelsEdited};
+    use gz_core::msgs;
+    use prost::Message as _;
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    r.app.insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
+        world: Some("w".into()),
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    let sdf = r#"<sdf version="1.9"><world name="w"><model name="a"><link name="l"/></model></world></sdf>"#;
+    let reply = GzServiceReply {
+        service: "/world/w/generate_world_sdf".into(),
+        msg_type: "gz.msgs.StringMsg".into(),
+        payload: msgs::StringMsg {
+            data: sdf.into(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    };
+    let drain = |r: &mut Rig| {
+        let sent: Vec<GzCommand> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .collect();
+        let records: Vec<Record> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<Record>>()
+            .drain()
+            .collect();
+        let done: Vec<ModelsEdited> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<ModelsEdited>>()
+            .drain()
+            .collect();
+        (sent, records, done)
+    };
+    let service = |c: &GzCommand| match c {
+        GzCommand::Request { service, .. } => service.clone(),
+        _ => String::new(),
+    };
+    let created = |c: &GzCommand| match c {
+        GzCommand::Request { payload, .. } => {
+            msgs::EntityFactory::decode(payload.as_slice()).unwrap()
+        }
+        _ => panic!("not a request"),
+    };
+    let run = |r: &mut Rig, edit| {
+        drain(r);
+        r.app.world_mut().write_message(EditModels(edit));
+        r.app.update();
+        let (sent, ..) = drain(r);
+        assert_eq!(
+            sent.iter().map(service).collect::<Vec<_>>(),
+            ["/world/w/generate_world_sdf"]
+        );
+        r.app.world_mut().write_message(reply.clone());
+        r.app.update();
+        drain(r)
+    };
+    // Duplicate: a copy named a_1, one size and a gap along Y.
+    let (sent, records, done) = run(&mut r, ModelEdit::Duplicate);
+    assert_eq!(service(&sent[0]), "/world/w/create");
+    let f = created(&sent[0]);
+    assert_eq!(f.name, "a_1");
+    assert!((f.pose.unwrap().position.unwrap().y - 1.5).abs() < 1e-4);
+    assert!(matches!(
+        &f.from,
+        Some(msgs::entity_factory::From::Sdf(s)) if s.contains(r#"<model name="a"><link name="l"/></model>"#)
+    ));
+    assert_eq!(records[0].verb, "duplicate");
+    assert_eq!(done[0].result, Ok("Duplicated a_1".into()));
+    // It shows: selected.
+    let copy = r
+        .app
+        .world_mut()
+        .spawn(crate::spawn::GzEntity {
+            name: "a_1".into(),
+            id: 9,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a_1".into(),
+        })
+        .id();
+    r.app.update();
+    assert_eq!(selected(&r), [copy]);
+    r.app.world_mut().entity_mut(copy).despawn();
+    r.app.update();
+    click(&mut r, pa, &[]);
+    // Copy, then Paste twice: a_1 and a_2 (the first still on its way).
+    let (sent, _, done) = run(&mut r, ModelEdit::Copy);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Ok("Copied a".into()));
+    for (name, y) in [("a_1", 1.5), ("a_2", 3.0)] {
+        r.app
+            .world_mut()
+            .write_message(EditModels(ModelEdit::Paste));
+        r.app.update();
+        let (sent, records, _) = drain(&mut r);
+        let f = created(&sent[0]);
+        assert_eq!(f.name, name);
+        assert!((f.pose.unwrap().position.unwrap().y - y).abs() < 1e-4);
+        assert_eq!(records[0].verb, "paste");
+    }
+    // A reply without the model fails, and the model can be deleted
+    // again.
+    drain(&mut r);
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    drain(&mut r);
+    r.app.world_mut().write_message(GzServiceReply {
+        payload: msgs::StringMsg {
+            data: r#"<sdf version="1.9"><world name="w"/></sdf>"#.into(),
+            ..Default::default()
+        }
+        .encode_to_vec(),
+        ..reply.clone()
+    });
+    r.app.update();
+    let (sent, _, done) = drain(&mut r);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Err("no model a in the world".into()));
+    // Delete: removed by its id, kept for undo with its pose as loaded.
+    let (sent, records, done) = run(&mut r, ModelEdit::Delete);
+    assert_eq!(service(&sent[0]), "/world/w/remove");
+    let GzCommand::Request { payload, .. } = &sent[0] else {
+        unreachable!()
+    };
+    let removed = msgs::Entity::decode(payload.as_slice()).unwrap();
+    assert_eq!((removed.name.as_str(), removed.id), ("a", 3));
+    assert!(matches!(
+        &records[0].changes[..],
+        [Change::Exists { model, after: false }] if model.name == "a" && model.sdf.contains("<link")
+    ));
+    assert_eq!(done[0].result, Ok("Deleted a".into()));
+    // Delete again before it's gone: nothing more (one edit, one remove).
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    let (sent, records, done) = drain(&mut r);
+    assert!(sent.is_empty() && records.is_empty() && done.is_empty());
+    // Not without edits.
+    r.app.world_mut().resource_mut::<GzStatus>().edits = Some(false);
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Delete));
+    r.app.update();
+    let (sent, _, done) = drain(&mut r);
+    assert!(sent.is_empty());
+    assert_eq!(done[0].result, Err("This server doesn't take edits".into()));
+}
+
+/// A model too large for the server to take whole (its `create` would be
+/// lost) isn't deleted, duplicated or pasted: nothing is sent, and the
+/// edit says why.
+#[test]
+fn a_model_too_large_to_send_is_left_alone() {
+    use crate::connection::{GzServiceReply, GzStatus};
+    use crate::view::model_edits::{EditModels, ModelEdit, ModelsEdited};
+    use gz_core::msgs;
+    use prost::Message as _;
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    r.app.insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
+        world: Some("w".into()),
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    // Plugin text the compacting keeps.
+    let sdf = format!(
+        r#"<sdf version="1.9"><world name="w"><model name="a"><link name="l"/><plugin name="p" filename="f"><x>{}</x></plugin></model></world></sdf>"#,
+        "y".repeat(gz_core::transport::MAX_FRAME)
+    );
+    let reply = GzServiceReply {
+        service: "/world/w/generate_world_sdf".into(),
+        msg_type: "gz.msgs.StringMsg".into(),
+        payload: msgs::StringMsg {
+            data: sdf,
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    };
+    let run = |r: &mut Rig, edit| {
+        r.app.world_mut().write_message(EditModels(edit));
+        r.app.update();
+        r.app.world_mut().write_message(reply.clone());
+        r.app.update();
+        let sent: Vec<String> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .filter_map(|c| match c {
+                GzCommand::Request { service, .. } => Some(service),
+                _ => None,
+            })
+            .collect();
+        let done: Vec<ModelsEdited> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<ModelsEdited>>()
+            .drain()
+            .collect();
+        (sent, done)
+    };
+    let (sent, done) = run(&mut r, ModelEdit::Delete);
+    assert_eq!(sent, ["/world/w/generate_world_sdf"], "no remove");
+    let why = done[0].result.clone().unwrap_err();
+    assert!(
+        why.starts_with("Not deleted: undo couldn't bring a back (its 4,")
+            && why.ends_with(" bytes are over the 4,088 the server takes)"),
+        "{why}"
+    );
+    let (sent, done) = run(&mut r, ModelEdit::Duplicate);
+    assert_eq!(sent, ["/world/w/generate_world_sdf"], "no create");
+    assert!(done[0]
+        .result
+        .clone()
+        .unwrap_err()
+        .starts_with("a is too large to create on this server"));
+    let (_, done) = run(&mut r, ModelEdit::Copy);
+    assert_eq!(done[0].result, Ok("Copied a".into()));
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Paste));
+    r.app.update();
+    let creates = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .drain()
+        .filter(|c| matches!(c, GzCommand::Request { .. }))
+        .count();
+    assert_eq!(creates, 0);
+    let done: Vec<ModelsEdited> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<ModelsEdited>>()
+        .drain()
+        .collect();
+    assert!(done[0]
+        .result
+        .clone()
+        .unwrap_err()
+        .starts_with("a is too large to create on this server"));
+}
+
+/// Restore puts the camera where a workspace saved it: pose, pivot and
+/// projection (orthographic with its height, or perspective), free and
+/// unsnapped; a pose read back is the one restored.
+#[test]
+fn restore_puts_the_camera_back() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Snap(SnapView::Top));
+    for _ in 0..30 {
+        r.app.update();
+    }
+    let pose = ViewPose {
+        translation: Vec3::new(2.0, 5.0, 3.0),
+        rotation: Transform::from_xyz(2.0, 5.0, 3.0)
+            .looking_at(Vec3::new(1.0, 0.0, 0.0), Vec3::Y)
+            .rotation,
+        pivot: Vec3::new(1.0, 0.0, 0.0),
+        ortho: Some(7.5),
+        snapped: None,
+    };
+    r.op(ViewOp::Restore(pose));
+    let (v, t, p) = (r.view(), r.transform(), r.projection());
+    assert_eq!(v.snapped, None);
+    assert_eq!(v.mode, CameraMode::Free);
+    assert!((ortho_height(&p).unwrap() - 7.5).abs() < 1e-4);
+    let back = ViewPose::of(&v, &t, &p);
+    // Orthographic, the view may stand back along its axis (the same
+    // picture).
+    let along = (back.translation - pose.translation).normalize_or_zero();
+    let forward = pose.rotation * Vec3::NEG_Z;
+    assert!(along.cross(forward).length() < 1e-3, "{back:?}");
+    assert!(back.rotation.angle_between(pose.rotation) < 1e-4);
+    assert_eq!((back.pivot, back.ortho), (pose.pivot, pose.ortho));
+    // Perspective, it's where it was.
+    let pose = ViewPose {
+        ortho: None,
+        ..pose
+    };
+    r.op(ViewOp::Restore(pose));
+    assert!(matches!(r.projection(), Projection::Perspective(_)));
+    let back = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert!(
+        back.translation.distance(pose.translation) < 1e-4,
+        "{back:?}"
+    );
+}
+
+/// A pose read mid-animation is where the animation ends, snapped too,
+/// and restoring it puts the axis view back.
+#[test]
+fn a_pose_read_mid_animation_is_its_end() {
+    let mut r = rig(default_view());
+    r.op(ViewOp::Snap(SnapView::Top));
+    r.app.update();
+    assert!(r.view().animating());
+    let mid = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert_eq!(mid.snapped, Some(SnapView::Top));
+    assert!(mid.ortho.is_some());
+    for _ in 0..30 {
+        r.app.update();
+    }
+    let end = ViewPose::of(&r.view(), &r.transform(), &r.projection());
+    assert!(
+        mid.rotation.angle_between(end.rotation) < 1e-4,
+        "{mid:?} {end:?}"
+    );
+    r.op(ViewOp::Orbit(Vec2::new(40.0, 0.0)));
+    r.op(ViewOp::Restore(mid));
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
+}
+
+/// Two Gazebo models, each a link with a cube visual that has a material;
+/// (rig, model a, link a, mesh a, model b, mesh b).
+fn two_editable_models() -> (Rig, Entity, Entity, Entity, Entity, Entity) {
+    use crate::spawn::GzEntity;
+    use gz_core::scene::NodeKind;
+    let (mut r, a, b) = two_models();
+    r.app.init_resource::<Assets<StandardMaterial>>();
+    let world = r.app.world_mut();
+    let gz = |name: &str, kind| GzEntity {
+        name: name.into(),
+        id: 0,
+        kind,
+        path: name.into(),
+    };
+    world.entity_mut(a).insert(gz("a", NodeKind::Model));
+    world.entity_mut(b).insert(gz("b", NodeKind::Model));
+    let link_of = |world: &World, m: Entity| world.get::<Children>(m).unwrap()[0];
+    let (la, lb) = (link_of(world, a), link_of(world, b));
+    let mesh_of = |world: &World, l: Entity| world.get::<Children>(l).unwrap()[0];
+    let (ma, mb) = (mesh_of(world, la), mesh_of(world, lb));
+    for (l, m) in [(la, ma), (lb, mb)] {
+        world.entity_mut(l).insert(gz("link", NodeKind::Link));
+        let material = world
+            .resource_mut::<Assets<StandardMaterial>>()
+            .add(StandardMaterial::default());
+        world
+            .entity_mut(m)
+            .insert((MeshMaterial3d(material), box_visual()));
+    }
+    r.app.update();
+    (r, a, la, ma, b, mb)
+}
+
+fn editing(r: &Rig) -> Option<Entity> {
+    r.app.world().resource::<editing::EditingModel>().model()
+}
+
+fn edit(r: &mut Rig, cmd: editing::EditCommand) {
+    r.app.world_mut().write_message(cmd);
+    r.app.update();
+    r.app.update();
+}
+
+/// A double click with Translate or Rotate edits the model; then a click
+/// picks its link, the other model can't be picked, and its meshes are
+/// faded; Done puts their materials back.
+#[test]
+fn editing_picks_the_models_links_and_dims_the_rest() {
+    let (mut r, a, la, ma, _, mb) = two_editable_models();
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    // Navigate: a double click only selects.
+    click(&mut r, pa, &[]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None);
+    r.app.insert_resource(gizmo::TransformTool::Translate);
+    r.app.update();
+    click(&mut r, pb, &[]);
+    click(&mut r, pa, &[]);
+    click(&mut r, pa, &[]);
+    r.app.update();
+    assert_eq!(editing(&r), Some(a));
+    assert_eq!(selected(&r), [], "entering clears the selection");
+    let original = |r: &Rig, m: Entity| {
+        r.app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(m)
+            .unwrap()
+            .0
+            .clone()
+    };
+    let before_b = r
+        .app
+        .world()
+        .get::<editing::Dimmed>(mb)
+        .map(|d| d.original.clone())
+        .expect("b is dimmed");
+    assert_ne!(original(&r, mb), before_b);
+    assert!(r.app.world().get::<editing::Dimmed>(ma).is_none());
+    let faded = r
+        .app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&original(&r, mb))
+        .unwrap()
+        .base_color
+        .alpha();
+    assert!((faded - editing::DIMMED_OPACITY).abs() < 1e-3, "{faded}");
+    // Its link picks; b is empty space.
+    r.app.update();
+    click(&mut r, pa, &[]);
+    assert_eq!(selected(&r), [la]);
+    click(&mut r, pb, &[]);
+    assert_eq!(selected(&r), []);
+    edit(&mut r, editing::EditCommand::Done);
+    assert_eq!(editing(&r), None);
+    assert_eq!(original(&r, mb), before_b);
+    assert!(r.app.world().get::<editing::Dimmed>(mb).is_none());
+}
+
+/// Entering pauses a running sim and turns the views' joints and frames
+/// on; Done puts them back and resumes. A paused sim stays paused.
+#[test]
+fn editing_pauses_and_shows_joints_and_frames() {
+    use crate::overlays::{Overlay, OverlaySet};
+    let (mut r, a, ..) = two_editable_models();
+    let camera = r.camera;
+    r.app
+        .world_mut()
+        .entity_mut(camera)
+        .insert(OverlaySet::default());
+    r.set_sim(Some(false));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(r.sent().contains(&GzCommand::Pause));
+    let set = *r.app.world().get::<OverlaySet>(camera).unwrap();
+    assert!(set.is_on(Overlay::Joints) && set.is_on(Overlay::Frames));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+    let set = *r.app.world().get::<OverlaySet>(camera).unwrap();
+    assert!(!set.is_on(Overlay::Joints) && !set.is_on(Overlay::Frames));
+    // Entered before the stats: the first running ones pause it.
+    r.set_sim(None);
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(!r.sent().contains(&GzCommand::Pause));
+    r.set_sim(Some(false));
+    r.app.update();
+    assert!(r.sent().contains(&GzCommand::Pause));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+    // Paused: it stays paused after Done.
+    r.set_sim(Some(true));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    edit(&mut r, editing::EditCommand::Done);
+    let sent = r.sent();
+    assert!(!sent.contains(&GzCommand::Pause) && !sent.contains(&GzCommand::Play));
+}
+
+/// While editing, the selection holds the model's parts only; a model
+/// that goes ends the editing; only a top-level model can be edited.
+#[test]
+fn editing_limits_the_selection_and_ends_with_its_model() {
+    let (mut r, a, la, _, b, _) = two_editable_models();
+    edit(&mut r, editing::EditCommand::Enter(la));
+    assert_eq!(editing(&r), None, "a link isn't a model");
+    edit(&mut r, editing::EditCommand::Enter(a));
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a, la, b];
+    r.app.update();
+    assert_eq!(selected(&r), [la]);
+    r.app.world_mut().entity_mut(a).despawn();
+    r.app.update();
+    assert_eq!(editing(&r), None);
+}
+
+/// How many frames [`editing::EditingModel`] was changed in.
+#[derive(Resource, Default)]
+struct EditChanges(usize);
+
+fn count_edit_changes(editing: Res<editing::EditingModel>, mut n: ResMut<EditChanges>) {
+    if editing.is_changed() {
+        n.0 += 1;
+    }
+}
+
+/// With stats coming, idle frames don't mark the editing changed, editing
+/// or not: what reads it as changed (the dimming, the tree) works only
+/// when it does change.
+#[test]
+fn idle_frames_leave_the_editing_unchanged() {
+    let (mut r, a, ..) = two_editable_models();
+    r.app
+        .init_resource::<EditChanges>()
+        .add_systems(PostUpdate, count_edit_changes);
+    r.set_sim(Some(false));
+    r.frames(3);
+    r.app.world_mut().resource_mut::<EditChanges>().0 = 0;
+    r.frames(5);
+    assert_eq!(r.app.world().resource::<EditChanges>().0, 0);
+    edit(&mut r, editing::EditCommand::Enter(a));
+    r.set_sim(Some(true));
+    r.frames(2);
+    r.app.world_mut().resource_mut::<EditChanges>().0 = 0;
+    r.frames(5);
+    assert_eq!(r.app.world().resource::<EditChanges>().0, 0);
+}
+
+/// Entering another model while one is edited moves to it: the sim stays
+/// paused (no Play, though the stats still say paused), and Done resumes
+/// it as the first would have.
+#[test]
+fn editing_another_model_keeps_the_sim_paused() {
+    let (mut r, a, _, _, b, _) = two_editable_models();
+    r.set_sim(Some(false));
+    r.sent();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert!(r.sent().contains(&GzCommand::Pause));
+    r.set_sim(Some(true));
+    edit(&mut r, editing::EditCommand::Enter(b));
+    assert_eq!(editing(&r), Some(b));
+    let sent = r.sent();
+    assert!(!sent.contains(&GzCommand::Play) && !sent.contains(&GzCommand::Pause));
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().contains(&GzCommand::Play));
+}
+
+/// Done turns off only what entering turned on: overlays the user changed
+/// while editing stay as they are. A view that comes while editing shows
+/// joints and frames too, and a workspace's copy of a view leaves them
+/// out.
+#[test]
+fn done_keeps_the_overlays_changed_while_editing() {
+    use crate::overlays::{Overlay, OverlaySet};
+    let (mut r, a, ..) = two_editable_models();
+    let camera = r.camera;
+    let mut joints = OverlaySet::default();
+    joints.set(Overlay::Joints, true);
+    r.app.world_mut().entity_mut(camera).insert(joints);
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let set = |r: &Rig, e: Entity| *r.app.world().get::<OverlaySet>(e).unwrap();
+    assert!(set(&r, camera).is_on(Overlay::Frames));
+    let own = r
+        .app
+        .world()
+        .resource::<editing::EditingModel>()
+        .own(camera, &set(&r, camera));
+    assert_eq!(own, joints, "a workspace saves the view's own");
+    {
+        let mut s = r.app.world_mut().get_mut::<OverlaySet>(camera).unwrap();
+        s.set(Overlay::Collisions, true);
+    }
+    let other = r.app.world_mut().spawn(OverlaySet::default()).id();
+    r.frames(2);
+    let s = set(&r, other);
+    assert!(
+        s.is_on(Overlay::Joints) && s.is_on(Overlay::Frames),
+        "{s:?}"
+    );
+    edit(&mut r, editing::EditCommand::Done);
+    let s = set(&r, camera);
+    assert!(
+        s.is_on(Overlay::Joints) && s.is_on(Overlay::Collisions),
+        "{s:?}"
+    );
+    assert!(!s.is_on(Overlay::Frames));
+    assert_eq!(set(&r, other), OverlaySet::default());
+}
+
+/// While editing, the camera still pivots on the dimmed models: only
+/// picking skips them.
+#[test]
+fn the_pivot_lands_on_a_dimmed_model() {
+    let (mut r, a, ..) = two_editable_models();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let pb = on_screen(&r, Vec3::new(0.0, 3.0, 0.5));
+    r.op(ViewOp::PivotAt {
+        at: pb,
+        orbit: true,
+    });
+    // On b's cube (0.5 m about (0, 3, 0.5)), not the ground behind it.
+    let pivot = gz_to_bevy().inverse() * r.pivot();
+    let off = (pivot - Vec3::new(0.0, 3.0, 0.5)).abs();
+    assert!(off.max_element() < 0.5 + 1e-3 && pivot.z > 0.01, "{pivot}");
+}
+
+/// A right click, or a camera drag, between two clicks: no double click.
+#[test]
+fn only_two_clicks_in_a_row_are_a_double_click() {
+    let (mut r, ..) = two_editable_models();
+    r.app.insert_resource(gizmo::TransformTool::Translate);
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    r.drag(MouseButton::Right, pa, &[]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None, "a right click between");
+    r.drag(MouseButton::Left, pa, &[pa + Vec2::new(40.0, 0.0)]);
+    click(&mut r, pa, &[]);
+    assert_eq!(editing(&r), None, "an orbit between");
+}
+
+/// [`two_editable_models`] on a server that takes edits, with the gizmo
+/// and undo.
+fn editable_gizmo_rig() -> (Rig, Entity, Entity) {
+    let (mut r, a, _, _, b, _) = two_editable_models();
+    {
+        let mut status = r.app.world_mut().resource_mut::<GzStatus>();
+        status.status = gz_core::transport::Status::Ready;
+        status.world = Some("w".into());
+        status.edits = Some(true);
+    }
+    r.app
+        .insert_resource(gizmo::TransformTool::Translate)
+        .init_resource::<gizmo::Snap>()
+        .init_resource::<gizmo::GizmoState>()
+        .add_plugins((crate::edit::EditPlugin, crate::undo::UndoPlugin))
+        .add_systems(Update, gizmo::gizmo_input.before(controls::mouse_input));
+    r.app.update();
+    (r, a, b)
+}
+
+/// The first click selects the model and brings the gizmo: a second on a
+/// handle is still the double click, not the gizmo's.
+#[test]
+fn a_double_click_on_a_gizmo_handle_edits_the_model() {
+    let (mut r, a, _) = editable_gizmo_rig();
+    let p = arrow_point(&r, 0, 0.3);
+    click(&mut r, p, &[]);
+    assert_eq!(selected(&r), [a]);
+    click(&mut r, p, &[]);
+    r.app.update();
+    assert_eq!(editing(&r), Some(a));
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+}
+
+/// Undo and redo wait while a model is edited.
+#[test]
+fn undo_waits_while_editing() {
+    let (mut r, a, b) = editable_gizmo_rig();
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![a];
+    r.app.update();
+    let (from, to) = (arrow_point(&r, 0, 0.8), arrow_point(&r, 0, 1.6));
+    r.drag(MouseButton::Left, from, &[to]);
+    r.app.update();
+    let x = |r: &Rig| r.app.world().get::<Transform>(a).unwrap().translation.x;
+    let moved = x(&r);
+    assert!(moved > 0.1, "{moved}");
+    edit(&mut r, editing::EditCommand::Enter(b));
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(x(&r), moved);
+    edit(&mut r, editing::EditCommand::Done);
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(x(&r), 0.0);
+}
+
+/// A faded material follows its own: a change to it (a texture combined
+/// in, say) reaches the copy. A heightmap's terrain fades too.
+#[test]
+fn faded_copies_follow_their_materials_and_terrain_fades() {
+    use crate::heightmap::TerrainMaterial;
+    let (mut r, a, _, _, b, mb) = two_editable_models();
+    r.app
+        .add_message::<AssetEvent<StandardMaterial>>()
+        .init_resource::<Assets<TerrainMaterial>>();
+    let lb = r.app.world().get::<Children>(b).unwrap()[0];
+    let terrain = {
+        let world = r.app.world_mut();
+        let m = world
+            .resource_mut::<Assets<TerrainMaterial>>()
+            .add(TerrainMaterial::default());
+        world
+            .spawn((MeshMaterial3d(m), box_visual(), ChildOf(lb)))
+            .id()
+    };
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let shown = |r: &Rig| {
+        r.app
+            .world()
+            .get::<MeshMaterial3d<StandardMaterial>>(mb)
+            .unwrap()
+            .0
+            .clone()
+    };
+    let original = r
+        .app
+        .world()
+        .get::<editing::Dimmed>(mb)
+        .unwrap()
+        .original
+        .clone();
+    {
+        let mut materials = r.app.world_mut().resource_mut::<Assets<StandardMaterial>>();
+        materials.get_mut(&original).unwrap().emissive = LinearRgba::RED;
+    }
+    r.app
+        .world_mut()
+        .write_message(AssetEvent::Modified { id: original.id() });
+    r.app.update();
+    let copy = r
+        .app
+        .world()
+        .resource::<Assets<StandardMaterial>>()
+        .get(&shown(&r))
+        .cloned()
+        .unwrap();
+    assert_eq!(copy.emissive, LinearRgba::RED);
+    assert!((copy.base_color.alpha() - editing::DIMMED_OPACITY).abs() < 1e-3);
+    let faded = r
+        .app
+        .world()
+        .get::<MeshMaterial3d<TerrainMaterial>>(terrain)
+        .unwrap()
+        .0
+        .clone();
+    let alpha = r
+        .app
+        .world()
+        .resource::<Assets<TerrainMaterial>>()
+        .get(&faded)
+        .unwrap()
+        .base
+        .base_color
+        .alpha();
+    assert!((alpha - editing::DIMMED_OPACITY).abs() < 1e-3, "{alpha}");
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r
+        .app
+        .world()
+        .get::<editing::Dimmed<TerrainMaterial>>(terrain)
+        .is_none());
+}
+
+/// Parts added while editing: a link spawns under the model, selected; a
+/// sensor joins its link's; the extras get them; undo and redo take the
+/// last back and put it back; Done drops them, the extras the server's
+/// again.
+#[test]
+fn parts_join_the_edited_model_until_done() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::{GzEntity, GzSensors};
+    use editing::parts::{EditParts, PartCommand, PartsDiscarded};
+    use gz_core::insert::Shape;
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let add = |r: &mut Rig, part: Part| {
+        r.app.world_mut().write_message(PartCommand::Add(part));
+        r.app.update();
+        r.app.update();
+    };
+    add(
+        &mut r,
+        Part::Link {
+            name: "link_1".into(),
+            shape: Shape::Box,
+            pose: Pose {
+                pos: [1.0, 0.0, 0.25],
+                quat: [0.0, 0.0, 0.0, 1.0],
+            },
+        },
+    );
+    let link = |r: &mut Rig| {
+        let world = r.app.world_mut();
+        world
+            .query::<(Entity, &GzEntity, &ChildOf)>()
+            .iter(world)
+            .find(|(_, g, _)| g.path == "a/link_1")
+            .map(|(e, _, p)| (e, p.parent()))
+    };
+    let (l1, parent) = link(&mut r).expect("the link");
+    assert_eq!(parent, a);
+    assert_eq!(selected(&r), [l1]);
+    let t = r.app.world().get::<Transform>(l1).unwrap().translation;
+    assert_eq!(t, Vec3::new(1.0, 0.0, 0.25));
+    add(
+        &mut r,
+        Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        },
+    );
+    let sensors = |r: &Rig| r.app.world().get::<GzSensors>(la).map_or(0, |s| s.0.len());
+    assert_eq!(sensors(&r), 1);
+    let extras = |r: &Rig| r.app.world().resource::<SdfExtras>().extras.clone();
+    let e = extras(&r).expect("the draft's");
+    assert!(e.link("a/link_1").is_some());
+    assert_eq!(e.link("a/base").unwrap().sensors[0].name, "imu_1");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(sensors(&r), 0);
+    assert!(extras(&r).unwrap().link("a/base").is_none());
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), None, "the server's: none yet");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Redo);
+    r.app.update();
+    r.app.update();
+    assert!(link(&mut r).is_some());
+    assert_eq!(
+        r.app
+            .world()
+            .resource::<EditParts>()
+            .draft
+            .undo_label()
+            .as_deref(),
+        Some("add link_1")
+    );
+    // A reply while editing gets the draft's parts too.
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(extras(&r).unwrap().link("a/link_1").is_some());
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .clear();
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), Some(gz_core::sdf::WorldExtras::default()));
+    let dropped: Vec<PartsDiscarded> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .drain()
+        .collect();
+    assert_eq!(dropped, [PartsDiscarded(1)]);
+}
+
+/// Undo takes a sensor selected as a part out of the selection; idle
+/// frames after Done leave the draft unchanged; the server's SDFormat is
+/// known once it comes, the draft's parts added or not.
+#[test]
+fn undo_unselects_a_part_and_idle_frames_leave_the_draft() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::GzEntity;
+    use editing::parts::{EditParts, PartCommand};
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let known = |r: &Rig| {
+        let w = r.app.world();
+        w.resource::<EditParts>()
+            .server_known(w.resource::<SdfExtras>())
+    };
+    r.app
+        .world_mut()
+        .write_message(PartCommand::Add(Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        }));
+    r.frames(2);
+    assert!(!known(&r), "the draft's extras aren't the server's");
+    let imu = super::Part {
+        kind: PartKind::Sensor,
+        owner: la,
+        name: "imu_1".into(),
+    };
+    r.app.world_mut().resource_mut::<Selection>().parts = vec![imu];
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(r.app.world().resource::<Selection>().parts.is_empty());
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(known(&r));
+    edit(&mut r, editing::EditCommand::Done);
+    r.frames(2);
+    let tick = |r: &Rig| r.app.world().resource_ref::<EditParts>().last_changed();
+    let before = tick(&r);
+    r.frames(3);
+    assert_eq!(tick(&r), before);
+}
+
+/// While a model is edited, a place reaches its links through a dimmed
+/// model in front of them, and the hover follows them too; outside
+/// editing, the model in front takes it.
+#[test]
+fn a_place_reaches_the_edited_model_through_a_dimmed_one() {
+    let (mut r, a, _, ma, b, mb) = two_editable_models();
+    let target = Vec3::new(0.0, 0.0, 0.5);
+    let camera = gz_to_bevy().inverse() * r.transform().translation;
+    // b's cube halfway from the camera to a's.
+    let mid = camera.lerp(target, 0.5);
+    r.app
+        .world_mut()
+        .get_mut::<Transform>(b)
+        .unwrap()
+        .translation = mid - Vec3::new(0.0, 3.0, 0.5);
+    r.app.update();
+    let pa = on_screen(&r, target);
+    let hit = |r: &mut Rig| {
+        r.op(ViewOp::Place {
+            at: pa,
+            keep: false,
+        });
+        let p: Vec<place::PlaceAt> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<place::PlaceAt>>()
+            .drain()
+            .collect();
+        p[0].hit
+    };
+    assert_eq!(hit(&mut r), Some(mb), "b is in front");
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert_eq!(hit(&mut r), Some(ma));
+    r.app.insert_resource(place::Placing(true));
+    r.cursor(Some(pa));
+    r.frames(2);
+    let hover = r.app.world().resource::<place::PlaceHover>().0;
+    assert_eq!(hover.and_then(|(_, _, e)| e), Some(ma));
 }

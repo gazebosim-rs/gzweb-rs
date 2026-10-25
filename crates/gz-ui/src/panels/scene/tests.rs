@@ -982,6 +982,33 @@ fn enter_selects_the_cursor_row_and_a_right_click_doesnt() {
     assert_eq!(selected(&app), [amr]);
 }
 
+/// A right press on a row opens the context menu for its entity, selected
+/// first (§7.9).
+#[test]
+fn a_right_press_on_a_row_opens_the_context_menu() {
+    use bevy::picking::events::PointerPress;
+    use bevy::picking::pointer::PointerButton;
+    let (mut app, _) = live_tree();
+    let krate = entity(&mut app, "crate_01");
+    let r = row(&mut app, "crate_01");
+    app.world_mut().trigger(PointerPress {
+        entity: r,
+        pointer: pointer(),
+        button: PointerButton::Secondary,
+        hit: hit(),
+        count: 1,
+    });
+    frames(&mut app, 3);
+    assert_eq!(selected(&app), [krate]);
+    let world = app.world_mut();
+    let menu = world
+        .query::<&crate::shell::context_menu::ContextMenu>()
+        .iter(world)
+        .next()
+        .map(|m| (m.subject, m.view));
+    assert_eq!(menu, Some((krate, None)));
+}
+
 #[test]
 fn the_footer_needs_a_model_and_isolate_forgets_a_gone_world() {
     use super::footer::FooterButton::{HideOthers, Isolate};
@@ -1103,4 +1130,81 @@ fn hides_hide_others_and_isolate_are_each_undone() {
     undo(&mut app);
     assert_eq!(vis(&app, amr), Visibility::Hidden);
     assert!(app.world().resource::<Isolated>().0.is_some());
+}
+
+/// Editing a model opens its row and dims the others, whose rows don't
+/// select (§6.6); leaving brings them back.
+#[test]
+fn editing_a_model_dims_the_other_rows() {
+    use gz_bevy::view::editing::EditCommand;
+    let (mut app, w) = live_tree();
+    app.world_mut()
+        .entity_mut(w.root)
+        .insert(gz_bevy::spawn::GzWorldRoot);
+    let amr = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &GzEntity)>()
+            .iter(world)
+            .find(|(_, g)| g.name == "amr_01")
+            .unwrap()
+            .0
+    };
+    app.world_mut().write_message(EditCommand::Enter(amr));
+    frames(&mut app, 4);
+    let spec = |app: &mut App, name: &str| {
+        let r = row(app, name);
+        app.world().get::<TreeRowSpec>(r).unwrap().clone()
+    };
+    assert!(!spec(&mut app, "amr_01").dimmed);
+    assert!(!spec(&mut app, "base_link").dimmed, "its row is open");
+    assert!(spec(&mut app, "crate_01").dimmed);
+    assert!(spec(&mut app, "sun").dimmed);
+    let crate_row = row(&mut app, "crate_01");
+    app.world_mut().trigger(Activate { entity: crate_row });
+    frames(&mut app, 2);
+    assert!(app
+        .world()
+        .resource::<gz_bevy::view::Selection>()
+        .is_empty());
+    let base_row = row(&mut app, "base_link");
+    app.world_mut().trigger(Activate { entity: base_row });
+    frames(&mut app, 2);
+    assert_eq!(
+        app.world()
+            .resource::<gz_bevy::view::Selection>()
+            .entities
+            .len(),
+        1
+    );
+    // A dimmed row has no menu.
+    use bevy::picking::events::PointerPress;
+    use bevy::picking::pointer::PointerButton;
+    app.world_mut().trigger(PointerPress {
+        entity: crate_row,
+        pointer: pointer(),
+        button: PointerButton::Secondary,
+        hit: hit(),
+        count: 1,
+    });
+    frames(&mut app, 3);
+    let menus = {
+        let world = app.world_mut();
+        world
+            .query::<&crate::shell::context_menu::ContextMenu>()
+            .iter(world)
+            .count()
+    };
+    assert_eq!(menus, 0);
+    // The model's row, closed, stays closed.
+    let key = NodeKey::Entity("amr_01".into());
+    app.world_mut()
+        .resource_mut::<TreeState>()
+        .expanded
+        .remove(&key);
+    frames(&mut app, 3);
+    assert!(!app.world().resource::<TreeState>().expanded.contains(&key));
+    app.world_mut().write_message(EditCommand::Done);
+    frames(&mut app, 3);
+    assert!(!spec(&mut app, "crate_01").dimmed);
 }

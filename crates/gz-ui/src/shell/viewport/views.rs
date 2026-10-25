@@ -240,6 +240,12 @@ impl ViewLayout {
         self.maximized = None;
     }
 
+    /// Sets the current preset's shares (a workspace's, §8), each kept
+    /// within the dividers' range.
+    pub(crate) fn set_shares(&mut self, shares: [f32; 2]) {
+        self.shares[self.preset.index()] = shares.map(|s| s.clamp(0.1, 0.9));
+    }
+
     /// Sets divider `axis`'s share (0 columns, 1 rows).
     fn set_share(&mut self, axis: usize, share: f32) {
         self.shares[self.preset.index()][axis] = share;

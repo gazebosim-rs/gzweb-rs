@@ -57,6 +57,7 @@ fn widget_heights_match_the_spec() {
                 expanded: None,
                 hidden: false,
                 hideable: true,
+                dimmed: false,
             },
         ))
         .id();

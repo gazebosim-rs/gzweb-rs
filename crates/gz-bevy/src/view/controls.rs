@@ -81,7 +81,11 @@ impl ViewerControls {
             // The full UI routes viewport keys by hover and focus
             // (`ViewRouting`); W A S D are the fly keys, except while an
             // armed Teleop drives with them (`DriveArmed`).
-            UiMode::Minimal | UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
+            // The full UI empties the scopes while a text field has the
+            // keys, so its `text` bindings (copy, paste, delete…) don't
+            // fire there.
+            UiMode::Minimal => vec![Scope::Global, Scope::Viewport, Scope::Minimal],
+            UiMode::Full => vec![Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text],
         }
     }
 }
@@ -191,8 +195,21 @@ pub struct BrowserWheel {
 pub struct ControlState {
     drag: Option<Drag>,
     tap: Option<Tap>,
+    /// The last click's time, place and view, for a double click.
+    last_click: Option<(f64, Vec2, Option<ViewId>)>,
     /// Keys that went down while ⌘ was held (see [`drop_command_chord_keys`]).
     under_command: Vec<KeyCode>,
+}
+
+impl ControlState {
+    /// A press at `at` in `view` now would be a double click's second: the
+    /// gizmo leaves it to the view, so a handle that came with the first
+    /// click doesn't take it.
+    pub fn double_click(&self, now: f64, at: Vec2, view: Option<ViewId>) -> bool {
+        self.last_click.is_some_and(|(t, was, v)| {
+            now - t <= DOUBLE_CLICK_SECS && was.distance(at) <= CLICK_SLOP && v == view
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -243,9 +260,26 @@ impl Plugin for ViewerControls {
             .init_resource::<Marquee>()
             .init_resource::<super::DriveArmed>()
             .add_message::<super::place::PlaceAt>()
+            .add_message::<super::EntityContext>()
+            .add_message::<super::align::AlignModels>()
+            .add_message::<super::model_edits::EditModels>()
+            .add_message::<super::model_edits::ModelsEdited>()
+            .add_message::<crate::connection::GzServiceReply>()
+            .init_resource::<super::model_edits::ModelClipboard>()
+            .init_resource::<super::model_edits::EditJobs>()
+            .init_resource::<super::model_edits::SelectWhenSpawned>()
+            .add_message::<crate::edit::SetPose>()
+            .init_resource::<crate::edit::Held>()
+            .add_message::<crate::undo::Record>()
             .init_resource::<super::place::Placing>()
             .init_resource::<super::place::PlaceHover>()
             .init_resource::<BoxSelectTool>()
+            .init_resource::<super::editing::EditingModel>()
+            .add_message::<super::editing::EditCommand>()
+            .init_resource::<super::editing::parts::EditParts>()
+            .add_message::<super::editing::parts::PartCommand>()
+            .add_message::<super::editing::parts::PartsDiscarded>()
+            .add_message::<crate::undo::UndoCommand>()
             .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
@@ -275,6 +309,38 @@ impl Plugin for ViewerControls {
                     // A new environment respawns the camera from its state:
                     // this frame's commands go in first.
                     .before(crate::render::apply_environment),
+            )
+            .add_systems(
+                Update,
+                (
+                    super::align::align_models,
+                    super::model_edits::request_model_edits,
+                    super::model_edits::finish_model_edits,
+                    super::model_edits::select_copies,
+                )
+                    .chain()
+                    .after(apply_view_commands)
+                    // Their edits are on the stack this frame.
+                    .before(crate::undo::UndoSystems),
+            )
+            // A double click's edit, this frame's; the overlays it turns on
+            // count this frame.
+            .add_systems(
+                Update,
+                (
+                    super::editing::run_edit_commands,
+                    super::editing::pause_when_known,
+                    super::editing::light_new_views,
+                    super::editing::end_editing_when_gone,
+                    super::editing::parts::run_parts,
+                    super::editing::parts::patch_extras,
+                    super::editing::limit_selection,
+                    super::editing::dim_others::<StandardMaterial>,
+                    super::editing::dim_others::<crate::heightmap::TerrainMaterial>,
+                )
+                    .chain()
+                    .after(apply_view_commands)
+                    .before(apply_overlay_commands),
             )
             // Followed targets move with this frame's poses.
             .add_systems(
@@ -473,6 +539,10 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
     out
 }
 
+/// Two clicks this close in time (and [`CLICK_SLOP`] in place) are a
+/// double click.
+pub const DOUBLE_CLICK_SECS: f64 = 0.4;
+
 /// What releasing a left drag does: a click (within [`CLICK_SLOP`])
 /// selects what was under the press; a marquee selects what it covers.
 /// Shift adds; ⌘/Ctrl toggles, except for the ⌘/Ctrl+drag marquee it
@@ -514,6 +584,7 @@ pub fn mouse_input(
     selecting: Res<SelectInViews>,
     gizmo: Option<Res<super::gizmo::GizmoState>>,
     placing: Res<super::place::Placing>,
+    (tool, time): (Option<Res<super::gizmo::TransformTool>>, Res<Time<Real>>),
     mut out: MessageWriter<ViewCommand>,
 ) {
     // A drag stays with its view; anything else goes to the one under the
@@ -552,10 +623,29 @@ pub fn mouse_input(
         if marquee.0.is_some() {
             marquee.0 = None;
         }
+        // Anything but a click (a drag, another button) starts over.
+        let mut clicked = None;
         if drag.button == MouseButton::Left {
             if let Some(op) = released(drag, held.shift, command, placing.0) {
+                let now = time.elapsed_secs_f64();
+                let click = matches!(op, ViewOp::Select { .. });
+                let double = click && state.double_click(now, drag.start, drag.view);
                 send(&mut out, op);
+                // A double click with Translate or Rotate edits the model
+                // (spec §6.6); the first click selected it.
+                let transform = tool
+                    .as_deref()
+                    .is_some_and(|t| *t != super::gizmo::TransformTool::None);
+                if double && transform {
+                    send(&mut out, ViewOp::EditAt { at: drag.start });
+                }
+                clicked = (click && !double).then_some((now, drag.start, drag.view));
             }
+        }
+        state.last_click = clicked;
+        // A right click (no drag) asks for the context menu.
+        if drag.button == MouseButton::Right && drag.selects && !drag.moved && !placing.0 {
+            send(&mut out, ViewOp::Context { at: drag.start });
         }
     }
     // A press on a gizmo handle is the gizmo's drag.

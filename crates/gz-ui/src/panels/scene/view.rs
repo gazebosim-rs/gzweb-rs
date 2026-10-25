@@ -10,6 +10,7 @@ use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, RadioGroup, ScrollArea};
 use bevy::window::PrimaryWindow;
+use gz_bevy::view::editing::{is_under, EditingModel};
 use gz_bevy::view::Selection;
 
 use super::model::{Chip, Row, TreeModel, TreeScroll, TreeState};
@@ -66,6 +67,27 @@ pub(super) struct TreeSources<'w, 's> {
     pub(crate) visibility: Query<'w, 's, &'static Visibility>,
     pub(crate) selection: Res<'w, Selection>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
+    /// While a model is edited, the rows outside it dim (§6.6).
+    pub(crate) editing: Option<Res<'w, EditingModel>>,
+    parents: Query<'w, 's, &'static ChildOf>,
+}
+
+/// Row `row` is in the model being edited (its own row, its links',
+/// their joints' and sensors'), or no model is.
+pub(crate) fn in_edited(
+    model: &TreeModel,
+    row: Row,
+    editing: Option<&EditingModel>,
+    parents: &Query<&ChildOf>,
+) -> bool {
+    let Some(edited) = editing.and_then(EditingModel::model) else {
+        return true;
+    };
+    let e = model
+        .node(row)
+        .entity
+        .or_else(|| model.part(row).map(|p| p.owner));
+    e.is_some_and(|e| is_under(parents, e, edited))
 }
 
 impl TreeSources<'_, '_> {
@@ -82,7 +104,14 @@ impl TreeSources<'_, '_> {
                 .and_then(|e| self.visibility.get(e).ok())
                 .is_some_and(|v| *v == Visibility::Hidden),
             hideable: n.entity.is_some(),
+            dimmed: !self.in_edited(row),
         }
+    }
+
+    /// Row `row` is in the model being edited (its own row, its links',
+    /// their joints' and sensors'), or no model is.
+    pub(crate) fn in_edited(&self, row: Row) -> bool {
+        in_edited(&self.model, row, self.editing.as_deref(), &self.parents)
     }
 
     /// Row `row`'s entity, or its joint or sensor, is selected (§5.7: the

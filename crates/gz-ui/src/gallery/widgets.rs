@@ -50,6 +50,7 @@ pub(super) fn scene_panel(t: &mut ChildSpawnerCommands, theme: &Theme) {
             expanded,
             hidden,
             hideable: !matches!(kind, EntityKind::World | EntityKind::Joint),
+            dimmed: false,
         };
         rows.spawn(tree_row(
             theme,

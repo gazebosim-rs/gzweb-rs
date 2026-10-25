@@ -5,11 +5,13 @@
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::ui_widgets::Activate;
 use bevy::window::PrimaryWindow;
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::messages::{MessageLevel, SystemMessages};
 use gz_bevy::spawn::GzEntity;
+use gz_bevy::undo::{UndoCommand, UndoStack};
 use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::{cursor_on_ground, Selection, ViewId, ViewOrigin};
 
@@ -36,6 +38,11 @@ pub(crate) struct CursorReadout(pub Option<[f32; 2]>);
 /// The hint while placing.
 pub(crate) const PLACE_HINT: &str = "Click to place · Shift to place several · Esc to stop";
 
+/// The hint while a model is edited with the sim paused (§6.6), and with
+/// it running (Play while editing).
+pub(crate) const EDIT_HINT: &str = "sim paused while editing · Done or Esc to finish";
+pub(crate) const EDIT_RUNNING_HINT: &str = "Editing · Done or Esc to finish";
+
 /// What the status bar's texts are read from.
 #[derive(SystemParam)]
 pub(crate) struct StatusSources<'w, 's> {
@@ -43,6 +50,8 @@ pub(crate) struct StatusSources<'w, 's> {
     tool: Res<'w, Tool>,
     /// Placing replaces the tool's hint (D-102).
     placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
+    /// So does editing a model (D-112).
+    editing: Option<Res<'w, gz_bevy::view::editing::EditingModel>>,
     cursor: Res<'w, CursorReadout>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     selection: Option<Res<'w, Selection>>,
@@ -55,6 +64,7 @@ impl StatusSources<'_, '_> {
     fn changed(&self) -> bool {
         self.tool.is_changed()
             || self.placing.as_ref().is_some_and(Res::is_changed)
+            || self.editing.as_ref().is_some_and(Res::is_changed)
             || self.cursor.is_changed()
             || self.status.as_ref().is_some_and(Res::is_changed)
             || self.selection.as_ref().is_some_and(Res::is_changed)
@@ -91,6 +101,13 @@ impl StatusSources<'_, '_> {
             StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
             StatusItem::Hint if self.placing.as_ref().is_some_and(|p| p.0) => PLACE_HINT.into(),
+            StatusItem::Hint if self.editing.as_ref().is_some_and(|e| e.model().is_some()) => {
+                if sim.is_some_and(|s| s.paused) {
+                    EDIT_HINT.into()
+                } else {
+                    EDIT_RUNNING_HINT.into()
+                }
+            }
             StatusItem::Hint => self.tool.hint().into(),
             StatusItem::Selection => self.selection(),
             StatusItem::Cursor => format::cursor(self.cursor.0),
@@ -185,14 +202,10 @@ impl MessageChip {
     /// there have been ("2 warnings").
     pub(crate) fn of(messages: &SystemMessages) -> Option<Self> {
         let m = messages.latest_problem()?;
+        let (warnings, errors) = messages.problem_counts();
         let (kind, n, one, many) = match m.level {
-            MessageLevel::Error => (StatusKind::Error, messages.errors, "error", "errors"),
-            _ => (
-                StatusKind::Warning,
-                messages.warnings,
-                "warning",
-                "warnings",
-            ),
+            MessageLevel::Error => (StatusKind::Error, errors, "error", "errors"),
+            _ => (StatusKind::Warning, warnings, "warning", "warnings"),
         };
         Some(Self {
             kind,
@@ -205,15 +218,45 @@ impl MessageChip {
 /// How long a transient confirmation shows (§3.6: 3 s).
 pub(crate) const NOTE_SECS: f64 = 3.0;
 
+/// How long Delete's undo chip shows (§7.1: 5 s).
+pub(crate) const UNDO_NOTE_SECS: f64 = 5.0;
+
 /// A transient confirmation ("Saved warehouse_demo.sdf", §3.6): it takes
-/// item 5's slot until `until` (real seconds).
+/// item 5's slot until `until` (real seconds). An undo chip ("Deleted cart
+/// · Undo", §7.1) also holds the edit it undoes (its serial and label),
+/// and goes once that isn't the one ⌘Z would undo.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub(crate) struct StatusNote(pub Option<(String, f64)>);
+pub(crate) struct StatusNote(pub Option<(String, f64)>, pub Option<(u64, String)>);
 
 impl StatusNote {
     /// Shows `text` for [`NOTE_SECS`] from `now`.
     pub(crate) fn show(&mut self, text: impl Into<String>, now: f64) {
         self.0 = Some((text.into(), now + NOTE_SECS));
+        self.1 = None;
+    }
+
+    /// Shows `text` with an Undo for the edit `undoes` ([`UndoStack`]'s
+    /// serial and label) for [`UNDO_NOTE_SECS`].
+    pub(crate) fn show_undo(&mut self, text: impl Into<String>, undoes: (u64, String), now: f64) {
+        self.0 = Some((text.into(), now + UNDO_NOTE_SECS));
+        self.1 = Some(undoes);
+    }
+}
+
+/// The undo chip's Undo.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct UndoChip;
+
+/// Clicking the undo chip undoes its edit.
+pub(crate) fn on_undo_chip(
+    ev: On<Activate>,
+    chips: Query<(), With<UndoChip>>,
+    mut note: ResMut<StatusNote>,
+    mut undo: MessageWriter<UndoCommand>,
+) {
+    if chips.contains(ev.entity) && note.1.is_some() {
+        undo.write(UndoCommand::Undo);
+        *note = StatusNote::default();
     }
 }
 
@@ -221,9 +264,11 @@ impl StatusNote {
 /// warning or error as a status chip, its whole text and source in the
 /// tooltip (the chip clips it). Rebuilt when it changes; the message tray
 /// it opens comes with M8d.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn message_chip(
     messages: Option<Res<SystemMessages>>,
     time: Res<Time<Real>>,
+    undo: Option<Res<UndoStack>>,
     mut note: ResMut<StatusNote>,
     theme: Res<Theme>,
     slots: Query<(Entity, &StatusItem)>,
@@ -231,8 +276,12 @@ pub(crate) fn message_chip(
     mut commands: Commands,
 ) {
     let now = time.elapsed_secs_f64();
-    if note.0.as_ref().is_some_and(|(_, until)| now >= *until) {
-        note.0 = None;
+    let undone = note
+        .1
+        .as_ref()
+        .is_some_and(|(n, _)| undo.as_deref().and_then(UndoStack::undo_serial) != Some(*n));
+    if undone || note.0.as_ref().is_some_and(|(_, until)| now >= *until) {
+        *note = StatusNote::default();
     }
     let messages_changed = messages.as_ref().is_some_and(|m| m.is_changed());
     if !messages_changed && !note.is_changed() {
@@ -241,7 +290,11 @@ pub(crate) fn message_chip(
     let shown = note.0.as_ref().map(|(text, _)| MessageChip {
         kind: StatusKind::Done,
         text: text.clone(),
-        count: String::new(),
+        count: if note.1.is_some() {
+            "Undo".into()
+        } else {
+            String::new()
+        },
     });
     let want = shown.or_else(|| messages.as_deref().and_then(MessageChip::of));
     let have = chips.iter().next();
@@ -263,13 +316,27 @@ pub(crate) fn message_chip(
             .map(|m| m.source.clone())
             .unwrap_or_default(),
     };
-    let tip = Tooltip::new(want.text.clone())
-        .detail(source)
-        .side(TooltipSide::Above);
+    let tip = match &note.1 {
+        Some((_, l)) if want.kind == StatusKind::Done => Tooltip::new(format!("Undo {l}")),
+        _ => Tooltip::new(want.text.clone()).detail(source),
+    }
+    .side(TooltipSide::Above);
     let count = (!want.count.is_empty()).then(|| want.count.clone());
-    commands.entity(slot).with_child((
+    let undoes = want.kind == StatusKind::Done && note.1.is_some();
+    let problem = matches!(want.kind, StatusKind::Warning | StatusKind::Error);
+    let mut chip = commands.spawn((
         status_chip(&theme, want.kind, want.text.clone(), count),
         tip,
         want,
+        ChildOf(slot),
     ));
+    if undoes {
+        chip.insert(UndoChip);
+    } else if problem {
+        // It opens the message tray (the slot is its menu).
+        chip.insert((
+            crate::widgets::menu::MenuTrigger,
+            bevy::ui_widgets::MenuButton,
+        ));
+    }
 }

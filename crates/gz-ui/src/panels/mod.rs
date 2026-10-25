@@ -56,6 +56,7 @@ mod scene;
 pub(crate) mod sensors;
 mod teleop;
 mod topics;
+pub(crate) mod workspaces;
 
 use std::borrow::Cow;
 
@@ -64,6 +65,7 @@ use bevy::prelude::*;
 
 use crate::assets::IconId;
 use crate::registry::{self, ui_id, Registered, Registry};
+pub(crate) use assets::AssetsState;
 pub use assets::{AssetsPanelPlugin, AssetsStart, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleStart, ConsoleUnread, CONSOLE};
 pub use plot::{PlotCharts, PlotPanelPlugin, PlotPick, PlotStart, PLOT};
@@ -71,6 +73,7 @@ pub use scene::{ScenePanelPlugin, SceneTreeStart, SCENE};
 pub use sensors::{SensorsPanelPlugin, SensorsStart, ViewSensor, SENSORS};
 pub use teleop::{TeleopPanelPlugin, TeleopStart, TELEOP};
 pub use topics::{TopicsPanelPlugin, TopicsStart, TOPICS};
+pub use workspaces::{WorkspacesPanelPlugin, WorkspacesStart};
 
 ui_id! {
     /// A panel's id: a short, stable name ("scene"), unique among the
@@ -307,6 +310,8 @@ pub struct PanelDef {
     /// Marks its footer, for its observer to fill
     /// ([`footer_content`](Self::footer_content)).
     pub footer_content: Option<ContentMarker>,
+    /// It has an activity button (Workspaces doesn't: decision Q2).
+    pub activity: bool,
 }
 
 impl PanelDef {
@@ -327,7 +332,14 @@ impl PanelDef {
             content: None,
             footer: Vec::new(),
             footer_content: None,
+            activity: true,
         }
+    }
+
+    /// No activity button: other controls open it (decision Q2).
+    pub fn no_activity_button(mut self) -> Self {
+        self.activity = false;
+        self
     }
 
     /// Its place in the activity bar: `group` (a separator between
@@ -498,6 +510,7 @@ impl PluginGroup for PanelPlugins {
             .add(SensorsPanelPlugin)
             .add(TeleopPanelPlugin)
             .add(ConsolePanelPlugin)
+            .add(WorkspacesPanelPlugin)
     }
 }
 

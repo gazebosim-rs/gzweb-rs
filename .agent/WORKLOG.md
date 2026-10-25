@@ -1865,3 +1865,157 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   or another world; ⇧⌘S prevented in the browser; typed names keep their
   last part; "last saved" forgets another world; type-to-search in the
   World menu; long Undo labels end in "…"; hides aren't saved (D-108).
+
+## 2026-10-24: M8c entity context menu (D-109)
+
+- **Context menu:** a right click on a model in a view (no drag) or a
+  right press on a tree row; selects it unless it is. §7.9's items;
+  Rename, Apply force… and Edit model say why they can't.
+- **Model edits:** `gz_bevy::view::model_edits` gets the model's
+  SDFormat (`gz_core::world_file::model_sdf`); Copy, Paste and
+  Duplicate `create` copies named `<name>_N` beside it, Delete sends
+  `remove`. Undo removes or recreates (`Change::Exists`); Delete shows
+  a 5 s Undo chip. ⌘C ⌘V ⌘D Delete; the palette.
+- **Align ›:** `gz_bevy::view::align`, X/Y/Z by min, centre or max.
+- **Submenus:** hover, click, Enter or → opens; ← closes; a choice
+  closes the stack.
+- **Flags:** `gzweb --menu context` (with `--select`).
+- **Live check** (debug build, :9013 `diff_drive`): the menu opens on
+  `vehicle_blue`. Deleting, duplicating and aligning by hand not tried
+  (tested against server replies).
+- **Review fixes (#55):** ↓ moves past a submenu's row; Delete again
+  while one is under way does nothing; `remove` by id; undo waits for a
+  model it's bringing back, which keeps its pose as loaded; Align holds
+  its models; ⇧D doesn't fly on the web; the undo chip follows its
+  edit's serial.
+- **Tests:** workspace 861 → 879 passing.
+
+## 2026-10-24: M8d message tray and workspaces (D-110)
+
+- **Message tray:** the problem chip opens it; problems newest first,
+  counts, Open console ›, Clear (`SystemMessages::clear_problems`).
+- **Workspaces:** Build, Run, Debug, Review; Alt+1–4, the status bar's
+  switcher, the palette; a switch keeps what it leaves; §8's defaults;
+  each view's camera (`ViewOp::Restore`) and overlays.
+- **Persistence:** Save current layout; `gz/ui/workspaces.json` in the
+  config dir or `localStorage`; current workspace and theme on change;
+  read at start (not over `--theme`; none for captures).
+- **Flags:** `gzweb --menu workspace`.
+- **Live check** (debug build, :9013 `diff_drive`): the switcher opens.
+- **Tests:** workspace 879 → 890 passing.
+- **Review fixes:** a file it can't parse is kept apart (`.bad`), one
+  it can't read or a newer version's isn't written over, unknown
+  workspaces are kept, writes are whole; a theme asked for isn't saved;
+  the start flags go over the saved layout; an unsaved workspace starts
+  as its default (Build as the app starts); a saved grid outlasts the
+  scene's flag (`overlays::KeepGrid`); a view mid-animation is saved
+  where it ends, with its axis view; the tray closes without its chip;
+  Alt+1–4 wait out an edit; the tray counts its rows.
+- **Tests:** workspace 890 → 899 passing.
+
+## 2026-10-24: M8e the Workspaces panel (D-111)
+
+- **Panel:** no activity button; Manage…, ⌘K and `gzweb --workspaces`
+  open it. Cards (72×44 thumbnails, what each shows, Alt+N, "modified"),
+  the current layout's summary, Save to …, Save as new…, Reset; the
+  footer's note and Import / export layouts… (Export only).
+- **Workspaces:** the user's own join §8's four (`user_N` in the file,
+  names and order in `custom`), in the switcher and ⌘K; Delete; Reset
+  puts back the layout as saved, then §8's default; Build unsaved takes
+  the app's start as its layout; the panel stands over the layout it
+  shows (`Beneath`), never saved.
+- **Live check** (debug build, :9013 `diff_drive`): the panel's cards,
+  summary and buttons.
+- **Tests:** workspace 899 → 919 passing (912 before the review fixes).
+- **Review fixes (#57):** what the panel stands in for moves with it on a
+  swap and never repeats the other slot; a closed sidebar lets it go; the
+  switcher keeps the user's workspaces before its separator; cards change
+  in place and keep the keys; Save's tip follows; raising a window isn't
+  a change; Reset to the default is kept; unique names on load; the
+  footer says when the file is left alone; the name row takes its Esc;
+  cards are list items.
+
+## 2026-10-25: M9a editing a model in place (D-112)
+
+- **Entering:** Edit model (inspector, context menu), a double click
+  with Translate or Rotate, `gzweb --edit`; pauses a running sim (once
+  its stats are known), joints and frames on, the selection cleared.
+- **While editing:** picks are the model's links; the selection holds
+  its parts; other meshes at 25% (faded copies); the tree opens the
+  model and dims the rest; the EDITING pill with Done; the status bar's
+  hint; the model edits refuse.
+- **Leaving:** Done, or Esc (clearing the selection first); overlays
+  back, the sim resumed if entering paused it.
+- **Live check** (debug build, :9013 `diff_drive`, `--select vehicle_blue
+  --edit`): the pill, the dimming, the tree, the pause and the hint. The
+  capture left the sim paused; a Play request resumed it.
+- **Tests:** workspace 919 → 927 passing.
+- **Review fixes:** the editing no longer marks itself changed every
+  frame (the tree's open row stays closed when closed, the dimming
+  scans only on a change); a dimmed tree row opens no menu; entering
+  another model keeps the sim paused; Done turns off only the joints and
+  frames it turned on, new views get them, and workspaces leave them
+  out; Edit model only for a top-level model in the inspector, and
+  unavailable on the edited one; the camera pivots on dimmed models;
+  ⌘K's Navigate isn't Esc; double clicks start over after anything else
+  and get through the gizmo's handle; faded copies follow their
+  materials, terrain fades; undo, redo and inserting refuse while
+  editing. Workspace 927 → 937 passing.
+
+## 2026-10-25: M9b the Parts tab (D-113)
+
+- **Parts:** `gz_core::parts`: links, joints, visuals, collisions,
+  sensors and plugins as SDFormat elements; what's shown of each is its
+  element parsed; joint rules; the draft and its undo.
+- **gz-bevy:** `view::editing::parts`: a part's entities (links,
+  visuals) and sensors, the extras with the draft's parts (kept across a
+  reply), undo and redo while editing, the draft dropped on Done.
+  `PlaceAt` carries the mesh clicked.
+- **Parts tab:** six tiles and the shape, joint and sensor selects; a
+  click adds a link, or a visual, collision or sensor on the link
+  clicked; a joint's two clicks with its rubber band; Plugin's fields;
+  a Shapes tile adds a link while editing; the World menu names the
+  draft's undo; Done says the parts weren't kept.
+- **Live check** (debug build, :9013 `diff_drive`, `--select vehicle_blue
+  --edit --assets parts`): the tab beside the pill. The capture paused
+  the sim; a Play request resumed it.
+- **Tests:** workspace 937 → 950 passing.
+- **Review fixes** (PR #59):
+  - a joint's parent is forgotten when another model is edited or undo
+    takes its link back;
+  - joints count world-fixed and nested links;
+  - a joint or collision waits for the server's SDFormat;
+  - place clicks reach the edited model through dimmed ones;
+  - plugin text is escaped;
+  - undo unselects a removed joint or sensor;
+  - armed Parts tiles are pressed to AccessKit;
+  - `patch_extras` no longer marks the draft changed every frame;
+  - the preview stands in the model's or link's frame;
+  - Esc with Plugin armed only disarms;
+  - a cone's centre of mass and a capsule's inertia.
+
+  Tests: 950 → 958 passing, each new one failing without its fix.
+
+## 2026-10-25: the server's frame limit (D-109 amended)
+
+- **Found** writing M9c: the websocket server (libwebsockets' default
+  receive buffer) hands a frame over 4088 bytes to its parser in pieces.
+  Measured on Jetty: 4088 bytes goes, 4089 is lost. A `create` from a
+  real model's SDFormat is lost while its `remove` goes through:
+  vehicle_blue is 9 KB, 6 KB compacted. Deleting it and undoing lost it.
+- **Fix:** the transport refuses frames over `MAX_FRAME`; `model_sdf`
+  compacts; Delete, Duplicate, Paste and their undo and redo check the
+  `create` first and do nothing, saying why, when it won't fit. Failed
+  model edits show in the status bar.
+- **Review** (PR #60):
+  - 4088 bytes is needed but not enough: the server parses what one
+    4096-byte read holds. A frame under the limit sharing a read with
+    another, or arriving over several reads, is cut too (shown on a
+    libwebsockets 4.3.5 server set up like gz's). The docs say so.
+  - Compacting keeps blank text that means something.
+  - The Console refuses a call or publish that long, saying why.
+  - The reason gives exact bytes.
+  - M9c's write-back is paused until the server joins a frame's pieces.
+- **Left:** the server should join a frame's pieces
+  (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
+  does, M9c's write-back is limited to models that fit.

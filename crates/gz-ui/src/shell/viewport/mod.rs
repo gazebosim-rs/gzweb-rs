@@ -9,6 +9,7 @@
 
 pub(crate) mod banner;
 pub(crate) mod connect_card;
+pub(crate) mod editing;
 pub(crate) mod gizmo;
 pub(crate) mod hud;
 pub(crate) mod marquee;
@@ -67,6 +68,7 @@ pub(crate) fn view_node(
             v.spawn(hud::scale_label(&t));
             v.spawn(marquee::marquee());
             v.spawn(gizmo::gizmo_readout());
+            v.spawn(editing::editing_bar(&t));
         })),
     )
 }
@@ -109,6 +111,7 @@ pub(crate) fn build(app: &mut App) {
     rail::build(app);
     view_cube::build(app);
     hud::build(app);
+    editing::build(app);
     outline::build(app);
     gizmo::build(app);
     app.add_systems(

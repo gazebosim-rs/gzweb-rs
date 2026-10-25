@@ -12,7 +12,7 @@ use bevy::text::EditableText;
 use bevy::ui::Checked;
 use bevy::ui_widgets::ValueChange;
 use gz_bevy::connection::{GzCommand, GzServiceReply, GzStatus};
-use gz_bevy::edit::edits_allowed;
+use gz_bevy::edit::{edits_allowed, too_long};
 use gz_bevy::messages::{MessageLevel, SystemMessages};
 use gz_bevy::topics::GzTopics;
 use gz_core::cli::{self, GzCli};
@@ -363,11 +363,15 @@ impl Run<'_> {
         match encode_text(&msg_type, text) {
             Ok(payload) => {
                 let said = format!("Published a {msg_type} on {topic}");
-                self.out.write(GzCommand::Publish {
+                let publish = GzCommand::Publish {
                     topic,
                     msg_type,
                     payload,
-                });
+                };
+                if let Some(why) = too_long(&publish) {
+                    return self.fail(format!("Too long to send: {why}"));
+                }
+                self.out.write(publish);
                 self.say(MessageLevel::Info, said);
             }
             Err(e) => self.fail(e.to_string()),
@@ -391,12 +395,16 @@ impl Run<'_> {
         if !payload.is_empty() && !edits_allowed(self.status.as_deref()) {
             return self.fail("This server mangles a request's message; only an empty one works");
         }
-        self.say(MessageLevel::Info, format!("Calling {service}…"));
-        self.out.write(GzCommand::Request {
+        let request = GzCommand::Request {
             service: service.clone(),
             msg_type: req_type,
             payload,
-        });
+        };
+        if let Some(why) = too_long(&request) {
+            return self.fail(format!("Too long to send: {why}"));
+        }
+        self.say(MessageLevel::Info, format!("Calling {service}…"));
+        self.out.write(request);
         let deadline = self.time.elapsed_secs_f64() + f64::from(timeout_ms) / 1000.0;
         self.calls.pending.push(Pending {
             service,
