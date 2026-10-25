@@ -195,6 +195,8 @@ pub struct BrowserWheel {
 pub struct ControlState {
     drag: Option<Drag>,
     tap: Option<Tap>,
+    /// The last click's time, place and view, for a double click.
+    last_click: Option<(f64, Vec2, Option<ViewId>)>,
     /// Keys that went down while ⌘ was held (see [`drop_command_chord_keys`]).
     under_command: Vec<KeyCode>,
 }
@@ -261,6 +263,8 @@ impl Plugin for ViewerControls {
             .init_resource::<super::place::Placing>()
             .init_resource::<super::place::PlaceHover>()
             .init_resource::<BoxSelectTool>()
+            .init_resource::<super::editing::EditingModel>()
+            .add_message::<super::editing::EditCommand>()
             .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
             .init_resource::<ControlState>()
@@ -303,6 +307,21 @@ impl Plugin for ViewerControls {
                     .after(apply_view_commands)
                     // Their edits are on the stack this frame.
                     .before(crate::undo::UndoSystems),
+            )
+            // A double click's edit, this frame's; the overlays it turns on
+            // count this frame.
+            .add_systems(
+                Update,
+                (
+                    super::editing::run_edit_commands,
+                    super::editing::pause_when_known,
+                    super::editing::end_editing_when_gone,
+                    super::editing::limit_selection,
+                    super::editing::dim_others,
+                )
+                    .chain()
+                    .after(apply_view_commands)
+                    .before(apply_overlay_commands),
             )
             // Followed targets move with this frame's poses.
             .add_systems(
@@ -501,6 +520,10 @@ fn read_wheel(input: &mut WheelInput, scale: f32, ctrl: bool, web: bool) -> Whee
     out
 }
 
+/// Two clicks this close in time (and [`CLICK_SLOP`] in place) are a
+/// double click.
+pub const DOUBLE_CLICK_SECS: f64 = 0.4;
+
 /// What releasing a left drag does: a click (within [`CLICK_SLOP`])
 /// selects what was under the press; a marquee selects what it covers.
 /// Shift adds; ⌘/Ctrl toggles, except for the ⌘/Ctrl+drag marquee it
@@ -542,6 +565,7 @@ pub fn mouse_input(
     selecting: Res<SelectInViews>,
     gizmo: Option<Res<super::gizmo::GizmoState>>,
     placing: Res<super::place::Placing>,
+    (tool, time): (Option<Res<super::gizmo::TransformTool>>, Res<Time<Real>>),
     mut out: MessageWriter<ViewCommand>,
 ) {
     // A drag stays with its view; anything else goes to the one under the
@@ -582,7 +606,24 @@ pub fn mouse_input(
         }
         if drag.button == MouseButton::Left {
             if let Some(op) = released(drag, held.shift, command, placing.0) {
+                let now = time.elapsed_secs_f64();
+                let click = matches!(op, ViewOp::Select { .. });
+                let double = click
+                    && state.last_click.is_some_and(|(t, at, v)| {
+                        now - t <= DOUBLE_CLICK_SECS
+                            && at.distance(drag.start) <= CLICK_SLOP
+                            && v == drag.view
+                    });
                 send(&mut out, op);
+                // A double click with Translate or Rotate edits the model
+                // (spec §6.6); the first click selected it.
+                let transform = tool
+                    .as_deref()
+                    .is_some_and(|t| *t != super::gizmo::TransformTool::None);
+                if double && transform {
+                    send(&mut out, ViewOp::EditAt { at: drag.start });
+                }
+                state.last_click = (click && !double).then_some((now, drag.start, drag.view));
             }
         }
         // A right click (no drag) asks for the context menu.

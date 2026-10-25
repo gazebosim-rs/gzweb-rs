@@ -6,13 +6,14 @@
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
-use bevy::ui_widgets::Activate;
+use bevy::ui_widgets::{Activate, Button as Headless};
 use gz_bevy::camera::MainCamera;
 use gz_bevy::connection::GzStatus;
 use gz_bevy::edit::{edits_allowed, movable, HasPlane, Held, SetPose};
 use gz_bevy::overlays::{Overlay, OverlayCommand};
 use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::undo::{Change, Record};
+use gz_bevy::view::editing::EditCommand;
 use gz_bevy::view::gizmo::SEND_SECS;
 use gz_bevy::view::{SelectMode, Selection, ViewCommand, ViewOp};
 use gz_core::scene::NodeKind;
@@ -21,13 +22,14 @@ use super::{InspectKind, Inspected};
 use crate::assets::text;
 use crate::assets::IconId;
 use crate::format;
+use crate::theme::visuals::Visuals;
 use crate::theme::{
     border, radius, ColorRole, Fill, FontFamily, Ink, Opacity, Stroke, Theme, TypeStyle, SPACE,
 };
 use crate::widgets::layout::{self, column, display, flex_spacer, group_header, property_row, row};
 use crate::widgets::text::set_text;
 use crate::widgets::{
-    button, icon_button, number_field, rounded, AxisTag, ButtonVariant, IconButtonSize,
+    button, clickable, icon_button, number_field, rounded, AxisTag, ButtonVariant, IconButtonSize,
     NumberCommit, NumberField, Tooltip, Unit,
 };
 
@@ -293,6 +295,12 @@ pub(crate) fn group<M: Component>(
 /// The link rows at the bottom (§3.5 item 6): each opens a sub-view, the
 /// last is All components. None opens yet: they show what they will be.
 pub(crate) fn links(body: &mut ChildSpawner, names: &[&str]) {
+    links_with(body, names, &[]);
+}
+
+/// [`links`], where the rows named in `live` run their action (the Model
+/// inspector's Edit model).
+pub(crate) fn links_with(body: &mut ChildSpawner, names: &[&str], live: &[(&str, EntityAction)]) {
     body.spawn(Node {
         padding: UiRect::axes(px(SPACE[8]), px(SPACE[4])),
         flex_shrink: 0.0,
@@ -300,20 +308,35 @@ pub(crate) fn links(body: &mut ChildSpawner, names: &[&str]) {
     })
     .with_children(|links| {
         for name in names {
-            links
-                .spawn((
-                    Node {
-                        height: px(36),
-                        flex_shrink: 0.0,
-                        ..row(0.0)
-                    },
-                    Tooltip::new(*name).detail("Not available yet"),
-                ))
-                .with_children(|row| {
-                    row.spawn(text(TypeStyle::ROW, ColorRole::Text3, name.to_string()));
-                    row.spawn(flex_spacer());
-                    row.spawn(text(TypeStyle::ROW, ColorRole::Text3, "›"));
-                });
+            let action = live.iter().find(|(n, _)| n == name).map(|(_, a)| *a);
+            let node = Node {
+                height: px(36),
+                flex_shrink: 0.0,
+                ..row(0.0)
+            };
+            let ink = if action.is_some() {
+                ColorRole::Text
+            } else {
+                ColorRole::Text3
+            };
+            let mut row = match action {
+                Some(a) => links.spawn((
+                    node,
+                    Headless,
+                    clickable(
+                        Visuals::new(ColorRole::Clear, ColorRole::Text),
+                        accesskit::Role::Button,
+                        name.to_string(),
+                    ),
+                    a,
+                )),
+                None => links.spawn((node, Tooltip::new(*name).detail("Not available yet"))),
+            };
+            row.with_children(|row| {
+                row.spawn(text(TypeStyle::ROW, ink, name.to_string()));
+                row.spawn(flex_spacer());
+                row.spawn(text(TypeStyle::ROW, ink, "›"));
+            });
         }
     });
 }
@@ -677,6 +700,8 @@ pub(crate) enum EntityAction {
     ShowJoints,
     /// Hide or show the subject.
     Hide,
+    /// Edit the model in place (§6.6).
+    EditModel,
 }
 
 /// The quick actions. Focus frames the subject: it selects it first if it
@@ -694,6 +719,7 @@ pub(crate) fn on_entity_action(
     mut views: MessageWriter<ViewCommand>,
     mut overlays: MessageWriter<OverlayCommand>,
     mut records: MessageWriter<Record>,
+    mut editing: MessageWriter<EditCommand>,
 ) {
     let Ok(action) = actions.get(ev.entity) else {
         return;
@@ -739,6 +765,9 @@ pub(crate) fn on_entity_action(
         }
         EntityAction::ShowJoints => {
             overlays.write(OverlayCommand::toggle(Overlay::Joints));
+        }
+        EntityAction::EditModel => {
+            editing.write(EditCommand::Enter(subject));
         }
         EntityAction::Hide => {
             if let Ok(mut v) = visibility.get_mut(subject) {

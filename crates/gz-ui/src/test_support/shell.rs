@@ -94,6 +94,13 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
             (
                 gz_bevy::view::select::prune_selection,
                 apply_view_commands,
+                (
+                    gz_bevy::view::editing::run_edit_commands,
+                    gz_bevy::view::editing::pause_when_known,
+                    gz_bevy::view::editing::end_editing_when_gone,
+                    gz_bevy::view::editing::limit_selection,
+                    gz_bevy::view::editing::dim_others,
+                ),
                 apply_overlay_commands,
             )
                 .chain()

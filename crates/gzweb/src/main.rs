@@ -33,6 +33,8 @@
 //!   (DECISIONS.md D-105).
 //! - `--workspaces` starts the full UI with the Workspaces panel open
 //!   (DECISIONS.md D-111).
+//! - `--edit` (with `--select MODEL`) edits that model in place once the
+//!   world is live (DECISIONS.md D-112).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
 //! - `--menu world|snap|context|workspace` opens the World menu or the
@@ -111,7 +113,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
-                     [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
+                     [--select MODEL,…] [--edit] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
                      [--sensors [NAME]] [--teleop] [--console] [--workspaces] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
@@ -293,6 +295,7 @@ fn parse_args(
                         .push(name.parse().map_err(|e| format!("--overlays: {e}"))?);
                 }
             }
+            "--edit" => start.edit = true,
             "--select" => start.select.extend(
                 value()?
                     .split(',')
@@ -419,6 +422,12 @@ fn parse_args(
     // Only the full UI shows (and selects) a selection.
     if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
         return Err("--select needs --ui full".into());
+    }
+    if start
+        .as_ref()
+        .is_some_and(|s| s.edit && s.select.is_empty())
+    {
+        return Err("--edit needs --select MODEL".into());
     }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
@@ -1006,6 +1015,12 @@ mod tests {
         assert!(USAGE.contains("--view") && USAGE.contains("--overlays"));
         let a = run_args(&["--select", " amr_01,,crate ", "--ui", "full"], None);
         assert_eq!(a.start.unwrap().select, ["amr_01", "crate"]);
+        let e = run_args(&["--select", "amr_01", "--edit", "--ui", "full"], None);
+        assert!(e.start.unwrap().edit);
+        assert_eq!(
+            parse(&["--edit", "--ui", "full"], None).unwrap_err(),
+            "--edit needs --select MODEL"
+        );
         assert_eq!(
             parse(&["--select", "amr_01", "--ui", "minimal"], None).unwrap_err(),
             "--select needs --ui full"

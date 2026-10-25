@@ -38,6 +38,11 @@ pub(crate) struct CursorReadout(pub Option<[f32; 2]>);
 /// The hint while placing.
 pub(crate) const PLACE_HINT: &str = "Click to place · Shift to place several · Esc to stop";
 
+/// The hint while a model is edited with the sim paused (§6.6), and with
+/// it running (Play while editing).
+pub(crate) const EDIT_HINT: &str = "sim paused while editing · Done or Esc to finish";
+pub(crate) const EDIT_RUNNING_HINT: &str = "Editing · Done or Esc to finish";
+
 /// What the status bar's texts are read from.
 #[derive(SystemParam)]
 pub(crate) struct StatusSources<'w, 's> {
@@ -45,6 +50,8 @@ pub(crate) struct StatusSources<'w, 's> {
     tool: Res<'w, Tool>,
     /// Placing replaces the tool's hint (D-102).
     placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
+    /// So does editing a model (D-112).
+    editing: Option<Res<'w, gz_bevy::view::editing::EditingModel>>,
     cursor: Res<'w, CursorReadout>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     selection: Option<Res<'w, Selection>>,
@@ -57,6 +64,7 @@ impl StatusSources<'_, '_> {
     fn changed(&self) -> bool {
         self.tool.is_changed()
             || self.placing.as_ref().is_some_and(Res::is_changed)
+            || self.editing.as_ref().is_some_and(Res::is_changed)
             || self.cursor.is_changed()
             || self.status.as_ref().is_some_and(Res::is_changed)
             || self.selection.as_ref().is_some_and(Res::is_changed)
@@ -93,6 +101,13 @@ impl StatusSources<'_, '_> {
             StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
             StatusItem::Hint if self.placing.as_ref().is_some_and(|p| p.0) => PLACE_HINT.into(),
+            StatusItem::Hint if self.editing.as_ref().is_some_and(|e| e.model().is_some()) => {
+                if sim.is_some_and(|s| s.paused) {
+                    EDIT_HINT.into()
+                } else {
+                    EDIT_RUNNING_HINT.into()
+                }
+            }
             StatusItem::Hint => self.tool.hint().into(),
             StatusItem::Selection => self.selection(),
             StatusItem::Cursor => format::cursor(self.cursor.0),
