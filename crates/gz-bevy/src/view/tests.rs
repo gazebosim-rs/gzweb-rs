@@ -3675,6 +3675,100 @@ fn model_edits_go_through_the_worlds_sdformat() {
     assert_eq!(done[0].result, Err("This server doesn't take edits".into()));
 }
 
+/// A model too large for the server to take whole (its `create` would be
+/// lost) isn't deleted, duplicated or pasted: nothing is sent, and the
+/// edit says why.
+#[test]
+fn a_model_too_large_to_send_is_left_alone() {
+    use crate::connection::{GzServiceReply, GzStatus};
+    use crate::view::model_edits::{EditModels, ModelEdit, ModelsEdited};
+    use gz_core::msgs;
+    use prost::Message as _;
+    let (mut r, a, _) = two_models();
+    r.app
+        .world_mut()
+        .entity_mut(a)
+        .insert(crate::spawn::GzEntity {
+            name: "a".into(),
+            id: 3,
+            kind: gz_core::scene::NodeKind::Model,
+            path: "a".into(),
+        });
+    r.app.insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
+        world: Some("w".into()),
+        edits: Some(true),
+        ..GzStatus::new("ws://h")
+    });
+    let pa = on_screen(&r, Vec3::new(0.0, 0.0, 0.5));
+    click(&mut r, pa, &[]);
+    // Plugin text the compacting keeps.
+    let sdf = format!(
+        r#"<sdf version="1.9"><world name="w"><model name="a"><link name="l"/><plugin name="p" filename="f"><x>{}</x></plugin></model></world></sdf>"#,
+        "y".repeat(gz_core::transport::MAX_FRAME)
+    );
+    let reply = GzServiceReply {
+        service: "/world/w/generate_world_sdf".into(),
+        msg_type: "gz.msgs.StringMsg".into(),
+        payload: msgs::StringMsg {
+            data: sdf,
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    };
+    let run = |r: &mut Rig, edit| {
+        r.app.world_mut().write_message(EditModels(edit));
+        r.app.update();
+        r.app.world_mut().write_message(reply.clone());
+        r.app.update();
+        let sent: Vec<String> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .filter_map(|c| match c {
+                GzCommand::Request { service, .. } => Some(service),
+                _ => None,
+            })
+            .collect();
+        let done: Vec<ModelsEdited> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<ModelsEdited>>()
+            .drain()
+            .collect();
+        (sent, done)
+    };
+    let (sent, done) = run(&mut r, ModelEdit::Delete);
+    assert_eq!(sent, ["/world/w/generate_world_sdf"], "no remove");
+    let why = done[0].result.clone().unwrap_err();
+    assert!(
+        why.starts_with("Not deleted: undo couldn't bring a back (its 4."),
+        "{why}"
+    );
+    let (sent, done) = run(&mut r, ModelEdit::Duplicate);
+    assert_eq!(sent, ["/world/w/generate_world_sdf"], "no create");
+    assert!(done[0]
+        .result
+        .clone()
+        .unwrap_err()
+        .starts_with("a is too large to create on this server"));
+    let (_, done) = run(&mut r, ModelEdit::Copy);
+    assert_eq!(done[0].result, Ok("Copied a".into()));
+    r.app
+        .world_mut()
+        .write_message(EditModels(ModelEdit::Paste));
+    r.app.update();
+    let creates = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .drain()
+        .filter(|c| matches!(c, GzCommand::Request { .. }))
+        .count();
+    assert_eq!(creates, 0);
+}
+
 /// Restore puts the camera where a workspace saved it: pose, pivot and
 /// projection (orthographic with its height, or perspective), free and
 /// unsnapped; a pose read back is the one restored.

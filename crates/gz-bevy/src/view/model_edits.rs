@@ -18,7 +18,7 @@ use super::align::gz_bounds;
 use super::select::{select, SelectMode};
 use super::ViewScene;
 use crate::connection::{GzCommand, GzServiceReply, GzStatus};
-use crate::edit::{create_copy_request, edits_allowed, remove_request};
+use crate::edit::{create_copy_request, edits_allowed, remove_request, too_long};
 use crate::spawn::{GzEntity, GzIndex, GzWorldRoot};
 use crate::undo::{Change, ModelCopy, Record};
 use gz_core::scene::NodeKind;
@@ -161,7 +161,8 @@ fn live_world(status: Option<&GzStatus>) -> Option<String> {
 }
 
 /// Creates `models` (copies) `steps` along, each beside its model, as one
-/// `verb` edit; they're selected once they appear.
+/// `verb` edit; they're selected once they appear. None is created if one
+/// is too large for the server to take ([`too_long`]).
 #[allow(clippy::too_many_arguments)]
 fn spawn_copies(
     world: &str,
@@ -173,7 +174,7 @@ fn spawn_copies(
     out: &mut MessageWriter<GzCommand>,
     records: &mut MessageWriter<Record>,
     pending: &mut SelectWhenSpawned,
-) -> String {
+) -> Result<String, String> {
     // Copies still on their way have their names.
     let waiting = if now <= pending.until {
         pending.names.clone()
@@ -182,12 +183,20 @@ fn spawn_copies(
     };
     let mut chosen: Vec<String> = vec![];
     let mut changes = vec![];
+    let mut creates = vec![];
     for (model, size) in models {
         let taken: Vec<String> = waiting.iter().chain(&chosen).cloned().collect();
         let name = free_name(&model.name, index, &taken);
         let mut pose = model.pose;
         pose.translation.y += steps as f32 * (size.y + GAP);
-        out.write(create_copy_request(world, &model.sdf, &name, &pose));
+        let create = create_copy_request(world, &model.sdf, &name, &pose);
+        if let Some(why) = too_long(&create) {
+            return Err(format!(
+                "{} is too large to create on this server: {why}",
+                model.name
+            ));
+        }
+        creates.push(create);
         changes.push(Change::Exists {
             model: ModelCopy {
                 name: name.clone(),
@@ -199,6 +208,7 @@ fn spawn_copies(
         });
         chosen.push(name);
     }
+    out.write_batch(creates);
     records.write(Record {
         verb: edit.verb(),
         named: true,
@@ -212,7 +222,7 @@ fn spawn_copies(
         until: now + SELECT_SECS,
         joined: false,
     };
-    label
+    Ok(label)
 }
 
 /// The parts of the world the edits read.
@@ -275,21 +285,23 @@ pub(crate) fn request_model_edits(
                 done.write(fail("Nothing copied"));
                 continue;
             }
-            clipboard.pastes += 1;
-            let label = spawn_copies(
+            let result = spawn_copies(
                 &world,
                 *edit,
                 &clipboard.models,
-                clipboard.pastes,
+                clipboard.pastes + 1,
                 index.as_deref(),
                 now,
                 &mut out,
                 &mut records,
                 &mut pending,
             );
+            if result.is_ok() {
+                clipboard.pastes += 1;
+            }
             done.write(ModelsEdited {
                 edit: *edit,
-                result: Ok(label),
+                result,
             });
             continue;
         }
@@ -386,14 +398,14 @@ pub(crate) fn finish_model_edits(
                 ))
             })
             .collect();
-        let result = copies.map(|copies| match edit {
+        let result = copies.and_then(|copies| match edit {
             ModelEdit::Copy => {
                 let named: Vec<String> = copies.iter().map(|(m, _)| m.name.clone()).collect();
                 *clipboard = ModelClipboard {
                     models: copies,
                     pastes: 0,
                 };
-                format!("{} {}", edit.done(), names(&named))
+                Ok(format!("{} {}", edit.done(), names(&named)))
             }
             ModelEdit::Duplicate | ModelEdit::Paste => spawn_copies(
                 world,
@@ -407,6 +419,17 @@ pub(crate) fn finish_model_edits(
                 &mut pending,
             ),
             ModelEdit::Delete => {
+                // Undo creates each again: one the server can't take isn't
+                // deleted (it would be gone for good).
+                for (m, _) in &copies {
+                    let create = create_copy_request(world, &m.sdf, &m.name, &m.pose);
+                    if let Some(why) = too_long(&create) {
+                        return Err(format!(
+                            "Not deleted: undo couldn't bring {} back ({why})",
+                            m.name
+                        ));
+                    }
+                }
                 let named: Vec<String> = copies.iter().map(|(m, _)| m.name.clone()).collect();
                 for ((m, _), t) in copies.iter().zip(&taken) {
                     out.write(remove_request(world, &m.name, Some(t.id)));
@@ -424,7 +447,7 @@ pub(crate) fn finish_model_edits(
                     scrub: None,
                     open: false,
                 });
-                format!("{} {}", edit.done(), names(&named))
+                Ok(format!("{} {}", edit.done(), names(&named)))
             }
         });
         // A delete that failed can be asked again.

@@ -155,6 +155,31 @@ pub fn remove_request(world: &str, name: &str, id: Option<u32>) -> GzCommand {
     }
 }
 
+/// Why the server couldn't take `request` whole, if it couldn't: it is
+/// longer than [`MAX_FRAME`](gz_core::transport::MAX_FRAME) ("its 8.9 KB
+/// is over the server's 4 KB"), so it would be lost. A `create` from a
+/// large model's SDFormat is one.
+pub fn too_long(request: &GzCommand) -> Option<String> {
+    use gz_core::transport::{frame_len, MAX_FRAME};
+    let GzCommand::Request {
+        service,
+        msg_type,
+        payload,
+    } = request
+    else {
+        return None;
+    };
+    let len = frame_len("req", service, msg_type, payload.len());
+    let kb = |n: usize| n as f64 / 1024.0;
+    (len > MAX_FRAME).then(|| {
+        format!(
+            "its {:.1} KB is over the server's {:.0} KB",
+            kb(len),
+            kb(MAX_FRAME)
+        )
+    })
+}
+
 /// Whether `reply` answers a `create`, and if so whether it succeeded.
 pub fn create_reply(reply: &GzServiceReply) -> Option<bool> {
     reply

@@ -127,9 +127,24 @@ pub fn model_sdf(sdf: &str, name: &str) -> Result<String, String> {
         .find(|n| n.has_tag_name("model") && n.attribute("name") == Some(name))
         .ok_or_else(|| format!("no model {name} in the world"))?;
     let version = root.attribute("version").unwrap_or("1.9");
+    // Compact, so as much as can fits in a frame the server takes whole
+    // (`transport::MAX_FRAME`): the indents between elements, and
+    // comments, go.
+    let range = model.range();
+    let mut gaps: Vec<std::ops::Range<usize>> = model
+        .descendants()
+        .filter(|n| {
+            n.is_comment() || (n.is_text() && n.text().is_some_and(|t| t.trim().is_empty()))
+        })
+        .map(|n| n.range())
+        .collect();
+    gaps.sort_by_key(|r| std::cmp::Reverse(r.start));
+    let mut element = sdf[range.clone()].to_string();
+    for gap in gaps {
+        element.replace_range(gap.start - range.start..gap.end - range.start, "");
+    }
     Ok(format!(
-        "<?xml version=\"1.0\"?><sdf version=\"{version}\">{}</sdf>",
-        &sdf[model.range()]
+        "<?xml version=\"1.0\"?><sdf version=\"{version}\">{element}</sdf>"
     ))
 }
 
@@ -257,5 +272,21 @@ mod tests {
             .unwrap_err()
             .contains("no model gone"));
         assert!(model_sdf("<sdf/>", "cart").is_err());
+    }
+
+    /// A model comes out compact: the indents between its elements and its
+    /// comments go, its text stays.
+    #[test]
+    fn a_model_comes_out_compact() {
+        let sdf = "<sdf version=\"1.9\"><world name=\"w\">\n  <model name=\"cart\">\n    \
+                   <!-- a cart -->\n    <pose>1 2 3 0 0 0</pose>\n    <link name=\"l\">\n      \
+                   <visual name=\"v\"><material><script><name> a b </name></script>\
+                   </material></visual>\n    </link>\n  </model>\n</world></sdf>";
+        assert_eq!(
+            model_sdf(sdf, "cart").unwrap(),
+            "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"cart\"><pose>1 2 3 0 0 0\
+             </pose><link name=\"l\"><visual name=\"v\"><material><script><name> a b </name>\
+             </script></material></visual></link></model></sdf>"
+        );
     }
 }

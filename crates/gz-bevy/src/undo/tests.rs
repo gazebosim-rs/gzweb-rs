@@ -425,6 +425,47 @@ fn a_delete_or_a_spawn_is_undone_through_the_server() {
     assert_eq!((stack.undo_label(), stack.redo_label()), (None, None));
 }
 
+/// A deleted model too large for the server to take whole isn't created
+/// again: nothing is sent and the delete stays where it is.
+#[test]
+fn a_model_too_large_to_send_isnt_created_again() {
+    let mut app = app(Some(true));
+    let sdf = format!(
+        "<sdf version=\"1.9\"><model name=\"cart\"><!--{}--></model></sdf>",
+        "x".repeat(gz_core::transport::MAX_FRAME)
+    );
+    app.world_mut().write_message(Record {
+        verb: "delete",
+        named: true,
+        changes: vec![Change::Exists {
+            model: ModelCopy {
+                name: "cart".into(),
+                sdf,
+                pose: Transform::IDENTITY,
+                loaded: None,
+            },
+            after: false,
+        }],
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    app.world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .clear();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    let sent = app
+        .world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .drain()
+        .filter(|c| matches!(c, GzCommand::Request { .. }))
+        .count();
+    assert_eq!(sent, 0);
+    let stack = app.world().resource::<UndoStack>();
+    assert_eq!(stack.undo_label(), Some("delete cart"));
+}
+
 /// Without edits, a delete stays where it is.
 #[test]
 fn a_delete_waits_for_a_server_that_takes_edits() {

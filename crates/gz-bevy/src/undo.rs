@@ -14,7 +14,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::connection::{GzCommand, GzStatus};
-use crate::edit::{create_copy_request, edits_allowed, remove_request, Held, SetPose};
+use crate::edit::{create_copy_request, edits_allowed, remove_request, too_long, Held, SetPose};
 use crate::spawn::{GzEntity, GzIndex};
 
 /// One change an edit makes, as recorded (by entity).
@@ -475,6 +475,25 @@ fn undo_redo(
                 "can't {verb} {} yet: {path} is still coming back",
                 edit.label
             );
+            continue;
+        }
+        // A model the server can't take whole isn't created again (the
+        // request would be lost): the edit stays where it is.
+        let too_large = edit.steps.iter().find_map(|s| match s {
+            Step::Exists { model, after } if *after != undo => {
+                let world = world.as_deref().unwrap_or_default();
+                too_long(&create_copy_request(
+                    world,
+                    &model.sdf,
+                    &model.name,
+                    &model.pose,
+                ))
+                .map(|why| format!("{}: {why}", model.name))
+            }
+            _ => None,
+        });
+        if let Some(why) = too_large {
+            warn!("can't {verb} {}: {why}", edit.label);
             continue;
         }
         let mut edit = if undo {

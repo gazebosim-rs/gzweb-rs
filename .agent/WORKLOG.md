@@ -1978,3 +1978,18 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   - a cone's centre of mass and a capsule's inertia.
 
   Tests: 950 → 958 passing, each new one failing without its fix.
+
+## 2026-10-25: the server's frame limit (D-109 amended)
+
+- **Found** writing M9c: the websocket server (libwebsockets' default
+  receive buffer) hands a frame over 4088 bytes to its parser in pieces.
+  Measured on Jetty: 4088 bytes goes, 4089 is lost. A `create` from a
+  real model's SDFormat is lost while its `remove` goes through:
+  vehicle_blue is 9 KB, 6 KB compacted. Deleting it and undoing lost it.
+- **Fix:** the transport refuses frames over `MAX_FRAME`; `model_sdf`
+  compacts; Delete, Duplicate, Paste and their undo and redo check the
+  `create` first and do nothing, saying why, when it won't fit. Failed
+  model edits show in the status bar.
+- **Left:** the server should join a frame's pieces
+  (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
+  does, M9c's write-back is limited to models that fit.

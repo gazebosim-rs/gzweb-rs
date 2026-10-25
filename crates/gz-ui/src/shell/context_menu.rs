@@ -477,8 +477,8 @@ pub(crate) fn on_context_item(
 }
 
 /// A finished copy, paste or duplicate says so in the status bar for 3 s;
-/// a delete for 5 s, with an Undo (§7.1). (A failed one is logged by
-/// gz-bevy.)
+/// a delete for 5 s, with an Undo (§7.1). A failed one says why (and
+/// gz-bevy logs it).
 pub(crate) fn models_edited(
     mut edited: MessageReader<ModelsEdited>,
     time: Res<Time<Real>>,
@@ -487,7 +487,13 @@ pub(crate) fn models_edited(
 ) {
     let now = time.elapsed_secs_f64();
     for e in edited.read() {
-        let Ok(text) = &e.result else { continue };
+        let text = match &e.result {
+            Ok(text) => text,
+            Err(why) => {
+                note.show(why.clone(), now);
+                continue;
+            }
+        };
         let undo = undo.as_deref();
         let undoes = undo
             .and_then(UndoStack::undo_serial)

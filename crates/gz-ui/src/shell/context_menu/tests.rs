@@ -393,6 +393,17 @@ fn a_delete_shows_an_undo_chip() {
         (text.as_str(), count.as_str(), undoes),
         ("Copied cart", "", false)
     );
+    // A failed one says why.
+    app.world_mut().write_message(ModelsEdited {
+        edit: ModelEdit::Delete,
+        result: Err("Not deleted: undo couldn't bring cart back".into()),
+    });
+    frames(&mut app, 2);
+    let (_, text, _, undoes) = chip(&mut app).expect("a chip");
+    assert_eq!(
+        (text.as_str(), undoes),
+        ("Not deleted: undo couldn't bring cart back", false)
+    );
 }
 
 /// Typing a letter jumps to a submenu's row too, not into the submenu.
