@@ -38,6 +38,7 @@ fn apply_start_menu(
     menus: Query<(Entity, &Children), With<crate::widgets::menu::Menu>>,
     worlds: Query<(), With<world_button::WorldButton>>,
     snaps: Query<(), With<tools::SnapTrigger>>,
+    switchers: Query<(), With<crate::shell::status_bar::WorkspaceButton>>,
     mut contexts: MessageWriter<gz_bevy::view::EntityContext>,
     mut commands: Commands,
 ) {
@@ -61,6 +62,7 @@ fn apply_start_menu(
         children.iter().any(|c| match start.0.as_str() {
             "world" => worlds.contains(c),
             "snap" => snaps.contains(c),
+            "workspace" => switchers.contains(c),
             _ => false,
         })
     });

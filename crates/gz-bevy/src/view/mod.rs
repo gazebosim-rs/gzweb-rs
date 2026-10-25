@@ -340,6 +340,58 @@ pub enum ViewOp {
     Context {
         at: Vec2,
     },
+    /// Put the camera where a workspace saved it (§8): its pose, pivot,
+    /// projection and axis view; free.
+    Restore(ViewPose),
+}
+
+/// Where a view's camera is, as a workspace saves it (spec §8): its pose
+/// and pivot (Bevy's world frame), the orthographic view height when
+/// orthographic, and the axis view it sits in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub pivot: Vec3,
+    pub ortho: Option<f32>,
+    pub snapped: Option<SnapView>,
+}
+
+impl ViewPose {
+    /// Where the camera is going: a running animation's end, else its
+    /// pose now.
+    pub fn of(view: &ViewCamera, t: &Transform, p: &Projection) -> Self {
+        let (mut view, mut t, mut p) = (view.clone(), *t, p.clone());
+        finish(&mut view, &mut t, &mut p);
+        Self {
+            translation: t.translation,
+            rotation: t.rotation,
+            pivot: view.pivot,
+            ortho: ortho_height(&p),
+            snapped: view.snapped,
+        }
+    }
+}
+
+/// Puts the camera at `pose` ([`ViewOp::Restore`]).
+fn restore(view: &mut ViewCamera, t: &mut Transform, p: &mut Projection, pose: ViewPose) {
+    view.snapped = pose.snapped;
+    view.mode = CameraMode::Free;
+    view.pivot = pose.pivot;
+    t.translation = pose.translation;
+    t.rotation = pose.rotation.normalize();
+    match pose.ortho {
+        Some(height) => {
+            let depth = depth_of(t, view.pivot).max(MIN_DISTANCE);
+            *p = Projection::Orthographic(OrthographicProjection {
+                near: depth,
+                far: view.perspective.far,
+                ..OrthographicProjection::default_3d()
+            });
+            set_ortho_height(p, height);
+        }
+        None => *p = Projection::Perspective(view.perspective.clone()),
+    }
 }
 
 /// A right click on a model in a view, or on an entity's row in the
@@ -1430,6 +1482,7 @@ fn apply(
             select(&mut scene.selection.reborrow(), mode, &picked);
         }
         ViewOp::SetDragAction(action) => view.drag_action = action,
+        ViewOp::Restore(pose) => restore(view, t, p, pose),
         ViewOp::PivotAt { at, orbit } => {
             view.pivot = scene.pivot(ray(p, t, at), orbit, view, t, p);
         }

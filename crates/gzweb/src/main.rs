@@ -33,9 +33,10 @@
 //!   (DECISIONS.md D-105).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
-//! - `--menu world|snap|context` opens the World menu or the Snap popover
-//!   once the world is live (DECISIONS.md D-108), or the entity context
-//!   menu for the `--select`ed model (D-109).
+//! - `--menu world|snap|context|workspace` opens the World menu or the
+//!   Snap popover once the world is live (DECISIONS.md D-108), the entity
+//!   context menu for the `--select`ed model (D-109), or the workspace
+//!   switcher (D-110).
 //! - `--pop-out PANEL,…` pops those panels (`plot`, `console`, …) out
 //!   into windows over the viewport at start (DECISIONS.md D-106).
 //! - `--assets TAB[:QUERY]` starts the full UI with the Assets panel open
@@ -68,6 +69,8 @@ struct Args {
     /// `--ui gallery`: the widget gallery instead of a world.
     gallery: bool,
     theme: ThemeMode,
+    /// `--theme` or `?theme=` was given (it wins over the saved theme).
+    theme_set: bool,
     /// `--window WxH`.
     window: Option<(u32, u32)>,
     /// `--view`, `--overlays`.
@@ -106,7 +109,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context] \
+                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -214,6 +217,7 @@ fn parse_args(
     let mut capture_at_ms = None;
     let mut gallery = false;
     let mut theme = ThemeMode::System;
+    let mut theme_set = false;
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
@@ -258,7 +262,10 @@ fn parse_args(
                     })?;
                 }
             }
-            "--theme" => theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?,
+            "--theme" => {
+                theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?;
+                theme_set = true;
+            }
             "--no-hud" => hud = false,
             "--window" => window = Some(parse_window(&value()?)?),
             "--capture-at-ms" => capture_at_ms = Some(millis()?),
@@ -301,8 +308,10 @@ fn parse_args(
             "--palette" => palette = Some(value()?),
             "--menu" => {
                 let m = value()?;
-                if !["world", "snap", "context"].contains(&m.as_str()) {
-                    return Err(format!("--menu: no menu '{m}' (world, snap, context)"));
+                if !["world", "snap", "context", "workspace"].contains(&m.as_str()) {
+                    return Err(format!(
+                        "--menu: no menu '{m}' (world, snap, context, workspace)"
+                    ));
                 }
                 menu = Some(m);
             }
@@ -431,6 +440,7 @@ fn parse_args(
         http_mirror,
         gallery,
         theme,
+        theme_set,
         window,
         start,
         scene,
@@ -480,6 +490,8 @@ fn command() -> Result<Command, String> {
         bevy::log::warn!("?ui: {e}");
         UiMode::Minimal
     });
+    let theme: Option<ThemeMode> =
+        get("theme").and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             url: web_url(
@@ -506,9 +518,8 @@ fn command() -> Result<Command, String> {
         snapshot: None,
         http_mirror: get("http_mirror"),
         gallery: is_gallery(get("ui").as_deref()),
-        theme: get("theme")
-            .and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok())
-            .unwrap_or_default(),
+        theme: theme.unwrap_or_default(),
+        theme_set: theme.is_some(),
         window: None,
         start: None,
         scene: None,
@@ -755,6 +766,14 @@ fn main() -> AppExit {
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
+        }
+        // The workspaces persist (spec §8), except for captures, which
+        // start as the app does; a theme asked for wins over the saved one.
+        if args.snapshot.is_none() {
+            if let Some(mut store) = gz_ui::shell::WorkspaceStore::platform() {
+                store.theme = !args.theme_set;
+                app.insert_resource(store);
+            }
         }
     }
     if let Some(req) = args.snapshot {
@@ -1126,7 +1145,10 @@ mod tests {
         assert_eq!(shot.mode, Mode::Capture);
         let d = run_args(&[], None);
         assert!(!d.gallery);
-        assert_eq!(d.theme, ThemeMode::System);
+        assert_eq!((d.theme, d.theme_set), (ThemeMode::System, false));
+        // An explicit system theme still wins over the saved one.
+        let s = run_args(&["--theme", "system"], None);
+        assert_eq!((s.theme, s.theme_set), (ThemeMode::System, true));
         assert_eq!(
             parse(&["--ui", "gallery", "--snapshot", "o.json"], None).unwrap_err(),
             "--snapshot doesn't apply to --ui gallery (use --screenshot)"

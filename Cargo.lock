@@ -3197,6 +3197,7 @@ dependencies = [
  "png",
  "prost",
  "resvg",
+ "serde",
  "serde_json",
  "tiny-skia 0.12.0",
 ]

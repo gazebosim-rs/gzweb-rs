@@ -148,7 +148,7 @@ where
 }
 
 /// A [`Menu`]'s popup, hidden until opened, holding what `items` spawns.
-fn popup<F>(theme: &Theme, side: MenuSide, items: F) -> impl Bundle
+pub(crate) fn popup<F>(theme: &Theme, side: MenuSide, items: F) -> impl Bundle
 where
     F: FnOnce(&mut ChildSpawner) + Send + Sync + 'static,
 {
@@ -185,8 +185,10 @@ pub(crate) fn on_menu_event(
         return;
     };
     let popup = children.iter().find(|c| popups.contains(*c));
+    // A menu whose trigger is gone for now (the status bar's tray while a
+    // note replaces its chip) still closes.
     let trigger = children.iter().find(|c| triggers.contains(*c));
-    let (Some(popup), Some(trigger)) = (popup, trigger) else {
+    let Some(popup) = popup else {
         return;
     };
     // A choice in a submenu closes the menus it is in too; a submenu
@@ -199,7 +201,11 @@ pub(crate) fn on_menu_event(
         MenuAction::Toggle if open => close_popup(&mut popups, popup),
         MenuAction::Toggle => open_popup(&mut commands, popup, NavAction::First),
         MenuAction::CloseAll => close_popup(&mut popups, popup),
-        MenuAction::FocusRoot => focus.set(trigger, FocusCause::Navigated),
+        MenuAction::FocusRoot => {
+            if let Some(trigger) = trigger {
+                focus.set(trigger, FocusCause::Navigated);
+            }
+        }
     }
 }
 

@@ -448,3 +448,27 @@ fn the_field_keeps_the_keys_and_the_choice() {
     type_query(&mut app, "wireframe");
     assert_eq!(results(&app)[0], "Toggle wireframe");
 }
+
+/// The workspaces are commands: one switches, Save keeps the layout.
+#[test]
+fn the_palette_switches_workspaces() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    open(&mut app);
+    type_query(&mut app, "workspace debug");
+    assert_eq!(
+        results(&app).first().map(String::as_str),
+        Some("Workspace: Debug")
+    );
+    enter(&mut app);
+    assert_eq!(
+        app.world().resource::<crate::shell::Workspaces>().current,
+        2
+    );
+    open(&mut app);
+    type_query(&mut app, "save current layout");
+    assert_eq!(
+        results(&app).first().map(String::as_str),
+        Some("Save current layout")
+    );
+}

@@ -138,7 +138,7 @@ impl Shortcuts<'_, '_> {
 }
 
 /// ⌘B, ⌘⌥I, the tool keys, ⌘Z and ⇧⌘Z, ⌘C ⌘V ⌘D and Delete (D-109; none
-/// mid-drag or mid-scrub), the
+/// mid-drag or mid-scrub), Alt+1–4 (the workspaces, D-110), the
 /// layout keys (⇧Space, ⌘W, ⌥⌘→, ⌥⌘↓), ⇧⌘R (Reset, on a live world), ⌘K,
 /// the themes and the panels' own shortcuts; and [`RunBinding`]s of the
 /// same (the command palette, D-107).
@@ -151,6 +151,7 @@ pub(crate) fn shortcut_keys(
     mut out: MessageWriter<UiCommand>,
     mut undo: MessageWriter<UndoCommand>,
     mut edits: MessageWriter<EditModels>,
+    mut workspaces: MessageWriter<super::workspaces::WorkspaceCommand>,
     mut layout: MessageWriter<LayoutCommand>,
     mut sim: MessageWriter<GzCommand>,
 ) {
@@ -190,6 +191,15 @@ pub(crate) fn shortcut_keys(
                         "edit.duplicate" => ModelEdit::Duplicate,
                         _ => ModelEdit::Delete,
                     }));
+                }
+                continue;
+            }
+            "ui.workspace_1" | "ui.workspace_2" | "ui.workspace_3" | "ui.workspace_4" => {
+                // Not under an edit: the switch would move its camera
+                // or close its field.
+                if !shortcuts.editing() {
+                    let n = usize::from(id.as_bytes()[id.len() - 1] - b'1');
+                    workspaces.write(super::workspaces::WorkspaceCommand::Switch(n));
                 }
                 continue;
             }

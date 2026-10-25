@@ -392,9 +392,9 @@ pop-out windows.
   so their data lives in always-on resources and only the view is gated.
 
 ### M8 — Menus, command palette, workspaces, persistence
-In four PRs: **M8a** the command palette and its commands, **M8b** the World menu and the
+In five PRs: **M8a** the command palette and its commands, **M8b** the World menu and the
 Snap popover, **M8c** the entity context menu (with Align), **M8d** the message tray,
-workspaces, the switcher and persistence.
+workspaces, the switcher and persistence, **M8e** the Workspaces panel.
 
 - **M8a notes:** the command palette (D-107): `shortcuts.json` commands that run as their key
   would (`RunBinding`, read by `shortcut_keys` and gz-bevy's `key_input`), the shown panels'
@@ -411,6 +411,11 @@ workspaces, the switcher and persistence.
   Delete's 5 s Undo chip, ⌘C ⌘V ⌘D Delete, the palette); Align › (`gz_bevy::view::align`); Show ›;
   submenus in the menu widget. Left: Rename (no server support), Apply force…, Edit model,
   per-entity overlays, copying lights and links, undoing Assets inserts.
+- **M8d notes:** the message tray (D-110); the four workspaces (`gz_ui::shell::workspaces`):
+  Alt+1–4, the status bar's switcher and the palette switch, a switch keeps what it leaves,
+  Save current layout, `workspaces.json` / `localStorage` with the current workspace and the
+  theme, cameras put back by `ViewOp::Restore`. Left: the Workspaces panel (M8e: cards,
+  Save as new, Reset, "modified"), a workspace's own theme, saving a followed camera.
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.

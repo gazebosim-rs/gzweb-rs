@@ -134,6 +134,7 @@ pub(crate) struct Sources<'w, 's> {
     undo: Option<Res<'w, UndoStack>>,
     selection: Option<Res<'w, Selection>>,
     clipboard: Option<Res<'w, ModelClipboard>>,
+    workspaces: Option<Res<'w, crate::shell::Workspaces>>,
     topics: Option<Res<'w, GzTopics>>,
     entities: Query<'w, 's, (Entity, &'static GzEntity)>,
     new_entities: Query<'w, 's, (), Added<GzEntity>>,
@@ -164,6 +165,7 @@ impl Sources<'_, '_> {
             || self.undo.as_ref().is_some_and(Res::is_changed)
             || self.selection.as_ref().is_some_and(Res::is_changed)
             || self.clipboard.as_ref().is_some_and(Res::is_changed)
+            || self.workspaces.as_ref().is_some_and(Res::is_changed)
             || self.status.is_changed()
             || self.hosts.is_changed()
             || self.layout.is_changed()
@@ -304,6 +306,34 @@ impl Sources<'_, '_> {
                 disabled: (needs_world && self.phase.0 != Phase::Live).then_some("Not connected"),
             });
         }
+        // The workspaces (§7.8), and saving the current one's layout.
+        let current = self.workspaces.as_deref().map_or(0, |w| w.current);
+        for (i, (_, name, binding)) in crate::shell::workspaces::WORKSPACES.iter().enumerate() {
+            out.push(Item {
+                group: Group::Commands,
+                icon: IconId::ActivityWorkspaces,
+                name: format!("Workspace: {name}"),
+                hint: if i == current {
+                    "current".into()
+                } else {
+                    String::new()
+                },
+                shortcut: shortcut(Some(binding)),
+                keywords: vec!["Layouts", "GUI config"],
+                run: Run::Workspace(crate::shell::WorkspaceCommand::Switch(i)),
+                disabled: None,
+            });
+        }
+        out.push(Item {
+            group: Group::Commands,
+            icon: IconId::Save,
+            name: "Save current layout".into(),
+            hint: String::new(),
+            shortcut: None,
+            keywords: vec!["Workspace", "Layouts", "GUI config"],
+            run: Run::Workspace(crate::shell::WorkspaceCommand::Save),
+            disabled: None,
+        });
         // The overlays without a key (§7.3).
         for o in [Overlay::CenterOfMass, Overlay::Frames, Overlay::Wireframe] {
             out.push(Item {
@@ -736,6 +766,7 @@ pub(crate) struct Runner<'w, 's> {
     ui: MessageWriter<'w, UiCommand>,
     bindings: MessageWriter<'w, RunBinding>,
     overlays: MessageWriter<'w, OverlayCommand>,
+    workspaces: MessageWriter<'w, crate::shell::WorkspaceCommand>,
     selection: ResMut<'w, Selection>,
     buttons: Query<'w, 's, (Entity, &'static ActionButton)>,
     commands: Commands<'w, 's>,
@@ -778,6 +809,9 @@ impl Runner<'_, '_> {
             }
             Run::Overlay(o) => {
                 self.overlays.write(OverlayCommand::toggle(*o));
+            }
+            Run::Workspace(cmd) => {
+                self.workspaces.write(*cmd);
             }
             Run::Echo(topic) => {
                 self.commands.insert_resource(TopicsStart {
