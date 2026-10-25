@@ -1,0 +1,395 @@
+//! The Workspaces panel: its cards, summary, buttons and name row, and
+//! what they do to the workspaces.
+
+use bevy::input::keyboard::KeyCode;
+use bevy::prelude::*;
+use bevy::ui::InteractionDisabled;
+use bevy::ui_widgets::Activate;
+
+use super::view::{
+    detail_of, note_of, Card, CardDelete, CurrentHeader, IoItem, LayoutButton, NameButton,
+    NameField, NameRow, SummaryValue,
+};
+use super::{PanelState, NEW};
+use crate::panels::PanelActionActivated;
+use crate::shell::status_bar::{SwitcherItem, WorkspaceName};
+use crate::shell::workspaces::{
+    exported, NameWorkspace, StoreAt, WorkspaceFile, WorkspaceLayout, WorkspaceStore,
+};
+use crate::shell::{
+    CurrentLayout, ShellLayout, Slot, UiCommand, WorkspaceCommand, Workspaces, WORKSPACES_PANEL,
+};
+use crate::test_support::shell::*;
+use crate::test_support::{descendants, frames};
+use crate::theme::visuals::Active;
+use crate::widgets::section::SectionCount;
+use crate::widgets::TextSubmit;
+
+/// The shell, past start-up, with the Workspaces panel open.
+fn panel_app() -> App {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    // Start-up lasts 30 frames and a real second.
+    app.world_mut().resource_mut::<ShellLayout>().startup = false;
+    frames(&mut app, 2);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: WORKSPACES_PANEL,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 4);
+    app
+}
+
+fn workspaces(app: &App) -> &Workspaces {
+    app.world().resource::<Workspaces>()
+}
+
+fn current(app: &App) -> &CurrentLayout {
+    app.world().resource::<CurrentLayout>()
+}
+
+/// The texts under `e`, joined by " | ".
+fn texts(app: &mut App, e: Entity) -> String {
+    let world = app.world_mut();
+    descendants(world, e)
+        .into_iter()
+        .filter_map(|d| world.get::<Text>(d).map(|t| t.0.clone()))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+/// The cards, in order: (index, its texts, current).
+fn cards(app: &mut App) -> Vec<(usize, String, bool)> {
+    let found: Vec<(usize, Entity, bool)> = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &Card, Has<Active>)>()
+            .iter(world)
+            .map(|(e, c, a)| (c.0, e, a))
+            .collect()
+    };
+    let mut out: Vec<_> = found
+        .into_iter()
+        .map(|(i, e, a)| (i, texts(app, e), a))
+        .collect();
+    out.sort_by_key(|c| c.0);
+    out
+}
+
+/// The entity of the first `C` that `pick` accepts.
+fn pick<C: Component>(app: &mut App, pick: impl Fn(&C) -> bool) -> Entity {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &C)>()
+        .iter(world)
+        .find(|(_, c)| pick(c))
+        .unwrap()
+        .0
+}
+
+fn value(app: &mut App, which: SummaryValue) -> String {
+    let world = app.world_mut();
+    world
+        .query::<(&SummaryValue, &Text)>()
+        .iter(world)
+        .find(|(v, _)| **v == which)
+        .map(|(_, t)| t.0.clone())
+        .unwrap()
+}
+
+fn header(app: &mut App) -> String {
+    let world = app.world_mut();
+    let children: Vec<Entity> = world
+        .query_filtered::<&Children, With<CurrentHeader>>()
+        .single(world)
+        .unwrap()
+        .to_vec();
+    children
+        .into_iter()
+        .find(|c| world.get::<SectionCount>(*c).is_some())
+        .and_then(|c| world.get::<Text>(c))
+        .map(|t| t.0.clone())
+        .unwrap()
+}
+
+/// A layout button and whether it's enabled.
+fn button(app: &mut App, which: LayoutButton) -> (Entity, bool) {
+    let e = pick(app, |b: &LayoutButton| *b == which);
+    (e, app.world().get::<InteractionDisabled>(e).is_none())
+}
+
+fn activate(app: &mut App, entity: Entity) {
+    app.world_mut().trigger(Activate { entity });
+    frames(app, 3);
+}
+
+fn naming(app: &App) -> bool {
+    app.world().resource::<PanelState>().naming
+}
+
+/// The cards: §8's four, the current one marked, each with what it shows
+/// and its keys; the summary names the layout under the panel, which
+/// showing the panel doesn't change.
+#[test]
+fn the_panel_shows_the_workspaces_and_the_layout() {
+    let mut app = panel_app();
+    let c = cards(&mut app);
+    assert_eq!(c.len(), 4);
+    assert!(c[0].1.contains("Build | scene · inspector"), "{c:?}");
+    assert!(c[0].1.contains("Alt+1"), "{c:?}");
+    assert!(c[0].2 && !c[1].2);
+    assert!(c[1].1.contains("Run | viewport only"), "{c:?}");
+    assert!(
+        c[2].1.contains("Debug | topics · plot · inspector"),
+        "{c:?}"
+    );
+    assert!(c[3].1.contains("Review | plot"), "{c:?}");
+    // The Workspaces panel stands in for Scene: not modified.
+    assert_eq!(layout(&app).primary, Some(WORKSPACES_PANEL));
+    assert!(!current(&app).modified);
+    assert_eq!(header(&mut app), "Build");
+    assert_eq!(value(&mut app, SummaryValue::Sidebar), "Scene · 300 px");
+    assert_eq!(value(&mut app, SummaryValue::Inspector), "shown · 300 px");
+    assert_eq!(value(&mut app, SummaryValue::Viewports), "1 · Perspective");
+    assert_eq!(value(&mut app, SummaryValue::Floating), "none");
+    assert_eq!(value(&mut app, SummaryValue::Theme), "light");
+    let (save, _) = button(&mut app, LayoutButton::Save);
+    assert_eq!(texts(&mut app, save), "Save to Build");
+    // Reset gives §8's default.
+    assert_eq!(current(&app).reset, Some(true));
+}
+
+/// A change shows "modified" (on the card too); Reset puts the layout as
+/// saved back, then §8's default, then has nothing to do.
+#[test]
+fn reset_puts_back_the_saved_layout_then_the_default() {
+    let mut app = panel_app();
+    app.world_mut().resource_mut::<ShellLayout>().inspector_open = false;
+    frames(&mut app, 3);
+    assert!(current(&app).modified);
+    assert_eq!(header(&mut app), "Build · modified");
+    assert!(cards(&mut app)[0].1.contains("modified"));
+    assert_eq!(value(&mut app, SummaryValue::Inspector), "collapsed");
+    let (reset, enabled) = button(&mut app, LayoutButton::Reset);
+    assert!(enabled);
+    activate(&mut app, reset);
+    assert!(layout(&app).inspector_open, "as saved");
+    assert!(!current(&app).modified);
+    // Again: §8's default, two views; then nothing left to reset.
+    let (reset, _) = button(&mut app, LayoutButton::Reset);
+    activate(&mut app, reset);
+    frames(&mut app, 2);
+    assert_eq!(
+        value(&mut app, SummaryValue::Viewports),
+        "2 · Perspective, Top"
+    );
+    assert_eq!(
+        layout(&app).primary,
+        Some(WORKSPACES_PANEL),
+        "the panel stays"
+    );
+    let (_, enabled) = button(&mut app, LayoutButton::Reset);
+    assert!(!enabled);
+    assert_eq!(current(&app).reset, None);
+}
+
+/// A card switches, and the panel stays where it is, over the next
+/// workspace's layout.
+#[test]
+fn a_card_switches_and_the_panel_stays() {
+    let mut app = panel_app();
+    let run = pick(&mut app, |c: &Card| c.0 == 1);
+    activate(&mut app, run);
+    assert_eq!(workspaces(&app).current, 1);
+    let l = layout(&app);
+    assert_eq!(l.primary, Some(WORKSPACES_PANEL));
+    assert!(l.sidebar_open, "the panel keeps the sidebar open");
+    assert!(!l.inspector_open, "Run's");
+    assert_eq!(value(&mut app, SummaryValue::Sidebar), "collapsed");
+    assert!(!current(&app).modified);
+    let c = cards(&mut app);
+    assert!(c[1].2 && !c[0].2);
+    // Back to Build: Scene under the panel, as it was.
+    let build = pick(&mut app, |c: &Card| c.0 == 0);
+    activate(&mut app, build);
+    assert_eq!(value(&mut app, SummaryValue::Sidebar), "Scene · 300 px");
+}
+
+/// Save as new… opens the name row with the keys; Enter saves a workspace
+/// by that name and switches to it; its card has Delete, the switcher
+/// lists it, and the file keeps it.
+#[test]
+fn save_as_new_names_a_workspace_of_the_users() {
+    let mut app = panel_app();
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(None),
+        theme: true,
+    });
+    let (new, _) = button(&mut app, LayoutButton::SaveAsNew);
+    activate(&mut app, new);
+    assert!(naming(&app));
+    let row = find::<NameRow>(&mut app);
+    assert!(displayed(&app, row));
+    let field = find::<NameField>(&mut app);
+    let input = focused(&app).expect("the name field has the keys");
+    assert!(descendants(app.world(), field).contains(&input));
+    // An empty name does nothing.
+    app.world_mut().trigger(TextSubmit {
+        entity: field,
+        value: "  ".into(),
+    });
+    frames(&mut app, 2);
+    assert!(naming(&app));
+    app.world_mut().trigger(TextSubmit {
+        entity: field,
+        value: "Teleop".into(),
+    });
+    frames(&mut app, 4);
+    assert!(!naming(&app));
+    let w = workspaces(&app);
+    assert_eq!(w.list().len(), 5);
+    assert_eq!((w.current, w.name()), (4, "Teleop"));
+    assert_eq!(header(&mut app), "Teleop");
+    let delete = pick(&mut app, |d: &CardDelete| d.0 == 4);
+    assert!(app.world().get_entity(delete).is_ok());
+    let name = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Text, With<WorkspaceName>>()
+            .single(world)
+            .unwrap()
+            .0
+            .clone()
+    };
+    assert_eq!(name, "Teleop");
+    let in_switcher = {
+        let world = app.world_mut();
+        world
+            .query::<(&SwitcherItem, Has<Active>)>()
+            .iter(world)
+            .any(|(i, a)| *i == SwitcherItem::Switch(4) && a)
+    };
+    assert!(in_switcher, "listed and marked");
+    let file = match &app.world().resource::<WorkspaceStore>().at {
+        StoreAt::Memory(Some(t)) => serde_json::from_str::<WorkspaceFile>(t).unwrap(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(file.current, "user_1");
+    assert_eq!(file.custom[0].name, "Teleop");
+    assert!(file.workspaces.contains_key("user_1"));
+    // The same name again is "teleop 2".
+    app.world_mut()
+        .write_message(WorkspaceCommand::SaveAsNew("teleop".into()));
+    frames(&mut app, 2);
+    assert_eq!(workspaces(&app).name(), "teleop 2");
+}
+
+/// Esc and Cancel close the name row; the header's + opens it.
+#[test]
+fn the_name_row_closes() {
+    let mut app = panel_app();
+    app.world_mut().trigger(PanelActionActivated {
+        entity: Entity::PLACEHOLDER,
+        panel: WORKSPACES_PANEL,
+        action: NEW,
+    });
+    frames(&mut app, 3);
+    assert!(naming(&app));
+    let input = focused(&app).unwrap();
+    focused_key(&mut app, input, KeyCode::Escape);
+    frames(&mut app, 2);
+    assert!(!naming(&app));
+    let row = find::<NameRow>(&mut app);
+    assert!(!displayed(&app, row));
+    app.world_mut().resource_mut::<PanelState>().naming = true;
+    frames(&mut app, 2);
+    let cancel = pick(&mut app, |b: &NameButton| *b == NameButton::Cancel);
+    activate(&mut app, cancel);
+    assert!(!naming(&app));
+    assert_eq!(workspaces(&app).list().len(), 4);
+}
+
+/// Delete drops one of the user's; deleting the current one goes back to
+/// Build. The built-in ones can't be deleted.
+#[test]
+fn delete_drops_a_users_workspace() {
+    let mut app = panel_app();
+    app.world_mut()
+        .write_message(WorkspaceCommand::SaveAsNew("Mine".into()));
+    frames(&mut app, 4);
+    assert_eq!(workspaces(&app).current, 4);
+    let delete = pick(&mut app, |d: &CardDelete| d.0 == 4);
+    activate(&mut app, delete);
+    let w = workspaces(&app);
+    assert_eq!((w.list().len(), w.current), (4, 0));
+    assert_eq!(cards(&mut app).len(), 4);
+    app.world_mut().write_message(WorkspaceCommand::Delete(1));
+    frames(&mut app, 2);
+    assert_eq!(workspaces(&app).list().len(), 4);
+}
+
+/// The switcher's Manage… opens the panel; ⌘K's Save as new opens it
+/// naming.
+#[test]
+fn manage_and_the_palette_open_the_panel() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let manage = pick(&mut app, |i: &SwitcherItem| *i == SwitcherItem::Manage);
+    activate(&mut app, manage);
+    assert_eq!(layout(&app).primary, Some(WORKSPACES_PANEL));
+    assert!(!naming(&app));
+    app.insert_resource(NameWorkspace);
+    frames(&mut app, 3);
+    assert!(naming(&app));
+}
+
+/// The footer says where the layouts are kept; Import waits for a file
+/// picker.
+#[test]
+fn the_footer_says_where_the_layouts_are_kept() {
+    let mut app = panel_app();
+    assert!(all_text(&mut app).contains("Layouts are kept for this session only"));
+    assert_eq!(
+        note_of(Some(&WorkspaceStore {
+            at: StoreAt::File("/home/me/.config/gz/ui/workspaces.json".into()),
+            theme: true,
+        })),
+        "Layouts are kept in /home/me/.config/gz/ui/workspaces.json"
+    );
+    assert_eq!(
+        note_of(Some(&WorkspaceStore {
+            at: StoreAt::Browser,
+            theme: true,
+        })),
+        "Layouts are kept in this browser's storage"
+    );
+    let import = pick(&mut app, |i: &IoItem| *i == IoItem::Import);
+    assert!(app.world().get::<InteractionDisabled>(import).is_some());
+}
+
+/// Export writes every workspace's layout and the user's names, which
+/// read back.
+#[test]
+fn exported_layouts_read_back() {
+    let mut app = panel_app();
+    app.world_mut()
+        .write_message(WorkspaceCommand::SaveAsNew("Mine".into()));
+    frames(&mut app, 4);
+    let file: WorkspaceFile = serde_json::from_str(&exported(workspaces(&app))).unwrap();
+    assert_eq!(file.workspaces.len(), 5);
+    assert_eq!(file.theme, None);
+    assert_eq!(file.custom[0].name, "Mine");
+    assert_eq!(file.workspaces["run"], WorkspaceLayout::default_for(1));
+}
+
+/// What a card says a layout shows.
+#[test]
+fn details_name_what_shows() {
+    let app = shell_app((1440, 900), 1.0);
+    let panels = app.world().resource::<crate::panels::PanelRegistry>();
+    let d = |i| detail_of(&WorkspaceLayout::default_for(i), panels);
+    assert_eq!(d(0), "scene · inspector · 2 views");
+    assert_eq!(d(1), "viewport only");
+    assert_eq!(d(2), "topics · plot · inspector");
+    assert_eq!(d(3), "plot");
+}

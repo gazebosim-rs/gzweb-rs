@@ -54,7 +54,9 @@ pub use popout::StartPopOuts;
 pub use top_bar::tools::Tool;
 pub use top_bar::StartMenu;
 pub use viewport::views::{LayoutPreset, StartLayout};
-pub use workspaces::{WorkspaceCommand, WorkspaceStore, Workspaces};
+pub use workspaces::{
+    CurrentLayout, Workspace, WorkspaceCommand, WorkspaceStore, Workspaces, WORKSPACES_PANEL,
+};
 
 use crate::inspectors::{InspectorPlugins, InspectorRegistry};
 use crate::panels::{PanelId, PanelPlugins, PanelRegistry};

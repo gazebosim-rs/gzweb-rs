@@ -471,4 +471,19 @@ fn the_palette_switches_workspaces() {
         results(&app).first().map(String::as_str),
         Some("Save current layout")
     );
+    // Save as new opens the Workspaces panel naming one.
+    open(&mut app);
+    type_query(&mut app, "new workspace");
+    assert_eq!(
+        results(&app).first().map(String::as_str),
+        Some("Save layout as new workspace")
+    );
+    enter(&mut app);
+    frames(&mut app, 3);
+    assert_eq!(layout(&app).primary, Some(crate::shell::WORKSPACES_PANEL));
+    assert!(
+        app.world()
+            .resource::<crate::panels::workspaces::PanelState>()
+            .naming
+    );
 }

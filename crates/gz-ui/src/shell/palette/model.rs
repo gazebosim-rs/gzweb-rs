@@ -59,8 +59,10 @@ pub(crate) enum Run {
     Echo(String),
     /// Turn an overlay on or off in every view (those without a key).
     Overlay(Overlay),
-    /// Switch workspaces, or save the current one's layout.
+    /// Switch workspaces, or save or reset the current one's layout.
     Workspace(crate::shell::WorkspaceCommand),
+    /// Name a new workspace in the Workspaces panel.
+    NewWorkspace,
 }
 
 /// One result.

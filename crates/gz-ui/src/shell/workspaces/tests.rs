@@ -212,6 +212,7 @@ fn the_store_is_read_at_start() {
         current: "run".into(),
         theme: Some("dark".into()),
         workspaces: [("run".to_string(), saved)].into_iter().collect(),
+        custom: vec![],
     };
     let text = serde_json::to_string(&file).unwrap();
     let app = with_store(Some(&text), true);
@@ -281,6 +282,7 @@ fn file_text(current: &str, version: u32, saved: &[(&str, WorkspaceLayout)]) -> 
             .iter()
             .map(|(id, w)| (id.to_string(), w.clone()))
             .collect(),
+        custom: vec![],
     })
     .unwrap()
 }
@@ -461,4 +463,81 @@ fn a_snapped_view_comes_back_snapped() {
     frames(&mut app, 2);
     let (v, ..) = camera(&mut app, 0).unwrap();
     assert_eq!(v.snapped, Some(SnapView::Front));
+}
+
+/// The user's workspaces read back in their order with their names (one
+/// the file holds without a name goes by its id), and the app starts in
+/// one.
+#[test]
+fn the_users_workspaces_read_back() {
+    let mut mine = WorkspaceLayout::default_for(2);
+    mine.inspector_open = false;
+    let file = WorkspaceFile {
+        version: FILE_VERSION,
+        current: "user_2".into(),
+        theme: None,
+        workspaces: [
+            ("user_2".to_string(), mine),
+            ("user_1".to_string(), WorkspaceLayout::default_for(1)),
+            ("other".to_string(), WorkspaceLayout::default_for(3)),
+        ]
+        .into_iter()
+        .collect(),
+        custom: vec![
+            CustomName {
+                id: "user_2".into(),
+                name: "Mine".into(),
+            },
+            CustomName {
+                id: "user_1".into(),
+                name: "Older".into(),
+            },
+        ],
+    };
+    let app = start_with(Some(&serde_json::to_string(&file).unwrap()), true, |_| {});
+    let w = workspaces(&app);
+    let names: Vec<&str> = w.list().iter().map(|w| w.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Build", "Run", "Debug", "Review", "Mine", "Older", "other"]
+    );
+    assert_eq!(w.current, 4);
+    let l = layout(&app);
+    assert_eq!(l.primary.map(|p| p.name()), Some("topics"));
+    assert!(!l.inspector_open);
+}
+
+/// Unsaved, Build's layout as saved is the app's start once start-up ends,
+/// so a first start isn't modified; a saved Build keeps its own.
+#[test]
+fn builds_start_is_its_layout_until_saved() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    assert!(
+        app.world().resource::<CurrentLayout>().modified,
+        "§8's default"
+    );
+    app.world_mut().resource_mut::<ShellLayout>().startup = false;
+    frames(&mut app, 3);
+    let current = app.world().resource::<CurrentLayout>();
+    assert!(!current.modified);
+    assert_eq!(current.reset, Some(true), "Reset gives §8's default");
+    assert_eq!(workspaces(&app).saved(0).preset, "single");
+}
+
+/// A popped-out Workspaces panel isn't part of a layout.
+#[test]
+fn the_workspaces_panel_isnt_saved() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    app.world_mut()
+        .write_message(crate::shell::UiCommand::PopOut(WORKSPACES_PANEL));
+    frames(&mut app, 3);
+    assert_eq!(layout(&app).popouts.len(), 1);
+    app.world_mut().write_message(WorkspaceCommand::Save);
+    frames(&mut app, 2);
+    assert!(workspaces(&app).saved(0).popouts.is_empty());
+    // A switch keeps it open.
+    alt(&mut app, KeyCode::Digit2);
+    assert_eq!(layout(&app).popouts.len(), 1);
 }

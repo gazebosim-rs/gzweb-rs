@@ -17,15 +17,21 @@ fn registry(plugins: impl PluginGroup) -> PanelRegistry {
 fn every_panel_registers_once_in_activity_bar_order() {
     let r = registry(PanelPlugins);
     let ids: Vec<PanelId> = r.iter().map(|p| p.id).collect();
-    assert_eq!(ids, [SCENE, ASSETS, TOPICS, PLOT, SENSORS, TELEOP, CONSOLE]);
+    let ws = crate::shell::WORKSPACES_PANEL;
+    assert_eq!(
+        ids,
+        [SCENE, ASSETS, TOPICS, PLOT, SENSORS, TELEOP, CONSOLE, ws]
+    );
     for p in r.iter() {
         assert!(!p.title.is_empty());
         assert_eq!(r.get(p.id).map(|d| d.title), Some(p.title));
         assert_eq!(p.id.to_string(), p.id.name());
     }
-    // Two groups: the world's panels, then the data panels.
-    let groups: Vec<u32> = r.iter().map(|p| p.group).collect();
+    // Two groups: the world's panels, then the data panels; Workspaces
+    // has no activity button (decision Q2).
+    let groups: Vec<u32> = r.iter().filter(|p| p.activity).map(|p| p.group).collect();
     assert_eq!(groups, [0, 0, 1, 1, 1, 1, 1]);
+    assert!(!r.get(ws).unwrap().activity);
     // The shortcuts open their panels; Scene opens at start.
     assert_eq!(r.for_binding("panel.console"), Some(CONSOLE));
     assert_eq!(r.for_binding("panel.teleop"), None);

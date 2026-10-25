@@ -197,9 +197,18 @@ pub(crate) enum SwitcherItem {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct WorkspaceName;
 
+/// The switcher's separator: the user's workspaces go before it.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct SwitcherSeparator;
+
+/// One of the user's workspaces in the switcher: its name.
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct UserItem(String);
+
 /// The workspace switcher (§7.8): the workspace button opens it upward.
-/// Build Alt+1 · Run Alt+2 · Debug Alt+3 · Review Alt+4 (the current one
-/// marked) · Save current layout · Manage… (the Workspaces panel, M8e).
+/// Build Alt+1 · Run Alt+2 · Debug Alt+3 · Review Alt+4, then the user's
+/// own ([`switcher_items`]; the current one marked) · Save current layout ·
+/// Manage… (the Workspaces panel).
 fn switcher(theme: &Theme, map: &InputMap, tip: Tooltip) -> impl Bundle {
     let t = theme.clone();
     let map = map.clone();
@@ -213,7 +222,7 @@ fn switcher(theme: &Theme, map: &InputMap, tip: Tooltip) -> impl Bundle {
                 SwitcherItem::Switch(i),
             ));
         }
-        p.spawn(menu_separator());
+        p.spawn((menu_separator(), SwitcherSeparator));
         p.spawn((
             menu_item(&t, MenuItemProps::new("Save current layout")),
             SwitcherItem::Save,
@@ -221,10 +230,65 @@ fn switcher(theme: &Theme, map: &InputMap, tip: Tooltip) -> impl Bundle {
         p.spawn((
             menu_item(&t, MenuItemProps::new("Manage…")),
             SwitcherItem::Manage,
-            InteractionDisabled,
-            Tooltip::new("Manage…").detail("Not yet: the Workspaces panel comes next"),
         ));
     })
+}
+
+/// The user's workspaces in the switcher, before its separator, as the
+/// list has them.
+pub(crate) fn switcher_items(
+    workspaces: Res<crate::shell::Workspaces>,
+    theme: Res<Theme>,
+    items: Query<(Entity, &SwitcherItem, &UserItem)>,
+    separators: Query<&ChildOf, With<SwitcherSeparator>>,
+    children: Query<&Children>,
+    mut commands: Commands,
+) {
+    if !workspaces.is_changed() {
+        return;
+    }
+    let want: Vec<(usize, &str)> = workspaces
+        .list()
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.builtin.is_none())
+        .map(|(i, w)| (i, w.name.as_str()))
+        .collect();
+    let mut have: Vec<(usize, &str)> = items
+        .iter()
+        .filter_map(|(_, item, name)| match item {
+            SwitcherItem::Switch(i) => Some((*i, name.0.as_str())),
+            _ => None,
+        })
+        .collect();
+    have.sort_unstable();
+    if have == want {
+        return;
+    }
+    for (e, ..) in &items {
+        commands.entity(e).despawn();
+    }
+    let Ok(popup) = separators.single().map(ChildOf::parent) else {
+        return;
+    };
+    let at = children
+        .get(popup)
+        .ok()
+        .and_then(|c| c.iter().position(|e| separators.contains(e)))
+        .unwrap_or(0);
+    let spawned: Vec<Entity> = want
+        .iter()
+        .map(|(i, name)| {
+            commands
+                .spawn((
+                    menu_item(&theme, MenuItemProps::new(*name)),
+                    SwitcherItem::Switch(*i),
+                    UserItem(name.to_string()),
+                ))
+                .id()
+        })
+        .collect();
+    commands.entity(popup).insert_children(at, &spawned);
 }
 
 /// The button names the current workspace (and its tooltip); the
@@ -265,6 +329,7 @@ pub(crate) fn on_switcher_item(
     ev: On<Activate>,
     items: Query<&SwitcherItem, Without<InteractionDisabled>>,
     mut out: MessageWriter<crate::shell::WorkspaceCommand>,
+    mut ui: MessageWriter<super::UiCommand>,
 ) {
     match items.get(ev.entity) {
         Ok(SwitcherItem::Switch(i)) => {
@@ -273,7 +338,13 @@ pub(crate) fn on_switcher_item(
         Ok(SwitcherItem::Save) => {
             out.write(crate::shell::WorkspaceCommand::Save);
         }
-        _ => {}
+        Ok(SwitcherItem::Manage) => {
+            ui.write(super::UiCommand::OpenPanel {
+                panel: crate::shell::WORKSPACES_PANEL,
+                slot: super::Slot::Primary,
+            });
+        }
+        Err(_) => {}
     }
 }
 
@@ -339,7 +410,7 @@ pub(crate) fn build(app: &mut App) {
                 readouts::connection_dot,
                 (readouts::message_chip, tray::tray_rows).chain(),
                 narrow_rules,
-                switcher_states,
+                (switcher_items, switcher_states).chain(),
             )
                 .in_set(ShellSystems::Readouts),
         );
