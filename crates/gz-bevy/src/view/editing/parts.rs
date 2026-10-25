@@ -23,7 +23,7 @@ use super::EditingModel;
 use crate::overlays::extras::SdfExtras;
 use crate::spawn::{pose_transform, GeometryAssets, GzEntity, GzSensors, GzVisual};
 use crate::undo::UndoCommand;
-use crate::view::Selection;
+use crate::view::{Part as SelectedPart, PartKind, Selection};
 
 /// An entity spawned for a part of the draft (a link, a visual).
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -60,6 +60,15 @@ impl EditParts {
     /// The edited model's scene path, while one is edited.
     pub fn model_path(&self) -> Option<&str> {
         self.model.as_ref().map(|(_, p)| p.as_str())
+    }
+
+    /// The server's SDFormat came (`extras` holds it, the draft's parts
+    /// added): its joints and names are known.
+    pub fn server_known(&self, extras: &SdfExtras) -> bool {
+        match &self.base {
+            Some(base) => base.is_some(),
+            None => extras.extras.is_some(),
+        }
     }
 }
 
@@ -256,6 +265,21 @@ pub fn run_parts(
                 if e.is_some_and(|e| selection.entities.contains(&e)) {
                     *selection = Selection::default();
                 }
+                // A joint or sensor selected as a part goes with it.
+                let kind = match &part {
+                    Part::Joint { .. } => Some((PartKind::Joint, path.as_str())),
+                    Part::Sensor { link, .. } => Some((PartKind::Sensor, link.as_str())),
+                    _ => None,
+                };
+                if let Some((kind, owner)) = kind {
+                    let owner = scene.at(owner);
+                    let gone = |p: &SelectedPart| {
+                        p.kind == kind && Some(p.owner) == owner && p.name == part.name()
+                    };
+                    if selection.parts.iter().any(gone) {
+                        selection.parts.retain(|p| !gone(p));
+                    }
+                }
             }
             UndoCommand::Redo => {
                 let Some(part) = parts.draft.redo().cloned() else {
@@ -278,7 +302,10 @@ pub fn patch_extras(mut parts: ResMut<EditParts>, extras: Option<ResMut<SdfExtra
     let server_new = parts.ours != Some(extras.generation);
     let patched = parts.model.is_some() && !parts.draft.is_empty();
     if !patched {
-        if let Some(base) = parts.base.take() {
+        // Read first: a take through `ResMut` would mark it changed every
+        // frame.
+        if parts.base.is_some() {
+            let base = parts.base.take().flatten();
             // A reply since is the server's own, newer.
             if !server_new {
                 extras.extras = base;

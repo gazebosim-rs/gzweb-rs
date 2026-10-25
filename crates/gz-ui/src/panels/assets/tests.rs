@@ -260,7 +260,8 @@ fn a_tile_arms_and_a_place_inserts() {
         .toggled();
     assert_eq!(toggled, Some(accesskit::Toggled::True));
     assert!(all_text(&mut app).contains(PLACE_HINT));
-    app.world_mut().resource_mut::<PlaceHover>().0 = Some((Vec3::new(1.0, 0.0, -2.0), Vec3::Y));
+    app.world_mut().resource_mut::<PlaceHover>().0 =
+        Some((Vec3::new(1.0, 0.0, -2.0), Vec3::Y, None));
     frames(&mut app, 2);
     let world = app.world_mut();
     let (ghost, at, vis) = world
@@ -599,7 +600,13 @@ fn a_start_opens_on_its_tab() {
 fn editing_parts() -> (App, Entity, Entity, Entity) {
     use gz_bevy::overlays::extras::SdfExtras;
     let mut app = live_assets();
+    // The server's SDFormat has come (with nothing it adds).
     app.init_resource::<SdfExtras>();
+    {
+        let mut x = app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
     let model = edit_a_model(&mut app);
     let link = |app: &mut App, name: &str, x: f32| {
         app.world_mut()
@@ -851,4 +858,197 @@ fn undo_takes_a_part_back_and_done_drops_them() {
         status_note(&app).as_deref(),
         Some("1 part not kept: writing parts to the model comes later")
     );
+}
+
+/// Esc, pressed and released.
+fn press_esc(app: &mut App) {
+    use bevy::input::ButtonState;
+    for state in [ButtonState::Pressed, ButtonState::Released] {
+        app.world_mut()
+            .write_message(bevy::input::keyboard::KeyboardInput {
+                key_code: KeyCode::Escape,
+                logical_key: bevy::input::keyboard::Key::Escape,
+                state,
+                text: None,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            });
+        frames(app, 2);
+    }
+}
+
+/// The server's SDFormat for the edited model, as `inner` (in its
+/// `<model>`) says.
+fn server_sdf(app: &mut App, inner: &str) {
+    use gz_bevy::overlays::extras::SdfExtras;
+    let sdf = format!(
+        "<sdf version=\"1.9\"><world name=\"w\"><model name=\"edited\">{inner}</model>\
+         </world></sdf>"
+    );
+    let mut x = app.world_mut().resource_mut::<SdfExtras>();
+    x.extras = Some(gz_core::sdf::WorldExtras::parse(&sdf).unwrap());
+    x.generation += 1;
+    frames(app, 2);
+}
+
+/// A joint's parent is forgotten once undo takes it back, or another
+/// model is edited: the next click is the parent again.
+#[test]
+fn a_joints_parent_goes_with_its_link_or_model() {
+    let (mut app, model, a, _) = editing_parts();
+    let link = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, link);
+    place(&mut app, [4.0, 0.0, 0.0], None, false);
+    let (l1, _) = at_path(&mut app, "edited/link_1").unwrap();
+    let joint = part_tile(&mut app, PartTool::Joint);
+    activate(&mut app, joint);
+    place(&mut app, [4.0, 0.0, 0.0], Some(l1), false);
+    assert_eq!(parts_state(&app).parent, Some(l1));
+    app.world_mut()
+        .write_message(gz_bevy::undo::UndoCommand::Undo);
+    frames(&mut app, 3);
+    assert_eq!(parts_state(&app).parent, None);
+    assert!(!all_text(&mut app).contains(JOINT_CHILD_HINT));
+    place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+    assert_eq!(parts_state(&app).parent, Some(a), "the parent again");
+    // Another model, edited: a isn't its link.
+    let root = app.world().get::<ChildOf>(model).unwrap().parent();
+    let other = app
+        .world_mut()
+        .spawn((
+            gz_bevy::spawn::GzEntity {
+                name: "other".into(),
+                id: 0,
+                kind: gz_core::scene::NodeKind::Model,
+                path: "other".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(root),
+        ))
+        .id();
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Enter(other));
+    frames(&mut app, 3);
+    assert_eq!(parts_state(&app).parent, None);
+}
+
+/// A link fixed to the world, or a nested model's link with its parent,
+/// can't take a second parent; before the server's SDFormat comes, a
+/// joint or a collision waits for it.
+#[test]
+fn joints_count_the_world_and_nested_models() {
+    use gz_bevy::overlays::extras::SdfExtras;
+    let (mut app, model, a, b) = editing_parts();
+    let inner = app
+        .world_mut()
+        .spawn((
+            gz_bevy::spawn::GzEntity {
+                name: "inner".into(),
+                id: 0,
+                kind: gz_core::scene::NodeKind::Model,
+                path: "edited/inner".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(model),
+        ))
+        .id();
+    let d = app
+        .world_mut()
+        .spawn((
+            gz_bevy::spawn::GzEntity {
+                name: "d".into(),
+                id: 0,
+                kind: gz_core::scene::NodeKind::Link,
+                path: "edited/inner/d".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(inner),
+        ))
+        .id();
+    server_sdf(
+        &mut app,
+        "<link name=\"a\"/><link name=\"b\"/><joint name=\"fix\" type=\"fixed\">\
+         <parent>world</parent><child>b</child></joint><model name=\"inner\">\
+         <link name=\"c\"/><link name=\"d\"/><joint name=\"j\" type=\"fixed\">\
+         <parent>c</parent><child>d</child></joint></model>",
+    );
+    let joint = part_tile(&mut app, PartTool::Joint);
+    for child in [b, d] {
+        activate(&mut app, joint);
+        place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+        place(&mut app, [0.0, 0.0, 0.0], Some(child), false);
+        let name = app
+            .world()
+            .get::<gz_bevy::spawn::GzEntity>(child)
+            .unwrap()
+            .name
+            .clone();
+        assert_eq!(
+            status_note(&app),
+            Some(format!("{name} has a parent joint already"))
+        );
+        press_esc(&mut app);
+    }
+    // No SDFormat yet.
+    app.world_mut().resource_mut::<SdfExtras>().extras = None;
+    frames(&mut app, 2);
+    for tool in [PartTool::Joint, PartTool::Collision] {
+        let t = part_tile(&mut app, tool);
+        activate(&mut app, t);
+        place(&mut app, [0.0, 0.0, 0.0], Some(a), false);
+        assert_eq!(status_note(&app).as_deref(), Some(super::parts::NO_SDF));
+        assert_eq!(parts_state(&app).parent, None, "{tool:?}");
+        press_esc(&mut app);
+    }
+}
+
+/// Esc with Plugin armed disarms it and leaves editing alone; an armed
+/// tile is pressed to AccessKit.
+#[test]
+fn esc_disarms_a_plugin_and_armed_tiles_are_pressed() {
+    let (mut app, model, ..) = editing_parts();
+    let p = part_tile(&mut app, PartTool::Plugin);
+    activate(&mut app, p);
+    frames(&mut app, 2);
+    let toggled = |app: &App, e: Entity| {
+        app.world()
+            .get::<bevy::a11y::AccessibilityNode>(e)
+            .unwrap()
+            .toggled()
+    };
+    assert_eq!(toggled(&app, p), Some(accesskit::Toggled::True));
+    press_esc(&mut app);
+    assert_eq!(parts_state(&app).armed, None);
+    assert_eq!(toggled(&app, p), None);
+    let editing = app
+        .world()
+        .resource::<gz_bevy::view::editing::EditingModel>()
+        .model();
+    assert_eq!(editing, Some(model), "still editing");
+}
+
+/// The preview of a link stands upright in a turned model.
+#[test]
+fn the_preview_stands_in_the_models_frame() {
+    let (mut app, model, ..) = editing_parts();
+    app.world_mut()
+        .get_mut::<Transform>(model)
+        .unwrap()
+        .rotation = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    let t = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, t);
+    app.world_mut().resource_mut::<PlaceHover>().0 = Some((Vec3::ZERO, Vec3::Y, None));
+    frames(&mut app, 3);
+    let world = app.world_mut();
+    let ghost = world
+        .query_filtered::<&Transform, With<super::parts::PartGhost>>()
+        .single(world)
+        .unwrap()
+        .rotation;
+    // Gazebo's yaw is a turn about Bevy's Y: its X goes to Bevy's -Z.
+    assert!((ghost * Vec3::X).distance(Vec3::NEG_Z) < 1e-5, "{ghost:?}");
+    assert!((ghost * Vec3::Y).distance(Vec3::Y) < 1e-5, "{ghost:?}");
 }

@@ -10,6 +10,7 @@
 //! parts`); undo takes it back.
 
 use accesskit::Role;
+use bevy::a11y::AccessibilityNode;
 use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::text::EditableText;
@@ -18,7 +19,7 @@ use bevy::ui_widgets::{Activate, Button as Headless};
 use gz_bevy::overlays::draw::JointGizmos;
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::{gz_to_bevy, GzEntity, GzSensors};
-use gz_bevy::view::editing::parts::{PartCommand, PartsDiscarded};
+use gz_bevy::view::editing::parts::{EditParts, PartCommand, PartsDiscarded};
 use gz_bevy::view::editing::{is_under, EditingModel};
 use gz_bevy::view::place::{PlaceAt, PlaceHover};
 use gz_bevy::view::NoViewPick;
@@ -28,6 +29,7 @@ use gz_core::parts::{
     PART_SIZE,
 };
 use gz_core::scene::{NodeKind, Pose};
+use gz_core::sdf::{Joint, WorldExtras};
 
 use super::model::{AssetTab, AssetsState, PartTool, JOINT_CHILD_HINT};
 use super::view::{TabChoice, TabPane, TILE_H};
@@ -87,6 +89,9 @@ pub(crate) const PARTS_HINT: &str = "Choose a part, then click in the view";
 
 /// What a click that adds nothing says (status bar).
 pub(crate) const NOT_A_LINK: &str = "Click a link of the model being edited";
+
+/// What a joint or collision says before the model's SDFormat comes.
+pub(crate) const NO_SDF: &str = "The model's SDFormat hasn't come yet: try again in a moment";
 
 fn tool_icon(t: PartTool) -> IconId {
     match t {
@@ -269,11 +274,23 @@ pub(super) fn parts_tab(
     }
 }
 
+/// A joint's parent that is no longer a link of the model being edited
+/// (another model is, or undo took it back) is forgotten: the next click
+/// chooses the parent again.
+pub(super) fn forget_parent(model: EditedModel, mut state: ResMut<AssetsState>) {
+    let Some(parent) = state.parts.parent else {
+        return;
+    };
+    if model.link_of(Some(parent)) != Some(parent) {
+        state.parts.parent = None;
+    }
+}
+
 /// The armed tile shows active, the hint says what a click does, and the
 /// plugin's fields show while Plugin is chosen.
 pub(super) fn part_states(
     state: Res<AssetsState>,
-    mut tiles: Query<(Entity, &PartTile, Has<Active>)>,
+    mut tiles: Query<(Entity, &PartTile, Has<Active>, &mut AccessibilityNode)>,
     mut hints: Query<&mut Text, With<PartsHint>>,
     mut forms: Query<&mut Node, With<PluginForm>>,
     added: Query<(), Added<PartTile>>,
@@ -283,8 +300,16 @@ pub(super) fn part_states(
         return;
     }
     let parts = &state.parts;
-    for (e, tile, active) in &mut tiles {
+    for (e, tile, active, mut access) in &mut tiles {
         let want = parts.armed == Some(tile.0);
+        // Armed, it's pressed to AccessKit too, as a Shapes tile is.
+        let pressed = want.then_some(accesskit::Toggled::True);
+        if access.toggled() != pressed {
+            match pressed {
+                Some(t) => access.set_toggled(t),
+                None => access.clear_toggled(),
+            }
+        }
         if want != active {
             if want {
                 commands.entity(e).insert(Active);
@@ -376,6 +401,7 @@ pub(super) struct EditedModel<'w, 's> {
     parents: Query<'w, 's, &'static ChildOf>,
     children: Query<'w, 's, &'static Children>,
     extras: Option<Res<'w, SdfExtras>>,
+    parts: Option<Res<'w, EditParts>>,
 }
 
 impl EditedModel<'_, '_> {
@@ -428,25 +454,47 @@ impl EditedModel<'_, '_> {
         Some((at, n))
     }
 
-    /// The model's joints, each `(parent, child)` by scene path, and their
-    /// names.
-    fn joints(&self, model: &str) -> (Vec<(String, String)>, Vec<String>) {
-        let Some(x) = self.extras.as_deref().and_then(|x| x.extras.as_ref()) else {
-            return (Vec::new(), Vec::new());
-        };
-        let path = |name: &str| format!("{model}/{}", name.replace("::", "/"));
-        let joints: Vec<_> = x.joints_of(model).collect();
-        (
-            joints
-                .iter()
-                .filter(|j| j.parent != "world")
-                .map(|j| (path(&j.parent), path(&j.child)))
-                .collect(),
-            joints.iter().map(|j| j.name.clone()).collect(),
-        )
+    /// The world's SDFormat, once the server's has come (the draft's parts
+    /// added): until then the model's joints and collisions aren't known.
+    fn known_extras(&self) -> Option<&WorldExtras> {
+        let x = self.extras.as_deref()?;
+        let known = self.parts.as_deref().is_none_or(|p| p.server_known(x));
+        known.then_some(x.extras.as_ref()).flatten()
     }
 
-    /// The names link `link`'s collisions and sensors have.
+    /// The joints in the model and its nested models, each `(parent,
+    /// child)` by scene path (`world` for the world), and the model's own
+    /// joints' names; none until the server's SDFormat comes.
+    #[allow(clippy::type_complexity)]
+    fn joints(&self, model: &str) -> Option<(Vec<(String, String)>, Vec<String>)> {
+        let x = self.known_extras()?;
+        let prefix = format!("{model}/");
+        let joints: Vec<_> = x
+            .links
+            .iter()
+            .filter(|(path, _)| path.starts_with(&prefix))
+            .flat_map(|(_, l)| &l.joints)
+            .filter(|j| j.model == model || j.model.starts_with(&prefix))
+            .collect();
+        let path = |j: &Joint, name: &str| match name {
+            "world" => "world".to_string(),
+            _ => format!("{}/{}", j.model, name.replace("::", "/")),
+        };
+        Some((
+            joints
+                .iter()
+                .map(|j| (path(j, &j.parent), path(j, &j.child)))
+                .collect(),
+            joints
+                .iter()
+                .filter(|j| j.model == model)
+                .map(|j| j.name.clone())
+                .collect(),
+        ))
+    }
+
+    /// The names link `link`'s visuals, collisions and sensors have (a
+    /// collision's only once the server's SDFormat comes).
     fn link_names(&self, link: Entity) -> Vec<String> {
         let mut out = self.child_names(link);
         if let Ok((_, Some(s))) = self.entities.get(link) {
@@ -463,6 +511,13 @@ impl EditedModel<'_, '_> {
             out.extend(l.sensors.iter().map(|s| s.name.clone()));
         }
         out
+    }
+
+    /// The rotation (Bevy world) that sets a preview's shape upright in
+    /// `e`'s frame, as a part added to it is.
+    fn upright_in(&self, e: Entity) -> Option<Quat> {
+        let g = self.globals.get(e).ok()?;
+        Some(g.rotation() * gz_to_bevy().inverse())
     }
 }
 
@@ -501,6 +556,13 @@ pub(super) fn place_part(
         };
         let parts = state.parts.clone();
         let link = model.link_of(p.hit);
+        // A collision's name, and a joint's links, need the model's
+        // SDFormat: the server's may not have come yet.
+        let needs_sdf = matches!(tool, PartTool::Collision | PartTool::Joint);
+        if needs_sdf && link.is_some() && model.known_extras().is_none() {
+            note.show(NO_SDF, now);
+            continue;
+        }
         let part = match tool {
             PartTool::Link => {
                 let shape = shape_link.unwrap_or(parts.shape);
@@ -556,7 +618,9 @@ pub(super) fn place_part(
                 let (Some(from), Some(to)) = (model.path(parent), model.path(l)) else {
                     continue;
                 };
-                let (joints, names) = model.joints(&path);
+                let Some((joints, names)) = model.joints(&path) else {
+                    continue;
+                };
                 if let Some(why) = joint_problem(&from, &to, &joints) {
                     note.show(why, now);
                     continue;
@@ -658,10 +722,11 @@ fn ghost_of(state: &AssetsState) -> Option<PartGhost> {
 }
 
 /// While a model is edited, the preview of the link, visual or collision
-/// a click would add follows the pointer, resting on the surface.
+/// a click would add follows the pointer, resting on the surface, upright
+/// in the model (a link) or the link under the pointer.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn part_ghost(
-    editing: Option<Res<EditingModel>>,
+    model: EditedModel,
     state: Res<AssetsState>,
     hover: Res<PlaceHover>,
     theme: Res<Theme>,
@@ -670,18 +735,29 @@ pub(super) fn part_ghost(
     mut ghosts: Query<(Entity, &PartGhost, &mut Transform, &mut Visibility)>,
     mut commands: Commands,
 ) {
-    let want = ghost_of(&state).filter(|_| edited(editing.as_deref()).is_some());
+    let edited = model.model().map(|(m, _)| m);
+    let want = ghost_of(&state).filter(|_| edited.is_some());
+    let on_link = matches!(
+        state.parts.armed,
+        Some(PartTool::Visual | PartTool::Collision)
+    );
     for (e, g, mut t, mut vis) in &mut ghosts {
         if Some(*g) != want {
             commands.entity(e).despawn();
             continue;
         }
         match hover.0 {
-            Some((at, normal)) => {
+            Some((at, normal, hit)) => {
                 #[allow(clippy::cast_possible_truncation)]
                 let to = at + normal * (g.size / 2.0) as f32;
-                if t.translation != to {
+                let frame = if on_link { model.link_of(hit) } else { None };
+                let up = frame
+                    .or(edited)
+                    .and_then(|f| model.upright_in(f))
+                    .unwrap_or(Quat::IDENTITY);
+                if t.translation != to || t.rotation != up {
                     t.translation = to;
+                    t.rotation = up;
                 }
                 vis.set_if_neq(Visibility::Inherited);
             }
@@ -742,7 +818,7 @@ pub(super) fn joint_band(
     };
     let color = theme.color(ColorRole::EntityJoint);
     gizmos.sphere(Isometry3d::from_translation(from), 0.04, color);
-    if let Some((to, _)) = hover.0 {
+    if let Some((to, ..)) = hover.0 {
         gizmos.line(from, to, color);
     }
 }

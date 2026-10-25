@@ -1095,15 +1095,28 @@ impl ViewScene<'_, '_> {
 
     /// The nearest mesh on the ray, else where it meets the ground, within
     /// `far`, the surface's normal there, facing the ray's origin, and the
-    /// mesh (none for the ground).
+    /// mesh (none for the ground). While a model is edited, its own meshes
+    /// come first: the others are see-through, so a click reaches its
+    /// links through them.
     fn surface_hit(&mut self, ray: Ray3d, far: f32) -> Option<(Vec3, Vec3, Option<Entity>)> {
         let skip = &self.skip;
-        let filter = |e: Entity| !skip.contains(e);
-        let settings = MeshRayCastSettings::default().with_filter(&filter);
-        if let Some((e, hit)) = self.ray_cast.cast_ray(ray, &settings).first() {
-            let n = hit.normal.normalize_or(Vec3::Y);
+        let parents = &self.parents;
+        let editing = self.editing();
+        let mut cast = |inside: Option<Entity>| {
+            let filter = |e: Entity| {
+                !skip.contains(e) && inside.is_none_or(|m| editing::is_under(parents, e, m))
+            };
+            let settings = MeshRayCastSettings::default().with_filter(&filter);
+            self.ray_cast
+                .cast_ray(ray, &settings)
+                .first()
+                .map(|(e, hit)| (*e, hit.point, hit.normal))
+        };
+        let hit = editing.and_then(|m| cast(Some(m))).or_else(|| cast(None));
+        if let Some((e, point, normal)) = hit {
+            let n = normal.normalize_or(Vec3::Y);
             let n = if n.dot(*ray.direction) > 0.0 { -n } else { n };
-            return Some((hit.point, n, Some(*e)));
+            return Some((point, n, Some(e)));
         }
         ground_point(ray, far).map(|p| (p, Vec3::Y, None))
     }

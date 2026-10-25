@@ -311,7 +311,7 @@ pub(super) fn ghost(
             }
         }
         match hover.0 {
-            Some((at, normal)) => {
+            Some((at, normal, _)) => {
                 // Off the surface along its normal, upright as it will be
                 // inserted.
                 #[allow(clippy::cast_possible_truncation)]

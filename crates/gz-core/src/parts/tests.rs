@@ -158,6 +158,43 @@ fn every_part_parses() {
     }
 }
 
+/// A cone link's centre of mass sits a quarter of its height below its
+/// centre; a capsule's inertia counts its caps as hemispheres.
+#[test]
+fn cones_and_capsules_have_their_own_mass() {
+    let inertial = |shape| {
+        let mut extras = WorldExtras::default();
+        Part::Link {
+            name: "l".into(),
+            shape,
+            pose: Pose::IDENTITY,
+        }
+        .add_to("m", &mut extras);
+        extras.link("m/l").unwrap().inertial.unwrap()
+    };
+    assert_eq!(inertial(Shape::Cone).pose.pos, [0.0, 0.0, -LINK_SIZE / 4.0]);
+    assert_eq!(inertial(Shape::Box).pose.pos, [0.0; 3]);
+    // r 0.1, l 0.3: 0.692 kg of cylinder, 0.308 kg of caps.
+    let capsule = inertial(Shape::Capsule).inertia;
+    assert!((capsule[0] - 0.018_538).abs() < 1e-5, "{capsule:?}");
+    assert!((capsule[5] - 0.004_692).abs() < 1e-5, "{capsule:?}");
+}
+
+/// A plugin's library and class are escaped, so any text makes SDFormat
+/// that reads back as typed.
+#[test]
+fn a_plugin_escapes_what_was_typed() {
+    let plugin = Part::Plugin {
+        name: "a<b>&\"c\"".into(),
+        filename: "lib&.so".into(),
+    };
+    let sdf = plugin.sdf("m");
+    let doc = roxmltree::Document::parse(&sdf).expect("well-formed");
+    let root = doc.root_element();
+    assert_eq!(root.attribute("name"), Some("a<b>&\"c\""));
+    assert_eq!(root.attribute("filename"), Some("lib&.so"));
+}
+
 /// A link is a joint's child once at most, and a joint can't close a loop.
 #[test]
 fn joints_make_a_tree() {

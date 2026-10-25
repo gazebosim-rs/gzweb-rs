@@ -1963,3 +1963,18 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   --edit --assets parts`): the tab beside the pill. The capture paused
   the sim; a Play request resumed it.
 - **Tests:** workspace 937 → 950 passing.
+- **Review fixes** (PR #59):
+  - a joint's parent is forgotten when another model is edited or undo
+    takes its link back;
+  - joints count world-fixed and nested links;
+  - a joint or collision waits for the server's SDFormat;
+  - place clicks reach the edited model through dimmed ones;
+  - plugin text is escaped;
+  - undo unselects a removed joint or sensor;
+  - armed Parts tiles are pressed to AccessKit;
+  - `patch_extras` no longer marks the draft changed every frame;
+  - the preview stands in the model's or link's frame;
+  - Esc with Plugin armed only disarms;
+  - a cone's centre of mass and a capsule's inertia.
+
+  Tests: 950 → 958 passing, each new one failing without its fix.

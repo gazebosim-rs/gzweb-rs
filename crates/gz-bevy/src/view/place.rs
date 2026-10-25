@@ -32,9 +32,10 @@ pub struct PlaceAt {
 }
 
 /// While placing, the surface point under the pointer and its normal
-/// (Bevy world coordinates), if it is over a view.
+/// (Bevy world coordinates), if it is over a view, and the mesh it's on
+/// (none for the ground).
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct PlaceHover(pub Option<(Vec3, Vec3)>);
+pub struct PlaceHover(pub Option<(Vec3, Vec3, Option<Entity>)>);
 
 /// A Bevy world point in Gazebo's coordinates.
 pub fn to_gazebo(p: Vec3) -> [f64; 3] {
@@ -90,6 +91,6 @@ pub(super) fn place_hover(
         return;
     }
     *cast = Some(key);
-    let at = surface_at(&mut scene, camera, size, cursor).map(|(p, n, _)| (p, n));
+    let at = surface_at(&mut scene, camera, size, cursor);
     hover.set_if_neq(PlaceHover(at));
 }

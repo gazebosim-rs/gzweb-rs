@@ -9,7 +9,7 @@
 //! the overlays, the tree and the inspectors read them) is its element
 //! parsed, so what is drawn is what will be written.
 
-use crate::insert::Shape;
+use crate::insert::{xml_escape, Shape};
 use crate::scene::{GeometryDesc, MaterialDesc, Pose, SensorDesc, VisualDesc};
 use crate::sdf::{JointKind, WorldExtras};
 use crate::world_file::{number, sdf_pose};
@@ -224,9 +224,16 @@ pub fn shape_geometry(shape: Shape, size: f64, mass: f64) -> (String, GeometryDe
             )
         }
         Shape::Capsule => {
-            // As the Shapes tab's: the caps a fifth of its height each.
+            // As the Shapes tab's: the caps a fifth of its height each. The
+            // mass splits by volume between the cylinder and the two
+            // hemispheres, each about its own centre, carried out to the
+            // capsule's.
             let (r, l) = (0.2 * size, 0.6 * size);
-            let side = mass * (3.0 * r * r + size * size) / 12.0;
+            let (cylinder, caps) = (l, 4.0 / 3.0 * r);
+            let mc = mass * cylinder / (cylinder + caps);
+            let mh = mass - mc;
+            let side = mc * (l * l / 12.0 + r * r / 4.0)
+                + mh * (0.4 * r * r + l * l / 4.0 + 3.0 * l * r / 8.0);
             (
                 format!(
                     "<capsule><radius>{}</radius><length>{}</length></capsule>",
@@ -237,7 +244,7 @@ pub fn shape_geometry(shape: Shape, size: f64, mass: f64) -> (String, GeometryDe
                     radius: r,
                     length: l,
                 },
-                [side, side, mass * r * r / 2.0],
+                [side, side, mc * r * r / 2.0 + 0.4 * mh * r * r],
             )
         }
         Shape::Cone => {
@@ -256,6 +263,12 @@ pub fn shape_geometry(shape: Shape, size: f64, mass: f64) -> (String, GeometryDe
             )
         }
     }
+}
+
+/// How far above its centre a `size` shape's centre of mass is, when it
+/// isn't at it: a cone's is a quarter of its height below.
+pub fn shape_centroid(shape: Shape, size: f64) -> Option<f64> {
+    (shape == Shape::Cone).then_some(-size / 4.0)
 }
 
 /// The grey the Shapes tab's models are.
@@ -338,10 +351,13 @@ impl Part {
             Part::Link { name, shape, pose } => {
                 let (geometry, _, [ixx, iyy, izz]) = shape_geometry(*shape, LINK_SIZE, LINK_MASS);
                 let n = number;
+                let centroid = shape_centroid(*shape, LINK_SIZE)
+                    .map(|z| format!("<pose>0 0 {} 0 0 0</pose>", n(z)))
+                    .unwrap_or_default();
                 format!(
-                    "<link name=\"{name}\"><pose>{}</pose><inertial><mass>{}</mass><inertia>\
-                     <ixx>{}</ixx><ixy>0</ixy><ixz>0</ixz><iyy>{}</iyy><iyz>0</iyz><izz>{}</izz>\
-                     </inertia></inertial><collision name=\"collision\"><geometry>{geometry}\
+                    "<link name=\"{name}\"><pose>{}</pose><inertial>{centroid}<mass>{}</mass>\
+                     <inertia><ixx>{}</ixx><ixy>0</ixy><ixz>0</ixz><iyy>{}</iyy><iyz>0</iyz>\
+                     <izz>{}</izz></inertia></inertial><collision name=\"collision\"><geometry>{geometry}\
                      </geometry></collision><visual name=\"visual\"><geometry>{geometry}\
                      </geometry>{GREY}</visual></link>",
                     sdf_pose(pose),
@@ -400,6 +416,7 @@ impl Part {
                 )
             }
             Part::Plugin { name, filename } => {
+                let (filename, name) = (xml_escape(filename), xml_escape(name));
                 format!("<plugin filename=\"{filename}\" name=\"{name}\"/>")
             }
         }

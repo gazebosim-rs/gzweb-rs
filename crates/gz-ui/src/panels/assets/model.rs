@@ -148,6 +148,14 @@ pub(crate) struct AssetsState {
     pub parts: PartsState,
 }
 
+impl AssetsState {
+    /// Something is armed (to insert, or a part, a plugin too): Esc
+    /// disarms it, and does only that.
+    pub(crate) fn takes_escape(&self) -> bool {
+        self.armed.is_some() || self.parts.armed.is_some() || self.parts.parent.is_some()
+    }
+}
+
 /// Where an insert is.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum InsertStage {

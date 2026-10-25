@@ -17,6 +17,8 @@
 
 mod model;
 mod parts;
+
+pub(crate) use model::AssetsState;
 mod systems;
 mod view;
 
@@ -76,7 +78,7 @@ impl Plugin for AssetsPanelPlugin {
                 .view(PanelView::Ready)
                 .content::<AssetsBody>(),
         )
-        .init_resource::<model::AssetsState>()
+        .init_resource::<AssetsState>()
         .init_resource::<model::Inserts>()
         .init_resource::<systems::BuiltRows>()
         .init_resource::<gz_bevy::view::place::Placing>()
@@ -94,6 +96,7 @@ impl Plugin for AssetsPanelPlugin {
                     systems::search_typed,
                     systems::ghost,
                     parts::parts_tab,
+                    parts::forget_parent,
                     parts::place_part,
                     parts::part_ghost,
                     parts::joint_band,

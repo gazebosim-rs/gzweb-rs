@@ -4273,3 +4273,98 @@ fn parts_join_the_edited_model_until_done() {
         .collect();
     assert_eq!(dropped, [PartsDiscarded(1)]);
 }
+
+/// Undo takes a sensor selected as a part out of the selection; idle
+/// frames after Done leave the draft unchanged; the server's SDFormat is
+/// known once it comes, the draft's parts added or not.
+#[test]
+fn undo_unselects_a_part_and_idle_frames_leave_the_draft() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::GzEntity;
+    use editing::parts::{EditParts, PartCommand};
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let known = |r: &Rig| {
+        let w = r.app.world();
+        w.resource::<EditParts>()
+            .server_known(w.resource::<SdfExtras>())
+    };
+    r.app
+        .world_mut()
+        .write_message(PartCommand::Add(Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        }));
+    r.frames(2);
+    assert!(!known(&r), "the draft's extras aren't the server's");
+    let imu = super::Part {
+        kind: PartKind::Sensor,
+        owner: la,
+        name: "imu_1".into(),
+    };
+    r.app.world_mut().resource_mut::<Selection>().parts = vec![imu];
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(r.app.world().resource::<Selection>().parts.is_empty());
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(known(&r));
+    edit(&mut r, editing::EditCommand::Done);
+    r.frames(2);
+    let tick = |r: &Rig| r.app.world().resource_ref::<EditParts>().last_changed();
+    let before = tick(&r);
+    r.frames(3);
+    assert_eq!(tick(&r), before);
+}
+
+/// While a model is edited, a place reaches its links through a dimmed
+/// model in front of them, and the hover follows them too; outside
+/// editing, the model in front takes it.
+#[test]
+fn a_place_reaches_the_edited_model_through_a_dimmed_one() {
+    let (mut r, a, _, ma, b, mb) = two_editable_models();
+    let target = Vec3::new(0.0, 0.0, 0.5);
+    let camera = gz_to_bevy().inverse() * r.transform().translation;
+    // b's cube halfway from the camera to a's.
+    let mid = camera.lerp(target, 0.5);
+    r.app
+        .world_mut()
+        .get_mut::<Transform>(b)
+        .unwrap()
+        .translation = mid - Vec3::new(0.0, 3.0, 0.5);
+    r.app.update();
+    let pa = on_screen(&r, target);
+    let hit = |r: &mut Rig| {
+        r.op(ViewOp::Place {
+            at: pa,
+            keep: false,
+        });
+        let p: Vec<place::PlaceAt> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<place::PlaceAt>>()
+            .drain()
+            .collect();
+        p[0].hit
+    };
+    assert_eq!(hit(&mut r), Some(mb), "b is in front");
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert_eq!(hit(&mut r), Some(ma));
+    r.app.insert_resource(place::Placing(true));
+    r.cursor(Some(pa));
+    r.frames(2);
+    let hover = r.app.world().resource::<place::PlaceHover>().0;
+    assert_eq!(hover.and_then(|(_, _, e)| e), Some(ma));
+}
