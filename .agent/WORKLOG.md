@@ -1917,3 +1917,19 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   a change; Reset to the default is kept; unique names on load; the
   footer says when the file is left alone; the name row takes its Esc;
   cards are list items.
+
+## 2026-10-25: M9a editing a model in place (D-112)
+
+- **Entering:** Edit model (inspector, context menu), a double click
+  with Translate or Rotate, `gzweb --edit`; pauses a running sim (once
+  its stats are known), joints and frames on, the selection cleared.
+- **While editing:** picks are the model's links; the selection holds
+  its parts; other meshes at 25% (faded copies); the tree opens the
+  model and dims the rest; the EDITING pill with Done; the status bar's
+  hint; the model edits refuse.
+- **Leaving:** Done, or Esc (clearing the selection first); overlays
+  back, the sim resumed if entering paused it.
+- **Live check** (debug build, :9013 `diff_drive`, `--select vehicle_blue
+  --edit`): the pill, the dimming, the tree, the pause and the hint. The
+  capture left the sim paused; a Play request resumed it.
+- **Tests:** workspace 919 → 927 passing.
