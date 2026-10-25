@@ -4509,7 +4509,7 @@ fn done_writes_the_parts_into_the_model_as_one_edit() {
     let replacing = &r.app.world().resource::<Replacing>().0;
     assert_eq!(replacing.len(), 1);
     assert_eq!(replacing[0].0.sdf, after.sdf);
-    assert_eq!(notes(&mut r), ["Wrote a: 1 part"]);
+    assert_eq!(notes(&mut r), ["Wrote a: 1 change"]);
     let dropped = r
         .app
         .world_mut()

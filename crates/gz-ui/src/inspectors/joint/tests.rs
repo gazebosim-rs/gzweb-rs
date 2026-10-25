@@ -138,7 +138,11 @@ fn an_end_that_isnt_in_the_scene_cant_be_selected() {
         .collect();
     assert_eq!(paths, ["cart/base"], "the parent only");
     let disabled = world
-        .query_filtered::<Has<InteractionDisabled>, With<crate::inspectors::common::QuickAction>>()
+        .query_filtered::<Has<InteractionDisabled>, (
+            With<crate::inspectors::common::QuickAction>,
+            // Reparent is off too, outside editing.
+            Without<crate::panels::PartAction>,
+        )>()
         .iter(world)
         .filter(|d| *d)
         .count();

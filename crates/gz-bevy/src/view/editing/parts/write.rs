@@ -25,12 +25,12 @@ use crate::undo::{Change, ModelCopy, Record, Replacing};
 use crate::view::editing::EditCommand;
 use crate::view::model_edits::EDIT_TIMEOUT_SECS;
 
-/// "3 parts", "1 part".
-fn parts_count(n: usize) -> String {
+/// "3 changes", "1 change" (a reparent is one, not a part).
+fn changes_count(n: usize) -> String {
     if n == 1 {
-        "1 part".into()
+        "1 change".into()
     } else {
-        format!("{n} parts")
+        format!("{n} changes")
     }
 }
 
@@ -182,5 +182,5 @@ pub fn finish_writes(
     let n = parts.draft.parts().len();
     parts.written = true;
     edits.write(EditCommand::Done);
-    notes.write(EditNote(format!("Wrote {name}: {}", parts_count(n))));
+    notes.write(EditNote(format!("Wrote {name}: {}", changes_count(n))));
 }

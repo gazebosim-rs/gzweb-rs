@@ -383,3 +383,84 @@ fn a_model_is_checked_before_it_is_written() {
         Err("j has no parent link".into())
     );
 }
+
+/// A reparent gives its joint (the model's, or a nested model's) a new
+/// parent in what's shown; undo names it.
+#[test]
+fn a_reparent_changes_its_joints_parent() {
+    let mut extras = WorldExtras::default();
+    Part::Joint {
+        name: "joint_1".into(),
+        kind: JointKind::Revolute,
+        parent: "amr/a".into(),
+        child: "amr/b".into(),
+    }
+    .add_to("amr", &mut extras);
+    let reparent = Part::Reparent {
+        joint: "joint_1".into(),
+        model: "amr".into(),
+        child: "amr/b".into(),
+        parent: "amr/inner/c".into(),
+    };
+    reparent.add_to("amr", &mut extras);
+    let j = &extras.link("amr/b").unwrap().joints[0];
+    assert_eq!((j.parent.as_str(), j.child.as_str()), ("inner::c", "b"));
+    assert_eq!(reparent.sdf("amr"), "");
+    assert_eq!(reparent.link(), Some("amr/b"));
+    let mut d = Draft::default();
+    d.add(reparent);
+    assert_eq!(d.undo_label().as_deref(), Some("reparent joint_1"));
+    // Another model's joint of that name is left alone.
+    let other = Part::Reparent {
+        joint: "joint_1".into(),
+        model: "amr/inner".into(),
+        child: "amr/b".into(),
+        parent: "amr/inner/d".into(),
+    };
+    other.add_to("amr", &mut extras);
+    assert_eq!(extras.link("amr/b").unwrap().joints[0].parent, "inner::c");
+}
+
+/// A reparent is written as its joint's `<parent>`: the draft's own joint
+/// gets it in its element, a joint the model has (also a nested model's)
+/// is rewritten, the last of a joint's reparents winning.
+#[test]
+fn reparents_are_written_as_their_joints_parent() {
+    let sdf = "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"amr\">\
+               <link name=\"a\"><inertial/></link><link name=\"b\"><inertial/></link>\
+               <link name=\"c\"><inertial/></link><joint name=\"j\" type=\"fixed\">\
+               <parent>a</parent><child>b</child></joint><model name=\"inner\">\
+               <link name=\"d\"><inertial/></link><link name=\"e\"><inertial/></link>\
+               <joint name=\"k\" type=\"fixed\"><parent>d</parent><child>e</child></joint>\
+               </model></model></sdf>";
+    let reparent = |joint: &str, model: &str, child: &str, parent: &str| Part::Reparent {
+        joint: joint.into(),
+        model: model.into(),
+        child: child.into(),
+        parent: parent.into(),
+    };
+    let parts = vec![
+        Part::Joint {
+            name: "joint_1".into(),
+            kind: JointKind::Fixed,
+            parent: "amr/a".into(),
+            child: "amr/c".into(),
+        },
+        reparent("joint_1", "amr", "amr/c", "amr/b"),
+        reparent("j", "amr", "amr/b", "amr/inner/d"),
+        reparent("j", "amr", "amr/b", "amr/c"),
+        reparent("k", "amr/inner", "amr/inner/e", "amr/inner/d"),
+    ];
+    let out = write_parts(sdf, "amr", &parts).unwrap();
+    let x = WorldExtras::parse(&out).unwrap();
+    let parent = |link: &str| x.link(link).unwrap().joints[0].parent.clone();
+    assert_eq!(parent("amr/c"), "b", "the draft's joint");
+    // j's child, b, is c's child now; written over a then inner::d, c won.
+    assert_eq!(parent("amr/b"), "c");
+    assert_eq!(parent("amr/inner/e"), "d");
+    assert_eq!(check_model(&out), Ok(()), "{out}");
+    assert_eq!(
+        write_parts(sdf, "amr", &[reparent("gone", "amr", "amr/b", "amr/a")]),
+        Err("no joint gone in the model".into())
+    );
+}

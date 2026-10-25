@@ -2051,3 +2051,24 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   Not driven live: Done's clicks in the client (no capture flag adds
   parts); the tests cover them.
 - **Tests:** workspace 966 → 974 passing.
+
+## 2026-10-25: M9d the inspectors' quick actions (D-115)
+
+- **Link inspector:** Add visual, Add collision and Add sensor, a second row
+  of quick actions, put the Parts tab's shape or sensor at the link's
+  origin while its model is edited.
+- **Joint inspector:** Reparent has the next click pick the joint's new
+  parent link, with a line from its child to the pointer, the status bar's
+  hint, and D-113's tree rules; `Part::Reparent` is a draft step that undo
+  takes back.
+- Outside editing both are disabled, saying why.
+- Built while M9c was paused on the server's frame limit; an agent is
+  finishing M9c separately. M9c's write-back needs to handle
+  `Part::Reparent` (it has no element: it changes its joint's `<parent>`).
+- **Review fixes** (PR #61):
+  - a Shapes tile (or another insert) cancels an armed Reparent;
+  - a draft joint's armed Reparent is checked after the draft is back in
+    the extras;
+  - the inspector's actions keep the link selected;
+  - a removed subject's buttons say so;
+  - the leaving note counts changes.

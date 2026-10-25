@@ -1,5 +1,6 @@
 //! The Joint inspector (spec §3.5): the JOINT tag and the joint's name, its
-//! path, Select parent, Select child and Show axis, the live position,
+//! path, Select parent, Select child and Show axis, Reparent while its
+//! model is edited (§6.6), the live position,
 //! velocity and effort (from the model's joint states, when the world
 //! publishes them), a command slider for a joint with a
 //! JointPositionController on a server that takes publications
@@ -20,6 +21,7 @@ use super::common::{
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
 use crate::format;
+use crate::panels::PartAction;
 use crate::shell::{world_name, ShellSystems};
 use crate::theme::Theme;
 use crate::widgets::text::set_text;
@@ -179,6 +181,12 @@ fn build_joint(
                 r.spawn(quick_action(&t, "Show axis", None))
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::ShowJoints);
+            });
+            b.spawn(quick_actions()).with_children(|r| {
+                let action = PartAction::Reparent;
+                r.spawn(quick_action(&t, action.label(), Some(action.unavailable())))
+                    .insert(quick_action_node(&t))
+                    .insert(action);
             });
             group(
                 b,

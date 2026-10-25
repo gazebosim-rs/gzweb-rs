@@ -458,8 +458,13 @@ visual / collision / sensor, Reparent).
   removes and records one "edit X"), `undo::Replacing` (create once the old model has gone,
   for Done and for undo and redo of it), the pill's Discard and the status notes. The server's
   `whole-messages.patch` joins a message's pieces; the long frame probe (`GzStatus::long_frames`)
-  lifts `MAX_FRAME` there, for model edits too; elsewhere Done with parts refuses. Left: M9d
-  (its Reparent is one more edit in `write_parts`).
+  lifts `MAX_FRAME` there, for model edits too; elsewhere Done with parts refuses. Its Reparent is
+  written too: a draft joint's `<parent>`, or the server joint's.
+- **M9d notes:** the inspectors' quick actions (D-115): Add visual, Add collision and Add sensor
+  on the Link inspector put the Parts tab's shape or sensor at the link's origin; Reparent on
+  the Joint inspector has the next click pick the joint's new parent (`Part::Reparent`, D-113's
+  rules). Live only while the model is edited.
+  M9c writes them back.
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

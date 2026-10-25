@@ -19,6 +19,7 @@ mod model;
 mod parts;
 
 pub(crate) use model::AssetsState;
+pub(crate) use parts::{PartAction, REPARENT_HINT};
 mod systems;
 mod view;
 
@@ -96,8 +97,12 @@ impl Plugin for AssetsPanelPlugin {
                     systems::search_typed,
                     systems::ghost,
                     parts::parts_tab,
-                    parts::forget_parent,
+                    // After the draft's parts are back in the extras (a
+                    // reply drops them for a moment): a draft joint to
+                    // reparent is still there.
+                    parts::forget_parent.after(gz_bevy::view::editing::parts::patch_extras),
                     parts::place_part,
+                    parts::part_action_states,
                     parts::part_ghost,
                     parts::joint_band,
                     parts::parts_discarded,

@@ -1,7 +1,8 @@
 //! The Link inspector (spec §3.5): the LINK tag and the link's name, its
-//! path, Select model, Show inertia and Show collision, the live pose in
-//! its model's frame, and the inertial, flags and geometry from the scene
-//! and the world's SDFormat.
+//! path, Select model, Show inertia and Show collision, Add visual, Add
+//! collision and Add sensor while its model is edited (§6.6), the live
+//! pose in its model's frame, and the inertial, flags and geometry from the
+//! scene and the world's SDFormat.
 
 use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
@@ -15,6 +16,7 @@ use super::common::{
 };
 use super::{InspectKind, Inspected, InspectorDef, InspectorId, RegisterInspector};
 use crate::format;
+use crate::panels::PartAction;
 use crate::shell::world_name;
 use crate::theme::Theme;
 
@@ -99,6 +101,17 @@ fn build_link(
                 r.spawn(quick_action(&t, "Show collision", None))
                     .insert(quick_action_node(&t))
                     .insert(EntityAction::ShowCollision);
+            });
+            b.spawn(quick_actions()).with_children(|r| {
+                for action in [
+                    PartAction::Visual,
+                    PartAction::Collision,
+                    PartAction::Sensor,
+                ] {
+                    r.spawn(quick_action(&t, action.label(), Some(action.unavailable())))
+                        .insert(quick_action_node(&t))
+                        .insert(action);
+                }
             });
             pose_group(b, &t, "Pose (in model)", PoseFrame::Parent, false);
             let inertial = extras.as_ref().and_then(|e| e.inertial);

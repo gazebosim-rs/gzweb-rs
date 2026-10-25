@@ -458,6 +458,8 @@ As built (D-113, M9b): the Parts tab, its six tiles and the shape, joint and sen
 
 As built (D-114, M9c): Done validates the draft's model (every link has inertia or a static model; joints have both ends, in the model), writes the parts into its SDFormat, removes it and creates it again from that, and resumes the sim; why it can't shows in the status bar and editing goes on. While there are parts to write the pill also shows Discard, which leaves without them. Undo after Done puts the whole session back as one step ("edit amr"); the parts' own undo is the draft's while editing. Write-back needs a server that joins a websocket message's pieces (the image's whole-messages patch, found by a probe); on one that doesn't, Done with parts refuses.
 
+As built (D-115, M9d): the Link inspector's Add visual, Add collision and Add sensor (at the link's origin, as the Parts tab chooses) and the Joint inspector's Reparent (the next click picks the new parent link), live while their model is edited; each a step of the draft, undoable.
+
 ### 6.4 Selection model
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 

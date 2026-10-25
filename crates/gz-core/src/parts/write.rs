@@ -12,11 +12,38 @@ use super::{sdf_link_name, Part};
 /// `sdf` (a document holding model `model`, a scene path) with `parts`
 /// written into it, in order: a link, joint or plugin last in the model; a
 /// visual, collision or sensor last in its link (a link the draft adds
-/// gets them in its own element). The rest of the text stays as it was:
-/// each part is a text edit to it (`edits`, applied from the end), so a
-/// part that changes an element already there rather than adding one (a
-/// joint's new parent) is one more edit.
+/// gets them in its own element); a reparent as its joint's `<parent>`
+/// (the draft's own joint written with it, the model's rewritten). The
+/// rest of the text stays as it was: each part is a text edit to it
+/// (`edits`, applied from the end).
 pub fn write_parts(sdf: &str, model: &str, parts: &[Part]) -> Result<String, String> {
+    // A reparent of the draft's own joint goes into its element; the last
+    // of a joint's reparents wins.
+    let mut parts: Vec<Part> = parts.to_vec();
+    let mut reparents: Vec<(String, String, String)> = Vec::new();
+    for i in 0..parts.len() {
+        let Part::Reparent {
+            joint,
+            model: owner,
+            parent: to,
+            ..
+        } = parts[i].clone()
+        else {
+            continue;
+        };
+        let draft = parts[..i].iter_mut().find_map(|p| match p {
+            Part::Joint { name, parent, .. } if *name == joint && owner == model => Some(parent),
+            _ => None,
+        });
+        match draft {
+            Some(parent) => *parent = to,
+            None => {
+                reparents.retain(|(j, o, _)| !(*j == joint && *o == owner));
+                reparents.push((joint, owner, to));
+            }
+        }
+    }
+    let parts = parts.as_slice();
     let doc = roxmltree::Document::parse(sdf).map_err(|e| e.to_string())?;
     let top = doc
         .root_element()
@@ -49,10 +76,26 @@ pub fn write_parts(sdf: &str, model: &str, parts: &[Part]) -> Result<String, Str
                 in_model.push_str(&element);
             }
             Part::Joint { .. } | Part::Plugin { .. } => in_model.push_str(&p.sdf(model)),
-            Part::Visual { .. } | Part::Collision { .. } | Part::Sensor { .. } => {}
+            Part::Visual { .. }
+            | Part::Collision { .. }
+            | Part::Sensor { .. }
+            | Part::Reparent { .. } => {}
         }
     }
     let mut edits = Vec::new();
+    for (joint, owner, to) in &reparents {
+        let element = find_model(top, model, owner)
+            .and_then(|m| named(m, "joint", joint))
+            .ok_or_else(|| format!("no joint {joint} in the model"))?;
+        let parent = element
+            .children()
+            .find(|c| c.has_tag_name("parent"))
+            .ok_or_else(|| format!("{joint} has no parent link"))?;
+        edits.push((
+            parent.range(),
+            format!("<parent>{}</parent>", sdf_link_name(owner, to)),
+        ));
+    }
     for (path, text) in &on_links {
         let link = find_link(top, model, path)
             .ok_or_else(|| format!("no link {} in the model", sdf_link_name(model, path)))?;
@@ -67,6 +110,17 @@ pub fn write_parts(sdf: &str, model: &str, parts: &[Part]) -> Result<String, Str
         out.replace_range(range, &text);
     }
     Ok(out)
+}
+
+/// The model scene path `path` names: `top` (model `model`) or one nested
+/// in it.
+fn find_model<'a, 'i>(top: Node<'a, 'i>, model: &str, path: &str) -> Option<Node<'a, 'i>> {
+    if path == model {
+        return Some(top);
+    }
+    let rest = path.strip_prefix(model)?.strip_prefix('/')?;
+    rest.split('/')
+        .try_fold(top, |at, name| named(at, "model", name))
 }
 
 /// The link scene path `path` names under `top` (model `model`), through
