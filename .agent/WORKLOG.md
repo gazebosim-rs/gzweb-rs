@@ -1895,3 +1895,18 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   where it ends, with its axis view; the tray closes without its chip;
   Alt+1–4 wait out an edit; the tray counts its rows.
 - **Tests:** workspace 890 → 899 passing.
+
+## 2026-10-24: M8e the Workspaces panel (D-111)
+
+- **Panel:** no activity button; Manage…, ⌘K and `gzweb --workspaces`
+  open it. Cards (72×44 thumbnails, what each shows, Alt+N, "modified"),
+  the current layout's summary, Save to …, Save as new…, Reset; the
+  footer's note and Import / export layouts… (Export only).
+- **Workspaces:** the user's own join §8's four (`user_N` in the file,
+  names and order in `custom`), in the switcher and ⌘K; Delete; Reset
+  puts back the layout as saved, then §8's default; Build unsaved takes
+  the app's start as its layout; the panel stands over the layout it
+  shows (`Beneath`), never saved.
+- **Live check** (debug build, :9013 `diff_drive`): the panel's cards,
+  summary and buttons.
+- **Tests:** workspace 899 → 912 passing.
