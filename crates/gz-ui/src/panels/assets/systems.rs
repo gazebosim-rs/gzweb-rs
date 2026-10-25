@@ -655,6 +655,7 @@ fn toggle_armed(state: &mut AssetsState, what: Insertable) {
     };
     state.parts.armed = None;
     state.parts.parent = None;
+    state.parts.reparent = None;
 }
 
 /// A tile arms its shape or light.

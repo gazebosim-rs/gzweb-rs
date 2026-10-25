@@ -823,9 +823,10 @@ pub(super) fn parts_discarded(
     mut note: ResMut<StatusNote>,
 ) {
     for PartsDiscarded(n) in dropped.read() {
-        let parts = if *n == 1 { "part" } else { "parts" };
+        // A reparent is a change, not a part.
+        let changes = if *n == 1 { "change" } else { "changes" };
         note.show(
-            format!("{n} {parts} not kept: writing parts to the model comes later"),
+            format!("{n} {changes} not kept: writing parts to the model comes later"),
             time.elapsed_secs_f64(),
         );
     }
@@ -1006,7 +1007,7 @@ pub(super) fn on_part_action(
         return;
     }
     if let Some(part) = model.part_on(tool, link, Vec3::ZERO, Vec3::ZERO, &state.parts) {
-        out.write(PartCommand::Add(part));
+        out.write(PartCommand::AddKept(part));
     }
 }
 
@@ -1045,7 +1046,11 @@ pub(super) fn part_action_states(
                 commands.entity(e).remove::<InteractionDisabled>();
             }
         }
-        let detail = (!live).then(|| action.unavailable().to_string());
+        let detail = match (live, inspected.removed) {
+            (false, _) => Some(action.unavailable().to_string()),
+            (true, true) => Some("It was removed".to_string()),
+            (true, false) => None,
+        };
         if tooltip.detail != detail {
             tooltip.detail = detail;
         }

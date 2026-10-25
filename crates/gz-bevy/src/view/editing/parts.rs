@@ -32,7 +32,11 @@ pub struct DraftPart;
 /// Adds a part to the model being edited.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub enum PartCommand {
+    /// Adds it, selecting it if it is an entity (a click in the view).
     Add(Part),
+    /// Adds it and leaves the selection as it is (an inspector's quick
+    /// action: the inspector stays on its link).
+    AddKept(Part),
 }
 
 /// Leaving editing dropped this many parts (they aren't written back
@@ -243,9 +247,13 @@ pub fn run_parts(
         undos.clear();
         return;
     };
-    for PartCommand::Add(part) in adds.read() {
+    for cmd in adds.read() {
+        let (part, select) = match cmd {
+            PartCommand::Add(part) => (part, true),
+            PartCommand::AddKept(part) => (part, false),
+        };
         let e = scene.show(part, &path);
-        if let Some(e) = e {
+        if let Some(e) = e.filter(|_| select) {
             *selection = Selection {
                 entities: vec![e],
                 parts: Vec::new(),

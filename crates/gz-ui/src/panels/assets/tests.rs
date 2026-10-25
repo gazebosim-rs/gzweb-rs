@@ -856,7 +856,7 @@ fn undo_takes_a_part_back_and_done_drops_them() {
     assert!(at_path(&mut app, "edited/link_1").is_none());
     assert_eq!(
         status_note(&app).as_deref(),
-        Some("1 part not kept: writing parts to the model comes later")
+        Some("1 change not kept: writing parts to the model comes later")
     );
 }
 
@@ -1104,12 +1104,11 @@ fn the_link_inspector_adds_parts_while_editing() {
         app.world().get::<Transform>(v).unwrap().translation,
         Vec3::ZERO
     );
-    // The new visual is selected, as the Parts tab's are: back to the link.
+    // The link stays selected: the inspector stays with it.
     assert_eq!(
         app.world().resource::<gz_bevy::view::Selection>().entities,
-        [v]
+        [a]
     );
-    inspect(&mut app, a, None);
     app.world_mut().resource_mut::<AssetsState>().parts.sensor = gz_core::parts::SensorKind::Imu;
     let (sensor, _) = part_action(&mut app, PartAction::Sensor);
     activate(&mut app, sensor);
@@ -1214,5 +1213,123 @@ fn reparent_picks_a_joints_new_parent() {
         extras.link("edited/b").unwrap().joints[0].parent,
         "a",
         "undone"
+    );
+}
+
+/// Reparent on a nested model's joint keeps the new parent in that model;
+/// a draft joint reparents too, twice, with undo and redo; a Shapes tile or
+/// leaving cancels it; outside editing the button says to edit the model.
+#[test]
+fn reparent_works_on_nested_and_draft_joints() {
+    use super::parts::PartAction;
+    use gz_bevy::undo::UndoCommand;
+    let (mut app, model, a, b) = editing_parts();
+    let spawn = |app: &mut App, name: &str, path: &str, kind, parent| {
+        app.world_mut()
+            .spawn((
+                gz_bevy::spawn::GzEntity {
+                    name: name.into(),
+                    id: 0,
+                    kind,
+                    path: path.into(),
+                },
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(parent),
+            ))
+            .id()
+    };
+    use gz_core::scene::NodeKind;
+    let inner = spawn(&mut app, "inner", "edited/inner", NodeKind::Model, model);
+    let c = spawn(&mut app, "c", "edited/inner/c", NodeKind::Link, inner);
+    let _d = spawn(&mut app, "d", "edited/inner/d", NodeKind::Link, inner);
+    let e = spawn(&mut app, "e", "edited/inner/e", NodeKind::Link, inner);
+    server_sdf(
+        &mut app,
+        "<link name=\"a\"/><link name=\"b\"/><model name=\"inner\"><link name=\"c\"/>\
+         <link name=\"d\"/><link name=\"e\"/><joint name=\"w\" type=\"fixed\">\
+         <parent>c</parent><child>d</child></joint></model>",
+    );
+    let extras = |app: &App| {
+        app.world()
+            .resource::<gz_bevy::overlays::extras::SdfExtras>()
+            .extras
+            .clone()
+            .unwrap()
+    };
+    let arm = |app: &mut App, owner, joint: &str| {
+        inspect(app, owner, Some(joint));
+        let (r, off) = part_action(app, PartAction::Reparent);
+        assert!(!off, "{joint}");
+        activate(app, r);
+    };
+    // The nested model's joint: a top-level link is refused, e is taken.
+    arm(&mut app, inner, "w");
+    place(&mut app, [0.0; 3], Some(a), false);
+    assert_eq!(status_note(&app).as_deref(), Some("Click a link of inner"));
+    place(&mut app, [0.0; 3], Some(e), false);
+    let w = extras(&app).link("edited/inner/d").unwrap().joints[0].clone();
+    assert_eq!((w.parent.as_str(), w.model.as_str()), ("e", "edited/inner"));
+    // A Shapes tile cancels an armed reparent.
+    arm(&mut app, inner, "w");
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Shapes;
+    frames(&mut app, 2);
+    let sphere = tile(&mut app, &Insertable::Shape(Shape::Sphere));
+    activate(&mut app, sphere);
+    assert_eq!(parts_state(&app).reparent, None);
+    activate(&mut app, sphere);
+    // A draft joint a→b, reparented to a new link, then to inner's c.
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Parts;
+    frames(&mut app, 2);
+    let joint = part_tile(&mut app, PartTool::Joint);
+    activate(&mut app, joint);
+    place(&mut app, [0.0; 3], Some(a), false);
+    place(&mut app, [0.0; 3], Some(b), false);
+    let link = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, link);
+    place(&mut app, [6.0, 0.0, 0.0], None, false);
+    let (l1, _) = at_path(&mut app, "edited/link_1").unwrap();
+    arm(&mut app, model, "joint_1");
+    place(&mut app, [0.0; 3], Some(l1), false);
+    let parent = |app: &App| {
+        extras(app).link("edited/b").unwrap().joints[0]
+            .parent
+            .clone()
+    };
+    assert_eq!(parent(&app), "link_1");
+    arm(&mut app, model, "joint_1");
+    place(&mut app, [0.0; 3], Some(c), false);
+    assert_eq!(parent(&app), "inner::c");
+    for (cmd, want) in [
+        (UndoCommand::Undo, "link_1"),
+        (UndoCommand::Undo, "a"),
+        (UndoCommand::Redo, "link_1"),
+    ] {
+        app.world_mut().write_message(cmd);
+        frames(&mut app, 3);
+        assert_eq!(parent(&app), want, "{cmd:?}");
+    }
+    // Leaving cancels an armed reparent, and it stays off in another model.
+    arm(&mut app, model, "joint_1");
+    let root = app.world().get::<ChildOf>(model).unwrap().parent();
+    let other = spawn(&mut app, "other", "other", NodeKind::Model, root);
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    frames(&mut app, 3);
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Enter(other));
+    frames(&mut app, 3);
+    assert_eq!(parts_state(&app).reparent, None);
+    // Outside editing.
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    frames(&mut app, 3);
+    inspect(&mut app, inner, Some("w"));
+    let (r, off) = part_action(&mut app, PartAction::Reparent);
+    assert!(off);
+    let tooltip = app.world().get::<crate::widgets::Tooltip>(r).unwrap();
+    assert_eq!(
+        tooltip.detail.as_deref(),
+        Some("Edit the model to reparent its joints")
     );
 }

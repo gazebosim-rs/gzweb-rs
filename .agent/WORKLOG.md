@@ -2033,3 +2033,10 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - Built while M9c was paused on the server's frame limit; an agent is
   finishing M9c separately. M9c's write-back needs to handle
   `Part::Reparent` (it has no element: it changes its joint's `<parent>`).
+- **Review fixes** (PR #61):
+  - a Shapes tile (or another insert) cancels an armed Reparent;
+  - a draft joint's armed Reparent is checked after the draft is back in
+    the extras;
+  - the inspector's actions keep the link selected;
+  - a removed subject's buttons say so;
+  - the leaving note counts changes.
