@@ -97,8 +97,10 @@ pub(crate) struct Shortcuts<'w, 's> {
     marquee: Option<Res<'w, gz_bevy::view::Marquee>>,
     /// So does a gizmo drag (its Esc puts the selection back, D-84).
     gizmo: Option<Res<'w, gz_bevy::view::gizmo::GizmoState>>,
-    /// And placing: Esc stops it (D-102).
+    /// And placing: Esc stops it (D-102), and a part armed that isn't
+    /// placed (a plugin).
     placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
+    assets: Option<Res<'w, crate::panels::AssetsState>>,
     scrubs: Query<'w, 's, (), With<crate::widgets::number_field::Scrub>>,
 }
 
@@ -126,7 +128,8 @@ impl Shortcuts<'_, '_> {
         let esc_taken = self.menu_esc.0
             || self.marquee.as_ref().is_some_and(|m| m.0.is_some())
             || self.gizmo.as_ref().is_some_and(|g| g.takes_escape())
-            || self.placing.as_ref().is_some_and(|p| p.0);
+            || self.placing.as_ref().is_some_and(|p| p.0)
+            || self.assets.as_ref().is_some_and(|a| a.takes_escape());
         map.just_pressed(&self.keys, &scopes)
             .filter(|b| {
                 !(esc_taken

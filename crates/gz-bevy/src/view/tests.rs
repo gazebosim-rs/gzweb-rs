@@ -4162,3 +4162,209 @@ fn faded_copies_follow_their_materials_and_terrain_fades() {
         .get::<editing::Dimmed<TerrainMaterial>>(terrain)
         .is_none());
 }
+
+/// Parts added while editing: a link spawns under the model, selected; a
+/// sensor joins its link's; the extras get them; undo and redo take the
+/// last back and put it back; Done drops them, the extras the server's
+/// again.
+#[test]
+fn parts_join_the_edited_model_until_done() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::{GzEntity, GzSensors};
+    use editing::parts::{EditParts, PartCommand, PartsDiscarded};
+    use gz_core::insert::Shape;
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let add = |r: &mut Rig, part: Part| {
+        r.app.world_mut().write_message(PartCommand::Add(part));
+        r.app.update();
+        r.app.update();
+    };
+    add(
+        &mut r,
+        Part::Link {
+            name: "link_1".into(),
+            shape: Shape::Box,
+            pose: Pose {
+                pos: [1.0, 0.0, 0.25],
+                quat: [0.0, 0.0, 0.0, 1.0],
+            },
+        },
+    );
+    let link = |r: &mut Rig| {
+        let world = r.app.world_mut();
+        world
+            .query::<(Entity, &GzEntity, &ChildOf)>()
+            .iter(world)
+            .find(|(_, g, _)| g.path == "a/link_1")
+            .map(|(e, _, p)| (e, p.parent()))
+    };
+    let (l1, parent) = link(&mut r).expect("the link");
+    assert_eq!(parent, a);
+    assert_eq!(selected(&r), [l1]);
+    let t = r.app.world().get::<Transform>(l1).unwrap().translation;
+    assert_eq!(t, Vec3::new(1.0, 0.0, 0.25));
+    add(
+        &mut r,
+        Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        },
+    );
+    let sensors = |r: &Rig| r.app.world().get::<GzSensors>(la).map_or(0, |s| s.0.len());
+    assert_eq!(sensors(&r), 1);
+    let extras = |r: &Rig| r.app.world().resource::<SdfExtras>().extras.clone();
+    let e = extras(&r).expect("the draft's");
+    assert!(e.link("a/link_1").is_some());
+    assert_eq!(e.link("a/base").unwrap().sensors[0].name, "imu_1");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert_eq!(sensors(&r), 0);
+    assert!(extras(&r).unwrap().link("a/base").is_none());
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), None, "the server's: none yet");
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Redo);
+    r.app.update();
+    r.app.update();
+    assert!(link(&mut r).is_some());
+    assert_eq!(
+        r.app
+            .world()
+            .resource::<EditParts>()
+            .draft
+            .undo_label()
+            .as_deref(),
+        Some("add link_1")
+    );
+    // A reply while editing gets the draft's parts too.
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(extras(&r).unwrap().link("a/link_1").is_some());
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .clear();
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(link(&mut r).is_none());
+    assert_eq!(extras(&r), Some(gz_core::sdf::WorldExtras::default()));
+    let dropped: Vec<PartsDiscarded> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .drain()
+        .collect();
+    assert_eq!(dropped, [PartsDiscarded(1)]);
+}
+
+/// Undo takes a sensor selected as a part out of the selection; idle
+/// frames after Done leave the draft unchanged; the server's SDFormat is
+/// known once it comes, the draft's parts added or not.
+#[test]
+fn undo_unselects_a_part_and_idle_frames_leave_the_draft() {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::GzEntity;
+    use editing::parts::{EditParts, PartCommand};
+    use gz_core::parts::{Part, SensorKind};
+    use gz_core::scene::Pose;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app.init_resource::<SdfExtras>();
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    edit(&mut r, editing::EditCommand::Enter(a));
+    let known = |r: &Rig| {
+        let w = r.app.world();
+        w.resource::<EditParts>()
+            .server_known(w.resource::<SdfExtras>())
+    };
+    r.app
+        .world_mut()
+        .write_message(PartCommand::Add(Part::Sensor {
+            link: "a/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        }));
+    r.frames(2);
+    assert!(!known(&r), "the draft's extras aren't the server's");
+    let imu = super::Part {
+        kind: PartKind::Sensor,
+        owner: la,
+        name: "imu_1".into(),
+    };
+    r.app.world_mut().resource_mut::<Selection>().parts = vec![imu];
+    r.app
+        .world_mut()
+        .write_message(crate::undo::UndoCommand::Undo);
+    r.app.update();
+    assert!(r.app.world().resource::<Selection>().parts.is_empty());
+    {
+        let mut x = r.app.world_mut().resource_mut::<SdfExtras>();
+        x.extras = Some(gz_core::sdf::WorldExtras::default());
+        x.generation += 1;
+    }
+    r.app.update();
+    assert!(known(&r));
+    edit(&mut r, editing::EditCommand::Done);
+    r.frames(2);
+    let tick = |r: &Rig| r.app.world().resource_ref::<EditParts>().last_changed();
+    let before = tick(&r);
+    r.frames(3);
+    assert_eq!(tick(&r), before);
+}
+
+/// While a model is edited, a place reaches its links through a dimmed
+/// model in front of them, and the hover follows them too; outside
+/// editing, the model in front takes it.
+#[test]
+fn a_place_reaches_the_edited_model_through_a_dimmed_one() {
+    let (mut r, a, _, ma, b, mb) = two_editable_models();
+    let target = Vec3::new(0.0, 0.0, 0.5);
+    let camera = gz_to_bevy().inverse() * r.transform().translation;
+    // b's cube halfway from the camera to a's.
+    let mid = camera.lerp(target, 0.5);
+    r.app
+        .world_mut()
+        .get_mut::<Transform>(b)
+        .unwrap()
+        .translation = mid - Vec3::new(0.0, 3.0, 0.5);
+    r.app.update();
+    let pa = on_screen(&r, target);
+    let hit = |r: &mut Rig| {
+        r.op(ViewOp::Place {
+            at: pa,
+            keep: false,
+        });
+        let p: Vec<place::PlaceAt> = r
+            .app
+            .world_mut()
+            .resource_mut::<Messages<place::PlaceAt>>()
+            .drain()
+            .collect();
+        p[0].hit
+    };
+    assert_eq!(hit(&mut r), Some(mb), "b is in front");
+    edit(&mut r, editing::EditCommand::Enter(a));
+    assert_eq!(hit(&mut r), Some(ma));
+    r.app.insert_resource(place::Placing(true));
+    r.cursor(Some(pa));
+    r.frames(2);
+    let hover = r.app.world().resource::<place::PlaceHover>().0;
+    assert_eq!(hover.and_then(|(_, _, e)| e), Some(ma));
+}

@@ -1094,17 +1094,31 @@ impl ViewScene<'_, '_> {
     }
 
     /// The nearest mesh on the ray, else where it meets the ground, within
-    /// `far`, and the surface's normal there, facing the ray's origin.
-    fn surface_hit(&mut self, ray: Ray3d, far: f32) -> Option<(Vec3, Vec3)> {
+    /// `far`, the surface's normal there, facing the ray's origin, and the
+    /// mesh (none for the ground). While a model is edited, its own meshes
+    /// come first: the others are see-through, so a click reaches its
+    /// links through them.
+    fn surface_hit(&mut self, ray: Ray3d, far: f32) -> Option<(Vec3, Vec3, Option<Entity>)> {
         let skip = &self.skip;
-        let filter = |e: Entity| !skip.contains(e);
-        let settings = MeshRayCastSettings::default().with_filter(&filter);
-        if let Some((_, hit)) = self.ray_cast.cast_ray(ray, &settings).first() {
-            let n = hit.normal.normalize_or(Vec3::Y);
+        let parents = &self.parents;
+        let editing = self.editing();
+        let mut cast = |inside: Option<Entity>| {
+            let filter = |e: Entity| {
+                !skip.contains(e) && inside.is_none_or(|m| editing::is_under(parents, e, m))
+            };
+            let settings = MeshRayCastSettings::default().with_filter(&filter);
+            self.ray_cast
+                .cast_ray(ray, &settings)
+                .first()
+                .map(|(e, hit)| (*e, hit.point, hit.normal))
+        };
+        let hit = editing.and_then(|m| cast(Some(m))).or_else(|| cast(None));
+        if let Some((e, point, normal)) = hit {
+            let n = normal.normalize_or(Vec3::Y);
             let n = if n.dot(*ray.direction) > 0.0 { -n } else { n };
-            return Some((hit.point, n));
+            return Some((point, n, Some(e)));
         }
-        ground_point(ray, far).map(|p| (p, Vec3::Y))
+        ground_point(ray, far).map(|p| (p, Vec3::Y, None))
     }
 
     /// What ⇧F and ⇧T follow: the first selected entity, else the
@@ -1388,11 +1402,12 @@ pub fn apply_view_commands(
             };
             let f = frame(camera);
             if let ViewOp::Place { at, keep } = cmd.op {
-                if let Some((p, n)) = place::surface_at(&mut scene, (&t, &p), f.size, at) {
+                if let Some((p, n, hit)) = place::surface_at(&mut scene, (&t, &p), f.size, at) {
                     placed.write(place::PlaceAt {
                         point: place::to_gazebo(p),
                         normal: place::to_gazebo(n),
                         keep,
+                        hit,
                     });
                 }
                 continue;

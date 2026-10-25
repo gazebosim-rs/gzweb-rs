@@ -1,5 +1,7 @@
 //! The Assets panel (spec §3.3, §3.3.1; DECISIONS.md D-102): shapes,
-//! lights, Fuel models and local models to insert into the world.
+//! lights, Fuel models and local models to insert into the world, and,
+//! while a model is edited, the parts to add to it (the Parts tab, §6.6,
+//! D-113: `parts`).
 //!
 //! A tile, a Fuel result's Insert or the Local tab's Insert arms it:
 //! clicks in the views then place it on the surface under the pointer
@@ -14,6 +16,9 @@
 //! respawned at any time.
 
 mod model;
+mod parts;
+
+pub(crate) use model::AssetsState;
 mod systems;
 mod view;
 
@@ -38,13 +43,14 @@ pub struct AssetsStart {
 impl std::str::FromStr for AssetsStart {
     type Err = String;
 
-    /// `shapes`, `lights`, `local`, `fuel` or `fuel:QUERY`.
+    /// `shapes`, `lights`, `local`, `parts` (showing while a model is
+    /// edited), `fuel` or `fuel:QUERY`.
     fn from_str(s: &str) -> Result<Self, String> {
         let (tab, query) = s.split_once(':').unwrap_or((s, ""));
         let tab = model::AssetTab::ALL
             .into_iter()
             .find(|t| t.label().eq_ignore_ascii_case(tab))
-            .ok_or_else(|| format!("not a tab (shapes, lights, fuel, local): {tab}"))?;
+            .ok_or_else(|| format!("not a tab (shapes, lights, fuel, local, parts): {tab}"))?;
         if !query.is_empty() && tab != model::AssetTab::Fuel {
             return Err("only the Fuel tab takes a query".into());
         }
@@ -72,7 +78,7 @@ impl Plugin for AssetsPanelPlugin {
                 .view(PanelView::Ready)
                 .content::<AssetsBody>(),
         )
-        .init_resource::<model::AssetsState>()
+        .init_resource::<AssetsState>()
         .init_resource::<model::Inserts>()
         .init_resource::<systems::BuiltRows>()
         .init_resource::<gz_bevy::view::place::Placing>()
@@ -89,6 +95,12 @@ impl Plugin for AssetsPanelPlugin {
                     systems::settle,
                     systems::search_typed,
                     systems::ghost,
+                    parts::parts_tab,
+                    parts::forget_parent,
+                    parts::place_part,
+                    parts::part_ghost,
+                    parts::joint_band,
+                    parts::parts_discarded,
                 )
                     .chain(),
                 (
@@ -101,6 +113,7 @@ impl Plugin for AssetsPanelPlugin {
                     systems::row_bars,
                     systems::sync_inserts,
                     systems::move_bars,
+                    parts::tab_systems(),
                 )
                     .chain()
                     .after(systems::ghost)
@@ -117,6 +130,7 @@ impl Plugin for AssetsPanelPlugin {
         .add_observer(systems::on_local_insert)
         .add_observer(systems::on_dismiss)
         .add_observer(systems::on_submit);
+        parts::observers(app);
     }
 }
 

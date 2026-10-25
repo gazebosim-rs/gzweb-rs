@@ -455,8 +455,9 @@ fn undo_redo(
             continue;
         };
         let verb = if undo { "undo" } else { "redo" };
+        // The edited model's parts are what undo takes back then
+        // (`view::editing::parts`).
         if editing.as_deref().is_some_and(|e| e.model().is_some()) {
-            warn!("can't {verb} {} while editing a model", edit.label);
             continue;
         }
         let moves = edit.steps.iter().any(Step::asks_server);

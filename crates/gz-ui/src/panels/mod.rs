@@ -65,6 +65,7 @@ use bevy::prelude::*;
 
 use crate::assets::IconId;
 use crate::registry::{self, ui_id, Registered, Registry};
+pub(crate) use assets::AssetsState;
 pub use assets::{AssetsPanelPlugin, AssetsStart, ASSETS};
 pub use console::{ConsolePanelPlugin, ConsoleStart, ConsoleUnread, CONSOLE};
 pub use plot::{PlotCharts, PlotPanelPlugin, PlotPick, PlotStart, PLOT};

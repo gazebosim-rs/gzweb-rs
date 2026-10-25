@@ -256,6 +256,23 @@ impl GeometryAssets<'_> {
         };
         spawn_geometry(&mut ctx, visual, parent, name);
     }
+
+    /// Spawns `node` and what it holds under `parent`, as the scene
+    /// message's nodes are, but known to no [`GzIndex`]: a part added to a
+    /// model being edited (`view::editing::parts`). Returns it.
+    pub fn spawn_node(&mut self, commands: &mut Commands, node: &Node, parent: Entity) -> Entity {
+        let mut index = GzIndex::default();
+        let mut ctx = SpawnCtx {
+            commands,
+            index: &mut index,
+            loads: &mut self.loads,
+            meshes: &mut self.meshes,
+            materials: &mut self.materials,
+            gz_materials: &mut self.gz_materials,
+            asset_server: &self.asset_server,
+        };
+        spawn_node(&mut ctx, node, parent)
+    }
 }
 
 pub fn pose_transform(pose: &Pose, scale: [f64; 3]) -> Transform {
@@ -268,7 +285,7 @@ pub fn pose_transform(pose: &Pose, scale: [f64; 3]) -> Transform {
     }
 }
 
-fn spawn_node(ctx: &mut SpawnCtx, node: &Node, parent: Entity) {
+fn spawn_node(ctx: &mut SpawnCtx, node: &Node, parent: Entity) -> Entity {
     let entity = ctx
         .commands
         .spawn((
@@ -315,6 +332,7 @@ fn spawn_node(ctx: &mut SpawnCtx, node: &Node, parent: Entity) {
     for child in &node.children {
         spawn_node(ctx, child, entity);
     }
+    entity
 }
 
 /// Child entity holding the renderable geometry, in the visual's Gazebo frame.

@@ -41,7 +41,9 @@ pub(crate) const NOT_CONNECTED: &str = "Not connected: connect to insert into a 
 pub(crate) const NO_EDITS: &str =
     "This server doesn't take edits, so nothing can be inserted (it needs the patched \
      websocket server)";
-pub(crate) const EDITING: &str = "Not while editing a model";
+pub(crate) const EDITING: &str =
+    "Editing a model: a shape adds a link to it, the Parts tab the rest. Done to insert into the \
+     world";
 
 /// What the panel's message says before a search.
 pub(crate) const SEARCH_PROMPT: &str = "Search Fuel for models";
@@ -82,6 +84,21 @@ impl Inserting<'_> {
             return Err(EDITING);
         }
         status.and_then(|s| s.world.clone()).ok_or(NOT_CONNECTED)
+    }
+
+    /// A model is being edited: a shape adds a link to it (the Parts tab
+    /// the rest); nothing goes into the world.
+    pub(super) fn editing(&self) -> bool {
+        self.editing.as_deref().is_some_and(|e| e.model().is_some())
+    }
+
+    /// Whether `what` can be armed now.
+    pub(super) fn allows(&self, what: &Insertable) -> bool {
+        if self.editing() {
+            matches!(what, Insertable::Shape(s) if *s != Shape::Plane)
+        } else {
+            self.world().is_ok()
+        }
     }
 
     fn changed(&self) -> bool {
@@ -133,10 +150,20 @@ pub(super) fn arm(
     let esc = keys.just_pressed(KeyCode::Escape)
         && !gizmo.is_some_and(|g| g.takes_escape())
         && !menu_esc.is_some_and(|m| m.0);
-    if state.armed.is_some() && (esc || inserting.world().is_err()) {
+    let allowed = state.armed.as_ref().is_none_or(|a| inserting.allows(a));
+    if state.armed.is_some() && (esc || !allowed) {
         state.armed = None;
     }
-    placing.set_if_neq(Placing(state.armed.is_some()));
+    let parts = &state.parts;
+    if (parts.armed.is_some() || parts.parent.is_some()) && (esc || !inserting.editing()) {
+        state.parts.armed = None;
+        state.parts.parent = None;
+    }
+    let part = state
+        .parts
+        .armed
+        .is_some_and(super::model::PartTool::places);
+    placing.set_if_neq(Placing(state.armed.is_some() || part));
 }
 
 /// Each place sends a `create` for what is armed, at the point; Shift
@@ -151,6 +178,10 @@ pub(super) fn place(
     mut out: MessageWriter<GzCommand>,
 ) {
     for p in places.read() {
+        // A model being edited takes them (`parts::place_part`).
+        if inserting.editing() {
+            continue;
+        }
         let (Some(what), Ok(world)) = (state.armed.clone(), inserting.world()) else {
             continue;
         };
@@ -249,6 +280,7 @@ pub(crate) struct Ghost(pub Insertable);
 /// The preview follows the pointer while something is armed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn ghost(
+    editing: Option<Res<EditingModel>>,
     state: Res<AssetsState>,
     hover: Res<PlaceHover>,
     theme: Res<Theme>,
@@ -263,7 +295,9 @@ pub(super) fn ghost(
     )>,
     mut commands: Commands,
 ) {
-    let want = state.armed.as_ref();
+    // Editing, a shape adds a link: its preview is `parts::part_ghost`.
+    let editing = editing.as_deref().is_some_and(|e| e.model().is_some());
+    let want = state.armed.as_ref().filter(|_| !editing);
     let color = ghost_color(&theme);
     for (e, g, mut t, mut vis, material) in &mut ghosts {
         if Some(&g.0) != want {
@@ -277,7 +311,7 @@ pub(super) fn ghost(
             }
         }
         match hover.0 {
-            Some((at, normal)) => {
+            Some((at, normal, _)) => {
                 // Off the surface along its normal, upright as it will be
                 // inserted.
                 #[allow(clippy::cast_possible_truncation)]
@@ -394,7 +428,7 @@ pub(super) fn tile_states(
     inserting: Inserting,
     mut tiles: Query<(Entity, &Tile, Has<Active>, &mut AccessibilityNode)>,
     buttons: Query<
-        (Entity, Has<InteractionDisabled>),
+        (Entity, Option<&Tile>, Has<InteractionDisabled>),
         Or<(With<Tile>, With<FuelInsert>, With<LocalInsert>)>,
     >,
     added: Query<(), Or<(Added<Tile>, Added<FuelInsert>)>>,
@@ -421,8 +455,9 @@ pub(super) fn tile_states(
             }
         }
     }
-    let can = inserting.world().is_ok();
-    for (e, disabled) in &buttons {
+    let world = inserting.world().is_ok();
+    for (e, tile, disabled) in &buttons {
+        let can = tile.map_or(world, |t| inserting.allows(&t.0));
         if can == disabled {
             if can {
                 commands.entity(e).remove::<InteractionDisabled>();
@@ -436,13 +471,18 @@ pub(super) fn tile_states(
 /// Says why nothing can be inserted, while that holds.
 pub(super) fn note(
     inserting: Inserting,
+    state: Res<AssetsState>,
     mut notes: Query<(&mut Text, &mut Node), With<AssetsNote>>,
     added: Query<(), Added<AssetsNote>>,
 ) {
-    if !inserting.changed() && added.is_empty() {
+    if !inserting.changed() && !state.is_changed() && added.is_empty() {
         return;
     }
-    let why = inserting.world().err();
+    // The Parts tab has its own hint.
+    let why = inserting
+        .world()
+        .err()
+        .filter(|_| state.tab != super::model::AssetTab::Parts);
     for (mut text, mut node) in &mut notes {
         set_text(&mut text, why.unwrap_or_default());
         set_shown(&mut node, why.is_some());
@@ -610,6 +650,8 @@ fn toggle_armed(state: &mut AssetsState, what: Insertable) {
     } else {
         Some(what)
     };
+    state.parts.armed = None;
+    state.parts.parent = None;
 }
 
 /// A tile arms its shape or light.

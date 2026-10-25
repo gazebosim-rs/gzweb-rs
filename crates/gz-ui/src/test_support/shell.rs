@@ -99,6 +99,8 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
                     gz_bevy::view::editing::pause_when_known,
                     gz_bevy::view::editing::light_new_views,
                     gz_bevy::view::editing::end_editing_when_gone,
+                    gz_bevy::view::editing::parts::run_parts,
+                    gz_bevy::view::editing::parts::patch_extras,
                     gz_bevy::view::editing::limit_selection,
                     gz_bevy::view::editing::dim_others::<StandardMaterial>,
                 )
@@ -409,8 +411,8 @@ pub(crate) fn send(app: &mut App, op: gz_bevy::view::ViewOp) {
     frames(app, 2);
 }
 
-/// Edits a new top-level model `edited` (in a world root of its own if
-/// there's none yet), returning it.
+/// Edits a new top-level model `edited` at the world's origin (in a world
+/// root of its own if there's none yet), returning it.
 pub(crate) fn edit_a_model(app: &mut App) -> Entity {
     use gz_bevy::spawn::{GzEntity, GzWorldRoot};
     use gz_bevy::view::editing::EditCommand;
@@ -420,8 +422,13 @@ pub(crate) fn edit_a_model(app: &mut App) -> Entity {
         .iter(world)
         .next()
         .unwrap_or_else(|| {
+            // Turned as the app's is: Gazebo's Z up.
             world
-                .spawn((Transform::default(), Visibility::default(), GzWorldRoot))
+                .spawn((
+                    Transform::from_rotation(gz_bevy::spawn::gz_to_bevy()),
+                    Visibility::default(),
+                    GzWorldRoot,
+                ))
                 .id()
         });
     let model = world
