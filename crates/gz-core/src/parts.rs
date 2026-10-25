@@ -1,13 +1,17 @@
 //! Parts added to a model while it is edited (spec §6.6; DECISIONS.md
 //! D-113): links, joints, visuals, collisions, sensors and plugins, as
 //! SDFormat elements, and the [`Draft`] that holds them in order, with its
-//! own undo. Nothing here reaches the server: writing the model back is
-//! M9c's, which puts each part's element into the model's SDFormat.
+//! own undo. Done writes them into the model's SDFormat ([`write_parts`],
+//! D-114) once [`check_model`] finds it whole.
 //!
 //! What a part shows before then comes from its own SDFormat: a part's
 //! [`WorldExtras`] (its collisions, inertial, joint, sensor or plugin, as
 //! the overlays, the tree and the inspectors read them) is its element
 //! parsed, so what is drawn is what will be written.
+
+mod write;
+
+pub use write::{check_model, write_parts};
 
 use crate::insert::{xml_escape, Shape};
 use crate::scene::{GeometryDesc, MaterialDesc, Pose, SensorDesc, VisualDesc};

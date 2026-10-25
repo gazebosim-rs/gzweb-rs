@@ -8,7 +8,9 @@
 //! forgets the hides and Isolate it undid (DECISIONS.md D-89). The world is
 //! dirty while the stack isn't where it was at load. A model spawned or
 //! deleted by an edit (Duplicate, Paste, Delete: D-109) is removed or
-//! created again from its SDFormat.
+//! created again from its SDFormat; one written back by editing (D-114) is
+//! removed and, once it has gone, created again from the other SDFormat
+//! ([`Replacing`]).
 
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -38,6 +40,9 @@ pub enum Change {
     },
     /// A top-level model spawned (`after`) or deleted (not `after`).
     Exists { model: ModelCopy, after: bool },
+    /// A top-level model written back with new SDFormat (one name, the
+    /// same pose): `before` as it was, `after` as written.
+    Replaced { before: ModelCopy, after: ModelCopy },
 }
 
 /// A top-level model as an edit spawns it or deleted it: its name (its
@@ -62,6 +67,14 @@ const RECREATE_SECS: f64 = 5.0;
 /// (undoing it now would find nothing to put back).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct Recreating(pub HashMap<String, f64>);
+
+/// The models removed to be created again from other SDFormat (a model
+/// written back, or such an edit undone), each with when: the server can't
+/// create one while its old self is there (one name), so each waits until
+/// that has gone. One whose old self is still there after
+/// `RECREATE_SECS` (5 s) isn't created (its `remove` went unheeded).
+#[derive(Resource, Debug, Clone, Default, PartialEq)]
+pub struct Replacing(pub Vec<(ModelCopy, f64)>);
 
 /// Visibilities by scene path.
 pub type Saved = Vec<(String, Visibility)>;
@@ -113,6 +126,10 @@ enum Step {
         model: ModelCopy,
         after: bool,
     },
+    Replaced {
+        before: ModelCopy,
+        after: ModelCopy,
+    },
 }
 
 impl Step {
@@ -122,21 +139,34 @@ impl Step {
             Step::Pose { before, after, .. } => before != after,
             Step::Visibility { before, after, .. } => before != after,
             Step::Isolated { before, after } => before != after,
-            Step::Exists { .. } => true,
+            Step::Exists { .. } | Step::Replaced { .. } => true,
         }
     }
 
     fn path(&self) -> Option<&str> {
         match self {
             Step::Pose { path, .. } | Step::Visibility { path, .. } => Some(path),
-            Step::Exists { model, .. } => Some(&model.name),
+            Step::Exists { model, .. } | Step::Replaced { after: model, .. } => Some(&model.name),
             Step::Isolated { .. } => None,
         }
     }
 
     /// Whether putting it back or doing it again asks the server.
     fn asks_server(&self) -> bool {
-        matches!(self, Step::Pose { .. } | Step::Exists { .. })
+        matches!(
+            self,
+            Step::Pose { .. } | Step::Exists { .. } | Step::Replaced { .. }
+        )
+    }
+
+    /// The model it creates when undone (`undo`) or redone, if it creates
+    /// one.
+    fn creates(&self, undo: bool) -> Option<&ModelCopy> {
+        match self {
+            Step::Exists { model, after } if *after != undo => Some(model),
+            Step::Replaced { before, after } => Some(if undo { before } else { after }),
+            _ => None,
+        }
     }
 }
 
@@ -302,10 +332,15 @@ impl UndoStack {
         self.saved = self.saved.filter(|s| *s == 0);
     }
 
-    /// Forgets the moves, spawns and deletes a Reset undid (gz-sim puts
-    /// the world back as it was loaded).
+    /// Forgets the moves, spawns, deletes and models written back a Reset
+    /// undid (gz-sim puts the world back as it was loaded).
     fn forget_poses(&mut self) {
-        self.forget(|s| matches!(s, Step::Pose { .. } | Step::Exists { .. }));
+        self.forget(|s| {
+            matches!(
+                s,
+                Step::Pose { .. } | Step::Exists { .. } | Step::Replaced { .. }
+            )
+        });
     }
 
     /// Forgets the hides and Isolate a new scene undid (it comes with
@@ -332,9 +367,10 @@ impl Plugin for UndoPlugin {
             .init_resource::<Isolated>()
             .init_resource::<Held>()
             .init_resource::<Recreating>()
+            .init_resource::<Replacing>()
             .add_systems(
                 Update,
-                (forget_other_worlds, record, undo_redo)
+                (forget_other_worlds, record, undo_redo, replace_when_gone)
                     .chain()
                     .in_set(UndoSystems)
                     .after(crate::view::gizmo::gizmo_input),
@@ -365,10 +401,12 @@ fn record(
                 Change::Pose { entity, .. } | Change::Visibility { entity, .. } => {
                     entities.get(*entity).ok()
                 }
-                Change::Isolated { .. } | Change::Exists { .. } => None,
+                Change::Isolated { .. } | Change::Exists { .. } | Change::Replaced { .. } => None,
             };
             let name = match c {
-                Change::Exists { model, .. } => Some(model.name.as_str()),
+                Change::Exists { model, .. } | Change::Replaced { after: model, .. } => {
+                    Some(model.name.as_str())
+                }
                 _ => entity.map(|g| g.name.as_str()),
             };
             if let Some(name) = name {
@@ -394,6 +432,10 @@ fn record(
                 (Change::Exists { model, after }, _) => Step::Exists {
                     model: model.clone(),
                     after: *after,
+                },
+                (Change::Replaced { before, after }, _) => Step::Replaced {
+                    before: before.clone(),
+                    after: after.clone(),
                 },
                 // Gone already: nothing to put back.
                 _ => continue,
@@ -427,6 +469,7 @@ fn undo_redo(
     mut isolated: ResMut<Isolated>,
     mut held: ResMut<Held>,
     mut recreating: ResMut<Recreating>,
+    mut replacing: ResMut<Replacing>,
     editing: Option<Res<crate::view::editing::EditingModel>>,
     mut loaded: Option<ResMut<crate::world_save::LoadedPoses>>,
     mut edits: MessageWriter<SetPose>,
@@ -468,7 +511,9 @@ fn undo_redo(
         }
         let waiting = edit.steps.iter().find_map(|s| match s {
             Step::Exists { .. } => None,
-            s => s.path().filter(|p| recreating.0.contains_key(*p)),
+            s => s.path().filter(|p| {
+                recreating.0.contains_key(*p) || replacing.0.iter().any(|(m, _)| m.name == *p)
+            }),
         });
         if let Some(path) = waiting {
             warn!(
@@ -479,18 +524,14 @@ fn undo_redo(
         }
         // A model the server can't take whole isn't created again (the
         // request would be lost): the edit stays where it is.
-        let too_large = edit.steps.iter().find_map(|s| match s {
-            Step::Exists { model, after } if *after != undo => {
-                let world = world.as_deref().unwrap_or_default();
-                too_long(&create_copy_request(
-                    world,
-                    &model.sdf,
-                    &model.name,
-                    &model.pose,
-                ))
-                .map(|why| format!("{}: {why}", model.name))
-            }
-            _ => None,
+        let too_large = edit.steps.iter().find_map(|s| {
+            let model = s.creates(undo)?;
+            let world = world.as_deref().unwrap_or_default();
+            too_long(
+                &create_copy_request(world, &model.sdf, &model.name, &model.pose),
+                status.as_deref(),
+            )
+            .map(|why| format!("{}: {why}", model.name))
         });
         if let Some(why) = too_large {
             warn!("can't {verb} {}: {why}", edit.label);
@@ -515,6 +556,19 @@ fn undo_redo(
             edit.steps.iter().collect()
         };
         for step in order {
+            if let Step::Replaced { before, after } = step {
+                // Removed, and created again as it was (or as written) once
+                // it has gone.
+                let world = world.as_deref().unwrap_or_default();
+                let id = entities
+                    .iter()
+                    .find(|(_, g)| g.path == after.name)
+                    .map(|(_, g)| g.id);
+                server.write(remove_request(world, &after.name, id));
+                let to = if undo { before } else { after };
+                replacing.0.push((to.clone(), now));
+                continue;
+            }
             if let Step::Exists { model, after } = step {
                 let world = world.as_deref().unwrap_or_default();
                 // Undoing a spawn or redoing a delete removes the model
@@ -567,6 +621,50 @@ fn undo_redo(
             stack.done.push(edit);
         }
     }
+}
+
+/// Each model [`Replacing`] waits on is created once its old self has gone
+/// (its pose as loaded kept for Save); one still there after
+/// `RECREATE_SECS` (5 s) isn't.
+pub fn replace_when_gone(
+    time: Res<Time<Real>>,
+    status: Option<Res<GzStatus>>,
+    entities: Query<&GzEntity>,
+    mut replacing: ResMut<Replacing>,
+    mut recreating: ResMut<Recreating>,
+    mut loaded: Option<ResMut<crate::world_save::LoadedPoses>>,
+    mut server: MessageWriter<GzCommand>,
+) {
+    if replacing.0.is_empty() {
+        return;
+    }
+    let now = time.elapsed_secs_f64();
+    let world = status.as_deref().and_then(|s| s.world.clone());
+    let mut kept = Vec::new();
+    for (model, since) in std::mem::take(&mut replacing.0) {
+        if entities.iter().any(|g| g.path == model.name) {
+            if now - since < RECREATE_SECS {
+                kept.push((model, since));
+            } else {
+                warn!("{} wasn't removed: not created again", model.name);
+            }
+            continue;
+        }
+        let Some(world) = world.as_deref() else {
+            continue;
+        };
+        server.write(create_copy_request(
+            world,
+            &model.sdf,
+            &model.name,
+            &model.pose,
+        ));
+        recreating.0.insert(model.name.clone(), now);
+        if let (Some(loaded), Some(at)) = (loaded.as_deref_mut(), model.loaded) {
+            loaded.0.insert(model.name.clone(), at);
+        }
+    }
+    replacing.0 = kept;
 }
 
 /// What the world was last seen to be: its server and name, its

@@ -155,12 +155,27 @@ pub fn remove_request(world: &str, name: &str, id: Option<u32>) -> GzCommand {
     }
 }
 
+/// The longest frame the connected server takes whole:
+/// [`MAX_LONG_FRAME`](gz_core::transport::MAX_LONG_FRAME) from one that
+/// joins a message's pieces (D-114), else
+/// [`MAX_FRAME`](gz_core::transport::MAX_FRAME).
+pub fn max_frame(status: Option<&GzStatus>) -> usize {
+    use gz_core::transport::{MAX_FRAME, MAX_LONG_FRAME};
+    if status.is_some_and(|s| s.long_frames == Some(true)) {
+        MAX_LONG_FRAME
+    } else {
+        MAX_FRAME
+    }
+}
+
 /// Why the server couldn't take `command` whole, if it couldn't: as a
-/// frame it is longer than [`MAX_FRAME`](gz_core::transport::MAX_FRAME)
-/// ("its 6,123 bytes are over the 4,088 the server takes"), so it would be
-/// lost. A `create` from a large model's SDFormat is one.
-pub fn too_long(command: &GzCommand) -> Option<String> {
-    use gz_core::transport::{frame_len, MAX_FRAME};
+/// frame it is longer than [`max_frame`] ("its 6,123 bytes are over the
+/// 4,088 the server takes"), so it would be lost. A `create` from a large
+/// model's SDFormat is one, on a server that reads each piece of a message
+/// as a frame.
+pub fn too_long(command: &GzCommand, status: Option<&GzStatus>) -> Option<String> {
+    use gz_core::transport::frame_len;
+    let max = max_frame(status);
     let len = match command {
         GzCommand::Request {
             service,
@@ -174,11 +189,11 @@ pub fn too_long(command: &GzCommand) -> Option<String> {
         } => frame_len("pub_in", topic, msg_type, payload.len()),
         _ => return None,
     };
-    (len > MAX_FRAME).then(|| {
+    (len > max).then(|| {
         format!(
             "its {} bytes are over the {} the server takes",
             thousands(len),
-            thousands(MAX_FRAME)
+            thousands(max)
         )
     })
 }

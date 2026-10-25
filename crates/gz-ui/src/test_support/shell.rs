@@ -100,6 +100,8 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
                     gz_bevy::view::editing::light_new_views,
                     gz_bevy::view::editing::end_editing_when_gone,
                     gz_bevy::view::editing::parts::run_parts,
+                    gz_bevy::view::editing::parts::write::start_writes,
+                    gz_bevy::view::editing::parts::write::finish_writes,
                     gz_bevy::view::editing::parts::patch_extras,
                     gz_bevy::view::editing::limit_selection,
                     gz_bevy::view::editing::dim_others::<StandardMaterial>,

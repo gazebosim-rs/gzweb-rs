@@ -8,17 +8,22 @@
 # gz-sim-websocket-server-system. docker/websocket.config adds it to every
 # world through GZ_SIM_SERVER_CONFIG_PATH, so worlds don't need editing.
 #
-# The websocket server is rebuilt with two patches in docker/websocket-server/:
+# The websocket server is rebuilt with three patches in docker/websocket-server/:
 # - binary-requests.patch (gazebosim/gz-sim#4093): the stock server ends
 #   every frame at its first zero byte and splits it on every comma, so a
 #   binary request (a pose with a round value) arrives corrupted, and the
 #   full UI's editing needs it (DECISIONS.md D-76);
 # - client-publish.patch: a `pub_in` operation that publishes a client's
 #   message on a Gazebo Transport topic (the stock server has none), which
-#   the Teleop panel drives with (DECISIONS.md D-104).
+#   the Teleop panel drives with (DECISIONS.md D-104);
+# - whole-messages.patch: the stock server reads what one 4096-byte read
+#   from the socket holds as a frame, so a longer frame (a model's
+#   SDFormat in a create) arrives in pieces and is lost; the patch joins a
+#   message's pieces first, which writing a model back needs
+#   (DECISIONS.md D-114).
 # The builder stage builds that one system from the gz-sim tag matching the
 # installed packages and the image replaces the stock library with it. Drop
-# the stage once a Jetty release has both.
+# the stage once a Jetty release has them all.
 #
 # Reproducibility: the base image is pinned by digest (ubuntu:24.04 as of
 # 2026-08-17; bump it deliberately). The Gazebo packages are not pinned:
@@ -43,6 +48,7 @@ RUN version=$(dpkg-query -W -f='${Version}' libgz-sim10 | cut -d- -f1) \
  && git clone -q --depth 1 --branch "gz-sim10_${version}" https://github.com/gazebosim/gz-sim /src \
  && git -C /src apply /build/binary-requests.patch \
  && git -C /src apply /build/client-publish.patch \
+ && git -C /src apply /build/whole-messages.patch \
  && cmake -S /build -B /out -DGZ_SIM_SOURCE=/src -DCMAKE_BUILD_TYPE=Release \
  && cmake --build /out -j"$(nproc)" \
  && echo "$version" > /out/gz-sim-version

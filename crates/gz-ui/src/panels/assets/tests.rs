@@ -835,11 +835,21 @@ fn joints_collisions_sensors_and_plugins() {
     );
 }
 
-/// Undo takes the last part back, and the World menu names it; leaving
-/// says the parts weren't kept.
+/// Undo takes the last part back, and the World menu names it; the
+/// pill's Discard, shown while there are parts, leaves without them and
+/// says so.
 #[test]
-fn undo_takes_a_part_back_and_done_drops_them() {
+fn undo_takes_a_part_back_and_discard_drops_them() {
+    use crate::shell::viewport::editing::EditingDiscard;
+    let discard_shown = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Node, With<EditingDiscard>>()
+            .iter(world)
+            .any(|n| n.display != Display::None)
+    };
     let (mut app, ..) = editing_parts();
+    assert!(!discard_shown(&mut app), "no parts yet");
     let t = part_tile(&mut app, PartTool::Link);
     activate(&mut app, t);
     place(&mut app, [1.0, 0.0, 0.0], None, true);
@@ -850,14 +860,18 @@ fn undo_takes_a_part_back_and_done_drops_them() {
     frames(&mut app, 3);
     assert!(at_path(&mut app, "edited/link_2").is_none());
     assert!(at_path(&mut app, "edited/link_1").is_some());
-    app.world_mut()
-        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    assert!(discard_shown(&mut app));
+    let discard = find::<EditingDiscard>(&mut app);
+    activate(&mut app, discard);
     frames(&mut app, 3);
     assert!(at_path(&mut app, "edited/link_1").is_none());
     assert_eq!(
-        status_note(&app).as_deref(),
-        Some("1 part not kept: writing parts to the model comes later")
+        app.world()
+            .resource::<gz_bevy::view::editing::EditingModel>()
+            .model(),
+        None
     );
+    assert_eq!(status_note(&app).as_deref(), Some("1 part discarded"));
 }
 
 /// Esc, pressed and released.

@@ -1,7 +1,10 @@
 //! The EDITING pill (spec §6.6; DECISIONS.md D-112): while a model is
 //! edited it floats top-centre of the active view, `hud` fill, 36 tall,
 //! radius 9: an `EDITING` tag, the model's name, "· 3 links · 2 joints ·
-//! sim paused", and Done (`primary`), which leaves editing.
+//! sim paused", and Done (`primary`), which writes the parts added and
+//! leaves editing (D-114). While there are parts to write, Discard
+//! (bordered) leaves without them. What writing says ([`EditNote`]) shows
+//! in the status bar.
 
 use accesskit::Role;
 use bevy::picking::Pickable;
@@ -11,12 +14,14 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::overlays::extras::SdfExtras;
 use gz_bevy::spawn::GzEntity;
 use gz_bevy::view::controls::ViewRouting;
+use gz_bevy::view::editing::parts::{EditNote, EditParts};
 use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::ViewId;
 use gz_core::scene::NodeKind;
 
 use super::views::ViewCameras;
 use crate::assets::fonts::text;
+use crate::shell::status_bar::readouts::StatusNote;
 use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, ColorRole, Fill, FontFamily, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{row, set_shown};
@@ -46,6 +51,10 @@ pub(crate) struct EditingMeta;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct EditingDone;
 
+/// The pill's Discard, shown while there are parts to write.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct EditingDiscard;
+
 /// The pill, in a row across the view's top that lets the pointer through,
 /// hidden until a model is edited.
 pub(crate) fn editing_bar(theme: &Theme) -> impl Bundle {
@@ -55,6 +64,18 @@ pub(crate) fn editing_bar(theme: &Theme) -> impl Bundle {
         v.hover_fill = ColorRole::Primary;
         v.pressed_fill = ColorRole::Text2;
         v
+    };
+    let bordered = Visuals::new(ColorRole::Surface2, ColorRole::Text)
+        .stroked(ColorRole::Line)
+        .keep_ink();
+    let button_node = |border: f32| Node {
+        height: px(PILL_H - 2.0 * SPACE[2]),
+        padding: UiRect::horizontal(px(SPACE[5])),
+        border: UiRect::all(px(border)),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        border_radius: rounded(PILL_RADIUS - SPACE[2] / 2.0),
+        ..default()
     };
     (
         EditingBar,
@@ -113,15 +134,25 @@ pub(crate) fn editing_bar(theme: &Theme) -> impl Bundle {
                     Pickable::IGNORE,
                 ),
                 (
-                    EditingDone,
+                    EditingDiscard,
                     Node {
-                        height: px(PILL_H - 2.0 * SPACE[2]),
-                        padding: UiRect::horizontal(px(SPACE[5])),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: rounded(PILL_RADIUS - SPACE[2] / 2.0),
-                        ..default()
+                        display: Display::None,
+                        ..button_node(border::HAIRLINE)
                     },
+                    Headless,
+                    clickable(bordered, Role::Button, "Discard parts"),
+                    children![(
+                        text(
+                            crate::widgets::button::BUTTON_TYPE,
+                            ColorRole::Text,
+                            "Discard"
+                        ),
+                        Content
+                    )],
+                ),
+                (
+                    EditingDone,
+                    button_node(0.0),
                     Headless,
                     clickable(visuals, Role::Button, "Done editing"),
                     children![(
@@ -156,10 +187,12 @@ pub(crate) fn meta_text(links: usize, joints: usize, paused: bool) -> String {
 
 /// The pill shows on the active view while a model is edited, with its
 /// name, its links and joints (the joints the world's SDFormat declares in
-/// it), and whether the sim is paused.
+/// it), whether the sim is paused, and Discard while there are parts to
+/// write.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn editing_pill_state(
     editing: Option<Res<EditingModel>>,
+    parts: Option<Res<EditParts>>,
     routing: Res<ViewRouting>,
     status: Option<Res<GzStatus>>,
     extras: Option<Res<SdfExtras>>,
@@ -167,6 +200,7 @@ pub(crate) fn editing_pill_state(
     children: Query<&Children>,
     cameras: ViewCameras,
     mut bars: Query<(Entity, &mut Node), With<EditingBar>>,
+    mut discards: Query<&mut Node, (With<EditingDiscard>, Without<EditingBar>)>,
     mut names: Query<&mut Text, (With<EditingName>, Without<EditingMeta>)>,
     mut metas: Query<&mut Text, (With<EditingMeta>, Without<EditingName>)>,
 ) {
@@ -177,6 +211,10 @@ pub(crate) fn editing_pill_state(
             &mut node,
             model.is_some() && cameras.id_of(e) == Some(active),
         );
+    }
+    let holds = parts.as_deref().is_some_and(EditParts::holds);
+    for mut node in &mut discards {
+        set_shown(&mut node, holds);
     }
     let Some(model) = model else {
         return;
@@ -212,14 +250,30 @@ pub(crate) fn editing_pill_state(
     }
 }
 
-/// Done leaves editing.
+/// Done writes the parts added and leaves editing; Discard leaves
+/// without them.
 pub(crate) fn on_done(
     ev: On<Activate>,
     dones: Query<(), With<EditingDone>>,
+    discards: Query<(), With<EditingDiscard>>,
     mut out: MessageWriter<EditCommand>,
 ) {
     if dones.contains(ev.entity) {
         out.write(EditCommand::Done);
+    } else if discards.contains(ev.entity) {
+        out.write(EditCommand::Discard);
+    }
+}
+
+/// What writing the model says (writing, written, or why not) shows in the
+/// status bar for 3 s.
+pub(crate) fn edit_notes(
+    mut notes: MessageReader<EditNote>,
+    time: Res<Time<Real>>,
+    mut note: ResMut<StatusNote>,
+) {
+    for EditNote(text) in notes.read() {
+        note.show(text.clone(), time.elapsed_secs_f64());
     }
 }
 
@@ -229,13 +283,16 @@ mod tests;
 pub(crate) fn build(app: &mut App) {
     app.add_message::<EditCommand>()
         .init_resource::<EditingModel>()
-        .init_resource::<gz_bevy::view::editing::parts::EditParts>()
+        .init_resource::<EditParts>()
         .add_message::<gz_bevy::view::editing::parts::PartCommand>()
         .add_message::<gz_bevy::view::editing::parts::PartsDiscarded>()
+        .add_message::<gz_bevy::view::editing::parts::WriteParts>()
+        .add_message::<EditNote>()
+        .init_resource::<gz_bevy::undo::Replacing>()
         .add_message::<gz_bevy::undo::UndoCommand>()
         .add_systems(
             Update,
-            editing_pill_state.in_set(crate::shell::ShellSystems::Readouts),
+            (editing_pill_state, edit_notes).in_set(crate::shell::ShellSystems::Readouts),
         )
         .add_observer(on_done);
 }

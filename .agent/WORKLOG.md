@@ -2019,3 +2019,35 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Left:** the server should join a frame's pieces
   (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
   does, M9c's write-back is limited to models that fit.
+
+## 2026-10-25: M9c write-back (D-114)
+
+- **Server:** `docker/websocket-server/whole-messages.patch`, the third
+  local patch: the websocket server joins a message's pieces per
+  connection (`lws_is_final_fragment`, `lws_remaining_packet_payload`)
+  before it parses the frame, up to 16 MiB. Not upstream.
+- **Probe:** after the edit probe's yes, a 12,288-byte `/gazebo/worlds`
+  request; the world list back means the server joins pieces
+  (`GzStatus::long_frames`). The transport then takes frames up to
+  `MAX_LONG_FRAME`, and `edit::too_long` uses the server's limit (model
+  edits and the Console benefit).
+- **Write-back:** `gz_core::parts::write_parts` and `check_model`;
+  `view::editing::parts::write` (Done asks for the world's SDFormat,
+  writes and checks the model, removes it, records one "edit X");
+  `undo::Replacing` creates it once the old one has gone (Done, and undo
+  and redo of it). Done refuses on a server that cuts long messages.
+- **UI:** the pill's Discard while there are parts; writing's notes in the
+  status bar; "N parts discarded".
+- **Live check** (`gz-websocket-jetty-pub-frames` on :9031 and the stock
+  `gz-websocket-jetty-pub` on :9032, both `diff_drive`):
+  - a 9 KB `create` goes on :9031 and is lost on :9032;
+  - 40 1.5 KB requests in one write: 40 good replies on :9031, 26 on
+    :9032;
+  - `write_parts` on vehicle_blue's live SDFormat (a link, visual, IMU and
+    fixed joint, 6.8 KB), then remove and create on :9031: the model came
+    back with them, and the client's pill counted 5 links and 4 joints;
+  - the debug client's probe: "takes long frames whole" on :9031, "cuts
+    long frames" on :9032.
+  Not driven live: Done's clicks in the client (no capture flag adds
+  parts); the tests cover them.
+- **Tests:** workspace 966 → 974 passing.

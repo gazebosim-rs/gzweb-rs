@@ -456,6 +456,8 @@ As built (D-112, M9a): entering, the dimming (other models unpickable, their mes
 
 As built (D-113, M9b): the Parts tab, its six tiles and the shape, joint and sensor selects; a click adds a link where it lands, or a visual, collision or sensor to the link clicked; a joint's two clicks with its rubber band; Plugin's fields; a Shapes tile adding a link while editing; each part undoable. Clicks stand in for drops (D-102's placing). Until M9c the parts are a draft: Done drops them.
 
+As built (D-114, M9c): Done validates the draft's model (every link has inertia or a static model; joints have both ends, in the model), writes the parts into its SDFormat, removes it and creates it again from that, and resumes the sim; why it can't shows in the status bar and editing goes on. While there are parts to write the pill also shows Discard, which leaves without them. Undo after Done puts the whole session back as one step ("edit amr"); the parts' own undo is the draft's while editing. Write-back needs a server that joins a websocket message's pieces (the image's whole-messages patch, found by a probe); on one that doesn't, Done with parts refuses.
+
 ### 6.4 Selection model
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 

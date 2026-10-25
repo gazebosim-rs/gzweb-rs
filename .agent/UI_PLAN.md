@@ -453,6 +453,13 @@ visual / collision / sensor, Reparent).
   extras with the draft's parts); Link, Visual, Collision and Sensor by a click, a joint by
   two with its rubber band, Plugin by name; a Shapes tile adds a link while editing; undo and
   redo take parts back. Left: M9c writes the draft back (Done drops it until then), M9d.
+- **M9c notes:** write-back (D-114): `gz_core::parts::write_parts` and `check_model`,
+  `gz_bevy::view::editing::parts::write` (Done asks for the world's SDFormat, writes, checks,
+  removes and records one "edit X"), `undo::Replacing` (create once the old model has gone,
+  for Done and for undo and redo of it), the pill's Discard and the status notes. The server's
+  `whole-messages.patch` joins a message's pieces; the long frame probe (`GzStatus::long_frames`)
+  lifts `MAX_FRAME` there, for model edits too; elsewhere Done with parts refuses. Left: M9d
+  (its Reparent is one more edit in `write_parts`).
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

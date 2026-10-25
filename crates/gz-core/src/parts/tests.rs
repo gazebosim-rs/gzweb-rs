@@ -252,3 +252,134 @@ fn the_draft_undoes_and_redoes() {
         None
     );
 }
+
+/// The model as `model_sdf` gives it: base and, in a static nested
+/// model, a wheel (empty).
+const AMR: &str = "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"amr\">\
+                   <link name=\"base\"><inertial><mass>2</mass></inertial></link>\
+                   <model name=\"inner\"><static>true</static><link name=\"wheel\"/></model>\
+                   </model></sdf>";
+
+/// The draft's parts go where they belong: a link, joint and plugin last in
+/// the model, a visual or collision last in its link (a new link's in its
+/// own element; an empty one opened out), a nested model's link found by
+/// its path. The result is SDFormat the parts read back from as drawn.
+#[test]
+fn parts_are_written_into_their_model() {
+    let parts = vec![
+        Part::Link {
+            name: "link_1".into(),
+            shape: Shape::Box,
+            pose: at(1.0, 0.0, 0.25),
+        },
+        Part::Visual {
+            link: "amr/link_1".into(),
+            name: "visual_1".into(),
+            shape: Shape::Sphere,
+            pose: at(0.0, 0.0, 0.3),
+        },
+        Part::Collision {
+            link: "amr/inner/wheel".into(),
+            name: "collision_1".into(),
+            shape: Shape::Box,
+            pose: Pose::IDENTITY,
+        },
+        Part::Sensor {
+            link: "amr/base".into(),
+            name: "imu_1".into(),
+            kind: SensorKind::Imu,
+            pose: Pose::IDENTITY,
+        },
+        Part::Joint {
+            name: "joint_1".into(),
+            kind: JointKind::Revolute,
+            parent: "amr/base".into(),
+            child: "amr/link_1".into(),
+        },
+        Part::Plugin {
+            name: "gz::sim::systems::JointStatePublisher".into(),
+            filename: "gz-sim-joint-state-publisher-system".into(),
+        },
+    ];
+    let out = write_parts(AMR, "amr", &parts).unwrap();
+    let x = WorldExtras::parse(&out).unwrap();
+    let link = x.link("amr/link_1").expect("the new link");
+    assert!(link.inertial.is_some());
+    let base = x.link("amr/base").unwrap();
+    assert_eq!(base.sensors[0].name, "imu_1");
+    assert_eq!(
+        x.link("amr/inner/wheel").unwrap().collisions[0].name,
+        "collision_1"
+    );
+    assert_eq!(link.joints[0].parent, "base");
+    assert_eq!(
+        x.model("amr").unwrap().plugins,
+        ["gz::sim::systems::JointStatePublisher"]
+    );
+    let doc = roxmltree::Document::parse(&out).unwrap();
+    let visual = doc
+        .descendants()
+        .find(|n| n.has_tag_name("visual") && n.attribute("name") == Some("visual_1"))
+        .unwrap();
+    assert_eq!(visual.parent().unwrap().attribute("name"), Some("link_1"));
+    assert!(out.starts_with(
+        "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"amr\"><link name=\"base\">"
+    ));
+    assert_eq!(check_model(&out), Ok(()), "{out}");
+    // A part on a link the model hasn't.
+    let lost = Part::Visual {
+        link: "amr/gone".into(),
+        name: "v".into(),
+        shape: Shape::Box,
+        pose: Pose::IDENTITY,
+    };
+    assert_eq!(
+        write_parts(AMR, "amr", &[lost]),
+        Err("no link gone in the model".into())
+    );
+}
+
+/// Done's check: a link without inertia (unless its model is static), a
+/// joint without both ends, or with an end the model hasn't, says why.
+#[test]
+fn a_model_is_checked_before_it_is_written() {
+    let model =
+        |inner: &str| format!("<sdf version=\"1.9\"><model name=\"m\">{inner}</model></sdf>");
+    let link = "<link name=\"a\"><inertial/></link>";
+    assert_eq!(check_model(&model(link)), Ok(()));
+    assert_eq!(
+        check_model(&model("<link name=\"a\"/>")),
+        Err("a has no inertia (a link needs it unless its model is static)".into())
+    );
+    assert_eq!(
+        check_model(&model("<static>true</static><link name=\"a\"/>")),
+        Ok(())
+    );
+    assert_eq!(
+        check_model(&model("<model name=\"i\"><link name=\"w\"/></model>")),
+        Err("i::w has no inertia (a link needs it unless its model is static)".into())
+    );
+    let joint = |p: &str, c: &str| {
+        model(&format!(
+            "{link}<model name=\"i\"><static>1</static><link name=\"w\"/></model>\
+             <frame name=\"f\"/><joint name=\"j\" type=\"fixed\"><parent>{p}</parent>\
+             <child>{c}</child></joint>"
+        ))
+    };
+    for (p, c) in [
+        ("world", "a"),
+        ("a", "i::w"),
+        ("f", "i"),
+        ("__model__", "a"),
+    ] {
+        assert_eq!(check_model(&joint(p, c)), Ok(()), "{p} {c}");
+    }
+    assert_eq!(
+        check_model(&joint("a", "b")),
+        Err("j's child b isn't in the model".into())
+    );
+    assert_eq!(
+        check_model(&joint("", "a")),
+        Err("j has no parent link".into())
+    );
+}

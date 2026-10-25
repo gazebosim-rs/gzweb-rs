@@ -3677,7 +3677,7 @@ fn model_edits_go_through_the_worlds_sdformat() {
 
 /// A model too large for the server to take whole (its `create` would be
 /// lost) isn't deleted, duplicated or pasted: nothing is sent, and the
-/// edit says why.
+/// edit says why. One that joins a message's pieces takes it.
 #[test]
 fn a_model_too_large_to_send_is_left_alone() {
     use crate::connection::{GzServiceReply, GzStatus};
@@ -3779,6 +3779,14 @@ fn a_model_too_large_to_send_is_left_alone() {
         .clone()
         .unwrap_err()
         .starts_with("a is too large to create on this server"));
+    // A server that joins a message's pieces takes it (D-114).
+    r.app.world_mut().resource_mut::<GzStatus>().long_frames = Some(true);
+    let (sent, done) = run(&mut r, ModelEdit::Duplicate);
+    assert_eq!(
+        sent,
+        ["/world/w/generate_world_sdf", "/world/w/create"],
+        "{done:?}"
+    );
 }
 
 /// Restore puts the camera where a workspace saved it: pose, pivot and
@@ -4368,9 +4376,221 @@ fn parts_join_the_edited_model_until_done() {
         .world_mut()
         .resource_mut::<Messages<PartsDiscarded>>()
         .clear();
-    edit(&mut r, editing::EditCommand::Done);
+    edit(&mut r, editing::EditCommand::Discard);
     assert!(link(&mut r).is_none());
     assert_eq!(extras(&r), Some(gz_core::sdf::WorldExtras::default()));
+    let dropped: Vec<PartsDiscarded> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .drain()
+        .collect();
+    assert_eq!(dropped, [PartsDiscarded(1)]);
+}
+
+/// A model being edited with a link added, on a server that takes edits
+/// and long frames (`long_frames`); (rig, model a, link a/base).
+fn a_model_with_a_part(long_frames: Option<bool>) -> (Rig, Entity, Entity) {
+    use crate::overlays::extras::SdfExtras;
+    use crate::spawn::GzEntity;
+    use editing::parts::PartCommand;
+    use gz_core::insert::Shape;
+    use gz_core::parts::Part;
+    let (mut r, a, la, ..) = two_editable_models();
+    r.app
+        .init_resource::<SdfExtras>()
+        .add_plugins((crate::edit::EditPlugin, crate::undo::UndoPlugin));
+    r.app.world_mut().get_mut::<GzEntity>(la).unwrap().path = "a/base".into();
+    r.app.insert_resource(GzStatus {
+        status: gz_core::transport::Status::Ready,
+        world: Some("w".into()),
+        edits: Some(true),
+        long_frames,
+        ..GzStatus::new("ws://h")
+    });
+    edit(&mut r, editing::EditCommand::Enter(a));
+    r.app
+        .world_mut()
+        .write_message(PartCommand::Add(Part::Link {
+            name: "link_1".into(),
+            shape: Shape::Box,
+            pose: gz_core::scene::Pose::IDENTITY,
+        }));
+    r.frames(2);
+    r.sent();
+    (r, a, la)
+}
+
+/// The world's SDFormat, model a's link `base` with inertia or without.
+fn world_reply(inertia: bool) -> crate::connection::GzServiceReply {
+    use gz_core::msgs;
+    use prost::Message as _;
+    let inertial = if inertia {
+        "<inertial><mass>1</mass></inertial>"
+    } else {
+        ""
+    };
+    let sdf = format!(
+        "<sdf version=\"1.9\"><world name=\"w\"><model name=\"a\">\
+         <link name=\"base\">{inertial}</link></model></world></sdf>"
+    );
+    crate::connection::GzServiceReply {
+        service: "/world/w/generate_world_sdf".into(),
+        msg_type: "gz.msgs.StringMsg".into(),
+        payload: msgs::StringMsg {
+            data: sdf,
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    }
+}
+
+fn notes(r: &mut Rig) -> Vec<String> {
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<editing::parts::EditNote>>()
+        .drain()
+        .map(|n| n.0)
+        .collect()
+}
+
+fn services(sent: &[GzCommand]) -> Vec<&str> {
+    sent.iter()
+        .filter_map(|c| match c {
+            GzCommand::Request { service, .. } => Some(service.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Done with parts asks for the world's SDFormat and stays in editing;
+/// the reply writes the parts into the model, which is removed (to be
+/// created again once it has gone) as one "edit a", and editing ends,
+/// resuming the sim, without the parts being called discarded.
+#[test]
+fn done_writes_the_parts_into_the_model_as_one_edit() {
+    use crate::undo::{Change, Record, Replacing};
+    use editing::parts::{EditParts, PartsDiscarded};
+    let (mut r, a, _) = a_model_with_a_part(Some(true));
+    assert!(r.app.world().resource::<EditParts>().holds());
+    r.app.world_mut().resource_mut::<Messages<Record>>().clear();
+    edit(&mut r, editing::EditCommand::Done);
+    assert_eq!(editing(&r), Some(a), "writing first");
+    let sent = r.sent();
+    assert_eq!(services(&sent), ["/world/w/generate_world_sdf"]);
+    assert!(r.app.world().resource::<EditParts>().writing());
+    assert_eq!(notes(&mut r), ["Writing a…"]);
+    // Done again while it is on its way asks nothing more.
+    edit(&mut r, editing::EditCommand::Done);
+    assert!(r.sent().is_empty());
+    r.app.world_mut().write_message(world_reply(true));
+    r.frames(3);
+    let sent = r.sent();
+    assert_eq!(services(&sent), ["/world/w/remove"], "{sent:?}");
+    assert_eq!(editing(&r), None);
+    let records: Vec<Record> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<Record>>()
+        .drain()
+        .collect();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].verb, "edit");
+    let [Change::Replaced { before, after }] = &records[0].changes[..] else {
+        panic!("{:?}", records[0].changes);
+    };
+    assert_eq!(before.name, "a");
+    assert!(!before.sdf.contains("link_1"));
+    assert!(
+        after.sdf.contains("<link name=\"link_1\">"),
+        "{}",
+        after.sdf
+    );
+    let replacing = &r.app.world().resource::<Replacing>().0;
+    assert_eq!(replacing.len(), 1);
+    assert_eq!(replacing[0].0.sdf, after.sdf);
+    assert_eq!(notes(&mut r), ["Wrote a: 1 part"]);
+    let dropped = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .drain()
+        .count();
+    assert_eq!(dropped, 0);
+    assert!(!r.app.world().resource::<EditParts>().holds());
+    // The model gone, it's created from the SDFormat as written.
+    r.app.world_mut().entity_mut(a).despawn();
+    r.frames(2);
+    let sent = r.sent();
+    assert_eq!(services(&sent), ["/world/w/create"]);
+}
+
+/// Done can't write a model whose check fails, on a server that cuts long
+/// messages, or with no reply: editing goes on with the parts, saying why,
+/// and Done tries again. Entering another model is refused while there
+/// are parts; Discard leaves without them.
+#[test]
+fn done_says_why_it_cant_write_and_discard_leaves() {
+    use crate::view::model_edits::EDIT_TIMEOUT_SECS;
+    use editing::parts::{EditParts, PartsDiscarded};
+    for long_frames in [None, Some(false)] {
+        let (mut r, a, _) = a_model_with_a_part(long_frames);
+        edit(&mut r, editing::EditCommand::Done);
+        assert!(r.sent().is_empty());
+        assert_eq!(editing(&r), Some(a));
+        assert_eq!(
+            notes(&mut r),
+            [
+                "Can't write a: this server cuts long messages, so it would lose the model \
+              · Discard the parts"
+            ]
+        );
+    }
+    let (mut r, a, _) = a_model_with_a_part(Some(true));
+    edit(&mut r, editing::EditCommand::Done);
+    notes(&mut r);
+    r.sent();
+    r.app.world_mut().write_message(world_reply(false));
+    r.frames(3);
+    let sent = r.sent();
+    assert!(services(&sent).is_empty(), "{sent:?}");
+    assert_eq!(editing(&r), Some(a));
+    assert_eq!(
+        notes(&mut r),
+        ["Can't write a: base has no inertia (a link needs it unless its model is static)"]
+    );
+    assert!(r.app.world().resource::<EditParts>().holds());
+    // No reply in time.
+    edit(&mut r, editing::EditCommand::Done);
+    assert_eq!(services(&r.sent()), ["/world/w/generate_world_sdf"]);
+    notes(&mut r);
+    let mut said = vec![];
+    for _ in 0..(EDIT_TIMEOUT_SECS * 1000.0) as usize / FRAME_MS as usize + 2 {
+        r.app.update();
+        said.extend(notes(&mut r));
+    }
+    assert_eq!(said, ["Can't write a: the server didn't answer"]);
+    assert!(!r.app.world().resource::<EditParts>().writing());
+    // Another model: refused while there are parts.
+    let b = {
+        let world = r.app.world_mut();
+        world
+            .query::<(Entity, &crate::spawn::GzEntity)>()
+            .iter(world)
+            .find(|(_, g)| g.path == "b")
+            .map(|(e, _)| e)
+            .unwrap()
+    };
+    edit(&mut r, editing::EditCommand::Enter(b));
+    assert_eq!(editing(&r), Some(a));
+    assert_eq!(notes(&mut r), ["Done or Discard this model's parts first"]);
+    r.app
+        .world_mut()
+        .resource_mut::<Messages<PartsDiscarded>>()
+        .clear();
+    edit(&mut r, editing::EditCommand::Discard);
+    assert_eq!(editing(&r), None);
+    assert!(services(&r.sent()).is_empty());
     let dropped: Vec<PartsDiscarded> = r
         .app
         .world_mut()
