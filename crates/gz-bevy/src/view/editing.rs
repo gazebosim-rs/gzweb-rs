@@ -4,16 +4,18 @@
 //! turns every view's joints and frames on, and keeps the model as
 //! [`EditingModel`]: its links are what views pick and what the
 //! selection holds, and every other entity renders at
-//! [`DIMMED_OPACITY`]. Done puts the overlays back and resumes the sim if
-//! entering paused it. The UI draws the EDITING pill and limits the Scene
+//! [`DIMMED_OPACITY`]. Done turns off the overlays entering turned on
+//! and resumes the sim if entering paused it. The UI draws the EDITING pill and limits the Scene
 //! tree; adding parts and writing the model back come later.
 
 use std::collections::HashMap;
 
+use bevy::ecs::message::MessageCursor;
 use bevy::prelude::*;
 
 use super::Selection;
 use crate::connection::{GzCommand, GzStatus};
+use crate::heightmap::TerrainMaterial;
 use crate::overlays::{Overlay, OverlaySet};
 use crate::spawn::{GzEntity, GzVisual, GzWorldRoot};
 
@@ -29,6 +31,34 @@ impl EditingModel {
     pub fn model(&self) -> Option<Entity> {
         self.0.as_ref().map(|e| e.model)
     }
+
+    /// `view`'s overlays without those editing turned on: what a
+    /// workspace saves of it.
+    pub fn own(&self, view: Entity, set: &OverlaySet) -> OverlaySet {
+        let mut out = *set;
+        for o in self.lit(view) {
+            out.set(o, false);
+        }
+        out
+    }
+
+    /// Forget what editing turned on in `view`: a workspace has just set
+    /// its overlays. Editing turns joints and frames on there again, and
+    /// Done turns off only those it did.
+    pub fn relight(&mut self, view: Entity) {
+        if let Some(e) = self.0.as_mut() {
+            e.lit.retain(|(v, _)| *v != view);
+        }
+    }
+
+    /// The overlays editing turned on in `view`.
+    fn lit(&self, view: Entity) -> impl Iterator<Item = Overlay> + '_ {
+        self.0
+            .iter()
+            .flat_map(|e| &e.lit)
+            .filter(move |(v, _)| *v == view)
+            .flat_map(|(_, os)| os.iter().copied())
+    }
 }
 
 /// A model being edited.
@@ -40,9 +70,13 @@ pub struct Editing {
     /// Whether the sim ran wasn't known yet (no stats): the first that
     /// come decide.
     pub undecided: bool,
-    /// Each view's overlays before entering, put back on Done.
-    overlays: Vec<(Entity, OverlaySet)>,
+    /// The overlays editing turned on in each view (joints and frames, if
+    /// they were off), turned off on Done.
+    lit: Vec<(Entity, Vec<Overlay>)>,
 }
+
+/// What editing turns on in every view (§6.6).
+const EDIT_OVERLAYS: [Overlay; 2] = [Overlay::Joints, Overlay::Frames];
 
 /// Enter editing a top-level model, or leave it.
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,9 +107,10 @@ pub fn part_of(parents: &Query<&ChildOf>, e: Entity, model: Entity) -> Option<En
 /// A view camera's overlays.
 type ViewSets<'w, 's> = Query<'w, 's, (Entity, &'static mut OverlaySet)>;
 
-/// Runs the [`EditCommand`]s. Entering needs a top-level model (another
-/// model being edited is left first); it pauses a running sim, turns the
-/// views' joints and frames on and clears the selection. Done undoes them.
+/// Runs the [`EditCommand`]s. Entering needs a top-level model; it pauses
+/// a running sim, turns the views' joints and frames on and clears the
+/// selection. Entering another while one is edited moves to it, the sim
+/// as it is. Done undoes them.
 #[allow(clippy::too_many_arguments)]
 pub fn run_edit_commands(
     mut commands: MessageReader<EditCommand>,
@@ -96,30 +131,26 @@ pub fn run_edit_commands(
                 if !top || editing.model() == Some(model) {
                     continue;
                 }
-                if let Some(was) = editing.0.take() {
-                    leave(was, &mut sets, &mut gz);
+                *selection = Selection::default();
+                // From one model to another: the sim stays paused, the
+                // views' overlays stay on, and Done resumes as the first
+                // would have.
+                if let Some(e) = editing.0.as_mut() {
+                    e.model = model;
+                    continue;
                 }
                 let sim = status.as_ref().and_then(|s| s.sim.as_ref());
                 let running = sim.is_some_and(|s| !s.paused);
                 if running {
                     gz.write(GzCommand::Pause);
                 }
-                let mut overlays = Vec::new();
-                for (view, mut set) in &mut sets {
-                    overlays.push((view, *set));
-                    for o in [Overlay::Joints, Overlay::Frames] {
-                        if !set.is_on(o) {
-                            set.set(o, true);
-                        }
-                    }
-                }
-                *selection = Selection::default();
                 editing.0 = Some(Editing {
                     model,
                     resume: running,
                     undecided: sim.is_none(),
-                    overlays,
+                    lit: Vec::new(),
                 });
+                light_views(&mut editing, &mut sets);
             }
             EditCommand::Done => {
                 if let Some(was) = editing.0.take() {
@@ -130,17 +161,67 @@ pub fn run_edit_commands(
     }
 }
 
-/// Puts back what entering changed: the views' overlays (the views it
-/// knew), and a sim it paused.
+/// Puts back what entering changed: the overlays it turned on, and a sim
+/// it paused.
 fn leave(was: Editing, sets: &mut ViewSets, gz: &mut MessageWriter<GzCommand>) {
-    for (view, before) in was.overlays {
-        if let Ok((_, mut set)) = sets.get_mut(view) {
-            set.set_if_neq(before);
-        }
-    }
-    if was.resume {
+    let resume = was.resume;
+    unlight(was, sets);
+    if resume {
         gz.write(GzCommand::Play);
     }
+}
+
+/// Turns off the overlays editing turned on (those still on: one the
+/// user turned off stays off; the others the user turned on stay on).
+fn unlight(was: Editing, sets: &mut ViewSets) {
+    for (view, lit) in was.lit {
+        if let Ok((_, mut set)) = sets.get_mut(view) {
+            for o in lit {
+                if set.is_on(o) {
+                    set.set(o, false);
+                }
+            }
+        }
+    }
+}
+
+/// Turns joints and frames on in each view editing hasn't yet (entering,
+/// a view that comes while editing, one a workspace just set), keeping
+/// which it turned on.
+fn light_views(editing: &mut ResMut<EditingModel>, sets: &mut ViewSets) {
+    let known = |editing: &EditingModel, v: Entity| {
+        editing
+            .0
+            .as_ref()
+            .is_some_and(|e| e.lit.iter().any(|(l, _)| *l == v))
+    };
+    for (view, mut set) in sets.iter_mut() {
+        if editing.0.is_none() || known(editing, view) {
+            continue;
+        }
+        let off: Vec<Overlay> = EDIT_OVERLAYS
+            .into_iter()
+            .filter(|o| !set.is_on(*o))
+            .collect();
+        for o in &off {
+            set.set(*o, true);
+        }
+        if let Some(e) = editing.0.as_mut() {
+            e.lit.push((view, off));
+        }
+    }
+}
+
+/// While a model is edited, every view shows its joints and frames: one
+/// that comes, or that a workspace sets, gets them too.
+pub fn light_new_views(mut editing: ResMut<EditingModel>, mut sets: ViewSets) {
+    let Some(e) = editing.0.as_ref() else {
+        return;
+    };
+    if sets.iter().all(|(v, _)| e.lit.iter().any(|(l, _)| *l == v)) {
+        return;
+    }
+    light_views(&mut editing, &mut sets);
 }
 
 /// Entered before the sim's first stats (`gzweb --edit`): once they come,
@@ -153,7 +234,12 @@ pub fn pause_when_known(
     let Some(sim) = status.as_ref().and_then(|s| s.sim.as_ref()) else {
         return;
     };
-    let Some(e) = editing.0.as_mut().filter(|e| e.undecided) else {
+    // Read first: a write marks the editing changed, and this runs every
+    // frame.
+    if !editing.0.as_ref().is_some_and(|e| e.undecided) {
+        return;
+    }
+    let Some(e) = editing.0.as_mut() else {
         return;
     };
     e.undecided = false;
@@ -177,11 +263,7 @@ pub fn end_editing_when_gone(
         return;
     }
     if let Some(was) = editing.0.take() {
-        for (view, before) in was.overlays {
-            if let Ok((_, mut set)) = sets.get_mut(view) {
-                set.set_if_neq(before);
-            }
-        }
+        unlight(was, &mut sets);
     }
 }
 
@@ -223,43 +305,111 @@ pub fn limit_selection(
     *selection = Selection { entities, parts };
 }
 
+/// A material [`dim_others`] can fade.
+pub trait Fade: Material + Clone {
+    /// Makes it `opacity` as opaque.
+    fn fade(&mut self, opacity: f32);
+}
+
+impl Fade for StandardMaterial {
+    fn fade(&mut self, opacity: f32) {
+        crate::material::set_opacity(self, opacity);
+    }
+}
+
+impl Fade for TerrainMaterial {
+    fn fade(&mut self, opacity: f32) {
+        // The layers blend over layer 0's colour and keep its alpha.
+        crate::material::set_opacity(&mut self.base, opacity);
+    }
+}
+
 /// A mesh drawn faded while a model is edited: its own material, and the
 /// faded one it shows.
 #[derive(Component, Clone, Debug, PartialEq)]
-pub struct Dimmed {
-    pub original: Handle<StandardMaterial>,
-    pub faded: Handle<StandardMaterial>,
+pub struct Dimmed<M: Material = StandardMaterial> {
+    pub original: Handle<M>,
+    pub faded: Handle<M>,
 }
 
 /// The scene's meshes, their material and whether they're dimmed.
-type SceneMeshes<'w, 's> = Query<
+type SceneMeshes<'w, 's, M> = Query<
     'w,
     's,
     (
         Entity,
-        Ref<'static, MeshMaterial3d<StandardMaterial>>,
-        Option<&'static Dimmed>,
+        Ref<'static, MeshMaterial3d<M>>,
+        Option<&'static Dimmed<M>>,
     ),
     Without<bevy::camera::visibility::RenderLayers>,
 >;
 
+/// Each material faded while editing (by its own), and the materials'
+/// changes not yet read.
+pub struct Faded<M: Material> {
+    copies: HashMap<AssetId<M>, Handle<M>>,
+    changes: MessageCursor<AssetEvent<M>>,
+}
+
+impl<M: Material> Default for Faded<M> {
+    fn default() -> Self {
+        Self {
+            copies: HashMap::new(),
+            changes: MessageCursor::default(),
+        }
+    }
+}
+
+/// The materials, and their changes.
+type MaterialsOf<'w, M> = (
+    Option<ResMut<'w, Assets<M>>>,
+    Option<Res<'w, Messages<AssetEvent<M>>>>,
+);
+
 /// While a model is edited every other visual's mesh shows a faded copy
 /// of its material ([`DIMMED_OPACITY`]; each material faded once, never
-/// in place); leaving puts the materials back. A mesh that comes, or
-/// gets a new material, while editing is faded too.
-pub fn dim_others(
+/// in place, and faded again when it changes or loads); leaving puts the
+/// materials back. A mesh that comes, or gets a new material, while
+/// editing is faded too. For [`StandardMaterial`] and the heightmaps'
+/// [`TerrainMaterial`].
+pub fn dim_others<M: Fade>(
     editing: Res<EditingModel>,
-    meshes: SceneMeshes,
+    meshes: SceneMeshes<M>,
     parents: Query<&ChildOf>,
     visuals: Query<(), With<GzVisual>>,
-    materials: Option<ResMut<Assets<StandardMaterial>>>,
-    mut faded: Local<HashMap<AssetId<StandardMaterial>, Handle<StandardMaterial>>>,
+    (materials, changes): MaterialsOf<M>,
+    mut faded: Local<Faded<M>>,
     mut commands: Commands,
 ) {
     // No renderer (a headless app): nothing to fade.
     let Some(mut materials) = materials else {
         return;
     };
+    let faded = &mut *faded;
+    // A faded material's own that changed (a texture combined into it,
+    // say) or came: its copy follows.
+    if let Some(changes) = changes {
+        let changed: Vec<AssetId<M>> = faded
+            .changes
+            .read(&changes)
+            .filter_map(|e| match e {
+                AssetEvent::Added { id }
+                | AssetEvent::Modified { id }
+                | AssetEvent::LoadedWithDependencies { id } => Some(*id),
+                _ => None,
+            })
+            .filter(|id| faded.copies.contains_key(id))
+            .collect();
+        for id in changed {
+            let Some(mut m) = materials.get(id).cloned() else {
+                continue;
+            };
+            m.fade(DIMMED_OPACITY);
+            if let Some(copy) = faded.copies.get(&id) {
+                let _ = materials.insert(copy, m);
+            }
+        }
+    }
     let model = editing.model();
     let all = editing.is_changed();
     if model.is_none() {
@@ -271,7 +421,7 @@ pub fn dim_others(
                 restore(&mut commands, e, &material.0, d);
             }
         }
-        faded.clear();
+        faded.copies.clear();
         return;
     }
     let model = model.unwrap_or(Entity::PLACEHOLDER);
@@ -294,11 +444,18 @@ pub fn dim_others(
             // Its own, or a new one given while dimmed.
             _ if !inside => {
                 let fade = faded
+                    .copies
                     .entry(current.id())
                     .or_insert_with(|| {
-                        let mut m = materials.get(&current).cloned().unwrap_or_default();
-                        crate::material::set_opacity(&mut m, DIMMED_OPACITY);
-                        materials.add(m)
+                        // Not loaded yet: faded as it loads (above).
+                        let mut m = materials.get(&current).cloned();
+                        if let Some(m) = m.as_mut() {
+                            m.fade(DIMMED_OPACITY);
+                        }
+                        match m {
+                            Some(m) => materials.add(m),
+                            None => materials.reserve_handle(),
+                        }
                     })
                     .clone();
                 commands.entity(e).insert((
@@ -316,10 +473,10 @@ pub fn dim_others(
 
 /// Puts a dimmed mesh's own material back, unless it was given another
 /// since (which stays).
-fn restore(commands: &mut Commands, e: Entity, current: &Handle<StandardMaterial>, d: &Dimmed) {
+fn restore<M: Material>(commands: &mut Commands, e: Entity, current: &Handle<M>, d: &Dimmed<M>) {
     let mut c = commands.entity(e);
     if *current == d.faded {
         c.insert(MeshMaterial3d(d.original.clone()));
     }
-    c.remove::<Dimmed>();
+    c.remove::<Dimmed<M>>();
 }

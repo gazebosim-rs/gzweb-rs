@@ -27,7 +27,7 @@ use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::undo::UndoStack;
 use gz_bevy::undo::{Change, Record};
 use gz_bevy::view::align::{AlignEdge, AlignModels};
-use gz_bevy::view::editing::EditCommand;
+use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
 use gz_bevy::view::model_edits::{EditModels, ModelClipboard, ModelEdit, ModelsEdited};
 use gz_bevy::view::{CameraMode, EntityContext, SelectMode, Selection, ViewCommand, ViewOp};
@@ -95,6 +95,8 @@ pub(crate) struct MenuState {
     pub(crate) movers: usize,
     /// The overlays on where it opened.
     pub(crate) overlays: Overlays,
+    /// The subject is the model being edited.
+    pub(crate) edited: bool,
 }
 
 /// Why an item can't run now, if it can't.
@@ -103,6 +105,7 @@ fn unavailable(item: ContextItem, s: &MenuState) -> Option<&'static str> {
     match item {
         ContextItem::Rename => Some("The server can't rename a model"),
         ContextItem::ApplyForce => Some("Not yet"),
+        ContextItem::EditModel if s.edited => Some("Editing it now"),
         ContextItem::Edit(ModelEdit::Copy) if !s.model => Some("Only a model copies"),
         ContextItem::Edit(ModelEdit::Paste) if !s.copied => Some("Nothing copied"),
         ContextItem::Edit(ModelEdit::Duplicate | ModelEdit::Delete) if !s.model => {
@@ -236,6 +239,7 @@ pub(crate) fn open_context_menu(
     subjects: Subjects,
     roots: Query<Entity, With<GzWorldRoot>>,
     open: Query<Entity, With<ContextMenu>>,
+    editing: Option<Res<EditingModel>>,
     mut commands: Commands,
 ) {
     let Some(ask) = asks.read().last() else {
@@ -279,6 +283,7 @@ pub(crate) fn open_context_menu(
             .and_then(|v| sets.get(v).ok().map(|s| s.0))
             .or(overlays.as_deref().copied())
             .unwrap_or_default(),
+        edited: editing.and_then(|e| e.model()) == Some(ask.entity),
     };
     let mut menu_root = Entity::PLACEHOLDER;
     let holder = commands

@@ -598,6 +598,7 @@ pub(super) fn on_row_context(
     model: Res<TreeModel>,
     mut selection: ResMut<Selection>,
     mut out: MessageWriter<gz_bevy::view::EntityContext>,
+    (editing, parents): (Option<Res<EditingModel>>, Query<&ChildOf>),
 ) {
     if ev.button != PointerButton::Secondary {
         return;
@@ -606,6 +607,10 @@ pub(super) fn on_row_context(
         return;
     };
     ev.propagate(false);
+    // Editing a model, the rows outside it have no menu (§6.6).
+    if !super::view::in_edited(&model, row, editing.as_deref(), &parents) {
+        return;
+    }
     if let Some(entity) = model.node(row).entity {
         crate::shell::context_menu::tree_context(entity, &mut selection, &mut out);
     }

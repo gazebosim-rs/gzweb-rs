@@ -201,6 +201,17 @@ pub struct ControlState {
     under_command: Vec<KeyCode>,
 }
 
+impl ControlState {
+    /// A press at `at` in `view` now would be a double click's second: the
+    /// gizmo leaves it to the view, so a handle that came with the first
+    /// click doesn't take it.
+    pub fn double_click(&self, now: f64, at: Vec2, view: Option<ViewId>) -> bool {
+        self.last_click.is_some_and(|(t, was, v)| {
+            now - t <= DOUBLE_CLICK_SECS && was.distance(at) <= CLICK_SLOP && v == view
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Drag {
     /// The view it started in, which it keeps.
@@ -315,9 +326,11 @@ impl Plugin for ViewerControls {
                 (
                     super::editing::run_edit_commands,
                     super::editing::pause_when_known,
+                    super::editing::light_new_views,
                     super::editing::end_editing_when_gone,
                     super::editing::limit_selection,
-                    super::editing::dim_others,
+                    super::editing::dim_others::<StandardMaterial>,
+                    super::editing::dim_others::<crate::heightmap::TerrainMaterial>,
                 )
                     .chain()
                     .after(apply_view_commands)
@@ -604,16 +617,13 @@ pub fn mouse_input(
         if marquee.0.is_some() {
             marquee.0 = None;
         }
+        // Anything but a click (a drag, another button) starts over.
+        let mut clicked = None;
         if drag.button == MouseButton::Left {
             if let Some(op) = released(drag, held.shift, command, placing.0) {
                 let now = time.elapsed_secs_f64();
                 let click = matches!(op, ViewOp::Select { .. });
-                let double = click
-                    && state.last_click.is_some_and(|(t, at, v)| {
-                        now - t <= DOUBLE_CLICK_SECS
-                            && at.distance(drag.start) <= CLICK_SLOP
-                            && v == drag.view
-                    });
+                let double = click && state.double_click(now, drag.start, drag.view);
                 send(&mut out, op);
                 // A double click with Translate or Rotate edits the model
                 // (spec §6.6); the first click selected it.
@@ -623,9 +633,10 @@ pub fn mouse_input(
                 if double && transform {
                     send(&mut out, ViewOp::EditAt { at: drag.start });
                 }
-                state.last_click = (click && !double).then_some((now, drag.start, drag.view));
+                clicked = (click && !double).then_some((now, drag.start, drag.view));
             }
         }
+        state.last_click = clicked;
         // A right click (no drag) asks for the context menu.
         if drag.button == MouseButton::Right && drag.selects && !drag.moved && !placing.0 {
             send(&mut out, ViewOp::Context { at: drag.start });

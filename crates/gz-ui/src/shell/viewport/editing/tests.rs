@@ -137,29 +137,45 @@ fn esc_clears_the_selection_then_leaves() {
     assert_eq!(editing(&app), None);
 }
 
+/// ⌘K's Navigate tool picks the tool: it neither clears the selection
+/// nor leaves, as Esc does.
+#[test]
+fn the_palettes_navigate_isnt_esc() {
+    let (mut app, amr, base, _) = live_world(true);
+    app.world_mut().write_message(EditCommand::Enter(amr));
+    frames(&mut app, 3);
+    app.world_mut().resource_mut::<Selection>().entities = vec![base];
+    app.world_mut()
+        .write_message(gz_bevy::view::controls::RunBinding("tool.navigate".into()));
+    frames(&mut app, 2);
+    assert_eq!(app.world().resource::<Selection>().entities, [base]);
+    assert_eq!(editing(&app), Some(amr));
+}
+
 /// The context menu's Edit model and the Model inspector's Edit model row
 /// edit the model.
 #[test]
 fn edit_model_in_the_menu_and_the_inspector_enters() {
-    let (mut app, amr, _, crate_) = live_world(true);
-    app.world_mut().resource_mut::<Selection>().entities = vec![crate_];
-    app.world_mut().write_message(EntityContext {
-        entity: crate_,
-        view: None,
-    });
-    frames(&mut app, 3);
-    let item = {
+    let (mut app, amr, base, crate_) = live_world(true);
+    let menu_item = |app: &mut App, entity: Entity| {
+        app.world_mut().resource_mut::<Selection>().entities = vec![entity];
+        app.world_mut()
+            .write_message(EntityContext { entity, view: None });
+        frames(app, 3);
         let world = app.world_mut();
         world
             .query::<(Entity, &ContextItem, Has<bevy::ui::InteractionDisabled>)>()
             .iter(world)
             .find(|(_, i, _)| **i == ContextItem::EditModel)
             .map(|(e, _, d)| (e, d))
-            .unwrap()
     };
+    assert_eq!(menu_item(&mut app, base), None, "a link isn't edited");
+    let item = menu_item(&mut app, crate_).unwrap();
     assert!(!item.1, "available");
     activate(&mut app, item.0);
     assert_eq!(editing(&app), Some(crate_));
+    let again = menu_item(&mut app, crate_).unwrap();
+    assert!(again.1, "it's edited now");
     app.world_mut().write_message(EditCommand::Done);
     frames(&mut app, 2);
     app.world_mut().resource_mut::<Selection>().entities = vec![amr];
@@ -175,6 +191,34 @@ fn edit_model_in_the_menu_and_the_inspector_enters() {
     };
     activate(&mut app, row);
     assert_eq!(editing(&app), Some(amr));
+    // A nested model's inspector: its Edit model row doesn't run.
+    app.world_mut().write_message(EditCommand::Done);
+    let nested = app
+        .world_mut()
+        .spawn((
+            GzEntity {
+                name: "arm".into(),
+                id: 0,
+                kind: NodeKind::Model,
+                path: "amr_01/arm".into(),
+            },
+            Transform::default(),
+            Visibility::default(),
+            ChildOf(amr),
+        ))
+        .id();
+    frames(&mut app, 2);
+    app.world_mut().resource_mut::<Selection>().entities = vec![nested];
+    frames(&mut app, 4);
+    assert!(all_text(&mut app).contains("Edit model"), "its inspector");
+    let live = {
+        let world = app.world_mut();
+        world
+            .query::<&EntityAction>()
+            .iter(world)
+            .any(|a| *a == EntityAction::EditModel)
+    };
+    assert!(!live);
 }
 
 #[test]

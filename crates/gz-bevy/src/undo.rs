@@ -414,8 +414,8 @@ fn record(
 
 /// Undoes or redoes the top edit. A move needs a server that takes edits:
 /// without one the edit stays where it is, and so it does while a model it
-/// changes is still being created again ([`Recreating`]). An entity that
-/// is gone is skipped.
+/// changes is still being created again ([`Recreating`]), or while a model
+/// is edited (spec §6.6). An entity that is gone is skipped.
 #[allow(clippy::too_many_arguments)]
 fn undo_redo(
     mut commands: MessageReader<UndoCommand>,
@@ -427,6 +427,7 @@ fn undo_redo(
     mut isolated: ResMut<Isolated>,
     mut held: ResMut<Held>,
     mut recreating: ResMut<Recreating>,
+    editing: Option<Res<crate::view::editing::EditingModel>>,
     mut loaded: Option<ResMut<crate::world_save::LoadedPoses>>,
     mut edits: MessageWriter<SetPose>,
     mut server: MessageWriter<GzCommand>,
@@ -453,9 +454,13 @@ fn undo_redo(
         let Some(edit) = top else {
             continue;
         };
+        let verb = if undo { "undo" } else { "redo" };
+        if editing.as_deref().is_some_and(|e| e.model().is_some()) {
+            warn!("can't {verb} {} while editing a model", edit.label);
+            continue;
+        }
         let moves = edit.steps.iter().any(Step::asks_server);
         let world = status.as_deref().and_then(|s| s.world.clone());
-        let verb = if undo { "undo" } else { "redo" };
         if moves && (!edits_allowed(status.as_deref()) || world.is_none()) {
             warn!("can't {verb} {}: the server doesn't take edits", edit.label);
             continue;

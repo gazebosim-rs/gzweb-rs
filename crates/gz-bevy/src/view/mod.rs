@@ -1065,9 +1065,21 @@ impl ViewScene<'_, '_> {
             .and_then(editing::EditingModel::model)
     }
 
-    /// The nearest visible mesh on the ray (in the model being edited, if
-    /// one is: the others can't be picked).
+    /// The nearest visible mesh on the ray: what the camera pivots on and
+    /// focus frames, dimmed models too.
     fn hit(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
+        let skip = &self.skip;
+        let filter = |e: Entity| !skip.contains(e);
+        let settings = MeshRayCastSettings::default().with_filter(&filter);
+        self.ray_cast
+            .cast_ray(ray, &settings)
+            .first()
+            .map(|(e, hit)| (*e, hit.point))
+    }
+
+    /// The nearest visible mesh on the ray that can be picked: in the
+    /// model being edited, if one is (the others are see-through).
+    fn pick(&mut self, ray: Ray3d) -> Option<(Entity, Vec3)> {
         let skip = &self.skip;
         let parents = &self.parents;
         let editing = self.editing();

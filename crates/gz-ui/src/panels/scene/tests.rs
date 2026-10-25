@@ -1177,6 +1177,33 @@ fn editing_a_model_dims_the_other_rows() {
             .len(),
         1
     );
+    // A dimmed row has no menu.
+    use bevy::picking::events::PointerPress;
+    use bevy::picking::pointer::PointerButton;
+    app.world_mut().trigger(PointerPress {
+        entity: crate_row,
+        pointer: pointer(),
+        button: PointerButton::Secondary,
+        hit: hit(),
+        count: 1,
+    });
+    frames(&mut app, 3);
+    let menus = {
+        let world = app.world_mut();
+        world
+            .query::<&crate::shell::context_menu::ContextMenu>()
+            .iter(world)
+            .count()
+    };
+    assert_eq!(menus, 0);
+    // The model's row, closed, stays closed.
+    let key = NodeKey::Entity("amr_01".into());
+    app.world_mut()
+        .resource_mut::<TreeState>()
+        .expanded
+        .remove(&key);
+    frames(&mut app, 3);
+    assert!(!app.world().resource::<TreeState>().expanded.contains(&key));
     app.world_mut().write_message(EditCommand::Done);
     frames(&mut app, 3);
     assert!(!spec(&mut app, "crate_01").dimmed);

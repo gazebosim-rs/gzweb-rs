@@ -506,11 +506,12 @@ type GizmoNodes<'w, 's> = ParamSet<
     ),
 >;
 
-/// The buttons, the keys, and whether Teleop drives.
+/// The buttons, the keys, whether Teleop drives, and the views' clicks.
 type GizmoKeys<'w> = (
     Res<'w, ButtonInput<MouseButton>>,
     Res<'w, ButtonInput<KeyCode>>,
     Option<Res<'w, super::DriveArmed>>,
+    Option<Res<'w, super::controls::ControlState>>,
 );
 
 /// Hover, press, drag, constrain, cancel and release.
@@ -524,7 +525,7 @@ pub fn gizmo_input(
     views: Views,
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
     routing: Res<ViewRouting>,
-    (buttons, keys, driving): GizmoKeys,
+    (buttons, keys, driving, clicks): GizmoKeys,
     time: Res<Time<Real>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     planes: Query<(), With<HasPlane>>,
@@ -658,7 +659,10 @@ pub fn gizmo_input(
     let (Some(handle), Some(center), Some(at)) = (hovered, center, cursor) else {
         return;
     };
-    if buttons.just_pressed(MouseButton::Left) {
+    // A double click's second press is the view's (spec §6.6: it edits
+    // the model).
+    let double = clicks.is_some_and(|c| c.double_click(now, at, routing.hovered));
+    if buttons.just_pressed(MouseButton::Left) && !double {
         let starts: Vec<(Entity, Transform)> = targets
             .iter()
             .filter_map(|e| nodes.p0().get(*e).ok().map(|(_, _, t, _)| (*e, *t)))

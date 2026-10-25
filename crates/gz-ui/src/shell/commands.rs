@@ -168,7 +168,9 @@ pub(crate) fn shortcut_keys(
     (tool, editing, mut selection, mut edit_out): EditKeys,
 ) {
     let ran: Vec<String> = runs.read().map(|r| r.0.clone()).collect();
-    for id in shortcuts.pressed().into_iter().chain(ran) {
+    let keyed = shortcuts.pressed();
+    let pressed = keyed.len();
+    for (i, id) in keyed.into_iter().chain(ran).enumerate() {
         let views = match id.as_str() {
             "view.maximize" => Some(LayoutCommand::Maximize(None)),
             "view.close" => Some(LayoutCommand::Close(None)),
@@ -226,9 +228,11 @@ pub(crate) fn shortcut_keys(
                 continue;
             }
             // Editing a model, Esc in Navigate clears the selection, then
-            // leaves (§6.6; one step per Esc, §6.3).
+            // leaves (§6.6; one step per Esc, §6.3). Not ⌘K's Navigate
+            // tool: that only picks the tool.
             "tool.navigate"
-                if *tool == Tool::Navigate
+                if i < pressed
+                    && *tool == Tool::Navigate
                     && editing.as_deref().is_some_and(|e| e.model().is_some()) =>
             {
                 if selection.is_empty() {

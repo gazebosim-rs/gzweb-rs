@@ -15,6 +15,7 @@ use gz_bevy::connection::{GzCommand, GzServiceReply, GzStatus};
 use gz_bevy::edit::{create_reply, create_request, edits_allowed};
 use gz_bevy::fuel::{FuelSearch, FuelState, GzFuel};
 use gz_bevy::spawn::GzIndex;
+use gz_bevy::view::editing::EditingModel;
 use gz_bevy::view::gizmo::GizmoState;
 use gz_bevy::view::place::{PlaceAt, PlaceHover, Placing};
 use gz_bevy::view::NoViewPick;
@@ -40,6 +41,7 @@ pub(crate) const NOT_CONNECTED: &str = "Not connected: connect to insert into a 
 pub(crate) const NO_EDITS: &str =
     "This server doesn't take edits, so nothing can be inserted (it needs the patched \
      websocket server)";
+pub(crate) const EDITING: &str = "Not while editing a model";
 
 /// What the panel's message says before a search.
 pub(crate) const SEARCH_PROMPT: &str = "Search Fuel for models";
@@ -61,6 +63,7 @@ pub(crate) struct BuiltRows {
 pub(super) struct Inserting<'w> {
     phase: Res<'w, CurrentPhase>,
     status: Option<Res<'w, GzStatus>>,
+    editing: Option<Res<'w, EditingModel>>,
 }
 
 impl Inserting<'_> {
@@ -73,11 +76,18 @@ impl Inserting<'_> {
         if !edits_allowed(status) {
             return Err(NO_EDITS);
         }
+        // Parts come with M9b's Parts tab; a model placed now would be
+        // dimmed and out of reach.
+        if self.editing.as_deref().is_some_and(|e| e.model().is_some()) {
+            return Err(EDITING);
+        }
         status.and_then(|s| s.world.clone()).ok_or(NOT_CONNECTED)
     }
 
     fn changed(&self) -> bool {
-        self.phase.is_changed() || self.status.as_ref().is_some_and(Res::is_changed)
+        self.phase.is_changed()
+            || self.status.as_ref().is_some_and(Res::is_changed)
+            || self.editing.as_ref().is_some_and(Res::is_changed)
     }
 }
 

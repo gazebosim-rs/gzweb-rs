@@ -119,7 +119,7 @@ impl ViewScene<'_, '_> {
     /// instead (spec §6.6). A model of only plane visuals (the ground) is
     /// empty space, as for a marquee and focus.
     pub(super) fn model_under(&mut self, ray: Ray3d) -> Option<Entity> {
-        let (hit, _) = self.hit(ray)?;
+        let (hit, _) = self.pick(ray)?;
         if let Some(model) = self.editing() {
             let part = super::editing::part_of(&self.parents, hit, model)?;
             return self

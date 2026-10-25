@@ -21,6 +21,7 @@ use gz_bevy::connection::GzStatus;
 use gz_bevy::save::save_bytes;
 use gz_bevy::spawn::GzIndex;
 use gz_bevy::undo::{UndoCommand, UndoStack};
+use gz_bevy::view::editing::EditingModel;
 use gz_bevy::view::input::InputMap;
 use gz_bevy::world_save::{SaveWorld, WorldSaved};
 
@@ -256,6 +257,7 @@ pub(crate) fn world_menu_states(
     status: Option<Res<GzStatus>>,
     index: Option<Res<GzIndex>>,
     undo: Option<Res<UndoStack>>,
+    editing: Option<Res<EditingModel>>,
     last: Res<LastSaved>,
     mut headers: Query<(&WorldHeader, &mut Text, &mut Ink)>,
     items: Query<(Entity, &WorldItem, &Children, Has<InteractionDisabled>)>,
@@ -267,6 +269,7 @@ pub(crate) fn world_menu_states(
         || status.as_ref().is_some_and(Res::is_changed)
         || index.as_ref().is_some_and(Res::is_changed)
         || undo.as_ref().is_some_and(Res::is_changed)
+        || editing.as_ref().is_some_and(Res::is_changed)
         || last.is_changed()
         || !added.is_empty();
     if !changed {
@@ -296,7 +299,9 @@ pub(crate) fn world_menu_states(
         set_text(&mut t, &want);
         ink.set_if_neq(Ink(role));
     }
-    let undo = undo.as_deref();
+    // Not while a model is edited (§6.6): M9c makes the session one step.
+    let editing = editing.as_deref().is_some_and(|e| e.model().is_some());
+    let undo = undo.as_deref().filter(|_| !editing);
     for (e, item, children, disabled) in &items {
         let (label, ..) = item.parts();
         let (enabled, label) = match item {

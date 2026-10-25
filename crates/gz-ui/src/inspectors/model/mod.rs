@@ -122,6 +122,10 @@ fn build_model(
     });
     let counts = parts(model, &path, &children, &entities, sdf.as_deref());
     let editable = pose_editable(status.as_deref(), model, &nodes, &roots);
+    // Only a top-level model is edited in place (§6.6).
+    let top = nodes
+        .get(model)
+        .is_ok_and(|(_, p, _)| roots.contains(p.parent()));
     let t = theme.clone();
     commands
         .entity(ev.entity)
@@ -175,7 +179,11 @@ fn build_model(
                     "Edit model",
                     "All components",
                 ],
-                &[("Edit model", EntityAction::EditModel)],
+                if top {
+                    &[("Edit model", EntityAction::EditModel)]
+                } else {
+                    &[]
+                },
             );
         })));
 }
