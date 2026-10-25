@@ -2019,3 +2019,17 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Left:** the server should join a frame's pieces
   (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
   does, M9c's write-back is limited to models that fit.
+
+## 2026-10-25: M9d the inspectors' quick actions (D-115)
+
+- **Link inspector:** Add visual, Add collision and Add sensor, a second row
+  of quick actions, put the Parts tab's shape or sensor at the link's
+  origin while its model is edited.
+- **Joint inspector:** Reparent has the next click pick the joint's new
+  parent link, with a line from its child to the pointer, the status bar's
+  hint, and D-113's tree rules; `Part::Reparent` is a draft step that undo
+  takes back.
+- Outside editing both are disabled, saying why.
+- Built while M9c was paused on the server's frame limit; an agent is
+  finishing M9c separately. M9c's write-back needs to handle
+  `Part::Reparent` (it has no element: it changes its joint's `<parent>`).

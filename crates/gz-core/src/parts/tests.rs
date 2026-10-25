@@ -252,3 +252,40 @@ fn the_draft_undoes_and_redoes() {
         None
     );
 }
+
+/// A reparent gives its joint (the model's, or a nested model's) a new
+/// parent in what's shown; undo names it.
+#[test]
+fn a_reparent_changes_its_joints_parent() {
+    let mut extras = WorldExtras::default();
+    Part::Joint {
+        name: "joint_1".into(),
+        kind: JointKind::Revolute,
+        parent: "amr/a".into(),
+        child: "amr/b".into(),
+    }
+    .add_to("amr", &mut extras);
+    let reparent = Part::Reparent {
+        joint: "joint_1".into(),
+        model: "amr".into(),
+        child: "amr/b".into(),
+        parent: "amr/inner/c".into(),
+    };
+    reparent.add_to("amr", &mut extras);
+    let j = &extras.link("amr/b").unwrap().joints[0];
+    assert_eq!((j.parent.as_str(), j.child.as_str()), ("inner::c", "b"));
+    assert_eq!(reparent.sdf("amr"), "");
+    assert_eq!(reparent.link(), Some("amr/b"));
+    let mut d = Draft::default();
+    d.add(reparent);
+    assert_eq!(d.undo_label().as_deref(), Some("reparent joint_1"));
+    // Another model's joint of that name is left alone.
+    let other = Part::Reparent {
+        joint: "joint_1".into(),
+        model: "amr/inner".into(),
+        child: "amr/b".into(),
+        parent: "amr/inner/d".into(),
+    };
+    other.add_to("amr", &mut extras);
+    assert_eq!(extras.link("amr/b").unwrap().joints[0].parent, "inner::c");
+}

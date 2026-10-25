@@ -19,6 +19,7 @@ mod model;
 mod parts;
 
 pub(crate) use model::AssetsState;
+pub(crate) use parts::{PartAction, REPARENT_HINT};
 mod systems;
 mod view;
 
@@ -98,6 +99,7 @@ impl Plugin for AssetsPanelPlugin {
                     parts::parts_tab,
                     parts::forget_parent,
                     parts::place_part,
+                    parts::part_action_states,
                     parts::part_ghost,
                     parts::joint_band,
                     parts::parts_discarded,

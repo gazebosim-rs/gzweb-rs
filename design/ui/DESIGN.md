@@ -456,6 +456,8 @@ As built (D-112, M9a): entering, the dimming (other models unpickable, their mes
 
 As built (D-113, M9b): the Parts tab, its six tiles and the shape, joint and sensor selects; a click adds a link where it lands, or a visual, collision or sensor to the link clicked; a joint's two clicks with its rubber band; Plugin's fields; a Shapes tile adding a link while editing; each part undoable. Clicks stand in for drops (D-102's placing). Until M9c the parts are a draft: Done drops them.
 
+As built (D-115, M9d): the Link inspector's Add visual, Add collision and Add sensor (at the link's origin, as the Parts tab chooses) and the Joint inspector's Reparent (the next click picks the new parent link), live while their model is edited; each a step of the draft, undoable.
+
 ### 6.4 Selection model
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 

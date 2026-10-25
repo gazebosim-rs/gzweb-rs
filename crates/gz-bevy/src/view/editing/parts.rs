@@ -158,7 +158,10 @@ impl PartScene<'_, '_> {
                 }
                 None
             }
-            Part::Collision { .. } | Part::Joint { .. } | Part::Plugin { .. } => None,
+            Part::Collision { .. }
+            | Part::Joint { .. }
+            | Part::Plugin { .. }
+            | Part::Reparent { .. } => None,
         }
     }
 
