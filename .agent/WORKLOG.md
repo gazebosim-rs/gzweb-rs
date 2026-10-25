@@ -1990,6 +1990,15 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   compacts; Delete, Duplicate, Paste and their undo and redo check the
   `create` first and do nothing, saying why, when it won't fit. Failed
   model edits show in the status bar.
+- **Review** (PR #60):
+  - 4088 bytes is needed but not enough: the server parses what one
+    4096-byte read holds. A frame under the limit sharing a read with
+    another, or arriving over several reads, is cut too (shown on a
+    libwebsockets 4.3.5 server set up like gz's). The docs say so.
+  - Compacting keeps blank text that means something.
+  - The Console refuses a call or publish that long, saying why.
+  - The reason gives exact bytes.
+  - M9c's write-back is paused until the server joins a frame's pieces.
 - **Left:** the server should join a frame's pieces
   (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
   does, M9c's write-back is limited to models that fit.

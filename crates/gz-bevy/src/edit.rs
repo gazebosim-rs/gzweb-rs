@@ -155,29 +155,45 @@ pub fn remove_request(world: &str, name: &str, id: Option<u32>) -> GzCommand {
     }
 }
 
-/// Why the server couldn't take `request` whole, if it couldn't: it is
-/// longer than [`MAX_FRAME`](gz_core::transport::MAX_FRAME) ("its 8.9 KB
-/// is over the server's 4 KB"), so it would be lost. A `create` from a
-/// large model's SDFormat is one.
-pub fn too_long(request: &GzCommand) -> Option<String> {
+/// Why the server couldn't take `command` whole, if it couldn't: as a
+/// frame it is longer than [`MAX_FRAME`](gz_core::transport::MAX_FRAME)
+/// ("its 6,123 bytes are over the 4,088 the server takes"), so it would be
+/// lost. A `create` from a large model's SDFormat is one.
+pub fn too_long(command: &GzCommand) -> Option<String> {
     use gz_core::transport::{frame_len, MAX_FRAME};
-    let GzCommand::Request {
-        service,
-        msg_type,
-        payload,
-    } = request
-    else {
-        return None;
+    let len = match command {
+        GzCommand::Request {
+            service,
+            msg_type,
+            payload,
+        } => frame_len("req", service, msg_type, payload.len()),
+        GzCommand::Publish {
+            topic,
+            msg_type,
+            payload,
+        } => frame_len("pub_in", topic, msg_type, payload.len()),
+        _ => return None,
     };
-    let len = frame_len("req", service, msg_type, payload.len());
-    let kb = |n: usize| n as f64 / 1024.0;
     (len > MAX_FRAME).then(|| {
         format!(
-            "its {:.1} KB is over the server's {:.0} KB",
-            kb(len),
-            kb(MAX_FRAME)
+            "its {} bytes are over the {} the server takes",
+            thousands(len),
+            thousands(MAX_FRAME)
         )
     })
+}
+
+/// `n` with its thousands apart: "6,123".
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Whether `reply` answers a `create`, and if so whether it succeeded.

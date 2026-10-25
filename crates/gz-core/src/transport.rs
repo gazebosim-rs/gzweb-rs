@@ -32,8 +32,11 @@
 //!   `throttle`, the service, type or payload of `req`) is an out-of-bounds
 //!   read, which crashes it (on Jetty, the whole simulation);
 //! - `throttle` with rate 0 divides by zero;
-//! - a frame longer than [`MAX_FRAME`] reaches the parser in pieces, each
-//!   read as a frame of its own (the request is lost), on every server.
+//! - the parser gets what one read from the socket holds (4096 bytes at
+//!   most) as one frame: a frame longer than [`MAX_FRAME`] always reaches
+//!   it in pieces, each read as a frame of its own (the request is lost),
+//!   and so can a shorter one that shares a read with the frame before it
+//!   or arrives over several (a slow link). Only the server can fix that.
 //!
 //! [`Transport`] refuses all of these with [`SendError::Unsendable`], except
 //! a `req` payload's commas and zeros for a server that takes binary
@@ -565,10 +568,12 @@ impl Transport {
     }
 }
 
-/// The longest frame the server takes whole, in bytes. Its websocket
-/// (libwebsockets, with its default receive buffer) hands a longer one to
-/// the parser in pieces, each read as a frame of its own: the request is
-/// lost, or a piece of it read as one (measured on Jetty).
+/// The longest frame the server can take whole, in bytes (measured on
+/// Jetty): its websocket (libwebsockets, with its default receive buffer)
+/// hands the parser what one 4096-byte read holds, so a longer frame is
+/// always lost in pieces (or a piece read as a request). A shorter one
+/// only arrives whole when it has a read to itself: frames sent close
+/// together, or over a slow link, can be cut too. See the module docs.
 pub const MAX_FRAME: usize = 4088;
 
 /// How long a frame is: its op, topic, type and payload, and the commas

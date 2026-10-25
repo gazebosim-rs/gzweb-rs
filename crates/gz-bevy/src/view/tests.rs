@@ -3743,7 +3743,8 @@ fn a_model_too_large_to_send_is_left_alone() {
     assert_eq!(sent, ["/world/w/generate_world_sdf"], "no remove");
     let why = done[0].result.clone().unwrap_err();
     assert!(
-        why.starts_with("Not deleted: undo couldn't bring a back (its 4."),
+        why.starts_with("Not deleted: undo couldn't bring a back (its 4,")
+            && why.ends_with(" bytes are over the 4,088 the server takes)"),
         "{why}"
     );
     let (sent, done) = run(&mut r, ModelEdit::Duplicate);
@@ -3767,6 +3768,17 @@ fn a_model_too_large_to_send_is_left_alone() {
         .filter(|c| matches!(c, GzCommand::Request { .. }))
         .count();
     assert_eq!(creates, 0);
+    let done: Vec<ModelsEdited> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<ModelsEdited>>()
+        .drain()
+        .collect();
+    assert!(done[0]
+        .result
+        .clone()
+        .unwrap_err()
+        .starts_with("a is too large to create on this server"));
 }
 
 /// Restore puts the camera where a workspace saved it: pose, pivot and

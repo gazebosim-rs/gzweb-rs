@@ -464,6 +464,50 @@ fn a_model_too_large_to_send_isnt_created_again() {
     assert_eq!(sent, 0);
     let stack = app.world().resource::<UndoStack>();
     assert_eq!(stack.undo_label(), Some("delete cart"));
+    // Deleted with a small one: neither comes back.
+    let small = ModelCopy {
+        name: "box".into(),
+        sdf: "<sdf version=\"1.9\"><model name=\"box\"/></sdf>".into(),
+        pose: Transform::IDENTITY,
+        loaded: None,
+    };
+    let large = ModelCopy {
+        name: "cart".into(),
+        sdf: format!(
+            "<sdf version=\"1.9\"><model name=\"cart\"><!--{}--></model></sdf>",
+            "x".repeat(gz_core::transport::MAX_FRAME)
+        ),
+        pose: Transform::IDENTITY,
+        loaded: None,
+    };
+    app.world_mut().write_message(Record {
+        verb: "delete",
+        named: true,
+        changes: [small, large]
+            .into_iter()
+            .map(|model| Change::Exists {
+                model,
+                after: false,
+            })
+            .collect(),
+        scrub: None,
+        open: false,
+    });
+    app.update();
+    app.world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .clear();
+    app.world_mut().write_message(UndoCommand::Undo);
+    app.update();
+    let sent = app
+        .world_mut()
+        .resource_mut::<Messages<GzCommand>>()
+        .drain()
+        .filter(|c| matches!(c, GzCommand::Request { .. }))
+        .count();
+    assert_eq!(sent, 0);
+    let stack = app.world().resource::<UndoStack>();
+    assert_eq!(stack.undo_label(), Some("delete 2 entities"));
 }
 
 /// Without edits, a delete stays where it is.

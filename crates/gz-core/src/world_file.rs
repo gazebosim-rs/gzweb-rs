@@ -112,6 +112,31 @@ pub fn with_model_poses(sdf: &str, poses: &[(&str, Pose)]) -> Result<String, Str
     Ok(out)
 }
 
+/// Whether text node `n` of `sdf` is only an indent between elements:
+/// blank, written as it reads (no entity, no CDATA), with an element and
+/// no other text beside it (comments and blanks aside), and not kept by
+/// `xml:space="preserve"`.
+fn indent(sdf: &str, n: roxmltree::Node) -> bool {
+    let Some(text) = n.text().filter(|_| n.is_text()) else {
+        return false;
+    };
+    if !text.trim().is_empty() || sdf[n.range()] != *text {
+        return false;
+    }
+    let preserved = n.ancestors().any(|a| {
+        a.attributes()
+            .any(|at| at.name() == "space" && at.value() == "preserve")
+    });
+    // Past comments and other blanks, to an element or text, if any.
+    let skip = |s: &roxmltree::Node| {
+        s.is_comment() || (s.is_text() && s.text().is_some_and(|t| t.trim().is_empty()))
+    };
+    let before = std::iter::successors(n.prev_sibling(), |s| s.prev_sibling()).find(|s| !skip(s));
+    let after = std::iter::successors(n.next_sibling(), |s| s.next_sibling()).find(|s| !skip(s));
+    let not_text = |s: Option<roxmltree::Node>| s.is_none_or(|s| s.is_element());
+    !preserved && not_text(before) && not_text(after) && (before.is_some() || after.is_some())
+}
+
 /// The top-level model `name` of `sdf` (a world's SDFormat) as an
 /// SDFormat document of its own, to `create` a copy of it from (DECISIONS.md
 /// D-109): its element as written, in an `<sdf>` of the world's version.
@@ -127,15 +152,13 @@ pub fn model_sdf(sdf: &str, name: &str) -> Result<String, String> {
         .find(|n| n.has_tag_name("model") && n.attribute("name") == Some(name))
         .ok_or_else(|| format!("no model {name} in the world"))?;
     let version = root.attribute("version").unwrap_or("1.9");
-    // Compact, so as much as can fits in a frame the server takes whole
-    // (`transport::MAX_FRAME`): the indents between elements, and
-    // comments, go.
+    // Compact, so more fits in a frame the server takes whole
+    // (`transport::MAX_FRAME`): comments go, and so do the indents
+    // between elements.
     let range = model.range();
     let mut gaps: Vec<std::ops::Range<usize>> = model
         .descendants()
-        .filter(|n| {
-            n.is_comment() || (n.is_text() && n.text().is_some_and(|t| t.trim().is_empty()))
-        })
+        .filter(|n| n.is_comment() || indent(sdf, *n))
         .map(|n| n.range())
         .collect();
     gaps.sort_by_key(|r| std::cmp::Reverse(r.start));
@@ -288,5 +311,27 @@ mod tests {
              </pose><link name=\"l\"><visual name=\"v\"><material><script><name> a b </name>\
              </script></material></visual></link></model></sdf>"
         );
+    }
+
+    /// Blank text that means something stays: an element's only text, an
+    /// entity, `xml:space="preserve"`, a space between text and comments.
+    #[test]
+    fn compacting_keeps_blank_text_that_matters() {
+        let model = |inner: &str| {
+            format!("<sdf version=\"1.9\"><world name=\"w\"><model name=\"m\">{inner}</model></world></sdf>")
+        };
+        for kept in [
+            "<a> </a>",
+            "<a>&#32;</a>",
+            "<a xml:space=\"preserve\"><b/> <c/></a>",
+            "<a>p<!--c--> <!--d-->q</a>",
+            "<a> <![CDATA[ ]]> </a>",
+        ] {
+            let out = model_sdf(&model(kept), "m").unwrap();
+            let want = kept.replace("<!--c-->", "").replace("<!--d-->", "");
+            assert!(out.contains(&want), "{kept}: {out}");
+        }
+        let out = model_sdf(&model("<a>\n  <b/>\n  <!-- c -->\n  <c/>\n</a>"), "m").unwrap();
+        assert!(out.contains("<a><b/><c/></a>"), "{out}");
     }
 }

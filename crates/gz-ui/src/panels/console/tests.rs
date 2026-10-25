@@ -655,3 +655,28 @@ fn the_command_line_calls_services_and_publishes() {
         (MessageLevel::Error, "Not connected".into())
     );
 }
+
+/// A call longer than the server takes whole isn't sent: it says why.
+#[test]
+fn a_call_too_long_to_send_says_so() {
+    let mut app = console_with(&[]);
+    app.world_mut().resource_mut::<GzStatus>().edits = Some(true);
+    sent(&mut app);
+    said(&mut app);
+    let long = "x".repeat(gz_core::transport::MAX_FRAME);
+    submit(
+        &mut app,
+        &format!(
+            "service -s /world/w/x --reqtype gz.msgs.StringMsg --reptype gz.msgs.Boolean --req 'data: \"{long}\"'"
+        ),
+    );
+    let requests = sent(&mut app)
+        .into_iter()
+        .filter(|c| matches!(c, GzCommand::Request { .. }))
+        .count();
+    assert_eq!(requests, 0);
+    let lines = said(&mut app);
+    let (level, text) = lines.last().unwrap();
+    assert_eq!(*level, MessageLevel::Error);
+    assert!(text.starts_with("Too long to send: its 4,"), "{text}");
+}
