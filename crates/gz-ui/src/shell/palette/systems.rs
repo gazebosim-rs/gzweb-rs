@@ -135,6 +135,7 @@ pub(crate) struct Sources<'w, 's> {
     selection: Option<Res<'w, Selection>>,
     clipboard: Option<Res<'w, ModelClipboard>>,
     workspaces: Option<Res<'w, crate::shell::Workspaces>>,
+    current_layout: Option<Res<'w, crate::shell::CurrentLayout>>,
     topics: Option<Res<'w, GzTopics>>,
     entities: Query<'w, 's, (Entity, &'static GzEntity)>,
     new_entities: Query<'w, 's, (), Added<GzEntity>>,
@@ -166,6 +167,7 @@ impl Sources<'_, '_> {
             || self.selection.as_ref().is_some_and(Res::is_changed)
             || self.clipboard.as_ref().is_some_and(Res::is_changed)
             || self.workspaces.as_ref().is_some_and(Res::is_changed)
+            || self.current_layout.as_ref().is_some_and(Res::is_changed)
             || self.status.is_changed()
             || self.hosts.is_changed()
             || self.layout.is_changed()
@@ -306,24 +308,53 @@ impl Sources<'_, '_> {
                 disabled: (needs_world && self.phase.0 != Phase::Live).then_some("Not connected"),
             });
         }
-        // The workspaces (§7.8), and saving the current one's layout.
+        // The workspaces (§7.8, §8), and saving, saving as new and
+        // resetting the current one's layout.
         let current = self.workspaces.as_deref().map_or(0, |w| w.current);
-        for (i, (_, name, binding)) in crate::shell::workspaces::WORKSPACES.iter().enumerate() {
+        let list = self.workspaces.as_deref().map(|w| w.list()).unwrap_or(&[]);
+        for (i, w) in list.iter().enumerate() {
             out.push(Item {
                 group: Group::Commands,
                 icon: IconId::ActivityWorkspaces,
-                name: format!("Workspace: {name}"),
+                name: format!("Workspace: {}", w.name),
                 hint: if i == current {
                     "current".into()
                 } else {
                     String::new()
                 },
-                shortcut: shortcut(Some(binding)),
+                shortcut: shortcut(w.binding()),
                 keywords: vec!["Layouts", "GUI config"],
                 run: Run::Workspace(crate::shell::WorkspaceCommand::Switch(i)),
                 disabled: None,
             });
         }
+        out.push(Item {
+            group: Group::Commands,
+            icon: IconId::ActivityWorkspaces,
+            name: "Save layout as new workspace".into(),
+            hint: String::new(),
+            shortcut: None,
+            keywords: vec!["Workspace", "Layouts", "GUI config"],
+            run: Run::NewWorkspace,
+            disabled: None,
+        });
+        let reset = self.current_layout.as_deref().and_then(|c| c.reset);
+        out.push(Item {
+            group: Group::Commands,
+            icon: IconId::ActivityWorkspaces,
+            name: "Reset workspace layout".into(),
+            hint: match reset {
+                Some(true) => "to its default".into(),
+                Some(false) => "to its saved layout".into(),
+                None => String::new(),
+            },
+            shortcut: None,
+            keywords: vec!["Workspace", "Layouts", "GUI config"],
+            run: Run::Workspace(crate::shell::WorkspaceCommand::Reset),
+            disabled: reset
+                .is_none()
+                .then_some("Nothing to reset: the layout is as saved"),
+        });
         out.push(Item {
             group: Group::Commands,
             icon: IconId::Save,
@@ -811,7 +842,15 @@ impl Runner<'_, '_> {
                 self.overlays.write(OverlayCommand::toggle(*o));
             }
             Run::Workspace(cmd) => {
-                self.workspaces.write(*cmd);
+                self.workspaces.write(cmd.clone());
+            }
+            Run::NewWorkspace => {
+                self.commands
+                    .insert_resource(crate::shell::workspaces::NameWorkspace);
+                self.ui.write(UiCommand::OpenPanel {
+                    panel: crate::shell::WORKSPACES_PANEL,
+                    slot: Slot::Primary,
+                });
             }
             Run::Echo(topic) => {
                 self.commands.insert_resource(TopicsStart {

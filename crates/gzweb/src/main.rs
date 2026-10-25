@@ -31,6 +31,8 @@
 //!   `--select MODEL` for its drive; DECISIONS.md D-104).
 //! - `--console` starts the full UI with the Console panel open
 //!   (DECISIONS.md D-105).
+//! - `--workspaces` starts the full UI with the Workspaces panel open
+//!   (DECISIONS.md D-111).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
 //! - `--menu world|snap|context|workspace` opens the World menu or the
@@ -89,6 +91,8 @@ struct Args {
     teleop: bool,
     /// `--console`.
     console: bool,
+    /// `--workspaces`.
+    workspaces: bool,
     /// `--pop-out`.
     pop_out: Vec<String>,
     /// `--palette`.
@@ -109,7 +113,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
                      [--select MODEL,…] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
-                     [--sensors [NAME]] [--teleop] [--console] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
+                     [--sensors [NAME]] [--teleop] [--console] [--workspaces] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
                      [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
@@ -228,6 +232,7 @@ fn parse_args(
     let mut sensors = None;
     let mut teleop = false;
     let mut console = false;
+    let mut workspaces = false;
     let mut pop_out = vec![];
     let mut palette = None;
     let mut menu = None;
@@ -305,6 +310,7 @@ fn parse_args(
             }
             "--teleop" => teleop = true,
             "--console" => console = true,
+            "--workspaces" => workspaces = true,
             "--palette" => palette = Some(value()?),
             "--menu" => {
                 let m = value()?;
@@ -395,6 +401,9 @@ fn parse_args(
     if console && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--console needs --ui full".into());
     }
+    if workspaces && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--workspaces needs --ui full".into());
+    }
     if !pop_out.is_empty() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--pop-out needs --ui full".into());
     }
@@ -450,6 +459,7 @@ fn parse_args(
         sensors,
         teleop,
         console,
+        workspaces,
         pop_out,
         palette,
         menu,
@@ -529,6 +539,7 @@ fn command() -> Result<Command, String> {
         sensors: None,
         teleop: false,
         console: false,
+        workspaces: false,
         pop_out: vec![],
         palette: None,
         menu: None,
@@ -751,6 +762,9 @@ fn main() -> AppExit {
         }
         if args.teleop {
             app.insert_resource(gz_ui::panels::TeleopStart);
+        }
+        if args.workspaces {
+            app.insert_resource(gz_ui::panels::WorkspacesStart);
         }
         if args.console {
             app.insert_resource(gz_ui::panels::ConsoleStart);
@@ -1046,6 +1060,7 @@ mod tests {
         );
         assert!(run_args(&["--teleop"], None).teleop);
         assert!(run_args(&["--console"], None).console);
+        assert!(run_args(&["--workspaces"], None).workspaces);
         assert_eq!(
             run_args(&["--pop-out", "plot, console"], None).pop_out,
             ["plot", "console"]

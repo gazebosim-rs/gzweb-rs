@@ -416,6 +416,10 @@ workspaces, the switcher and persistence, **M8e** the Workspaces panel.
   Save current layout, `workspaces.json` / `localStorage` with the current workspace and the
   theme, cameras put back by `ViewOp::Restore`. Left: the Workspaces panel (M8e: cards,
   Save as new, Reset, "modified"), a workspace's own theme, saving a followed camera.
+- **M8e notes:** the Workspaces panel (D-111): cards with thumbnails, the current layout's
+  summary, Save to …, Save as new… (the user's own workspaces, in the switcher and ⌘K, kept in
+  `workspaces.json`), Reset (as saved, then §8's default), "modified", Delete, Export. Left:
+  Import (no file picker), a workspace's own theme, saving a followed camera.
 - World menu (Save via `generate_world_sdf`, Save as, Open/Import where the server allows,
   Export screenshot), entity context menu with Align, ⌘K over every action and panel, Snap
   popover, message tray, workspace switcher.

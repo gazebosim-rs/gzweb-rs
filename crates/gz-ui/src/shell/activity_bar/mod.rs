@@ -83,7 +83,7 @@ pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry
         ),
         Children::spawn(SpawnWith(move |bar: &mut ChildSpawner| {
             let mut group = None;
-            for panel in panels.iter() {
+            for panel in panels.iter().filter(|p| p.activity) {
                 if group.is_some_and(|g| g != panel.group) {
                     bar.spawn(separator(Orientation::Horizontal, SEPARATOR_W, SPACE[3]));
                 }
