@@ -271,10 +271,15 @@ pub(crate) fn switcher_items(
     let Ok(popup) = separators.single().map(ChildOf::parent) else {
         return;
     };
+    // Counted without the items going, which are despawned only later.
     let at = children
         .get(popup)
         .ok()
-        .and_then(|c| c.iter().position(|e| separators.contains(e)))
+        .and_then(|c| {
+            c.iter()
+                .filter(|e| !items.contains(*e))
+                .position(|e| separators.contains(e))
+        })
         .unwrap_or(0);
     let spawned: Vec<Entity> = want
         .iter()

@@ -317,8 +317,15 @@ impl Workspaces {
 /// side panel would hold, within a pixel or a fraction's rounding.
 pub(crate) fn same_layout(a: &WorkspaceLayout, b: &WorkspaceLayout) -> bool {
     let near = |x: f32, y: f32, by: f32| (x - y).abs() <= by;
-    let popouts = a.popouts.len() == b.popouts.len()
-        && a.popouts.iter().zip(&b.popouts).all(|(p, q)| {
+    // The windows by panel: raising one reorders them.
+    let by_panel = |w: &WorkspaceLayout| {
+        let mut p = w.popouts.clone();
+        p.sort_by(|x, y| x.panel.cmp(&y.panel));
+        p
+    };
+    let (pa, pb) = (by_panel(a), by_panel(b));
+    let popouts = pa.len() == pb.len()
+        && pa.iter().zip(&pb).all(|(p, q)| {
             p.panel == q.panel
                 && p.from == q.from
                 && p.rect.iter().zip(q.rect).all(|(x, y)| near(*x, y, 1.0))
@@ -328,9 +335,8 @@ pub(crate) fn same_layout(a: &WorkspaceLayout, b: &WorkspaceLayout) -> bool {
             (Some(x), Some(y)) => x == y,
             _ => true,
         };
-        // A default's "snap to Top" against a view in it, or a saved one's.
-        let snap = v.snap.is_none() && v.pose.is_some() || v.snap == w.snap;
-        overlays && snap
+        // The axis view it sits in (a default's to snap to).
+        overlays && v.snap == w.snap
     });
     // The sidebar's panels and width count only while it's open (a
     // closed one is laid out with the first panel).
@@ -518,30 +524,65 @@ pub(crate) struct LayoutState<'w, 's> {
     beneath: ResMut<'w, Beneath>,
 }
 
-/// What the Workspaces panel stands in for while it shows in a slot: the
-/// panel there before it and the sidebar's state. A layout is read and
+/// What the Workspaces panel stands in for while it's in a slot: the
+/// panel it took the slot from (it moves with the panel from slot to
+/// slot) and the sidebar's state before it came. A layout is read and
 /// laid out under it, so managing the workspaces doesn't change them.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Beneath {
-    primary: Option<PanelId>,
-    secondary: Option<PanelId>,
+    stand_in: Option<PanelId>,
     sidebar_open: bool,
+    /// Its slot and the slots' panels, last look.
+    was: (Option<Slot>, Option<PanelId>, Option<PanelId>),
 }
 
-/// Follows what the Workspaces panel would stand in for.
+impl Beneath {
+    /// It never stands in for the panel its other slot shows (a swap, or a
+    /// dock that moved that panel down).
+    fn settle(&mut self, l: &ShellLayout) {
+        let slot = workspaces_slot(l);
+        let other = match slot {
+            Some(Slot::Primary) => l.secondary,
+            Some(Slot::Secondary) => l.primary,
+            None => None,
+        };
+        if self.stand_in.is_some() && self.stand_in == other {
+            self.stand_in = None;
+        }
+        self.was = (slot, l.primary, l.secondary);
+    }
+}
+
+/// The slot the Workspaces panel is in, if it's in one.
+fn workspaces_slot(l: &ShellLayout) -> Option<Slot> {
+    let ws = Some(WORKSPACES_PANEL);
+    if l.primary == ws {
+        Some(Slot::Primary)
+    } else if l.secondary == ws {
+        Some(Slot::Secondary)
+    } else {
+        None
+    }
+}
+
+/// Follows what the Workspaces panel stands in for: coming into a slot,
+/// the panel that was there and the sidebar's state.
 pub(crate) fn track_beneath(layout: Res<ShellLayout>, mut beneath: ResMut<Beneath>) {
     if !layout.is_changed() {
         return;
     }
-    let ws = Some(WORKSPACES_PANEL);
     let mut next = *beneath;
-    if layout.primary != ws {
-        next.primary = layout.primary;
-        next.sidebar_open = layout.sidebar_open;
+    let (was, was_primary, was_secondary) = next.was;
+    match (was, workspaces_slot(&layout)) {
+        (_, None) => {
+            next.stand_in = None;
+            next.sidebar_open = layout.sidebar_open;
+        }
+        (None, Some(Slot::Primary)) => next.stand_in = was_primary,
+        (None, Some(Slot::Secondary)) => next.stand_in = was_secondary,
+        (Some(_), Some(_)) => {}
     }
-    if layout.secondary != ws {
-        next.secondary = layout.secondary;
-    }
+    next.settle(&layout);
     beneath.set_if_neq(next);
 }
 
@@ -561,17 +602,21 @@ impl LayoutState<'_, '_> {
         let preset = self.views.preset;
         let mut cams: Vec<_> = self.cameras.iter().collect();
         cams.sort_by_key(|(_, id, ..)| id.0);
-        let ws = Some(WORKSPACES_PANEL);
-        let (primary, sidebar_open) = if l.primary == ws {
-            (self.beneath.primary, self.beneath.sidebar_open)
-        } else {
-            (l.primary, l.sidebar_open)
-        };
-        let secondary = if l.secondary == ws {
-            self.beneath.secondary
-        } else {
-            l.secondary
-        };
+        let b = &*self.beneath;
+        let slot = workspaces_slot(l);
+        let (mut primary, mut secondary) = (l.primary, l.secondary);
+        match slot {
+            Some(Slot::Primary) => primary = b.stand_in,
+            Some(Slot::Secondary) => secondary = b.stand_in,
+            None => {}
+        }
+        // Standing in for nothing, it's as if closed: the second panel
+        // moves up.
+        if primary.is_none() {
+            primary = secondary.take();
+        }
+        // Closed with it, the sidebar is closed; open, it's as it was.
+        let sidebar_open = l.sidebar_open && (slot.is_none() || b.sidebar_open);
         WorkspaceLayout {
             sidebar_open,
             sidebar_w: l.sidebar_w,
@@ -649,8 +694,9 @@ impl LayoutState<'_, '_> {
             .collect();
         let l = &mut *self.layout;
         let ws = Some(WORKSPACES_PANEL);
-        // The Workspaces panel stays where it shows, over the layout.
-        let keep = (l.primary == ws, l.secondary == ws);
+        // The Workspaces panel stays where it shows, over the layout (not
+        // in a closed sidebar).
+        let keep = workspaces_slot(l).filter(|_| l.sidebar_open);
         let kept = l
             .popouts
             .iter()
@@ -666,18 +712,22 @@ impl LayoutState<'_, '_> {
         l.popouts = popouts;
         l.popouts.extend(kept);
         let beneath = &mut *self.beneath;
-        if keep.0 {
-            beneath.primary = l.primary;
-            beneath.sidebar_open = l.sidebar_open;
-            l.primary = ws;
-            l.sidebar_open = true;
-            if l.secondary == ws {
-                l.secondary = None;
+        match keep {
+            Some(Slot::Primary) => {
+                beneath.stand_in = l.primary;
+                beneath.sidebar_open = l.sidebar_open;
+                l.primary = ws;
+                l.sidebar_open = true;
             }
-        } else if keep.1 {
-            beneath.secondary = l.secondary;
-            l.secondary = ws.filter(|_| l.primary.is_some());
+            Some(Slot::Secondary) => {
+                beneath.stand_in = l.secondary;
+                beneath.sidebar_open = l.sidebar_open;
+                l.secondary = ws;
+                l.sidebar_open = true;
+            }
+            None => {}
         }
+        beneath.settle(l);
         l.floor_closed = [false; 2];
         l.startup = false;
         l.enforce_floor(None);
@@ -850,6 +900,13 @@ pub(crate) struct Persisted {
 }
 
 impl Persisted {
+    /// The store isn't written this session.
+    pub(crate) fn read_only(&self) -> bool {
+        self.read_only
+    }
+}
+
+impl Persisted {
     /// What the file holds for `workspaces` and `theme`.
     fn file_of(
         &self,
@@ -990,7 +1047,7 @@ pub(crate) fn load_workspaces(
             }
             Some(_) => {}
             None => {
-                let name = name.unwrap_or(id).to_string();
+                let name = workspaces.free_name(name.unwrap_or(id));
                 workspaces
                     .list
                     .push(Workspace::custom(id.into(), name, w.clone()));
@@ -1071,18 +1128,21 @@ pub(crate) fn run_workspace_commands(
                 let default = ws
                     .builtin
                     .is_some_and(|b| to == WorkspaceLayout::default_for(b));
+                let saved = ws.user_saved;
+                // The default is kept as its layout, so it's there next
+                // start too (Build would start as the app does).
                 if default {
                     ws.saved = to.clone();
-                    ws.user_saved = false;
+                    ws.user_saved = true;
                 }
                 ws.left = None;
                 state.apply(&to, &mut pending);
                 let name = ws.name.clone();
                 note.show(
-                    if default {
-                        format!("Reset {name} to its default")
-                    } else {
-                        format!("Reset {name} to its saved layout")
+                    match (default, saved) {
+                        (true, _) => format!("Reset {name} to its default"),
+                        (false, true) => format!("Reset {name} to its saved layout"),
+                        (false, false) => format!("Reset {name} to how it started"),
                     },
                     now,
                 );

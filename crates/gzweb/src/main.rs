@@ -30,8 +30,9 @@
 //! - `--teleop` starts the full UI with the Teleop panel open (with
 //!   `--select MODEL` for its drive; DECISIONS.md D-104).
 //! - `--console` starts the full UI with the Console panel open
-//! - `--workspaces` starts the full UI with the Workspaces panel open
 //!   (DECISIONS.md D-105).
+//! - `--workspaces` starts the full UI with the Workspaces panel open
+//!   (DECISIONS.md D-111).
 //! - `--palette QUERY` opens the command palette with QUERY typed
 //!   (DECISIONS.md D-107).
 //! - `--menu world|snap|context|workspace` opens the World menu or the

@@ -14,7 +14,7 @@ use gz_bevy::view::input::InputMap;
 
 use super::view::{
     card_look, spawn_card, Card, CardDelete, CardLook, Cards, CurrentHeader, IoItem, LayoutButton,
-    NameButton, NameField, NameRow, SummaryValue,
+    NameButton, NameField, NameRow, Spawned, SummaryValue,
 };
 use super::{PanelState, NEW};
 use crate::panels::{PanelActionActivated, PanelRegistry};
@@ -23,7 +23,7 @@ use crate::shell::workspaces::{exported, NameWorkspace};
 use crate::shell::{
     CurrentLayout, Slot, UiCommand, WorkspaceCommand, Workspaces, WORKSPACES_PANEL,
 };
-use crate::theme::visuals::Content;
+use crate::theme::visuals::{Active, Content};
 use crate::theme::{Theme, ThemeMode};
 use crate::widgets::layout::set_shown;
 use crate::widgets::section::SectionCount;
@@ -61,8 +61,9 @@ pub(super) fn start_naming(
     }
 }
 
-/// The cards follow the workspaces and the current layout, rebuilt only
-/// when one would look different.
+/// The cards follow the workspaces and the current layout: a card whose
+/// look changed is respawned in its place (only its mark, when that's all
+/// that changed), and one that had the keys keeps them.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_cards(
     workspaces: Res<Workspaces>,
@@ -72,7 +73,8 @@ pub(super) fn sync_cards(
     theme: Res<Theme>,
     cards: Query<(Entity, Option<&Children>), With<Cards>>,
     added: Query<(), Added<Cards>>,
-    mut shown: Local<Vec<CardLook>>,
+    mut focus: ResMut<InputFocus>,
+    mut shown: Local<Vec<(CardLook, Spawned)>>,
     mut commands: Commands,
 ) {
     let Ok((parent, children)) = cards.single() else {
@@ -94,16 +96,48 @@ pub(super) fn sync_cards(
             )
         })
         .collect();
-    if !fresh && !theme.is_changed() && *shown == looks {
-        return;
+    let focused = focus.get();
+    let all = fresh || theme.is_changed() || shown.len() != looks.len();
+    if all {
+        for &c in children.into_iter().flatten() {
+            commands.entity(c).despawn();
+        }
+        shown.clear();
     }
-    for &c in children.into_iter().flatten() {
-        commands.entity(c).despawn();
+    let mut next = Vec::with_capacity(looks.len());
+    for (i, look) in looks.into_iter().enumerate() {
+        let was = shown.get(i).cloned();
+        let spawned = match was {
+            Some((old, spawned)) if old == look => spawned,
+            Some((old, spawned))
+                if CardLook {
+                    current: look.current,
+                    ..old.clone()
+                } == look =>
+            {
+                let mut c = commands.entity(spawned.card);
+                if look.current {
+                    c.insert(Active);
+                } else {
+                    c.remove::<Active>();
+                }
+                spawned
+            }
+            was => {
+                if let Some((_, old)) = was {
+                    commands.entity(old.item).despawn();
+                }
+                let spawned = spawn_card(&mut commands, &theme, i, look.clone());
+                commands.entity(parent).insert_children(i, &[spawned.item]);
+                if focused == Some(was.map_or(Entity::PLACEHOLDER, |(_, s)| s.card)) {
+                    focus.set(spawned.card, FocusCause::Navigated);
+                }
+                spawned
+            }
+        };
+        next.push((look, spawned));
     }
-    for (i, look) in looks.iter().enumerate() {
-        spawn_card(&mut commands, &theme, parent, i, look.clone());
-    }
-    *shown = looks;
+    *shown = next;
 }
 
 /// The summary's values, the section's "Build · modified", and the
@@ -120,6 +154,7 @@ pub(super) fn sync_summary(
     buttons: Query<(Entity, &LayoutButton, &Children, Has<InteractionDisabled>)>,
     mut labels: Query<&mut Text, (With<Content>, Without<SummaryValue>, Without<SectionCount>)>,
     added: Query<(), Added<SummaryValue>>,
+    mut buttons_said: Local<Option<(String, Option<bool>)>>,
     mut commands: Commands,
 ) {
     let fresh = !added.is_empty();
@@ -193,17 +228,21 @@ pub(super) fn sync_summary(
             }
         }
     }
+    // The buttons only when what they say changes (a tooltip put back
+    // while it shows would flicker).
+    let key = (name.to_string(), current.reset);
+    if !fresh && buttons_said.as_ref() == Some(&key) {
+        return;
+    }
+    *buttons_said = Some(key);
     for (e, b, children, disabled) in &buttons {
+        let save_tip = Some(Tooltip::new(format!("Save to {name}")));
         let (label, enabled, tip) = match b {
             // A long name would crowd the row: "Save", named in the tip.
             LayoutButton::Save if name.chars().count() <= SAVE_NAME_MAX => {
-                (format!("Save to {name}"), true, None)
+                (format!("Save to {name}"), true, save_tip)
             }
-            LayoutButton::Save => (
-                "Save".to_string(),
-                true,
-                Some(Tooltip::new(format!("Save to {name}"))),
-            ),
+            LayoutButton::Save => ("Save".to_string(), true, save_tip),
             LayoutButton::SaveAsNew => ("Save as new…".to_string(), true, None),
             LayoutButton::Reset => (
                 "Reset".to_string(),

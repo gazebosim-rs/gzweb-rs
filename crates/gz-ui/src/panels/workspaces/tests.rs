@@ -349,18 +349,24 @@ fn manage_and_the_palette_open_the_panel() {
 fn the_footer_says_where_the_layouts_are_kept() {
     let mut app = panel_app();
     assert!(all_text(&mut app).contains("Layouts are kept for this session only"));
+    let file = WorkspaceStore {
+        at: StoreAt::File("/home/me/.config/gz/ui/workspaces.json".into()),
+        theme: true,
+    };
     assert_eq!(
-        note_of(Some(&WorkspaceStore {
-            at: StoreAt::File("/home/me/.config/gz/ui/workspaces.json".into()),
-            theme: true,
-        })),
+        note_of(Some(&file), false),
         "Layouts are kept in /home/me/.config/gz/ui/workspaces.json"
     );
     assert_eq!(
-        note_of(Some(&WorkspaceStore {
-            at: StoreAt::Browser,
-            theme: true,
-        })),
+        note_of(Some(&file), true),
+        "Layouts are kept for this session only: /home/me/.config/gz/ui/workspaces.json is left as it is"
+    );
+    let browser = WorkspaceStore {
+        at: StoreAt::Browser,
+        theme: true,
+    };
+    assert_eq!(
+        note_of(Some(&browser), false),
         "Layouts are kept in this browser's storage"
     );
     let import = pick(&mut app, |i: &IoItem| *i == IoItem::Import);
@@ -392,4 +398,226 @@ fn details_name_what_shows() {
     assert_eq!(d(1), "viewport only");
     assert_eq!(d(2), "topics · plot · inspector");
     assert_eq!(d(3), "plot");
+}
+
+fn alt(app: &mut App, digit: KeyCode) {
+    chord(app, &[KeyCode::AltLeft, digit]);
+    frames(app, 3);
+}
+
+/// Swapping the slots moves what the panel stands in for with it: Debug's
+/// Topics, now under Plot, never "Plot + Plot".
+#[test]
+fn a_swap_carries_what_the_panel_stands_in_for() {
+    let mut app = panel_app();
+    alt(&mut app, KeyCode::Digit3);
+    assert_eq!(
+        value(&mut app, SummaryValue::Sidebar),
+        "Topics + Plot · 300 px"
+    );
+    app.world_mut().write_message(UiCommand::SwapSlots);
+    frames(&mut app, 3);
+    let l = layout(&app);
+    assert_eq!(l.secondary, Some(WORKSPACES_PANEL));
+    assert_eq!(
+        value(&mut app, SummaryValue::Sidebar),
+        "Plot + Topics · 300 px"
+    );
+    let now = current(&app).layout.clone().unwrap();
+    assert_eq!(
+        (now.primary.as_deref(), now.secondary.as_deref()),
+        (Some("plot"), Some("topics"))
+    );
+}
+
+/// In a closed sidebar the panel isn't showing: the layout says closed,
+/// and a switch lays out the next workspace as it is (Run's: no sidebar).
+#[test]
+fn a_closed_sidebar_lets_the_panel_go() {
+    let mut app = panel_app();
+    app.world_mut().write_message(UiCommand::ToggleSidebar);
+    frames(&mut app, 3);
+    assert!(!layout(&app).sidebar_open);
+    assert!(!current(&app).layout.as_ref().unwrap().sidebar_open);
+    alt(&mut app, KeyCode::Digit2);
+    let l = layout(&app);
+    assert!(!l.sidebar_open);
+    assert_ne!(l.primary, Some(WORKSPACES_PANEL));
+}
+
+/// The user's workspaces stay before the switcher's separator, however
+/// many there are.
+#[test]
+fn the_switcher_keeps_the_users_workspaces_in_order() {
+    let mut app = panel_app();
+    for name in ["A", "B", "C"] {
+        app.world_mut()
+            .write_message(WorkspaceCommand::SaveAsNew(name.into()));
+        frames(&mut app, 3);
+    }
+    let order: Vec<String> = {
+        let world = app.world_mut();
+        let sep = world
+            .query_filtered::<Entity, With<crate::shell::status_bar::SwitcherSeparator>>()
+            .single(world)
+            .unwrap();
+        let popup = world.get::<ChildOf>(sep).unwrap().parent();
+        world
+            .get::<Children>(popup)
+            .unwrap()
+            .iter()
+            .map(|c| {
+                if c == sep {
+                    "|".to_string()
+                } else {
+                    match world.get::<SwitcherItem>(c) {
+                        Some(SwitcherItem::Switch(i)) => i.to_string(),
+                        Some(SwitcherItem::Save) => "save".into(),
+                        Some(SwitcherItem::Manage) => "manage".into(),
+                        None => "?".into(),
+                    }
+                }
+            })
+            .collect()
+    };
+    assert_eq!(
+        order,
+        ["0", "1", "2", "3", "4", "5", "6", "|", "save", "manage"]
+    );
+}
+
+/// A card is respawned only when its look changes: a divider's drag
+/// doesn't, and a switch only marks; a card with the keys keeps them.
+#[test]
+fn cards_change_in_place() {
+    let mut app = panel_app();
+    let ids = |app: &mut App| {
+        let world = app.world_mut();
+        let mut c: Vec<(usize, Entity)> = world
+            .query::<(Entity, &Card)>()
+            .iter(world)
+            .map(|(e, c)| (c.0, e))
+            .collect();
+        c.sort();
+        c
+    };
+    alt(&mut app, KeyCode::Digit1);
+    app.world_mut().write_message(WorkspaceCommand::Reset);
+    frames(&mut app, 3);
+    let step = |app: &mut App, by: f32| {
+        let mut views = app
+            .world_mut()
+            .resource_mut::<crate::shell::viewport::views::ViewLayout>();
+        let s = views.shares();
+        views.set_shares([s[0] + by, s[1]]);
+    };
+    // The first step makes Build "modified"; the next ones (within a
+    // twentieth) redraw nothing.
+    step(&mut app, 0.01);
+    frames(&mut app, 3);
+    let before = ids(&mut app);
+    for _ in 0..3 {
+        step(&mut app, 0.002);
+        frames(&mut app, 1);
+    }
+    frames(&mut app, 2);
+    assert_eq!(ids(&mut app), before, "a drag's steps redraw nothing");
+    // Tab, then Enter on Run: the card keeps the keys and gets the mark.
+    let run = before[1].1;
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .set(run, bevy::input_focus::FocusCause::Navigated);
+    activate(&mut app, run);
+    assert_eq!(workspaces(&app).current, 1);
+    let after = ids(&mut app);
+    let run = after[1].1;
+    assert_eq!(focused(&app), Some(run));
+    assert!(app.world().get::<Active>(run).is_some());
+}
+
+/// Save's tip names the workspace it saves to, whatever it was before.
+#[test]
+fn saves_tip_follows_the_workspace() {
+    let mut app = panel_app();
+    app.world_mut()
+        .write_message(WorkspaceCommand::SaveAsNew("A long name".into()));
+    frames(&mut app, 3);
+    let tip = |app: &mut App| {
+        let (save, _) = button(app, LayoutButton::Save);
+        app.world()
+            .get::<crate::widgets::Tooltip>(save)
+            .unwrap()
+            .title
+            .clone()
+    };
+    assert_eq!(tip(&mut app), "Save to A long name");
+    let (save, _) = button(&mut app, LayoutButton::Save);
+    assert_eq!(texts(&mut app, save), "Save");
+    alt(&mut app, KeyCode::Digit1);
+    assert_eq!(tip(&mut app), "Save to Build");
+    let (save, _) = button(&mut app, LayoutButton::Save);
+    assert_eq!(texts(&mut app, save), "Save to Build");
+}
+
+/// Raising a window reorders them, which isn't a change.
+#[test]
+fn raising_a_window_isnt_a_change() {
+    let mut app = panel_app();
+    for p in [crate::panels::PLOT, crate::panels::CONSOLE] {
+        app.world_mut().write_message(UiCommand::PopOut(p));
+        frames(&mut app, 3);
+    }
+    app.world_mut().write_message(WorkspaceCommand::Save);
+    frames(&mut app, 3);
+    assert!(!current(&app).modified);
+    app.world_mut()
+        .resource_mut::<ShellLayout>()
+        .raise(crate::panels::PLOT);
+    frames(&mut app, 3);
+    assert!(!current(&app).modified);
+}
+
+/// Reset to the default is kept: Build saved as its default, so it starts
+/// so next time; a name the file repeats is made unique.
+#[test]
+fn a_reset_default_is_kept_and_names_are_unique() {
+    let mut app = panel_app();
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(None),
+        theme: true,
+    });
+    app.world_mut().write_message(WorkspaceCommand::Reset);
+    frames(&mut app, 3);
+    let file = match &app.world().resource::<WorkspaceStore>().at {
+        StoreAt::Memory(Some(t)) => serde_json::from_str::<WorkspaceFile>(t).unwrap(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(file.workspaces["build"], WorkspaceLayout::default_for(0));
+    let note = app
+        .world()
+        .resource::<crate::shell::status_bar::readouts::StatusNote>();
+    assert_eq!(
+        note.0.as_ref().map(|n| n.0.as_str()),
+        Some("Reset Build to its default")
+    );
+
+    let file = WorkspaceFile {
+        version: 1,
+        current: "build".into(),
+        theme: None,
+        workspaces: [("user_1".to_string(), WorkspaceLayout::default_for(1))]
+            .into_iter()
+            .collect(),
+        custom: vec![crate::shell::workspaces::CustomName {
+            id: "user_1".into(),
+            name: "Build".into(),
+        }],
+    };
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(Some(serde_json::to_string(&file).unwrap())),
+        theme: true,
+    });
+    frames(&mut app, 3);
+    assert_eq!(workspaces(&app).list()[4].name, "Build 2");
 }

@@ -20,9 +20,11 @@ use crate::assets::fonts::text;
 use crate::assets::IconId;
 use crate::panels::PanelRegistry;
 use crate::shell::viewport::views::LayoutPreset;
-use crate::shell::workspaces::{StoreAt, WorkspaceLayout, WorkspaceStore};
+use crate::shell::workspaces::{Persisted, StoreAt, WorkspaceLayout, WorkspaceStore};
 use crate::theme::visuals::{Active, Visuals};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
+use crate::widgets::button::ICON_BUTTON_RADIUS;
+use crate::widgets::focus::TakesEscape;
 use crate::widgets::layout::{column, flex_spacer, property_row, row};
 use crate::widgets::menu::{
     menu_item, on_menu_event, popup, Menu, MenuItemProps, MenuSide, MenuTrigger,
@@ -187,6 +189,8 @@ pub(super) fn build_body(ev: On<Add<WorkspacesBody>>, theme: Res<Theme>, mut com
                     });
                     rows.spawn((
                         NameRow,
+                        // Its Esc closes it, not the shortcuts' too.
+                        TakesEscape,
                         Node {
                             display: Display::None,
                             ..column(SPACE[3])
@@ -256,7 +260,9 @@ impl Thumb {
         Self {
             sidebar: w.sidebar_open && w.primary.is_some(),
             preset: LayoutPreset::from_str(&w.preset).unwrap_or(LayoutPreset::Single),
-            share: w.shares[0].clamp(0.2, 0.8),
+            // In twentieths, so a divider's drag doesn't redraw the card
+            // each frame.
+            share: ((w.shares[0] * 20.0).round() / 20.0).clamp(0.2, 0.8),
             inspector: w.inspector_open,
         }
     }
@@ -400,34 +406,44 @@ fn thumbnail(thumb: Thumb) -> impl Bundle {
     )
 }
 
+/// The Delete button's side, and the room the card leaves it.
+fn delete_room(theme: &Theme) -> f32 {
+    theme.s.icon_btn_sm + SPACE[4]
+}
+
 /// A workspace's card: the thumbnail, the name over what it shows, then
-/// its keys (or, one of the user's, Delete). The current one in
-/// `accent_soft` with an `accent` border.
+/// its keys (one of the user's leaves room for Delete, beside it in the
+/// list item). The current one in `accent_soft` with an `accent` border.
 pub(crate) fn card(theme: &Theme, index: usize, look: CardLook) -> impl Bundle {
     let visuals = Visuals {
         active_ink: ColorRole::Text,
+        active_stroke: Some(ColorRole::Accent),
         ..Visuals::new(ColorRole::Surface, ColorRole::Text)
             .stroked(ColorRole::Line)
             .keep_ink()
     };
-    let visuals = Visuals {
-        active_stroke: Some(ColorRole::Accent),
-        ..visuals
+    let mut label = format!("{}: {}", look.name, look.detail);
+    if look.current {
+        label.push_str(", current");
+    }
+    let right = if look.custom {
+        SPACE[4] + delete_room(theme)
+    } else {
+        SPACE[4]
     };
-    let t = theme.clone();
-    let name = look.name.clone();
     (
         Card(index),
         Node {
-            padding: UiRect::all(px(SPACE[4])),
+            flex_grow: 1.0,
+            min_width: px(0),
+            padding: UiRect::new(px(SPACE[4]), px(right), px(SPACE[4]), px(SPACE[4])),
             border: UiRect::all(px(border::HAIRLINE)),
             border_radius: rounded(radius::LG),
             align_items: AlignItems::Center,
-            flex_shrink: 0.0,
             ..row(SPACE[5])
         },
         Headless,
-        clickable(visuals, Role::Button, format!("Workspace {name}")),
+        clickable(visuals, Role::Button, label),
         Children::spawn(SpawnWith(move |c: &mut ChildSpawner| {
             c.spawn(thumbnail(look.thumb));
             c.spawn(Node {
@@ -439,17 +455,7 @@ pub(crate) fn card(theme: &Theme, index: usize, look: CardLook) -> impl Bundle {
                 n.spawn(text(TypeStyle::BODY, ColorRole::Text, look.name.clone()));
                 n.spawn(text(TypeStyle::MONO_SMALL, ColorRole::Text3, look.detail));
             });
-            if look.custom {
-                c.spawn((
-                    icon_button(
-                        &t,
-                        IconId::Trash,
-                        IconButtonSize::Small,
-                        Tooltip::new(format!("Delete {}", look.name)),
-                    ),
-                    CardDelete(index),
-                ));
-            } else if let Some(keys) = look.keys {
+            if let Some(keys) = look.keys {
                 c.spawn(text(TypeStyle::MONO_SMALL, ColorRole::Text3, keys));
             }
         })),
@@ -489,27 +495,78 @@ pub(crate) fn card_look(
     }
 }
 
-/// Spawns `look`'s card into the cards' parent, marked current.
+/// A card spawned: its list item (the cards' child) and its button.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Spawned {
+    pub(crate) item: Entity,
+    pub(crate) card: Entity,
+}
+
+/// Spawns `look`'s card: a list item holding the card (marked current)
+/// and, one of the user's, its Delete over the card's right end. The
+/// caller places the item.
 pub(crate) fn spawn_card(
     commands: &mut Commands,
     theme: &Theme,
-    cards: Entity,
     index: usize,
     look: CardLook,
-) {
-    let current = look.current;
-    let mut c = commands.spawn((card(theme, index, look), ChildOf(cards)));
+) -> Spawned {
+    let (current, custom, name) = (look.current, look.custom, look.name.clone());
+    let item = commands
+        .spawn((
+            Node {
+                flex_shrink: 0.0,
+                align_items: AlignItems::Center,
+                ..row(0.0)
+            },
+            a11y(Role::ListItem, name.clone()),
+        ))
+        .id();
+    let mut c = commands.spawn((card(theme, index, look), ChildOf(item)));
     if current {
         c.insert(Active);
     }
+    let card = c.id();
+    if custom {
+        let side = theme.s.icon_btn_sm;
+        commands
+            .spawn((
+                icon_button(
+                    theme,
+                    IconId::Trash,
+                    IconButtonSize::Small,
+                    Tooltip::new(format!("Delete {name}")),
+                ),
+                CardDelete(index),
+                ChildOf(item),
+            ))
+            .insert(Node {
+                width: px(side),
+                height: px(side),
+                flex_shrink: 0.0,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                border_radius: rounded(ICON_BUTTON_RADIUS),
+                // Over the card's right end, in the room it leaves.
+                margin: UiRect::left(px(-delete_room(theme))),
+                ..default()
+            });
+    }
+    Spawned { item, card }
 }
 
-/// Where the layouts are kept, for the footer's note.
-pub(crate) fn note_of(store: Option<&WorkspaceStore>) -> String {
-    match store.map(|s| &s.at) {
-        Some(StoreAt::File(path)) => format!("Layouts are kept in {}", path.display()),
-        Some(StoreAt::Browser) => "Layouts are kept in this browser's storage".into(),
-        _ => "Layouts are kept for this session only".into(),
+/// Where the layouts are kept, for the footer's note; a store that isn't
+/// written this session (`read_only`) says so.
+pub(crate) fn note_of(store: Option<&WorkspaceStore>, read_only: bool) -> String {
+    let at = match store.map(|s| &s.at) {
+        Some(StoreAt::File(path)) => path.display().to_string(),
+        Some(StoreAt::Browser) => "this browser's storage".into(),
+        _ => return "Layouts are kept for this session only".into(),
+    };
+    if read_only {
+        format!("Layouts are kept for this session only: {at} is left as it is")
+    } else {
+        format!("Layouts are kept in {at}")
     }
 }
 
@@ -519,10 +576,11 @@ pub(super) fn build_footer(
     ev: On<Add<WorkspacesFooter>>,
     theme: Res<Theme>,
     store: Option<Res<WorkspaceStore>>,
+    persisted: Res<Persisted>,
     mut commands: Commands,
 ) {
     let t = theme.clone();
-    let note = note_of(store.as_deref());
+    let note = note_of(store.as_deref(), persisted.read_only());
     commands.entity(ev.entity).with_children(|f| {
         f.spawn(Node {
             flex_grow: 1.0,
