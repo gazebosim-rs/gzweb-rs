@@ -1909,4 +1909,11 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   shows (`Beneath`), never saved.
 - **Live check** (debug build, :9013 `diff_drive`): the panel's cards,
   summary and buttons.
-- **Tests:** workspace 899 → 912 passing.
+- **Tests:** workspace 899 → 919 passing (912 before the review fixes).
+- **Review fixes (#57):** what the panel stands in for moves with it on a
+  swap and never repeats the other slot; a closed sidebar lets it go; the
+  switcher keeps the user's workspaces before its separator; cards change
+  in place and keep the keys; Save's tip follows; raising a window isn't
+  a change; Reset to the default is kept; unique names on load; the
+  footer says when the file is left alone; the name row takes its Esc;
+  cards are list items.
