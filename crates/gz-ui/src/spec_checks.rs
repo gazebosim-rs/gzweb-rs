@@ -1,7 +1,8 @@
 //! The spec's own checks, computed from its data files (DESIGN.md §4.4,
 //! §13): the generated tables match `tokens.json`, the §13 contrast pairs
-//! pass in both themes, no colour literals outside `theme/tokens.rs`, and the
-//! embedded fonts and icons are the ones the spec lists.
+//! pass in both themes, no colour literals outside `theme/tokens.rs`, the
+//! embedded fonts and icons are the ones the spec lists, and the icon pairs
+//! §13 names differ.
 
 use std::path::{Path, PathBuf};
 
@@ -418,6 +419,30 @@ fn icon_ids_follow_icons_json() {
     for (i, (id, name)) in IconId::ALL.iter().zip(names).enumerate() {
         assert_eq!(id.name(), name);
         assert_eq!(id.index(), i);
+    }
+}
+
+/// §13: no glyph does two different actions. The pairs the spec names
+/// differ (Scene against the menu's "more", the nearest it has to a
+/// hamburger). Two pairs in `icons.json` itself share a glyph, revert and
+/// undo, track and eye; they wait on the design (WORKLOG M10e).
+#[test]
+fn the_named_icon_pairs_differ() {
+    let icons = json("icons.json");
+    let glyph = |name: &str| icons["icons"][name].to_string();
+    let groups: [&[&str]; 4] = [
+        &["reset", "rotate", "revert"],
+        &["activity_scene", "more"],
+        &["activity_workspaces", "layout_split"],
+        &["focus", "track", "activity_teleop"],
+    ];
+    for group in groups {
+        for (i, a) in group.iter().enumerate() {
+            assert_ne!(glyph(a), "null", "{a}");
+            for b in &group[i + 1..] {
+                assert_ne!(glyph(a), glyph(b), "{a} and {b} share a glyph");
+            }
+        }
     }
 }
 

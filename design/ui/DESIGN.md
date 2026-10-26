@@ -649,6 +649,8 @@ Build in this order. Each milestone ends with screenshots compared against the n
 8. **Menus, command palette, workspaces, persistence.**
 9. **Accessibility pass, web build hardening, performance** (tree virtualization with 5,000 entities at 60 fps).
 
+As built (D-120, M10e): `scripts/stress-world.sh` makes the 5,000-entity world; natively the full UI takes 2.6 to 4.0 ms a frame with it (idle, scrolling the expanded tree, a new selection every frame), and a test holds the tree to a screenful's work a frame. The web build's `gzweb_bg.wasm` has a budget of 14 MB gzipped (12.78 MB as built, without the function names), checked by `scripts/wasm-budget.sh` at the end of `build.sh`. A GPU-bound target (a laptop, the browser) is still to be measured. The §13 checklist's status is in `.agent/WORKLOG.md` (M10e).
+
 ---
 
 ## 13. Verification checklist
