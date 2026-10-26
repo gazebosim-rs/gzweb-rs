@@ -373,7 +373,11 @@ pub(crate) struct WorkspaceFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) theme: Option<String>,
     /// The UI scale (1.0 is 100%; DECISIONS.md D-118).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_scale"
+    )]
     pub(crate) ui_scale: Option<f32>,
     /// The motion setting: `system`, `reduce` or `full`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -917,6 +921,28 @@ pub(crate) struct WorkspacesLoaded(bool);
 
 /// What the store holds beyond the app's own state, and what it last
 /// had written.
+/// A UI scale as the file has it: a factor (`1.25`), or, written by hand,
+/// a percentage (`125`, `"125%"`). Anything else is no scale, and the rest
+/// of the file still reads.
+fn lenient_scale<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<f32>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Number(f32),
+        Text(String),
+        Other(serde::de::IgnoredAny),
+    }
+    let v: Option<f32> = match Option::<Raw>::deserialize(d)? {
+        Some(Raw::Number(n)) => Some(n),
+        Some(Raw::Text(t)) => t.trim().trim_end_matches('%').trim().parse().ok(),
+        Some(Raw::Other(_)) | None => None,
+    };
+    // A factor is at most 2 (200%); more than a little past it is a
+    // percentage.
+    Ok(v.filter(|v| v.is_finite())
+        .map(|v| if v > 2.5 { v / 100.0 } else { v }))
+}
+
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Persisted {
     /// What was last written (or read), to write again only on a change.

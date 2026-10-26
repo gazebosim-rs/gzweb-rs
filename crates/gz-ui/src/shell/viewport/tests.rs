@@ -827,4 +827,16 @@ fn the_snapping_readout_follows_the_pointer() {
     app.world_mut().resource_mut::<GizmoState>().readout = None;
     frames(&mut app, 2);
     assert!(!displayed(&app, r));
+    // At 200% the pointer's window pixels are half as many UI pixels, and
+    // a new scale moves the readout.
+    app.world_mut().resource_mut::<GizmoState>().readout =
+        Some((Vec2::new(200.0, 100.0), "0.50 m".into()));
+    frames(&mut app, 2);
+    app.world_mut().resource_mut::<Theme>().set_scale(2.0);
+    frames(&mut app, 2);
+    let node = app.world().get::<Node>(r).unwrap();
+    assert_eq!(
+        (node.left, node.top),
+        (px(100.0 + READOUT_OFFSET.x), px(50.0 + READOUT_OFFSET.y))
+    );
 }

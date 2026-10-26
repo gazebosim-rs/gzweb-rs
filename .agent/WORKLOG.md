@@ -2157,3 +2157,9 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   window (200% at 1440x900) clips the top bar's right end as a narrow
   window does.
 - **Tests:** workspace 981 → 993 passing; coverage 97.5% lines. check.sh passes.
+- **Review fixes** (PR #65):
+  - the gizmo's snapping readout divides by the UI scale;
+  - minimal mode keeps the motion setting in its views (`--motion`, the
+    browser's preference) and refuses `--ui-scale`;
+  - the file's scale reads leniently (a hand-written percentage, or a bad
+    value dropped without losing the file).

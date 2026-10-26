@@ -431,8 +431,11 @@ fn the_ui_scale_and_motion_persist() {
     let theme = app.world().resource::<Theme>();
     assert_eq!(theme.scale, 1.25);
     assert!(theme.reduce_motion);
-    let app = with_store(Some(&file(5.0)), true);
-    assert_eq!(app.world().resource::<Theme>().scale, 2.0);
+    let app = with_store(Some(&file(2.4)), true);
+    assert_eq!(app.world().resource::<Theme>().scale, 2.0, "clamped");
+    // Past 2.5 it is a percentage: 150 is 150%.
+    let app = with_store(Some(&file(150.0)), true);
+    assert_eq!(app.world().resource::<Theme>().scale, 1.5);
 
     let mut app = shell_app((1440, 900), 1.0);
     app.world_mut().resource_mut::<Theme>().set_scale(0.9);
@@ -642,4 +645,24 @@ fn the_workspaces_panel_isnt_saved() {
     // A switch keeps it open.
     alt(&mut app, KeyCode::Digit2);
     assert_eq!(layout(&app).popouts.len(), 1);
+}
+
+/// The file's UI scale is a factor; one written by hand as a percentage
+/// reads as one, and one that isn't a number is dropped while the rest of
+/// the file still reads.
+#[test]
+fn a_hand_written_scale_reads_leniently() {
+    let scale = |v: &str| {
+        let text = format!(r#"{{"version": 1, "current": "build", "ui_scale": {v}}}"#);
+        serde_json::from_str::<WorkspaceFile>(&text)
+            .map(|f| f.ui_scale)
+            .map_err(|e| e.to_string())
+    };
+    assert_eq!(scale("1.25"), Ok(Some(1.25)));
+    assert_eq!(scale("125"), Ok(Some(1.25)));
+    assert_eq!(scale(r#""125%""#), Ok(Some(1.25)));
+    assert_eq!(scale(r#""1.5""#), Ok(Some(1.5)));
+    assert_eq!(scale(r#""big""#), Ok(None));
+    assert_eq!(scale("[1]"), Ok(None));
+    assert_eq!(scale("null"), Ok(None));
 }

@@ -445,6 +445,10 @@ fn parse_args(
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
+    // Minimal mode has no UI to scale (its motion setting is the views').
+    if scale.is_some() && !gallery && (no_ui || ui != UiMode::Full) {
+        return Err("--ui-scale needs --ui full".into());
+    }
     // Only the full UI shows (and selects) a selection.
     if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
         return Err("--select needs --ui full".into());
@@ -539,11 +543,20 @@ fn command() -> Result<Command, String> {
     });
     let theme: Option<ThemeMode> =
         get("theme").and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok());
-    let scale = get("ui_scale").and_then(|s| {
-        parse_ui_scale(&s)
-            .map_err(|e| bevy::log::warn!("?ui_scale: {e}"))
-            .ok()
-    });
+    let scale = get("ui_scale")
+        .and_then(|s| {
+            parse_ui_scale(&s)
+                .map_err(|e| bevy::log::warn!("?ui_scale: {e}"))
+                .ok()
+        })
+        .filter(|_| {
+            // Minimal mode has no UI to scale.
+            let full = ui == UiMode::Full || is_gallery(get("ui").as_deref());
+            if !full {
+                bevy::log::warn!("?ui_scale needs ui=full");
+            }
+            full
+        });
     let motion: Option<MotionMode> =
         get("motion").and_then(|m| m.parse().map_err(|e| bevy::log::warn!("?motion: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
@@ -720,6 +733,20 @@ fn gallery_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
     })
 }
 
+/// Without the full UI no setting holds the motion: the views keep it,
+/// reduced if asked, or following the browser's preference.
+fn views_keep_motion(app: &mut App, motion: Option<MotionMode>) {
+    match motion.unwrap_or_default() {
+        MotionMode::Reduce => {
+            app.insert_resource(gz_bevy::view::ReduceMotion(true));
+        }
+        MotionMode::Full => {}
+        MotionMode::System => {
+            app.insert_resource(gz_bevy::view::FollowBrowserMotion);
+        }
+    }
+}
+
 /// The UI's plugin with the theme, UI scale and motion asked for.
 fn ui_plugin(args: &Args) -> gz_ui::GzUiPlugin {
     gz_ui::GzUiPlugin {
@@ -793,6 +820,9 @@ fn main() -> AppExit {
     }
     if let Some(start) = args.start {
         app.insert_resource(start);
+    }
+    if !full {
+        views_keep_motion(&mut app, args.motion);
     }
     if full {
         app.add_plugins((ui, gz_ui::shell::ShellPlugins));
@@ -1262,6 +1292,27 @@ mod tests {
             parse(&["--motion", "slow"], None).unwrap_err(),
             "--motion: unknown motion 'slow' (system, reduce or full)"
         );
+        // Minimal mode has no UI to scale; its views keep the motion.
+        assert_eq!(
+            parse(&["--ui", "minimal", "--ui-scale", "150"], None).unwrap_err(),
+            "--ui-scale needs --ui full"
+        );
+        let mut app = App::new();
+        views_keep_motion(&mut app, Some(MotionMode::Reduce));
+        assert_eq!(
+            app.world().get_resource::<gz_bevy::view::ReduceMotion>(),
+            Some(&gz_bevy::view::ReduceMotion(true))
+        );
+        let mut app = App::new();
+        views_keep_motion(&mut app, None);
+        assert!(app
+            .world()
+            .contains_resource::<gz_bevy::view::FollowBrowserMotion>());
+        let mut app = App::new();
+        views_keep_motion(&mut app, Some(MotionMode::Full));
+        assert!(!app
+            .world()
+            .contains_resource::<gz_bevy::view::ReduceMotion>());
     }
 
     #[test]

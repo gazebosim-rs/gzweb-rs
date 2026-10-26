@@ -4740,3 +4740,22 @@ fn a_place_reaches_the_edited_model_through_a_dimmed_one() {
     let hover = r.app.world().resource::<place::PlaceHover>().0;
     assert_eq!(hover.and_then(|(_, _, e)| e), Some(ma));
 }
+
+/// Following the browser's motion (minimal mode), natively motion stays
+/// full: a reduced one is put back.
+#[test]
+fn the_views_can_follow_the_browsers_motion() {
+    let mut r = rig(default_view());
+    r.app.insert_resource(ReduceMotion(true));
+    r.app.update();
+    assert_eq!(
+        *r.app.world().resource::<ReduceMotion>(),
+        ReduceMotion(true)
+    );
+    r.app.insert_resource(FollowBrowserMotion);
+    r.app.update();
+    assert_eq!(
+        *r.app.world().resource::<ReduceMotion>(),
+        ReduceMotion(false)
+    );
+}

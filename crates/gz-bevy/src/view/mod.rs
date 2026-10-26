@@ -1302,6 +1302,26 @@ pub struct LinkedViews(pub bool);
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReduceMotion(pub bool);
 
+/// The views follow the browser's `prefers-reduced-motion` themselves:
+/// minimal mode, which has no UI to hold the motion setting.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct FollowBrowserMotion;
+
+/// With [`FollowBrowserMotion`], keeps [`ReduceMotion`] in step with the
+/// browser (natively, motion stays full).
+pub fn follow_browser_motion(
+    follow: Option<Res<FollowBrowserMotion>>,
+    mut motion: ResMut<ReduceMotion>,
+) {
+    if follow.is_some() {
+        #[cfg(target_arch = "wasm32")]
+        let reduce = web::prefers_reduced_motion();
+        #[cfg(not(target_arch = "wasm32"))]
+        let reduce = false;
+        motion.set_if_neq(ReduceMotion(reduce));
+    }
+}
+
 /// How one view's move carries to the views linked to it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Link {
