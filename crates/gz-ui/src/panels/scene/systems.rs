@@ -42,6 +42,8 @@ use crate::widgets::{EntityKind, TreeRowExpand, TreeRowSpec, TreeRowVisibility};
 type StructureChanged = Or<(Added<GzEntity>, Changed<GzSensors>)>;
 /// The list's content node.
 type ContentOnly = (With<TreeContent>, Without<TreeSlot>);
+/// The list itself.
+type ListOnly = (With<TreeList>, Without<TreeSlot>);
 /// A pooled row: what it shows, its node and parent, and whether it shows
 /// a selected entity.
 type PooledRow = (
@@ -502,33 +504,45 @@ pub(super) fn chip_states(
 }
 
 /// The keyboard cursor's row shows the focus ring while the tree has
-/// keyboard focus (§5: focus-visible).
+/// keyboard focus (§5: focus-visible); with no cursor row in sight (none
+/// yet, filtered out or scrolled away), the list shows it inside its edge.
 pub(super) fn cursor_ring(
     focus: Res<InputFocus>,
     visible: Res<InputFocusVisible>,
     state: Res<TreeState>,
     model: Res<TreeModel>,
     rows: Res<TreeRows>,
-    lists: Query<(), With<TreeList>>,
+    mut lists: Query<(Entity, &mut Ring), ListOnly>,
     mut slots: Query<(Ref<TreeSlot>, &mut Ring)>,
 ) {
-    let on = visible.0 && focus.get().is_some_and(|f| lists.contains(f));
+    let focused = |e: Entity| visible.0 && focus.get() == Some(e);
+    let on = lists.iter().any(|(e, _)| focused(e));
     let cursor = state.cursor.as_ref();
     let all = focus.is_changed() || visible.is_changed() || state.is_changed() || rows.is_changed();
+    let mut shown = false;
     for (slot, mut ring) in &mut slots {
-        if !all && !slot.is_changed() {
-            continue;
-        }
         let here = on
             && slot
                 .0
                 .and_then(|i| rows.0.get(i))
                 .is_some_and(|r| Some(&model.node(*r).key) == cursor);
-        ring.set_if_neq(Ring(if here {
-            ColorRole::Accent
-        } else {
-            ColorRole::Clear
-        }));
+        shown |= here;
+        if !all && !slot.is_changed() {
+            continue;
+        }
+        ring.set_if_neq(Ring(accent_if(here)));
+    }
+    for (e, mut ring) in &mut lists {
+        ring.set_if_neq(Ring(accent_if(focused(e) && !shown)));
+    }
+}
+
+/// A ring's colour: `accent` when it shows.
+fn accent_if(on: bool) -> ColorRole {
+    if on {
+        ColorRole::Accent
+    } else {
+        ColorRole::Clear
     }
 }
 

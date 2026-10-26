@@ -171,6 +171,23 @@ fn the_menu_opens_for_its_subject_and_runs_an_item() {
     assert_eq!(menus(&mut app), 1);
 }
 
+/// The menu opens at the pointer at any UI scale: the pointer is in window
+/// pixels, the menu in UI pixels (D-118).
+#[test]
+fn the_menu_opens_at_the_pointer_at_any_ui_scale() {
+    let (mut app, cart, _) = live();
+    app.world_mut().resource_mut::<Theme>().set_scale(1.5);
+    frames(&mut app, 2);
+    let at = Vec2::new(600.0, 300.0);
+    let world = app.world_mut();
+    let mut window = world.query::<&mut Window>().single_mut(world).unwrap();
+    window.set_cursor_position(Some(at));
+    open(&mut app, cart);
+    let holder = find::<ContextMenu>(&mut app);
+    let (min, _) = rect(&app, holder);
+    assert!((min * 1.5 - at).length() < 0.5, "{min}");
+}
+
 /// Without edits, the edits say why; Copy still runs.
 #[test]
 fn edits_wait_for_a_server_that_takes_them() {

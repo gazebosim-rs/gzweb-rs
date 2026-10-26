@@ -228,6 +228,7 @@ impl Plugin for GzWebPlugin {
                     hud::update_adapter,
                     hud::update_status,
                     hud::update_sim,
+                    hud::update_hint,
                 ),
             );
         }

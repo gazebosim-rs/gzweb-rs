@@ -439,6 +439,8 @@ The rail's Orbit/Pan/Zoom sets the view's plain left-drag action; it persists pe
 
 Key table (abbreviated; see the file for scope and web alternates): Esc Navigate · B box select · T translate · R rotate · X/Y/Z constrain · F focus · H home · 5 projection · 7/1/3 top/front/right (Shift+ for bottom/back/left) · Space tap play-pause · Space-hold pan · ⇧F follow · ⇧T track · ⇧Space maximize · ⌥⌘→/↓ split · ⌘W close view · G/C/I/J overlays · ⌘→ step · ⌘⇧R reset · X stop (teleop armed) · ⌘Z/⇧⌘Z undo/redo · ⌘C/V/D copy/paste/duplicate · Delete · F2 rename · ⌘N/O/S/⇧S/I file · ⌘K palette · ⌘B sidebar · ⌘⌥I inspector · Alt+1–4 workspaces · ⌘⇧E/A/T/P/C panels.
 
+As built (D-119, M10d): the file names keys by their US places, and a letter binding is the key that types the letter on the user's layout (G toggles the grid on the key printed G on AZERTY, QWERTZ and Dvorak; on a layout without Latin letters, the US place). Digits, arrows and named keys stay physical. The fly keys and Teleop's drive keys are positional: they keep W A S D Q E's places (Z Q S D A E on AZERTY), win a plain press of their keys, and their labels show the user's caps. In the browser the canvas swallows ⌘K on the key that types K.
+
 ### 6.6 Model editing (decision Q6: in place)
 
 Entering: Model inspector › Edit model, context menu › Edit model, or double-click a model with Translate/Rotate active. Nothing changes frame. What changes:
@@ -464,7 +466,7 @@ As built (D-115, M9d): the Link inspector's Add visual, Add collision and Add se
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 
 ### 6.5 Focus and keyboard navigation
-Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar; disabled controls are skipped. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5. A focused control takes Space and Enter (DECISIONS.md D-58a).
+Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar; disabled controls are skipped. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5. A focused control takes Space and Enter (DECISIONS.md D-58a). As built (D-117): each view is a tab stop that takes the viewport's keys and becomes the active view, its ring inside its edge; the arrows move focus along the activity bar and, checking as they go, through radio groups (the tool group, the rail's drag group, chips); an arrow with a modifier stays a shortcut.
 
 ---
 
@@ -592,6 +594,8 @@ Check what the pinned Bevy version offers for text input, scrolling and focus (r
 - Color is never the only signal: active states also change shape (ring), status dots have text, warnings have icons.
 - UI scale setting 80–200% (Settings › Appearance) multiplies `Theme.scale`.
 - Honor reduce-motion (all durations 0).
+
+As built (D-118): until Settings › Appearance exists, ⌘K's Settings group sets the UI scale (80, 90, 100, 110, 125, 150, 175, 200%) and the motion (reduce, full, follow system), and `gzweb --ui-scale PERCENT` and `--motion` pick them at start; both persist with the theme. Follow system reads the browser's `prefers-reduced-motion`; natively it means full motion. Reduced, the camera's snaps, focus and home, the connect card's fade and the views' reveal are instant and the Assets panel's progress bars hold still.
 
 ---
 

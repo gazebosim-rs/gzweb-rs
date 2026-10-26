@@ -3,7 +3,7 @@
 //! Settings. Each button's badge is what its panel wrote into
 //! [`PanelStatus`]. A click opens the panel in the sidebar's primary slot,
 //! Shift+click in the secondary; clicking the active button collapses the
-//! sidebar.
+//! sidebar. The arrow keys move along the bar (spec §6.5).
 
 use bevy::a11y::AccessibilityNode;
 use bevy::ecs::spawn::SpawnWith;
@@ -18,10 +18,11 @@ use crate::panels::{PanelId, PanelRegistry};
 use crate::theme::visuals::Active;
 use crate::theme::{border, ColorRole, Fill, Stroke, Theme, SPACE};
 use crate::widgets::badge::Badge;
+use crate::widgets::focus::ArrowGroup;
 use crate::widgets::layout::{column, flex_spacer, separator, set_shown, Orientation};
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::text::set_text;
-use crate::widgets::{activity_button, BadgeKind, Tooltip};
+use crate::widgets::{a11y, activity_button, BadgeKind, Tooltip};
 
 /// An activity button's panel.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,6 +82,8 @@ pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry
             },
             ColorRole::Bg,
         ),
+        ArrowGroup(Orientation::Vertical),
+        bar_access(),
         Children::spawn(SpawnWith(move |bar: &mut ChildSpawner| {
             let mut group = None;
             for panel in panels.iter().filter(|p| p.activity) {
@@ -111,6 +114,13 @@ pub(crate) fn activity_bar(theme: &Theme, map: &InputMap, panels: &PanelRegistry
             ));
         })),
     )
+}
+
+/// The bar to AccessKit: a vertical toolbar, its buttons inside.
+fn bar_access() -> AccessibilityNode {
+    let mut access = a11y(accesskit::Role::Toolbar, "Activity bar");
+    access.0.set_orientation(accesskit::Orientation::Vertical);
+    access
 }
 
 /// Activity clicks (Shift from the keyboard state) and Settings.

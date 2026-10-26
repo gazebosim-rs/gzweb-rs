@@ -6,6 +6,11 @@
 //! (milestone M3): the [view cube](view_cube) at the top right, the
 //! [rail](rail) below it, and the [HUD pills](hud) (the scale label and
 //! the target chip). They show while a world is loaded, with the view.
+//!
+//! Each view is a tab stop of its own (§6.5: the viewport receives keys;
+//! DECISIONS.md D-117): focused, by Tab or a press, it has the viewport's
+//! keys and becomes the active view, and Tab shows its focus ring inside
+//! its edge ([`view::focus_frame`]).
 
 pub(crate) mod banner;
 pub(crate) mod connect_card;
@@ -21,6 +26,7 @@ pub(crate) mod views;
 
 use bevy::camera::visibility::VisibilitySystems;
 use bevy::ecs::spawn::SpawnWith;
+use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::ui::UiSystems;
 use gz_bevy::view::controls::ViewPlacementSystems;
@@ -48,6 +54,8 @@ pub(crate) fn view_node(
     let map = map.clone();
     (
         ViewNode(id),
+        TabIndex(0),
+        view::view_access(id),
         views::Reveal::default(),
         // A marquee or readout dragged off the view stays in it.
         views::pane(
@@ -62,6 +70,7 @@ pub(crate) fn view_node(
             // First, under the view's controls.
             v.spawn(outline::outline());
             v.spawn(views::active_frame());
+            v.spawn(view::focus_frame());
             v.spawn(view_cube::view_cube(&t));
             v.spawn(views::face_marker(&t));
             v.spawn(rail::rail(&t, &map));
@@ -119,6 +128,7 @@ pub(crate) fn build(app: &mut App) {
         (
             connect_card::prefill_address,
             view::show_views,
+            view::focus_frames,
             marquee::marquee_box,
         )
             .in_set(GzUiSystems::Behaviour),
@@ -141,6 +151,9 @@ pub(crate) fn build(app: &mut App) {
                 .before(ViewPlacementSystems)
                 .before(VisibilitySystems::UpdateFrusta),
             view::show_view_image.after(ViewPlacementSystems),
+            view::keep_view_access
+                .after(bevy::ui::AccessibilityUiSystems)
+                .before(bevy::a11y::AccessibilitySystems::Update),
         ),
     )
     .add_observer(connect_card::on_connect_button)

@@ -58,6 +58,7 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         app.add_plugins((
             crate::GzUiPlugin {
                 theme: ThemeMode::Light,
+                ..default()
             },
             plugins.set(ShellPlugin { camera: false }),
         ));
@@ -89,6 +90,17 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .init_resource::<gz_bevy::view::Marquee>()
         .init_resource::<gz_bevy::camera::GzCameraTarget>()
         .init_resource::<gz_bevy::view::LinkedViews>()
+        // What the keys type (D-119), as ViewerControls learns it.
+        .init_resource::<gz_bevy::view::KeyLayout>()
+        .add_systems(
+            PreUpdate,
+            (
+                gz_bevy::view::layout::learn_layout,
+                gz_bevy::view::layout::mark_unreachable,
+            )
+                .chain()
+                .after(bevy::input::InputSystems),
+        )
         .add_systems(
             Update,
             (
@@ -235,6 +247,27 @@ pub(crate) fn key(app: &mut App, key_code: KeyCode, state: ButtonState) {
     });
 }
 
+/// A key that types `typed` on the user's layout (D-119).
+pub(crate) fn typed_key(app: &mut App, key_code: KeyCode, typed: &str, state: ButtonState) {
+    let window = find::<Window>(app);
+    app.world_mut().write_message(KeyboardInput {
+        key_code,
+        logical_key: Key::Character(typed.into()),
+        state,
+        text: Some(typed.into()),
+        repeat: false,
+        window,
+    });
+}
+
+/// Presses and releases a key that types `typed`.
+pub(crate) fn tap_typed(app: &mut App, key_code: KeyCode, typed: &str) {
+    typed_key(app, key_code, typed, ButtonState::Pressed);
+    app.update();
+    typed_key(app, key_code, typed, ButtonState::Released);
+    app.update();
+}
+
 /// Focuses `e` (as Tab would) and presses `key_code` in it.
 pub(crate) fn focused_key(app: &mut App, e: Entity, key_code: KeyCode) {
     app.world_mut()
@@ -361,10 +394,13 @@ pub(crate) fn focused(app: &App) -> Option<Entity> {
         .get()
 }
 
-/// Focus `e` as Tab would: no pointer press involved.
+/// Focus `e` as Tab would: no pointer press involved, and focus shows.
 pub(crate) fn tab_to(app: &mut App, e: Entity) {
     let world = app.world_mut();
     world.resource_mut::<crate::widgets::focus::PointerLed>().0 = false;
+    world
+        .resource_mut::<bevy::input_focus::InputFocusVisible>()
+        .0 = true;
     world
         .resource_mut::<bevy::input_focus::InputFocus>()
         .set(e, bevy::input_focus::FocusCause::Navigated);

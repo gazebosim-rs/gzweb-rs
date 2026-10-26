@@ -144,7 +144,7 @@ fn a_spec_change_repaints_every_part() {
         app.world().get::<Icon>(glyph).unwrap().id,
         IconId::ChevronRight
     );
-    assert_eq!(label(&app, caret).as_deref(), Some("Expand"));
+    assert_eq!(label(&app, caret).as_deref(), Some("Expand amr_01"));
     assert_eq!(label(&app, eye).as_deref(), Some("Hide amr_01"));
     let a = app.world().get::<AccessibilityNode>(row).unwrap();
     assert_eq!(
@@ -169,7 +169,7 @@ fn a_spec_change_repaints_every_part() {
     assert_eq!(w.get::<Node>(indent).unwrap().width, px(0.0));
     assert_eq!(w.get::<Icon>(glyph).unwrap().id, IconId::ChevronDown);
     assert_eq!(w.get::<Ink>(glyph).unwrap().0, ColorRole::Text3);
-    assert_eq!(label(&app, caret).as_deref(), Some("Collapse"));
+    assert_eq!(label(&app, caret).as_deref(), Some("Collapse front_camera"));
     assert_eq!(label(&app, eye).as_deref(), Some("Show front_camera"));
     let a = app.world().get::<AccessibilityNode>(row).unwrap();
     assert_eq!(
@@ -185,4 +185,29 @@ fn a_spec_change_repaints_every_part() {
     assert_eq!(app.world().get::<Ink>(glyph).unwrap().0, ColorRole::Clear);
     let a = app.world().get::<AccessibilityNode>(row).unwrap();
     assert_eq!(a.0.is_expanded(), None);
+    // A caret or an eye that does nothing is no nameless button (§10): it
+    // leaves the accessibility tree, and comes back named.
+    let hidden = |app: &App, e: Entity| {
+        app.world()
+            .get::<AccessibilityNode>(e)
+            .unwrap()
+            .0
+            .is_hidden()
+    };
+    assert!(hidden(&app, caret));
+    assert!(!hidden(&app, eye));
+    app.world_mut()
+        .get_mut::<TreeRowSpec>(row)
+        .unwrap()
+        .hideable = false;
+    frames(&mut app, 2);
+    assert!(hidden(&app, eye));
+    {
+        let mut s = app.world_mut().get_mut::<TreeRowSpec>(row).unwrap();
+        s.expanded = Some(false);
+        s.hideable = true;
+    }
+    frames(&mut app, 2);
+    assert!(!hidden(&app, caret) && !hidden(&app, eye));
+    assert_eq!(label(&app, caret).as_deref(), Some("Expand front_camera"));
 }

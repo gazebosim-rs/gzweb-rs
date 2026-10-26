@@ -24,6 +24,7 @@ use bevy::input::touch::TouchPhase;
 use bevy::prelude::*;
 
 use super::input::{Action, InputMap, KeyMods, Platform, Scope};
+use super::layout::{KeyLayout, Keys};
 use super::{
     apply_view_commands, apply_view_placement, view_rect, BoxSelectTool, DragAction, Marquee,
     MarqueeRect, SelectInViews, SelectMode, Selection, ViewCamera, ViewCommand, ViewId, ViewOp,
@@ -117,6 +118,9 @@ pub struct ViewRouting {
     /// The view that had the last press (spec §3.4 "Active view"): the
     /// tools and the gizmo apply to it.
     pub active: Option<ViewId>,
+    /// The view keyboard focus is in, by Tab (not a press): its own
+    /// single-key shortcuts are its, wherever the pointer is.
+    pub focused: Option<ViewId>,
 }
 
 impl Default for ViewRouting {
@@ -126,15 +130,17 @@ impl Default for ViewRouting {
             keys: true,
             hovered: None,
             active: None,
+            focused: None,
         }
     }
 }
 
 impl ViewRouting {
-    /// The view single-key shortcuts apply to: the hovered one, else the
-    /// active one (spec §3.4).
+    /// The view single-key shortcuts apply to: the one Tab put keyboard
+    /// focus in, else the hovered one, else the active one (spec §3.4,
+    /// §6.5).
     pub fn key_view(&self) -> Option<ViewId> {
-        self.hovered.or(self.active)
+        self.focused.or(self.hovered).or(self.active)
     }
 }
 
@@ -285,15 +291,27 @@ impl Plugin for ViewerControls {
             .add_message::<crate::undo::UndoCommand>()
             .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
+            .init_resource::<KeyLayout>()
             .init_resource::<ControlState>()
             .init_resource::<BrowserWheel>()
             .init_resource::<ViewRouting>()
             .init_resource::<super::ViewSlots>()
             .init_resource::<super::LinkedViews>()
+            .init_resource::<super::ReduceMotion>()
+            .add_systems(
+                Update,
+                super::follow_browser_motion.before(apply_view_commands),
+            )
             .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
             .insert_resource(ActiveScopes(Self::scopes(self.mode)))
+            .add_systems(
+                PreUpdate,
+                (super::layout::learn_layout, super::layout::mark_unreachable)
+                    .chain()
+                    .after(bevy::input::InputSystems),
+            )
             .add_systems(
                 Update,
                 (
@@ -578,7 +596,7 @@ pub fn mouse_input(
     windows: Query<&Window>,
     views: Views,
     buttons: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, layout): (Res<ButtonInput<KeyCode>>, Res<KeyLayout>),
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
     routing: Res<ViewRouting>,
@@ -660,8 +678,8 @@ pub fn mouse_input(
             .into_iter()
             .find(|b| buttons.just_pressed(*b));
         if let (Some(button), Some(at)) = (pressed, cursor) {
-            let pan_hold =
-                button == MouseButton::Left && map.holding(&keys, &scopes, Action::PanHold);
+            let pan_hold = button == MouseButton::Left
+                && map.holding(Keys::new(&keys, Some(&layout)), &scopes, Action::PanHold);
             let gesture = match button {
                 MouseButton::Left if pan_hold => Gesture::Camera(DragAction::Pan),
                 // Placing, a left drag moves the camera and a click places.
@@ -770,7 +788,7 @@ pub struct RunBinding(pub String);
 pub fn key_input(
     windows: Query<&Window>,
     views: Views,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, layout): (Res<ButtonInput<KeyCode>>, Res<KeyLayout>),
     buttons: Res<ButtonInput<MouseButton>>,
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
@@ -787,8 +805,9 @@ pub fn key_input(
 ) {
     let now = time.elapsed_secs_f64();
     let scopes = routing.key_scopes(&scopes.0);
+    let keys = Keys::new(&keys, Some(&layout));
     let mut fired: Vec<Action> = map
-        .just_pressed(&keys, &scopes)
+        .just_pressed(keys, &scopes)
         .filter_map(|b| b.action)
         .collect();
     // A run binding is a tap: held actions (pan, fly) need a held key.
@@ -804,7 +823,7 @@ pub fn key_input(
         state.tap = None;
         state.under_command.clear();
     } else {
-        tap(&keys, &buttons, &map, &scopes, now, &mut state, &mut fired);
+        tap(keys, &buttons, &map, &scopes, now, &mut state, &mut fired);
     }
 
     let target = target(&windows, &views, routing.key_view());
@@ -860,7 +879,7 @@ pub fn key_input(
 /// A tap: down and up within [`TAP_SECS`], no mouse button in between. Down
 /// and up in one frame is a tap too.
 fn tap(
-    keys: &ButtonInput<KeyCode>,
+    keys: Keys,
     buttons: &ButtonInput<MouseButton>,
     map: &InputMap,
     scopes: &[Scope],
@@ -871,7 +890,7 @@ fn tap(
     let mouse_down = buttons.get_pressed().next().is_some();
     if let Some(tap) = state.tap.as_mut() {
         tap.dragged |= mouse_down;
-        if keys.just_released(tap.key) {
+        if keys.input.just_released(tap.key) {
             if now - tap.since < TAP_SECS && !tap.dragged {
                 fired.extend(tap.action);
             }
@@ -881,21 +900,21 @@ fn tap(
     if state.tap.is_some() {
         return;
     }
-    let held = KeyMods::held(keys);
-    let Some((binding, chord)) = map
-        .taps(scopes)
-        .find(|(_, c)| keys.just_pressed(c.key) && c.matches(held, map.platform))
-    else {
+    let held = keys.mods();
+    let Some((binding, key)) = map.taps(scopes).find_map(|(b, c)| {
+        let key = keys.just_pressed(c.key, b.positional)?;
+        c.matches(held, map.platform).then_some((b, key))
+    }) else {
         return;
     };
-    if keys.just_released(chord.key) {
+    if keys.input.just_released(key) {
         if !mouse_down {
             fired.extend(binding.action);
         }
         return;
     }
     state.tap = Some(Tap {
-        key: chord.key,
+        key,
         action: binding.action,
         since: now,
         dragged: mouse_down,
@@ -908,21 +927,48 @@ fn tap(
 pub fn fly_input(
     windows: Query<&Window>,
     views: Views,
-    keys: Res<ButtonInput<KeyCode>>,
+    (keys, layout): (Res<ButtonInput<KeyCode>>, Res<KeyLayout>),
     map: Res<InputMap>,
     scopes: Res<ActiveScopes>,
     routing: Res<ViewRouting>,
     time: Res<Time<Real>>,
-    driving: Option<Res<super::DriveArmed>>,
+    (driving, gizmo): (
+        Option<Res<super::DriveArmed>>,
+        Option<Res<super::gizmo::GizmoState>>,
+    ),
     mut out: MessageWriter<ViewCommand>,
+    mut held_by_drag: Local<Vec<KeyCode>>,
 ) {
     // An armed Teleop drives with these keys instead.
     if driving.is_some_and(|d| d.0) {
         return;
     }
+    // A gizmo drag takes X, Y and Z, which a layout can put on a fly key
+    // (AZERTY's Z is `KeyW`), and the camera stays put under the drag. A
+    // key held through it flies only once pressed again (D-119).
+    if gizmo.is_some_and(|g| g.captures()) {
+        let new: Vec<KeyCode> = keys
+            .get_pressed()
+            .copied()
+            .filter(|k| !is_modifier(*k) && !held_by_drag.contains(k))
+            .collect();
+        held_by_drag.extend(new);
+        return;
+    }
+    held_by_drag.retain(|k| keys.pressed(*k));
+    let mut fresh;
+    let keys = if held_by_drag.is_empty() {
+        &*keys
+    } else {
+        fresh = keys.clone();
+        for k in held_by_drag.iter().copied() {
+            fresh.release(k);
+        }
+        &fresh
+    };
     let scopes = routing.key_scopes(&scopes.0);
     let dir: Vec3 = map
-        .held(&keys, &scopes)
+        .held(Keys::new(keys, Some(&layout)), &scopes)
         .filter_map(|b| match b.action {
             Some(Action::Fly(d)) => Some(d.vector()),
             _ => None,

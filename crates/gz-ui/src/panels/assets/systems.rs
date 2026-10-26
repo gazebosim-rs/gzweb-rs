@@ -616,15 +616,21 @@ pub(super) fn sync_inserts(
     built.inserts = Some(key);
 }
 
-/// Moves each bar's segment across, and round again.
+/// Moves each bar's segment across, and round again; with reduced motion
+/// it holds still in the middle (spec §10).
 pub(super) fn move_bars(
     time: Res<Time<Real>>,
+    theme: Res<Theme>,
     mut segments: Query<(&mut Node, &ChildOf), With<Indeterminate>>,
     bars: Query<&ComputedNode>,
 ) {
     let t = time.elapsed_secs() * BAR_SPEED;
     // From off the left (-30%) to off the right (100%).
-    let left = (t.fract() * 130.0) - 30.0;
+    let left = if theme.reduce_motion {
+        35.0
+    } else {
+        (t.fract() * 130.0) - 30.0
+    };
     for (mut node, parent) in &mut segments {
         // A hidden bar's (or tab's) has no width: leave its layout be.
         if bars.get(parent.parent()).is_ok_and(|b| b.size().x > 0.0) {

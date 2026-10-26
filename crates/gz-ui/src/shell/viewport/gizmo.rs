@@ -68,14 +68,18 @@ fn gizmo_style(theme: Res<Theme>, style: Option<ResMut<GizmoStyle>>) {
 }
 
 /// The readout follows the gizmo's while snapping, in the view the drag
-/// is in.
+/// is in: the gizmo gives it in window pixels, the readout's node is in UI
+/// pixels.
 fn readout(
     state: Option<Res<GizmoState>>,
+    ui_scale: Option<Res<UiScale>>,
     views: ViewCameras,
     mut boxes: Query<(Entity, &mut Node, &Children), With<GizmoReadout>>,
     mut texts: Query<&mut Text>,
 ) {
-    let Some(state) = state.filter(|s| s.is_changed()) else {
+    // A new scale moves it too.
+    let rescaled = ui_scale.as_ref().is_some_and(|s| s.is_changed());
+    let Some(state) = state.filter(|s| s.is_changed() || rescaled) else {
         return;
     };
     let view = state.view();
@@ -86,7 +90,8 @@ fn readout(
             node.display = want;
         }
         if let Some((at, value)) = &state.readout {
-            let at = *at + READOUT_OFFSET;
+            let scale = ui_scale.as_ref().map_or(1.0, |s| s.0);
+            let at = *at / scale + READOUT_OFFSET;
             node.left = px(at.x);
             node.top = px(at.y);
             for c in children {

@@ -38,21 +38,24 @@ pub(crate) fn marquee() -> impl Bundle {
     )
 }
 
-/// The box follows the marquee in the view it is drawn in (the view's
-/// logical pixels are its node's).
+/// The box follows the marquee in the view it is drawn in: the marquee
+/// is in the view's logical pixels (the window's), the box in its node's
+/// (those over the UI scale).
 pub(crate) fn marquee_box(
     marquee: Res<Marquee>,
+    ui_scale: Res<UiScale>,
     views: ViewCameras,
     mut boxes: Query<(Entity, &mut Node), With<MarqueeBox>>,
 ) {
-    if !marquee.is_changed() {
+    if !marquee.is_changed() && !ui_scale.is_changed() {
         return;
     }
+    let k = 1.0 / ui_scale.0.max(f32::EPSILON);
     for (e, mut node) in &mut boxes {
         let rect = marquee
             .0
             .filter(|m| views.of(e).is_some_and(|v| v.0 == m.view))
-            .map(|m| Rect::from_corners(m.from, m.to));
+            .map(|m| Rect::from_corners(m.from * k, m.to * k));
         let want = display(rect.is_some());
         if node.display != want {
             node.display = want;

@@ -506,10 +506,14 @@ type GizmoNodes<'w, 's> = ParamSet<
     ),
 >;
 
-/// The buttons, the keys, whether Teleop drives, and the views' clicks.
+/// The buttons, the keys and the letters they type, whether Teleop drives,
+/// and the views' clicks.
 type GizmoKeys<'w> = (
     Res<'w, ButtonInput<MouseButton>>,
-    Res<'w, ButtonInput<KeyCode>>,
+    (
+        Res<'w, ButtonInput<KeyCode>>,
+        Option<Res<'w, super::layout::KeyLayout>>,
+    ),
     Option<Res<'w, super::DriveArmed>>,
     Option<Res<'w, super::controls::ControlState>>,
 );
@@ -525,7 +529,7 @@ pub fn gizmo_input(
     views: Views,
     cameras: Query<(&Transform, &Projection), Without<GzEntity>>,
     routing: Res<ViewRouting>,
-    (buttons, keys, driving, clicks): GizmoKeys,
+    (buttons, (keys, layout), driving, clicks): GizmoKeys,
     time: Res<Time<Real>>,
     roots: Query<(Entity, &GlobalTransform), With<GzWorldRoot>>,
     planes: Query<(), With<HasPlane>>,
@@ -572,7 +576,8 @@ pub fn gizmo_input(
             state.escaped = true;
             return;
         }
-        // Plain X, Y, Z (not ⌘/Ctrl+Z, undo).
+        // Plain X, Y, Z (not ⌘/Ctrl+Z, undo), by the letter the layout
+        // types (D-119).
         let chord = keys.any_pressed([
             KeyCode::ControlLeft,
             KeyCode::ControlRight,
@@ -581,8 +586,9 @@ pub fn gizmo_input(
             KeyCode::AltLeft,
             KeyCode::AltRight,
         ]);
+        let letters = super::layout::Keys::new(&keys, layout.as_deref());
         for (k, i) in [(KeyCode::KeyX, 0), (KeyCode::KeyY, 1), (KeyCode::KeyZ, 2)] {
-            if !chord && keys.just_pressed(k) {
+            if !chord && letters.letter_just_pressed(k) {
                 drag.handle = match drag.handle {
                     Handle::Ring(_) => Handle::Ring(i),
                     _ => Handle::Axis(i),

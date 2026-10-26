@@ -55,7 +55,7 @@ pub mod prelude {
         panel_shown, PanelState, PanelStatus, SetPanelStatus, ShellLayout, ShellPlugin,
         ShellPlugins, ShellSystems, Side, Slot, Tool, UiCommand,
     };
-    pub use crate::theme::{ColorRole, Fill, Ink, Stroke, Theme, ThemeMode};
+    pub use crate::theme::{ColorRole, Fill, Ink, MotionMode, Stroke, Theme, ThemeMode};
     pub use crate::{GzUiPlugin, GzUiSystems};
 }
 
@@ -67,7 +67,7 @@ use bevy::prelude::*;
 use bevy::ui::UiSystems;
 
 use assets::{brand, fonts, icons};
-use theme::{visuals, OsTheme, Theme, ThemeMode};
+use theme::{visuals, MotionMode, OsMotion, OsTheme, Theme, ThemeMode};
 use widgets::{cursor, focus};
 
 /// The UI's systems, in order. Everything a widget does to its own state
@@ -86,12 +86,18 @@ pub enum GzUiSystems {
 pub struct GzUiPlugin {
     /// The theme setting at startup.
     pub theme: ThemeMode,
+    /// The UI scale at startup (kept to 80 to 200%).
+    pub scale: f32,
+    /// The motion setting at startup.
+    pub motion: MotionMode,
 }
 
 impl Default for GzUiPlugin {
     fn default() -> Self {
         Self {
             theme: ThemeMode::System,
+            scale: 1.0,
+            motion: MotionMode::System,
         }
     }
 }
@@ -101,8 +107,13 @@ impl Plugin for GzUiPlugin {
         if !app.is_plugin_added::<TabNavigationPlugin>() {
             app.add_plugins(TabNavigationPlugin);
         }
-        app.insert_resource(Theme::new(self.theme, false))
+        let mut theme = Theme::new(self.theme, false);
+        theme.set_scale(self.scale);
+        theme.set_motion(self.motion);
+        app.insert_resource(theme)
             .init_resource::<OsTheme>()
+            .init_resource::<OsMotion>()
+            .init_resource::<gz_bevy::view::ReduceMotion>()
             .init_resource::<fonts::UiFonts>()
             .init_resource::<icons::IconAtlas>()
             .init_resource::<brand::Logos>()
@@ -126,6 +137,7 @@ impl Plugin for GzUiPlugin {
             .add_systems(Startup, focus::watch_windows)
             .add_observer(focus::skip_disabled)
             .add_observer(focus::restore_enabled)
+            .add_observer(focus::arrow_keys)
             .add_systems(
                 PreUpdate,
                 (
@@ -145,7 +157,13 @@ impl Plugin for GzUiPlugin {
             )
             .add_systems(
                 Update,
-                (theme::read_os_theme, theme::follow_os_theme)
+                (
+                    theme::read_os_theme,
+                    theme::follow_os_theme,
+                    #[cfg(target_arch = "wasm32")]
+                    theme::read_os_motion,
+                    theme::follow_os_motion,
+                )
                     .chain()
                     .before(GzUiSystems::Behaviour),
             )
@@ -162,7 +180,12 @@ impl Plugin for GzUiPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (theme::sync_ui_scale, theme::apply_theme_system).in_set(GzUiSystems::Resolve),
+                (
+                    theme::sync_ui_scale,
+                    theme::sync_motion,
+                    theme::apply_theme_system,
+                )
+                    .in_set(GzUiSystems::Resolve),
             );
         cursor::build(app);
         widgets::build(app);

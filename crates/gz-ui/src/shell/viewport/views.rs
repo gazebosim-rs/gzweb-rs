@@ -837,6 +837,7 @@ pub(crate) fn face_marker(theme: &Theme) -> impl Bundle {
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn reveal_views(
     time: Res<Time<Real>>,
+    theme: Res<Theme>,
     routing: Res<ViewRouting>,
     layout: Res<ViewLayout>,
     mut views: Query<(&ViewNode, &mut Reveal, &Children, Ref<ViewNode>)>,
@@ -858,7 +859,7 @@ pub(crate) fn reveal_views(
     mut commands: Commands,
 ) {
     let one = layout.ids().len() < 2;
-    let step = time.delta_secs() / REVEAL_SECS;
+    let step = theme.motion_dt(time.delta_secs(), REVEAL_SECS) / REVEAL_SECS;
     for (node, mut reveal, children, added) in &mut views {
         let full = one || routing.active == Some(node.0) || routing.hovered == Some(node.0);
         let want = if full { 1.0 } else { 0.0 };

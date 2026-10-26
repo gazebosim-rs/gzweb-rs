@@ -79,6 +79,7 @@ impl Plugin for TeleopPanelPlugin {
                     systems::sync_sliders,
                     systems::follow_sliders,
                     systems::mode_states,
+                    systems::pad_caps,
                 )
                     .chain()
                     .after(systems::teleop_status)

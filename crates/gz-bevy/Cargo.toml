@@ -59,6 +59,7 @@ features = [
     "AddEventListenerOptions",
     "EventTarget",
     "KeyboardEvent",
+    "MediaQueryList",
     "MouseEvent",
     "UiEvent",
     "WheelEvent",
