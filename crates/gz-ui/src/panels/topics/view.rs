@@ -19,7 +19,8 @@ use crate::theme::visuals::{Content, OwnInk, Visuals};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, display, row};
 use crate::widgets::{
-    a11y, choice_chip, filter_field, focus, icon_button, rounded, IconButtonSize, Tooltip,
+    a11y, choice_chip, filter_field, focus, icon_button, inset_focus_ring, rounded, IconButtonSize,
+    Tooltip,
 };
 
 /// The filter field's root.
@@ -136,6 +137,7 @@ pub(super) fn build_topics(
                 ScrollArea,
                 ScrollPosition(Vec2::new(0.0, y)),
                 TabIndex(0),
+                inset_focus_ring(),
                 a11y(Role::ListBox, "Topics"),
                 Node {
                     flex_grow: 1.0,

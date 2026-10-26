@@ -8,7 +8,10 @@
 //! pointer like any UI, but a press on them or keyboard focus in them keeps
 //! the view's keys (§3.4: the active view is the one that got the last
 //! press, "including on its rail or cube"; shortcuts.json: viewport keys
-//! fire while "viewport or its rail has focus").
+//! fire while "viewport or its rail has focus"). A view is a tab stop
+//! itself (§6.5: the viewport receives keys; DECISIONS.md D-117): keyboard
+//! focus on it, from Tab or a press, gives the views the keys and makes
+//! it the active view.
 
 use bevy::ecs::system::SystemParam;
 use bevy::input_focus::InputFocus;
@@ -96,6 +99,11 @@ impl PointerOver<'_, '_> {
         self.hits().any(|e| self.is_view_control(e))
     }
 
+    /// The view whose node `e` is.
+    fn view_of(&self, e: Entity) -> Option<ViewId> {
+        self.views.get(e).ok().map(|(v, ..)| v.0)
+    }
+
     /// `e` is a UI node other than the view's.
     fn is_ui(&self, e: Entity) -> bool {
         self.nodes.contains(e)
@@ -130,9 +138,13 @@ pub(crate) fn route_pointer(
         }
     }
     // A widget that takes keyboard focus takes the keys too (the window
-    // itself holds the focus at start), unless it is one of the view's.
+    // itself holds the focus at start), unless it is one of the view's; a
+    // view that takes it has them, and is the active one.
     if let Some(e) = focus.filter(|f| f.is_changed()).and_then(|f| f.get()) {
-        if over.is_ui(e) {
+        if let Some(view) = over.view_of(e) {
+            view_focus.0 = true;
+            active = Some(view);
+        } else if over.is_ui(e) {
             view_focus.0 = over.is_view_control(e);
         }
     }

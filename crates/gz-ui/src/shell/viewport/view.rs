@@ -1,7 +1,11 @@
 //! The 3D views in the viewport area (spec §3.4, §9.3, §7.10): their
 //! nodes, each view's placement on its node (rendered into a texture the
-//! node shows), and the dimming over the last frame while disconnected.
+//! node shows), its focus ring, and the dimming over the last frame while
+//! disconnected.
 
+use accesskit::Role;
+use bevy::a11y::AccessibilityNode;
+use bevy::input_focus::{InputFocus, InputFocusVisible};
 use bevy::prelude::*;
 use bevy::ui::{ComputedNode, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
@@ -9,11 +13,76 @@ use gz_bevy::camera::MainCamera;
 use gz_bevy::view::{ViewId, ViewPlacement};
 
 use crate::shell::connection::{CurrentPhase, Phase};
-use crate::widgets::layout::{node_rect, set_shown};
+use crate::shell::regions::pass_through;
+use crate::theme::{border, ColorRole, Stroke};
+use crate::widgets::a11y;
+use crate::widgets::layout::{node_rect, overlay, set_shown};
 
 /// A 3D view's placeholder node: its camera renders into its rect.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ViewNode(pub(crate) ViewId);
+
+/// A view to AccessKit: an application, whose keys are its own (the
+/// viewport's shortcuts), named by its place in the layout.
+pub(crate) fn view_access(id: ViewId) -> AccessibilityNode {
+    let mut access = a11y(Role::Application, format!("View {}", id.0 + 1));
+    access
+        .0
+        .set_description("3D view: the viewport's keys apply while it has focus");
+    access
+}
+
+/// Keeps each view's AccessKit node: Bevy makes a node whose `ImageNode`
+/// changes an unnamed image, and the view's changes with its texture.
+/// Runs in PostUpdate after Bevy's UI accessibility.
+pub(crate) fn keep_view_access(mut views: Query<(&ViewNode, &mut AccessibilityNode)>) {
+    for (view, mut access) in &mut views {
+        if access.0.role() != Role::Application {
+            *access = view_access(view.0);
+        }
+    }
+}
+
+/// A view's focus ring.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct FocusFrame;
+
+/// How far inside the view's edge its focus ring is: clear of the active
+/// view's 2 px frame by the ring's 2 px offset (§5).
+pub(crate) const FOCUS_INSET: f32 = 4.0;
+
+/// A hidden 2 px `accent` ring inside the view's edge: the §5 ring, which
+/// draws outside a control, would fall on the view's neighbours, and an
+/// outline on the view's node draws under its image.
+pub(crate) fn focus_frame() -> impl Bundle {
+    let inset = px(FOCUS_INSET);
+    (
+        FocusFrame,
+        Node {
+            display: Display::None,
+            border: UiRect::all(px(border::FOCUS_RING)),
+            left: inset,
+            right: inset,
+            top: inset,
+            bottom: inset,
+            ..overlay()
+        },
+        Stroke(ColorRole::Accent),
+        pass_through(),
+    )
+}
+
+/// Shows a view's focus ring while it has keyboard focus and focus shows
+/// (Tab put it there, not a press: as for every ring).
+pub(crate) fn focus_frames(
+    focus: Res<InputFocus>,
+    visible: Res<InputFocusVisible>,
+    mut frames: Query<(&ChildOf, &mut Node), With<FocusFrame>>,
+) {
+    for (parent, mut node) in &mut frames {
+        set_shown(&mut node, visible.0 && focus.get() == Some(parent.parent()));
+    }
+}
 
 /// The last frame shows at 70% while disconnected (§7.10).
 pub(crate) const DIM_OPACITY: f32 = 0.3;

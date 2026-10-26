@@ -506,7 +506,8 @@ fn the_tree_is_virtualized() {
 }
 
 /// The tree is a tab stop in the sidebar; arrow keys move its cursor,
-/// which shows the focus ring, and open and close rows.
+/// which shows the focus ring (the list does until there is one), and
+/// open and close rows.
 #[test]
 fn the_tree_takes_tab_and_the_arrow_keys() {
     let (mut app, _) = live_tree();
@@ -534,8 +535,14 @@ fn the_tree_takes_tab_and_the_arrow_keys() {
         frames(app, 2);
     };
     let cursor = |app: &App| app.world().resource::<TreeState>().cursor.clone();
+    // No cursor yet: the list shows the ring inside its edge, then hands
+    // it to the cursor's row.
+    frames(&mut app, 1);
+    let list_ring = |app: &App| app.world().get::<Ring>(list).copied();
+    assert_eq!(list_ring(&app), Some(Ring(ColorRole::Accent)));
     press(&mut app, KeyCode::ArrowDown);
     assert_eq!(cursor(&app), Some(NodeKey::World));
+    assert_eq!(list_ring(&app), Some(Ring(ColorRole::Clear)));
     press(&mut app, KeyCode::ArrowDown);
     assert_eq!(cursor(&app), Some(NodeKey::Entity("amr_01".into())));
     let amr = row(&mut app, "amr_01");
