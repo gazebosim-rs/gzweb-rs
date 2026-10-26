@@ -9,8 +9,9 @@
 //! the session and shows the next one as it was left, or as saved, or
 //! its default (§8's table). Save current layout writes it for good: to
 //! `gz/ui/workspaces.json` in the platform's config directory natively,
-//! to `localStorage` in the browser, with the current workspace and the
-//! theme, which are written whenever they change. The app starts in the
+//! to `localStorage` in the browser, with the current workspace, the
+//! theme, the UI scale and the motion setting, which are written whenever
+//! they change. The app starts in the
 //! workspace it was left in: as saved, or as the app starts when never
 //! saved (so start-up stays as it was).
 
@@ -29,7 +30,7 @@ use crate::panels::{PanelId, PanelRegistry};
 use crate::shell::layout::{PopOut, ShellLayout, Slot, DEFAULT_SPLIT};
 use crate::shell::status_bar::readouts::StatusNote;
 use crate::shell::viewport::views::{LayoutPreset, ViewLayout};
-use crate::theme::{Sizes, Theme, ThemeMode};
+use crate::theme::{MotionMode, Sizes, Theme, ThemeMode};
 
 /// The workspaces: id (in the file), name and binding.
 pub(crate) const WORKSPACES: [(&str, &str, &str); 4] = [
@@ -371,6 +372,12 @@ pub(crate) struct WorkspaceFile {
     pub(crate) current: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) theme: Option<String>,
+    /// The UI scale (1.0 is 100%; DECISIONS.md D-118).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ui_scale: Option<f32>,
+    /// The motion setting: `system`, `reduce` or `full`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) motion: Option<String>,
     /// The workspaces saved, by id.
     #[serde(default)]
     pub(crate) workspaces: std::collections::BTreeMap<String, WorkspaceLayout>,
@@ -393,6 +400,11 @@ pub struct WorkspaceStore {
     pub at: StoreAt,
     /// The saved theme applies at start (not over `gzweb --theme`).
     pub theme: bool,
+    /// The saved UI scale applies at start (not over `gzweb --ui-scale`).
+    pub scale: bool,
+    /// The saved motion setting applies at start (not over `gzweb
+    /// --motion`).
+    pub motion: bool,
 }
 
 /// Where a [`WorkspaceStore`] keeps its file.
@@ -414,7 +426,12 @@ impl WorkspaceStore {
         let at = Some(StoreAt::Browser);
         #[cfg(not(target_arch = "wasm32"))]
         let at = config_file().map(StoreAt::File);
-        at.map(|at| Self { at, theme: true })
+        at.map(|at| Self {
+            at,
+            theme: true,
+            scale: true,
+            motion: true,
+        })
     }
 
     fn read(&self) -> Result<Option<String>, String> {
@@ -905,8 +922,10 @@ pub(crate) struct Persisted {
     /// What was last written (or read), to write again only on a change.
     written: Option<WorkspaceFile>,
     /// The file's theme, kept as it is while a theme was asked for
-    /// ([`WorkspaceStore::theme`] off).
+    /// ([`WorkspaceStore::theme`] off); its UI scale and motion likewise.
     theme: Option<String>,
+    ui_scale: Option<f32>,
+    motion: Option<String>,
     /// It isn't written: it couldn't be read, or a newer gzweb wrote it.
     read_only: bool,
 }
@@ -919,7 +938,8 @@ impl Persisted {
 }
 
 impl Persisted {
-    /// What the file holds for `workspaces` and `theme`.
+    /// What the file holds for `workspaces` and `theme` (its mode, UI
+    /// scale and motion).
     fn file_of(
         &self,
         workspaces: &Workspaces,
@@ -934,6 +954,16 @@ impl Persisted {
                 Some(theme.mode.id().into())
             } else {
                 self.theme.clone()
+            },
+            ui_scale: if store.scale {
+                Some(theme.scale)
+            } else {
+                self.ui_scale
+            },
+            motion: if store.motion {
+                Some(theme.motion.id().into())
+            } else {
+                self.motion.clone()
             },
             workspaces: list
                 .iter()
@@ -961,6 +991,8 @@ pub(crate) fn exported(workspaces: &Workspaces) -> String {
         version: FILE_VERSION,
         current: list[workspaces.current].id.clone(),
         theme: None,
+        ui_scale: None,
+        motion: None,
         workspaces: list
             .iter()
             .map(|w| (w.id.clone(), w.saved.clone()))
@@ -979,7 +1011,7 @@ pub(crate) fn exported(workspaces: &Workspaces) -> String {
 
 /// Reads the store on the first frame: the saved workspaces, the
 /// current one (laid out as saved, else its default; Build unsaved is the
-/// app's start) and the theme. Either way, it's written again only once
+/// app's start), the theme, the UI scale and the motion. Either way, it's written again only once
 /// something in it changes.
 ///
 /// A file it can't parse is kept apart (`.bad`) and the defaults used; if
@@ -1082,6 +1114,20 @@ pub(crate) fn load_workspaces(
             .and_then(|t| ThemeMode::from_str(t).ok())
         {
             theme.set_mode(mode);
+        }
+    }
+    persisted.ui_scale = file.ui_scale;
+    if let Some(scale) = file.ui_scale.filter(|_| store.scale) {
+        theme.set_scale(scale);
+    }
+    persisted.motion = file.motion.clone();
+    if store.motion {
+        if let Some(motion) = file
+            .motion
+            .as_deref()
+            .and_then(|m| MotionMode::from_str(m).ok())
+        {
+            theme.set_motion(motion);
         }
     }
     persisted.written = Some(persisted.file_of(&workspaces, &theme, &store));
@@ -1226,7 +1272,7 @@ fn switch(
 }
 
 /// Writes the store when what it holds changes: the saved workspaces, the
-/// current one, the theme.
+/// current one, the theme (its mode, UI scale and motion).
 pub(crate) fn persist_workspaces(
     store: Option<ResMut<WorkspaceStore>>,
     loaded: Res<WorkspacesLoaded>,

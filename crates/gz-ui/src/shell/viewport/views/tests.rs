@@ -665,6 +665,34 @@ fn an_inactive_view_shows_its_face_marker_until_hovered() {
     assert_eq!(look(&mut app, n[0].1), (true, true, false));
 }
 
+/// With reduce-motion an inactive view's controls come back in one frame
+/// when hovered; with full motion they ease (spec §10, D-118).
+#[test]
+fn reduced_motion_reveals_a_view_at_once() {
+    use crate::theme::{MotionMode, Theme};
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        Duration::from_millis(1),
+    ));
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_motion(MotionMode::Reduce);
+    frames(&mut app, 3);
+    let n = nodes(&mut app);
+    let reveal = |app: &App| app.world().get::<Reveal>(n[1].1).unwrap().0;
+    assert_eq!(reveal(&app), 0.0);
+    cursor(&mut app, n[1].2 .0 + n[1].2 .1 / 2.0);
+    app.update();
+    assert_eq!(reveal(&app), 1.0);
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_motion(MotionMode::Full);
+    cursor(&mut app, n[0].2 .0 + n[0].2 .1 / 2.0);
+    app.update();
+    let r = reveal(&app);
+    assert!(r > 0.5 && r < 1.0, "{r}");
+}
+
 #[test]
 fn each_rail_turns_its_own_views_overlays_and_apply_to_all_copies_them() {
     use crate::shell::viewport::rail::menus::{ApplyToAll, OverlayItem};

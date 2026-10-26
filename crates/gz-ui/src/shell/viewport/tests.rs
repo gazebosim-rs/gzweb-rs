@@ -123,6 +123,44 @@ fn the_3d_view_follows_the_view_node_at_any_scale() {
     assert_eq!(size, UVec2::new(1410 - 445, 900 - 55 - 35));
 }
 
+/// A UI scale change at run time (⌘K, D-118) lays the shell out again and
+/// each view's camera follows its node in the same frame, and again when
+/// the floor rule refits the layout a frame later: the placement is the
+/// node's rect in window pixels, its texture the node's physical size
+/// (§13: camera regions match their nodes after a UI scale change).
+#[test]
+fn the_3d_view_follows_its_node_through_a_ui_scale_change() {
+    let mut app = shell_app((1440, 900), 2.0);
+    frames(&mut app, 3);
+    let matches = |app: &mut App, scale: f32| {
+        let node = find::<ViewNode>(app);
+        let (min, size) = rect(app, node);
+        let (r, texture, on) = placed(app);
+        assert!(on, "{scale}");
+        assert!(
+            (r.min - min * scale).length() < 1e-3,
+            "{scale}: {r:?} {min}"
+        );
+        assert!((r.size() - size * scale).length() < 1e-3, "{scale}");
+        assert_eq!(texture, (r.size() * 2.0).round().as_uvec2(), "{scale}");
+    };
+    for scale in [2.0, 0.8, 1.25, 1.0] {
+        app.world_mut().write_message(UiCommand::SetUiScale(scale));
+        app.update();
+        assert_eq!(app.world().resource::<UiScale>().0, scale);
+        matches(&mut app, scale);
+        frames(&mut app, 3);
+        matches(&mut app, scale);
+    }
+    // At 200% the 1440 px window is 720 UI px: the floor rule closed the
+    // inspector and left the view its minimum or more.
+    app.world_mut().write_message(UiCommand::SetUiScale(2.0));
+    frames(&mut app, 3);
+    let l = layout(&app);
+    assert!(!l.inspector_open);
+    assert!(l.viewport_w() >= 240.0, "{}", l.viewport_w());
+}
+
 /// The card's status line in each phase (§7.10).
 #[test]
 fn the_card_says_what_the_connection_is_doing() {
@@ -468,6 +506,26 @@ fn an_interrupted_card_fade_restores_its_opacities() {
     );
 }
 
+/// With reduce-motion the card goes as the world loads, without its fade
+/// (spec §10, D-118).
+#[test]
+fn reduced_motion_drops_the_card_without_a_fade() {
+    use super::connect_card::Fading;
+    use crate::theme::MotionMode;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)));
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_motion(MotionMode::Reduce);
+    frames(&mut app, 2);
+    let card = find::<ConnectCard>(&mut app);
+    assert!(displayed(&app, card));
+    go_live(&mut app, false);
+    frames(&mut app, 1);
+    assert!(!displayed(&app, card));
+    assert!(app.world().get::<Fading>(card).is_none());
+}
+
 /// What the connect card makes of an address (DECISIONS.md D-55).
 #[test]
 fn addresses_normalize() {
@@ -491,31 +549,36 @@ fn addresses_normalize() {
     );
 }
 
+/// The box spans the drag's corners, which are in the view's (window)
+/// pixels: at UI scale 2 the box is half as many UI pixels (D-118).
 #[test]
 fn the_marquee_box_follows_the_drag() {
     use gz_bevy::view::{Marquee, MarqueeRect};
-    let mut app = shell_app((1440, 900), 1.0);
-    go_live(&mut app, false);
-    frames(&mut app, 2);
-    let b = find::<super::marquee::MarqueeBox>(&mut app);
-    assert!(!displayed(&app, b));
-    let view = find::<MainCamera>(&mut app);
-    let node = find::<ViewNode>(&mut app);
-    // Dragged up and left: the box spans the two corners.
-    app.world_mut().resource_mut::<Marquee>().0 = Some(MarqueeRect {
-        view,
-        from: Vec2::new(300.0, 200.0),
-        to: Vec2::new(100.0, 150.0),
-    });
-    frames(&mut app, 2);
-    assert!(displayed(&app, b));
-    let (pos, size) = rect(&app, b);
-    let (origin, _) = rect(&app, node);
-    assert_eq!(pos - origin, Vec2::new(100.0, 150.0));
-    assert_eq!(size, Vec2::new(200.0, 50.0));
-    app.world_mut().resource_mut::<Marquee>().0 = None;
-    frames(&mut app, 2);
-    assert!(!displayed(&app, b));
+    for scale in [1.0, 2.0] {
+        let mut app = shell_app((1440, 900), 1.0);
+        app.world_mut().resource_mut::<Theme>().set_scale(scale);
+        go_live(&mut app, false);
+        frames(&mut app, 2);
+        let b = find::<super::marquee::MarqueeBox>(&mut app);
+        assert!(!displayed(&app, b));
+        let view = find::<MainCamera>(&mut app);
+        let node = find::<ViewNode>(&mut app);
+        // Dragged up and left: the box spans the two corners.
+        app.world_mut().resource_mut::<Marquee>().0 = Some(MarqueeRect {
+            view,
+            from: Vec2::new(300.0, 200.0),
+            to: Vec2::new(100.0, 150.0),
+        });
+        frames(&mut app, 2);
+        assert!(displayed(&app, b));
+        let (pos, size) = rect(&app, b);
+        let (origin, _) = rect(&app, node);
+        assert_eq!((pos - origin) * scale, Vec2::new(100.0, 150.0), "{scale}");
+        assert_eq!(size * scale, Vec2::new(200.0, 50.0), "{scale}");
+        app.world_mut().resource_mut::<Marquee>().0 = None;
+        frames(&mut app, 2);
+        assert!(!displayed(&app, b));
+    }
 }
 
 #[test]
@@ -555,6 +618,45 @@ fn the_outline_overlay_shows_while_anything_is_outlined() {
         .to_vec4();
     assert_eq!(m.params.selected, want);
     assert_eq!(m.params.hovered.w, want.w * 0.5);
+}
+
+/// At UI scale 2 the overlay still covers the outlined part of the view:
+/// the mask's rect is in window pixels, the node in UI pixels, half as
+/// many (D-118).
+#[test]
+fn the_outline_overlay_follows_the_ui_scale() {
+    use super::outline::{OutlineMaterial, OutlineOverlay};
+    use bevy::camera::primitives::Aabb;
+    use gz_bevy::view::outline::OutlineClone;
+    let mut app = shell_app((1440, 900), 1.0);
+    app.init_asset::<OutlineMaterial>();
+    app.world_mut().resource_mut::<Theme>().set_scale(2.0);
+    go_live(&mut app, false);
+    frames(&mut app, 2);
+    app.world_mut().spawn((
+        OutlineClone::Selected,
+        Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5)),
+        GlobalTransform::default(),
+    ));
+    app.world_mut()
+        .resource_mut::<gz_bevy::view::outline::Outlining>()
+        .0 = true;
+    frames(&mut app, 3);
+    let want = first_mask(&mut app).rect.expect("the clone's screen rect");
+    let overlay = find::<OutlineOverlay>(&mut app);
+    let node = find::<ViewNode>(&mut app);
+    let (pos, size) = rect(&app, overlay);
+    let (origin, _) = rect(&app, node);
+    // Laid out to whole physical pixels: within a window pixel.
+    let near = |a: Vec2, b: Vec2| (a - b).abs().max_element() < 1.1;
+    assert!(
+        near((pos - origin) * 2.0, want.min - Vec2::splat(4.0)),
+        "{pos} {want:?}"
+    );
+    assert!(
+        near(size * 2.0, want.size() + Vec2::splat(8.0)),
+        "{size} {want:?}"
+    );
 }
 
 #[test]

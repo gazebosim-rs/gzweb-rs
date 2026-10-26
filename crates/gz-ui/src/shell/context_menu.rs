@@ -231,6 +231,7 @@ pub(crate) fn open_context_menu(
     theme: Res<Theme>,
     map: Option<Res<InputMap>>,
     windows: Query<&Window>,
+    ui_scale: Res<UiScale>,
     status: Option<Res<GzStatus>>,
     selection: Res<Selection>,
     clipboard: Option<Res<ModelClipboard>>,
@@ -249,10 +250,12 @@ pub(crate) fn open_context_menu(
         return;
     };
     // At the pointer (without one, `--menu context`, a quarter down the
-    // middle: the menu is tall).
+    // middle: the menu is tall), in UI pixels: the window's over the UI
+    // scale.
     let at = window
         .cursor_position()
-        .unwrap_or(Vec2::new(window.width() / 2.0, window.height() / 4.0));
+        .unwrap_or(Vec2::new(window.width() / 2.0, window.height() / 4.0))
+        / ui_scale.0.max(f32::EPSILON);
     for e in &open {
         commands.entity(e).despawn();
     }

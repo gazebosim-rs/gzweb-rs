@@ -197,6 +197,8 @@ fn with_store(text: Option<&str>, theme: bool) -> App {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(text.map(str::to_string)),
         theme,
+        scale: theme,
+        motion: theme,
     });
     frames(&mut app, 3);
     app
@@ -245,6 +247,8 @@ fn the_store_is_read_at_start() {
         version: 1,
         current: "run".into(),
         theme: Some("dark".into()),
+        ui_scale: None,
+        motion: None,
         workspaces: [("run".to_string(), saved)].into_iter().collect(),
         custom: vec![],
     };
@@ -301,6 +305,8 @@ fn start_with(text: Option<&str>, theme: bool, before: impl FnOnce(&mut App)) ->
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(text.map(str::to_string)),
         theme,
+        scale: theme,
+        motion: theme,
     });
     before(&mut app);
     frames(&mut app, 3);
@@ -312,6 +318,8 @@ fn file_text(current: &str, version: u32, saved: &[(&str, WorkspaceLayout)]) -> 
         version,
         current: current.into(),
         theme: Some("dark".into()),
+        ui_scale: None,
+        motion: None,
         workspaces: saved
             .iter()
             .map(|(id, w)| (id.to_string(), w.clone()))
@@ -333,6 +341,8 @@ fn a_file_it_cant_parse_is_kept_apart() {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::File(path.clone()),
         theme: true,
+        scale: true,
+        motion: true,
     });
     frames(&mut app, 3);
     assert_eq!(workspaces(&app).current, 0);
@@ -386,6 +396,62 @@ fn a_theme_asked_for_isnt_saved() {
     let mut app = start_with(None, false, |_| {});
     alt(&mut app, KeyCode::Digit2);
     assert_eq!(stored(&app).unwrap().theme, None);
+}
+
+/// The UI scale and the motion setting are written when they change and
+/// read at start (kept to 80 to 200%); asked for (`--ui-scale`,
+/// `--motion`), they aren't saved and the file keeps its own (D-118).
+#[test]
+fn the_ui_scale_and_motion_persist() {
+    let mut app = with_store(None, true);
+    app.world_mut()
+        .write_message(crate::shell::UiCommand::SetUiScale(1.5));
+    frames(&mut app, 2);
+    let file = stored(&app).expect("written");
+    assert_eq!(
+        (file.ui_scale, file.motion.as_deref()),
+        (Some(1.5), Some("system"))
+    );
+    app.world_mut()
+        .write_message(crate::shell::UiCommand::SetMotion(MotionMode::Reduce));
+    frames(&mut app, 2);
+    assert_eq!(stored(&app).unwrap().motion.as_deref(), Some("reduce"));
+
+    let file = |scale: f32| {
+        serde_json::to_string(&WorkspaceFile {
+            version: FILE_VERSION,
+            current: "build".into(),
+            ui_scale: Some(scale),
+            motion: Some("reduce".into()),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    let app = with_store(Some(&file(1.25)), true);
+    let theme = app.world().resource::<Theme>();
+    assert_eq!(theme.scale, 1.25);
+    assert!(theme.reduce_motion);
+    let app = with_store(Some(&file(5.0)), true);
+    assert_eq!(app.world().resource::<Theme>().scale, 2.0);
+
+    let mut app = shell_app((1440, 900), 1.0);
+    app.world_mut().resource_mut::<Theme>().set_scale(0.9);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(Some(file(1.25))),
+        theme: true,
+        scale: false,
+        motion: false,
+    });
+    frames(&mut app, 3);
+    let theme = app.world().resource::<Theme>();
+    assert_eq!(theme.scale, 0.9);
+    assert!(!theme.reduce_motion);
+    alt(&mut app, KeyCode::Digit2);
+    let kept = stored(&app).unwrap();
+    assert_eq!(
+        (kept.ui_scale, kept.motion.as_deref()),
+        (Some(1.25), Some("reduce"))
+    );
 }
 
 /// Left in a workspace never saved, the app starts in its default (Build's
@@ -510,6 +576,8 @@ fn the_users_workspaces_read_back() {
         version: FILE_VERSION,
         current: "user_2".into(),
         theme: None,
+        ui_scale: None,
+        motion: None,
         workspaces: [
             ("user_2".to_string(), mine),
             ("user_1".to_string(), WorkspaceLayout::default_for(1)),

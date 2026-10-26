@@ -192,6 +192,7 @@ type CardFade = (
 /// interrupted.
 pub(crate) fn fade_card(
     time: Res<Time<Real>>,
+    theme: Res<Theme>,
     mut cards: Query<CardFade, With<ConnectCard>>,
     mut fades: FadeQueries,
     mut commands: Commands,
@@ -199,7 +200,7 @@ pub(crate) fn fade_card(
     for (card, mut node, fading, faded) in &mut cards {
         let (alpha, done) = match fading {
             Some(mut fading) => {
-                fading.0 -= time.delta_secs();
+                fading.0 -= theme.motion_dt(time.delta_secs(), fade_secs());
                 let done = fading.0 <= 0.0;
                 let alpha = (!done).then(|| (fading.0 / fade_secs()).clamp(0.0, 1.0));
                 (alpha, done)

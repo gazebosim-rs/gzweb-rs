@@ -305,10 +305,13 @@ fn ops(app: &mut App) -> Vec<ViewOp> {
 }
 
 /// The window position (logical) of image point `uv` on the cube.
+/// Where `uv` is on the cube, in window pixels (the pointer's): UI pixels
+/// times the UI scale.
 fn at_uv(app: &mut App, uv: Vec2) -> Vec2 {
     let cube = find::<ViewCube>(app);
     let (min, size) = rect(app, cube);
-    min + Vec2::new((uv.x + 1.0) / 2.0, (1.0 - uv.y) / 2.0) * size
+    let scale = app.world().resource::<UiScale>().0;
+    (min + Vec2::new((uv.x + 1.0) / 2.0, (1.0 - uv.y) / 2.0) * size) * scale
 }
 
 fn pointer_at(p: Vec2) -> Pointer {
@@ -397,6 +400,26 @@ fn the_cube_picks_at_any_scale_factor() {
     );
     let target = app.world().get::<bevy::camera::RenderTarget>(scene.camera);
     assert!(matches!(target, Some(bevy::camera::RenderTarget::Image(t)) if t.scale_factor == 2.0));
+}
+
+/// After a UI scale change the cube still picks under the pointer, and
+/// its texture follows its node's new physical size (D-61, D-118).
+#[test]
+fn the_cube_picks_and_stays_sharp_after_a_ui_scale_change() {
+    let mut app = cube_app(1.0);
+    app.world_mut()
+        .write_message(crate::shell::UiCommand::SetUiScale(2.0));
+    frames(&mut app, 3);
+    click_cube(&mut app, Vec2::new(0.0, -0.4));
+    assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Back)]);
+    let scene = cube_scene(&mut app);
+    let size = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&scene.image)
+        .unwrap()
+        .size();
+    assert_eq!(size, UVec2::splat(112));
 }
 
 #[test]

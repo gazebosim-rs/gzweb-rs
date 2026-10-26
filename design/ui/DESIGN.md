@@ -593,6 +593,8 @@ Check what the pinned Bevy version offers for text input, scrolling and focus (r
 - UI scale setting 80–200% (Settings › Appearance) multiplies `Theme.scale`.
 - Honor reduce-motion (all durations 0).
 
+As built (D-118): until Settings › Appearance exists, ⌘K's Settings group sets the UI scale (80, 90, 100, 110, 125, 150, 175, 200%) and the motion (reduce, full, follow system), and `gzweb --ui-scale PERCENT` and `--motion` pick them at start; both persist with the theme. Follow system reads the browser's `prefers-reduced-motion`; natively it means full motion. Reduced, the camera's snaps, focus and home, the connect card's fade and the views' reveal are instant and the Assets panel's progress bars hold still.
+
 ---
 
 ## 11. Gazebo parity map

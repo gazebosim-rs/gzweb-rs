@@ -907,6 +907,36 @@ fn home_animates_back_to_gzwebs_default_view_in_perspective() {
     assert_near(published, Vec3::ZERO, 1e-5);
 }
 
+/// With reduce-motion a snap, home, focus or look-from lands in the frame
+/// it starts, where the animation would have ended (spec §10, D-118).
+#[test]
+fn reduced_motion_lands_each_move_at_once() {
+    let mut r = rig(default_view());
+    let (_, model) = r.world_root();
+    let cube = r.cube(Some(model), Vec3::new(2.0, 0.0, 0.5), 0.5);
+    r.app.world_mut().insert_resource(ReduceMotion(true));
+    r.op(ViewOp::Snap(SnapView::Top));
+    assert!(!r.view().animating());
+    assert_eq!(r.view().snapped, Some(SnapView::Top));
+    assert!(r.ortho().is_some());
+    r.op(ViewOp::Home);
+    assert!(!r.view().animating());
+    let home = home_transform();
+    assert_near(r.transform().translation, home.translation, 1e-4);
+    r.op(ViewOp::LookFrom(Vec3::new(1.0, 1.0, 1.0)));
+    assert!(!r.view().animating());
+    let back = gz_to_bevy().inverse() * *r.transform().back();
+    assert_near(back, Vec3::ONE.normalize(), 1e-4);
+    r.app.world_mut().resource_mut::<Selection>().entities = vec![cube];
+    r.op(ViewOp::Focus { at: None });
+    assert!(!r.view().animating());
+    assert_near(r.pivot(), Vec3::new(2.0, 0.5, 0.0), 1e-3);
+    // Off again, a move animates.
+    r.app.world_mut().insert_resource(ReduceMotion(false));
+    r.op(ViewOp::Home);
+    assert!(r.view().animating());
+}
+
 #[test]
 fn fly_moves_in_the_ground_plane_at_a_frame_rate_independent_speed() {
     let mut r = rig(default_view());
