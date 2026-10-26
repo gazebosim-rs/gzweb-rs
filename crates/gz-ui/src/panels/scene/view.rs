@@ -131,10 +131,10 @@ impl TreeSources<'_, '_> {
         self.theme.s.tree_row_h
     }
 
-    /// Rows a list as tall as the window shows: the pool a new body starts
-    /// with, so it shows its rows in its first frame.
+    /// Rows a list as tall as the window (in UI pixels) shows: the pool a
+    /// new body starts with, so it shows its rows in its first frame.
     fn first_pool(&self) -> usize {
-        let h = self.windows.single().map_or(900.0, Window::height);
+        let h = self.windows.single().map_or(900.0, Window::height) / self.theme.scale;
         pool_size(h, self.row_h())
     }
 }

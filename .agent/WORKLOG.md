@@ -2160,3 +2160,39 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
     the hovered one, and is active;
   - `--keys` sends logical keys and text, releases a chord on leaving
     Live, and holds `--screenshot` until done.
+
+## 2026-10-25: M10c UI scale and reduce-motion (D-118)
+
+- **UI scale:** ⌘K's Settings group lists "UI scale: 80%" to "200%" (the
+  one in effect says "current"); `gzweb --ui-scale PERCENT` (80 to 200)
+  and `?ui_scale=` pick it at start. `Theme::set_scale` keeps any value to
+  80 to 200%.
+- **Pixels:** the context menu, the selection marquee and the outline
+  overlay took window pixels as UI pixels, so above 100% they landed the
+  scale times too far; they divide by `UiScale` now. The Scene tree's
+  first row pool counts UI pixels. The views' placement already followed
+  its node; tests now hold it through scale changes.
+- **Reduce-motion:** "Motion: reduce / full / follow system", `--motion`
+  and `?motion=`. Follow system reads the browser's
+  `prefers-reduced-motion` (natively: full). Reduced, the camera's snaps,
+  focus, home, look-from and mode turns land at once
+  (`gz_bevy::view::ReduceMotion`), the card's fade and the views' reveal
+  are instant, and the Assets panel's bars hold still.
+- **Persistence:** `ui_scale` and `motion` in `workspaces.json`; one asked
+  for by a flag wins and isn't saved.
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive` on
+  :9051, `--screenshot`): 80%, 100% and 200% at 1440x900, text and icons
+  sharp; 200% at 2880x1800 with `--menu context --select vehicle_blue`
+  looks as 100% does at 1440x900, the outline on the model (before the fix
+  it was drawn a view away from it); 125% with `--palette "ui scale"`;
+  150% with `--motion reduce --view top --palette motion`.
+- **Left:** the full UI needs 1024x640 UI pixels, so above 100% a smaller
+  window (200% at 1440x900) clips the top bar's right end as a narrow
+  window does.
+- **Tests:** workspace 981 → 993 passing; coverage 97.5% lines. check.sh passes.
+- **Review fixes** (PR #65):
+  - the gizmo's snapping readout divides by the UI scale;
+  - minimal mode keeps the motion setting in its views (`--motion`, the
+    browser's preference) and refuses `--ui-scale`;
+  - the file's scale reads leniently (a hand-written percentage, or a bad
+    value dropped without losing the file).

@@ -21,6 +21,7 @@ use crate::shell::top_bar::search::SearchTrigger;
 use crate::shell::{Slot, UiCommand};
 use crate::test_support::frames;
 use crate::test_support::shell::*;
+use crate::theme::{MotionMode, Theme};
 use crate::widgets::text_field::{set_field_text, TextFieldInput};
 use crate::widgets::TextSubmit;
 
@@ -486,4 +487,57 @@ fn the_palette_switches_workspaces() {
             .resource::<crate::panels::workspaces::PanelState>()
             .naming
     );
+}
+
+/// Settings has the UI scales and the motion settings (D-118): one runs,
+/// the theme takes it, and the one in effect says "current".
+#[test]
+fn the_palette_sets_the_ui_scale_and_motion() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let hint = |app: &App, name: &str| {
+        app.world()
+            .resource::<PaletteState>()
+            .results
+            .iter()
+            .find(|i| i.name == name)
+            .map(|i| i.hint.clone())
+    };
+    open(&mut app);
+    type_query(&mut app, "ui scale");
+    let all = results(&app);
+    for pct in [80, 90, 100, 110, 125, 150, 175, 200] {
+        assert!(
+            all.contains(&format!("UI scale: {pct}%")),
+            "{pct} in {all:?}"
+        );
+    }
+    assert_eq!(hint(&app, "UI scale: 100%").as_deref(), Some("current"));
+    type_query(&mut app, "150%");
+    assert_eq!(
+        results(&app).first().map(String::as_str),
+        Some("UI scale: 150%")
+    );
+    enter(&mut app);
+    assert_eq!(app.world().resource::<Theme>().scale, 1.5);
+    assert_eq!(app.world().resource::<UiScale>().0, 1.5);
+    open(&mut app);
+    type_query(&mut app, "ui scale");
+    assert_eq!(hint(&app, "UI scale: 150%").as_deref(), Some("current"));
+    assert_eq!(hint(&app, "UI scale: 100%").as_deref(), Some(""));
+
+    type_query(&mut app, "reduce motion");
+    assert_eq!(
+        results(&app).first().map(String::as_str),
+        Some("Motion: reduce")
+    );
+    enter(&mut app);
+    let theme = app.world().resource::<Theme>();
+    assert!(theme.reduce_motion && theme.motion == MotionMode::Reduce);
+    open(&mut app);
+    type_query(&mut app, "motion");
+    assert_eq!(hint(&app, "Motion: reduce").as_deref(), Some("current"));
+    for name in ["Motion: full", "Motion: follow system"] {
+        assert!(results(&app).iter().any(|n| n == name), "{name}");
+    }
 }

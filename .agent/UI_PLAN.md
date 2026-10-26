@@ -497,6 +497,10 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
   the page's status lines. Text-field focus inside the canvas was done in M1 (bevy_ui text
   inputs keep the browser's chords). M10 still owns layout-aware letters.
+- **M10c notes:** UI scale and reduce-motion (D-118): ⌘K's "UI scale: N%" and "Motion: …",
+  `gzweb --ui-scale`, `--motion`; `Theme::set_scale` (80 to 200%), `Theme::motion_dt`,
+  `gz_bevy::view::ReduceMotion`; the menu, marquee and outline divide by `UiScale`; persisted
+  in `workspaces.json`.
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 

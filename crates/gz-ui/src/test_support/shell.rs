@@ -58,6 +58,7 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         app.add_plugins((
             crate::GzUiPlugin {
                 theme: ThemeMode::Light,
+                ..default()
             },
             plugins.set(ShellPlugin { camera: false }),
         ));

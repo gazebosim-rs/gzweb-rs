@@ -88,6 +88,7 @@ pub(crate) fn outline() -> impl Bundle {
 #[allow(clippy::type_complexity)]
 pub(crate) fn outline_overlay(
     theme: Res<Theme>,
+    ui_scale: Res<UiScale>,
     views: ViewCameras,
     cameras: Query<(&ViewId, &ViewPlacement, &OutlineMask), With<MainCamera>>,
     materials: Option<ResMut<Assets<OutlineMaterial>>>,
@@ -136,11 +137,13 @@ pub(crate) fn outline_overlay(
         if node.display != want {
             node.display = want;
         }
+        // The area is in the view's (window) pixels; the node in UI ones.
+        let k = 1.0 / ui_scale.0.max(f32::EPSILON);
         let place = (
-            px(area.min.x),
-            px(area.min.y),
-            px(area.width()),
-            px(area.height()),
+            px(area.min.x * k),
+            px(area.min.y * k),
+            px(area.width() * k),
+            px(area.height() * k),
         );
         if (node.left, node.top, node.width, node.height) != place {
             (node.left, node.top, node.width, node.height) = place;

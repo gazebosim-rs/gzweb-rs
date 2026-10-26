@@ -65,6 +65,44 @@ impl std::str::FromStr for ThemeMode {
     }
 }
 
+/// The motion setting (spec §10, DECISIONS.md D-118): follow the OS's
+/// reduce-motion preference, or reduce or keep motion whatever it says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Reflect)]
+pub enum MotionMode {
+    #[default]
+    System,
+    Reduce,
+    Full,
+}
+
+impl MotionMode {
+    /// Its name, as [`FromStr`](std::str::FromStr) reads it.
+    pub fn id(self) -> &'static str {
+        match self {
+            MotionMode::System => "system",
+            MotionMode::Reduce => "reduce",
+            MotionMode::Full => "full",
+        }
+    }
+}
+
+impl std::str::FromStr for MotionMode {
+    type Err = String;
+
+    /// `system`, `reduce` or `full`.
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "system" => Ok(MotionMode::System),
+            "reduce" => Ok(MotionMode::Reduce),
+            "full" => Ok(MotionMode::Full),
+            _ => Err(format!("unknown motion '{s}' (system, reduce or full)")),
+        }
+    }
+}
+
+/// The UI scales the settings offer (spec §10: 80 to 200%).
+pub const UI_SCALES: [f32; 8] = [0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+
 /// The resolved theme (spec §4.3). Change it (or [`ThemeMode`] via
 /// [`Theme::set_mode`]) and every role re-resolves on the next frame.
 #[derive(Resource, Clone, Debug, Reflect)]
@@ -75,11 +113,18 @@ pub struct Theme {
     pub c: Palette,
     pub s: Sizes,
     /// UI scale; 1.0 is the designs as drawn. Synced to Bevy's `UiScale`
-    /// (DECISIONS.md D-23).
+    /// (DECISIONS.md D-23); set it with [`Theme::set_scale`], which keeps
+    /// it to 80 to 200% (D-118).
     pub scale: f32,
     /// The OS prefers dark: what [`ThemeMode::System`] resolves to. Kept
     /// in step with the OS preference (`OsTheme`) by `follow_os_theme`.
     pub os_dark: bool,
+    pub motion: MotionMode,
+    /// The motion after applying `System`: every duration is 0 (spec §10).
+    pub reduce_motion: bool,
+    /// The OS asks for reduced motion: what [`MotionMode::System`]
+    /// resolves to (`OsMotion`, kept by `follow_os_motion`).
+    pub os_reduce_motion: bool,
 }
 
 impl Default for Theme {
@@ -97,9 +142,43 @@ impl Theme {
             s: Sizes::default(),
             scale: 1.0,
             os_dark: os_prefers_dark,
+            motion: MotionMode::System,
+            reduce_motion: false,
+            os_reduce_motion: false,
         };
         theme.set_mode(mode);
         theme
+    }
+
+    /// Sets the UI scale, kept to 80 to 200% (spec §10).
+    pub fn set_scale(&mut self, scale: f32) {
+        let (lo, hi) = (UI_SCALES[0], UI_SCALES[UI_SCALES.len() - 1]);
+        self.scale = if scale.is_finite() {
+            scale.clamp(lo, hi)
+        } else {
+            1.0
+        };
+    }
+
+    /// Sets the motion setting; `System` follows the OS preference the
+    /// theme already tracks ([`Theme::os_reduce_motion`]).
+    pub fn set_motion(&mut self, motion: MotionMode) {
+        self.motion = motion;
+        self.reduce_motion = match motion {
+            MotionMode::Reduce => true,
+            MotionMode::Full => false,
+            MotionMode::System => self.os_reduce_motion,
+        };
+    }
+
+    /// How far a transition `secs` long gets in a frame `dt` long: all
+    /// the way with reduced motion (every duration 0, spec §10).
+    pub fn motion_dt(&self, dt: f32, secs: f32) -> f32 {
+        if self.reduce_motion {
+            secs
+        } else {
+            dt
+        }
     }
 
     /// Sets the mode and re-resolves the palette; `System` follows the
@@ -180,6 +259,44 @@ pub(crate) fn follow_os_theme(os: Res<OsTheme>, mut theme: ResMut<Theme>) {
     } else {
         // The palette doesn't change: don't re-resolve every role.
         theme.bypass_change_detection().os_dark = os.dark;
+    }
+}
+
+/// The OS's reduce-motion preference, for [`MotionMode::System`] (spec
+/// §10). The browser's `prefers-reduced-motion` on the web; Bevy and
+/// winit don't read the desktop's, so natively it stays off.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct OsMotion {
+    pub reduce: bool,
+}
+
+/// Keeps [`OsMotion`] in step with the browser's `prefers-reduced-motion`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn read_os_motion(mut os: ResMut<OsMotion>) {
+    os.set_if_neq(OsMotion {
+        reduce: gz_bevy::view::web::prefers_reduced_motion(),
+    });
+}
+
+/// Hands [`OsMotion`] to the [`Theme`]; in [`MotionMode::System`], the
+/// motion follows it.
+pub(crate) fn follow_os_motion(os: Res<OsMotion>, mut theme: ResMut<Theme>) {
+    if !os.is_changed() || theme.os_reduce_motion == os.reduce {
+        return;
+    }
+    if theme.motion == MotionMode::System {
+        theme.os_reduce_motion = os.reduce;
+        theme.set_motion(MotionMode::System);
+    } else {
+        theme.bypass_change_detection().os_reduce_motion = os.reduce;
+    }
+}
+
+/// Mirrors [`Theme::reduce_motion`] into `gz-bevy`'s, which the camera's
+/// animations read.
+pub(crate) fn sync_motion(theme: Res<Theme>, mut motion: ResMut<gz_bevy::view::ReduceMotion>) {
+    if theme.is_changed() && motion.0 != theme.reduce_motion {
+        motion.0 = theme.reduce_motion;
     }
 }
 

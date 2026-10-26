@@ -1296,6 +1296,32 @@ fn pivot_depth(view: &ViewCamera, t: &Transform, p: &Projection) -> f32 {
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LinkedViews(pub bool);
 
+/// Reduce motion (spec §10, DECISIONS.md D-118): snaps, focus, home and
+/// the camera modes' turns land in the frame they start instead of
+/// animating. The UI sets it from its setting and the OS preference.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReduceMotion(pub bool);
+
+/// The views follow the browser's `prefers-reduced-motion` themselves:
+/// minimal mode, which has no UI to hold the motion setting.
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct FollowBrowserMotion;
+
+/// With [`FollowBrowserMotion`], keeps [`ReduceMotion`] in step with the
+/// browser (natively, motion stays full).
+pub fn follow_browser_motion(
+    follow: Option<Res<FollowBrowserMotion>>,
+    mut motion: ResMut<ReduceMotion>,
+) {
+    if follow.is_some() {
+        #[cfg(target_arch = "wasm32")]
+        let reduce = web::prefers_reduced_motion();
+        #[cfg(not(target_arch = "wasm32"))]
+        let reduce = false;
+        motion.set_if_neq(ReduceMotion(reduce));
+    }
+}
+
 /// How one view's move carries to the views linked to it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Link {
@@ -1385,6 +1411,7 @@ pub fn apply_view_commands(
     mut edits: MessageWriter<editing::EditCommand>,
     time: Res<Time<Real>>,
     linked: Option<Res<LinkedViews>>,
+    reduce: Option<Res<ReduceMotion>>,
     mut target: ResMut<GzCameraTarget>,
 ) {
     let linked = linked.is_some_and(|l| l.0);
@@ -1472,7 +1499,12 @@ pub fn apply_view_commands(
                 _ => {}
             }
         }
-        let dt = time.delta_secs();
+        // Reduced, an animation takes its whole length in one frame.
+        let dt = if reduce.is_some_and(|r| r.0) {
+            ANIMATION_SECS
+        } else {
+            time.delta_secs()
+        };
         for (e, mut view, mut t, mut p, camera, _) in &mut views {
             if view.animating() {
                 let carries = view.animation.as_ref().is_some_and(|a| a.link) && linked;

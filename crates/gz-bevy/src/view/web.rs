@@ -37,6 +37,9 @@ thread_local! {
     static GESTURE_SCALE: Cell<f64> = const { Cell::new(1.0) };
     /// A UI text field in the canvas has keyboard focus.
     static TEXT_FOCUS: Cell<bool> = const { Cell::new(false) };
+    /// The `prefers-reduced-motion` query, made once.
+    static REDUCED_MOTION: Option<web_sys::MediaQueryList> = web_sys::window()
+        .and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
 }
 
 /// The `localStorage` key of the last server the page connected to
@@ -89,6 +92,12 @@ pub fn page_is_secure() -> bool {
     web_sys::window()
         .and_then(|w| w.location().protocol().ok())
         .is_some_and(|p| p == "https:")
+}
+
+/// The browser asks for reduced motion (`prefers-reduced-motion: reduce`,
+/// which follows the OS setting); read each time, so a change shows.
+pub fn prefers_reduced_motion() -> bool {
+    REDUCED_MOTION.with(|q| q.as_ref().is_some_and(web_sys::MediaQueryList::matches))
 }
 
 /// Tells the canvas listener that a UI text field has (or lost) keyboard

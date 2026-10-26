@@ -295,6 +295,11 @@ impl Plugin for ViewerControls {
             .init_resource::<ViewRouting>()
             .init_resource::<super::ViewSlots>()
             .init_resource::<super::LinkedViews>()
+            .init_resource::<super::ReduceMotion>()
+            .add_systems(
+                Update,
+                super::follow_browser_motion.before(apply_view_commands),
+            )
             .init_resource::<StepsPerClick>()
             .init_resource::<GzGrid>()
             .init_resource::<crate::camera::GzCameraTarget>()
