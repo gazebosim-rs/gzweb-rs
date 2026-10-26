@@ -483,6 +483,13 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   filter entity per cubemap until the render world reports it filtered, its maps shared by
   every view that shows it (D-116). The atmosphere's environment is Bevy's real-time one.
   Quad at High 6.38 → 5.46 ms. Workspace 967 passing; coverage 97.4% lines. check.sh passes.
+- **M10d notes:** a letter binding is the key that types the letter (`view::layout::KeyLayout`,
+  learned from `KeyboardInput.logical_key`; a key that types no Latin letter falls back to its US
+  letter); digits, arrows and named keys stay physical. The fly keys and `teleop.drive` are
+  positional (`input::POSITIONAL`) and win a plain press of their keys; a gizmo drag holds the
+  fly keys. The browser swallows chords by the same rule, and the HUD's fly hint and the Teleop
+  pad show the layout's caps (Chromium's layout map at start). D-119. Workspace 999 passing;
+  coverage 97.5% lines. check.sh passes.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
@@ -491,7 +498,7 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
   the page's status lines. Text-field focus inside the canvas was done in M1 (bevy_ui text
-  inputs keep the browser's chords). M10 still owns layout-aware letters.
+  inputs keep the browser's chords). Layout-aware letters are M10d's (D-119).
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 

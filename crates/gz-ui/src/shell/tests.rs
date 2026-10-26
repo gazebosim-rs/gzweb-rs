@@ -468,6 +468,23 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     assert_eq!(l.primary, Some(CONSOLE));
 }
 
+/// D-119: a shortcut's letter is the key that types it: on Dvorak, B is
+/// `KeyN` and `KeyB` types X, with Ctrl or without.
+#[test]
+fn shortcut_letters_follow_the_keyboard_layout() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    tap_typed(&mut app, KeyCode::KeyB, "x");
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    tap_typed(&mut app, KeyCode::KeyN, "b");
+    assert_eq!(*app.world().resource::<Tool>(), Tool::BoxSelect);
+    key(&mut app, KeyCode::ControlLeft, ButtonState::Pressed);
+    tap_typed(&mut app, KeyCode::KeyB, "x");
+    assert!(layout(&app).sidebar_open);
+    tap_typed(&mut app, KeyCode::KeyN, "b");
+    assert!(!layout(&app).sidebar_open);
+}
+
 #[test]
 fn camera_input_goes_to_the_view_only_when_the_pointer_is_over_it() {
     let mut app = shell_app((1440, 900), 1.0);

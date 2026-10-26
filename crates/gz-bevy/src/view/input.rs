@@ -13,6 +13,11 @@
 //! [`MINIMAL_JSON`] adds the bindings only minimal mode has (the fly keys),
 //! in the same format, so they go through the same parser and conflict
 //! check.
+//!
+//! The file names keys by their US positions. A letter matches the key
+//! that types it on the user's layout, and every other key (digits,
+//! arrows, Space) and the [`POSITIONAL`] bindings match the physical key
+//! (DECISIONS.md D-119, [`super::layout`]).
 
 use bevy::input::keyboard::KeyCode;
 use bevy::input::ButtonInput;
@@ -20,6 +25,7 @@ use bevy::prelude::Resource;
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 
+use super::layout::{KeyLayout, Keys};
 use super::{FlyDir, SnapView};
 use crate::overlays::Overlay;
 
@@ -40,6 +46,21 @@ pub const MINIMAL_JSON: &str = r#"{
     { "id": "view.fly_up", "label": "Move up", "keys": "E", "scope": "minimal", "trigger": "held" }
   ]
 }"#;
+
+/// Bindings whose keys are places on the keyboard, not letters (D-119): the
+/// fly keys and Teleop's drive keys keep W A S D's shape on every layout
+/// (Z Q S D on AZERTY). A plain press of a key one of them uses, while it
+/// is live, is that binding's, whatever letter the key types (Colemak's F
+/// is on `KeyE`, fly up). Every other letter binding follows the layout.
+pub const POSITIONAL: &[&str] = &[
+    "teleop.drive",
+    "view.fly_forward",
+    "view.fly_back",
+    "view.fly_left",
+    "view.fly_right",
+    "view.fly_down",
+    "view.fly_up",
+];
 
 /// Pairs of bindings that share keys and overlapping scopes but can never be
 /// live at the same time, as the spec states.
@@ -324,9 +345,22 @@ pub struct Binding {
     /// A [`Trigger::Press`] binding that shares its chord with a
     /// [`Trigger::Hold`] one, so it fires on a quick release (Space).
     pub tap: bool,
+    /// Its keys are physical places, not letters ([`POSITIONAL`]).
+    pub positional: bool,
 }
 
 impl Binding {
+    /// How `chord`, one of this binding's, reads on `platform` with
+    /// `layout`: a positional key by what its cap shows there (fly forward
+    /// is `Z` on AZERTY), any other chord by its US name.
+    pub fn chord_label(&self, chord: &Chord, platform: Platform, layout: &KeyLayout) -> String {
+        if self.positional && chord.mods == Mods::default() {
+            layout.cap(chord.key)
+        } else {
+            chord.label(platform)
+        }
+    }
+
     /// The chords that type this binding on `platform`.
     pub fn chords(&self, platform: Platform) -> &[Chord] {
         match (platform, self.on_web, &self.web_alt) {
@@ -483,19 +517,33 @@ impl InputMap {
     }
 
     /// [`Trigger::Press`] bindings (not taps) in `scopes` whose chord went
-    /// down this frame with exactly its modifiers held.
+    /// down this frame with exactly its modifiers held. A plain press of a
+    /// key a live [`POSITIONAL`] binding uses is only that binding's.
     pub fn just_pressed<'a>(
         &'a self,
-        keys: &'a ButtonInput<KeyCode>,
+        keys: Keys<'a>,
         scopes: &'a [Scope],
     ) -> impl Iterator<Item = &'a Binding> + 'a {
-        let held = KeyMods::held(keys);
+        let held = keys.mods();
+        let claimed = move |physical: KeyCode| {
+            held == KeyMods::default()
+                && self.live(scopes).any(|o| {
+                    o.positional
+                        && o.chords(self.platform)
+                            .iter()
+                            .any(|c| keys.layout.types(physical, c.key, true))
+                })
+        };
         self.live(scopes).filter(move |b| {
             b.trigger == Trigger::Press
                 && !b.tap
-                && b.chords(self.platform)
-                    .iter()
-                    .any(|c| key_event(keys, c.key, true) && c.matches(held, self.platform))
+                && b.chords(self.platform).iter().any(|c| {
+                    c.matches(held, self.platform)
+                        && keys.input.get_just_pressed().any(|p| {
+                            keys.layout.types(*p, c.key, b.positional)
+                                && (b.positional || !claimed(*p))
+                        })
+                })
         })
     }
 
@@ -515,21 +563,23 @@ impl InputMap {
     /// [`Trigger::Held`] bindings in `scopes` with a key down. Shift is
     /// allowed; Ctrl, Alt and ⌘ mean a command chord, so nothing is held.
     /// Nor is a key the held modifiers make another binding's chord (⇧D,
-    /// the web's Duplicate, isn't D's fly right).
+    /// the web's Duplicate, isn't D's fly right; on Colemak ⇧ and `KeyE`
+    /// is ⇧F, follow, not fly up).
     pub fn held<'a>(
         &'a self,
-        keys: &'a ButtonInput<KeyCode>,
+        keys: Keys<'a>,
         scopes: &'a [Scope],
     ) -> impl Iterator<Item = &'a Binding> + 'a {
-        let mods = KeyMods::held(keys);
+        let mods = keys.mods();
         let command = mods.command();
-        let chorded = move |key: KeyCode| {
+        let chorded = move |physical: KeyCode| {
             mods != KeyMods::default()
                 && self.live(scopes).any(|o| {
                     o.trigger != Trigger::Held
-                        && o.chords(self.platform)
-                            .iter()
-                            .any(|c| c.key == key && c.matches(mods, self.platform))
+                        && o.chords(self.platform).iter().any(|c| {
+                            keys.layout.types(physical, c.key, o.positional)
+                                && c.matches(mods, self.platform)
+                        })
                 })
         };
         self.live(scopes).filter(move |b| {
@@ -537,16 +587,32 @@ impl InputMap {
                 && b.trigger == Trigger::Held
                 && b.chords(self.platform)
                     .iter()
-                    .any(|c| key_event(keys, c.key, false) && !chorded(c.key))
+                    .any(|c| keys.pressed(c.key, b.positional).any(|p| !chorded(p)))
         })
     }
 
     /// Whether a [`Trigger::Hold`] binding for `action` in `scopes` is held.
-    pub fn holding(&self, keys: &ButtonInput<KeyCode>, scopes: &[Scope], action: Action) -> bool {
+    pub fn holding(&self, keys: Keys, scopes: &[Scope], action: Action) -> bool {
         self.live(scopes).any(|b| {
             b.trigger == Trigger::Hold
                 && b.action == Some(action)
-                && b.chords(self.platform).iter().any(|c| keys.pressed(c.key))
+                && b.chords(self.platform)
+                    .iter()
+                    .any(|c| keys.pressed(c.key, b.positional).next().is_some())
+        })
+    }
+
+    /// The key a browser `keydown` is to the chords the canvas swallows
+    /// ([`web_cancels`](Self::web_cancels)), from its `code` and `key`: the
+    /// letter it types on the user's layout ([`super::layout::dom_letter`]:
+    /// Ctrl+K is the key that types K), else the physical key for the
+    /// listed keys that aren't letters (Space, Tab, the arrows).
+    pub fn web_key(&self, code: &str, key: &str, held: KeyMods) -> Option<KeyCode> {
+        super::layout::dom_letter(code, key, held.command()).or_else(|| {
+            self.web_prevent_default
+                .iter()
+                .map(|c| c.key)
+                .find(|k| !LETTERS.contains(k) && dom_code(*k) == code)
         })
     }
 
@@ -635,20 +701,9 @@ impl InputMap {
     }
 }
 
-/// `just` = went down this frame; otherwise held. Digits also answer to the
-/// numeric keypad, as in other 3D tools.
-fn key_event(keys: &ButtonInput<KeyCode>, key: KeyCode, just: bool) -> bool {
-    let test = |k: KeyCode| {
-        if just {
-            keys.just_pressed(k)
-        } else {
-            keys.pressed(k)
-        }
-    };
-    test(key) || numpad(key).is_some_and(test)
-}
-
-fn numpad(key: KeyCode) -> Option<KeyCode> {
+/// A digit's twin on the numeric keypad: digits answer to both, as in other
+/// 3D tools.
+pub(crate) fn numpad(key: KeyCode) -> Option<KeyCode> {
     Some(match key {
         KeyCode::Digit0 => KeyCode::Numpad0,
         KeyCode::Digit1 => KeyCode::Numpad1,
@@ -684,6 +739,7 @@ fn binding(raw: RawBinding) -> Result<Binding, String> {
     };
     Ok(Binding {
         action: Action::from_id(&raw.id),
+        positional: POSITIONAL.contains(&raw.id.as_str()),
         id: raw.id,
         label: raw.label,
         scope,
@@ -765,36 +821,38 @@ fn key_range(token: &str) -> Result<Vec<KeyCode>, String> {
     key(token).map(|k| vec![k])
 }
 
+/// The letter keys, `KeyA` to `KeyZ`.
+pub(crate) const LETTERS: [KeyCode; 26] = [
+    KeyCode::KeyA,
+    KeyCode::KeyB,
+    KeyCode::KeyC,
+    KeyCode::KeyD,
+    KeyCode::KeyE,
+    KeyCode::KeyF,
+    KeyCode::KeyG,
+    KeyCode::KeyH,
+    KeyCode::KeyI,
+    KeyCode::KeyJ,
+    KeyCode::KeyK,
+    KeyCode::KeyL,
+    KeyCode::KeyM,
+    KeyCode::KeyN,
+    KeyCode::KeyO,
+    KeyCode::KeyP,
+    KeyCode::KeyQ,
+    KeyCode::KeyR,
+    KeyCode::KeyS,
+    KeyCode::KeyT,
+    KeyCode::KeyU,
+    KeyCode::KeyV,
+    KeyCode::KeyW,
+    KeyCode::KeyX,
+    KeyCode::KeyY,
+    KeyCode::KeyZ,
+];
+
 /// A key name as the file writes it (`W`, `7`, `Escape`, `Right`, `F2`).
 pub fn key(name: &str) -> Result<KeyCode, String> {
-    const LETTERS: [KeyCode; 26] = [
-        KeyCode::KeyA,
-        KeyCode::KeyB,
-        KeyCode::KeyC,
-        KeyCode::KeyD,
-        KeyCode::KeyE,
-        KeyCode::KeyF,
-        KeyCode::KeyG,
-        KeyCode::KeyH,
-        KeyCode::KeyI,
-        KeyCode::KeyJ,
-        KeyCode::KeyK,
-        KeyCode::KeyL,
-        KeyCode::KeyM,
-        KeyCode::KeyN,
-        KeyCode::KeyO,
-        KeyCode::KeyP,
-        KeyCode::KeyQ,
-        KeyCode::KeyR,
-        KeyCode::KeyS,
-        KeyCode::KeyT,
-        KeyCode::KeyU,
-        KeyCode::KeyV,
-        KeyCode::KeyW,
-        KeyCode::KeyX,
-        KeyCode::KeyY,
-        KeyCode::KeyZ,
-    ];
     const DIGITS: [KeyCode; 10] = [
         KeyCode::Digit0,
         KeyCode::Digit1,
@@ -1233,7 +1291,7 @@ mod tests {
         let scopes = [Scope::Global, Scope::Viewport, Scope::Minimal];
         let mut keys = ButtonInput::<KeyCode>::default();
         let ids = |map: &InputMap, keys: &ButtonInput<KeyCode>| {
-            map.just_pressed(keys, &scopes)
+            map.just_pressed(Keys::new(keys, None), &scopes)
                 .map(|b| b.id.clone())
                 .collect::<Vec<_>>()
         };
@@ -1263,7 +1321,7 @@ mod tests {
         };
         assert!(ids(&mac, &keys).is_empty());
         // A command chord holds no fly key.
-        assert_eq!(map.held(&keys, &scopes).count(), 0);
+        assert_eq!(map.held(Keys::new(&keys, None), &scopes).count(), 0);
         keys.reset_all();
 
         // Space is a tap, never a plain press.
@@ -1271,21 +1329,27 @@ mod tests {
         assert!(ids(&map, &keys).is_empty());
         let taps: Vec<_> = map.taps(&scopes).map(|(b, c)| (b.id.clone(), c)).collect();
         assert_eq!(taps, [("sim.play_pause".to_string(), chord("Space"))]);
-        assert!(map.holding(&keys, &scopes, Action::PanHold));
-        assert!(!map.holding(&keys, &[Scope::Global], Action::PanHold));
+        assert!(map.holding(Keys::new(&keys, None), &scopes, Action::PanHold));
+        assert!(!map.holding(Keys::new(&keys, None), &[Scope::Global], Action::PanHold));
         keys.reset_all();
 
         // Fly keys are held, and Shift doesn't stop them.
         keys.press(KeyCode::KeyW);
         keys.press(KeyCode::ArrowLeft);
         keys.press(KeyCode::ShiftRight);
-        let held: Vec<_> = map.held(&keys, &scopes).filter_map(|b| b.action).collect();
+        let held: Vec<_> = map
+            .held(Keys::new(&keys, None), &scopes)
+            .filter_map(|b| b.action)
+            .collect();
         assert_eq!(
             held,
             [Action::Fly(FlyDir::Forward), Action::Fly(FlyDir::Left)]
         );
         // Out of scope: nothing.
-        assert_eq!(map.held(&keys, &[Scope::Viewport]).count(), 0);
+        assert_eq!(
+            map.held(Keys::new(&keys, None), &[Scope::Viewport]).count(),
+            0
+        );
         keys.reset_all();
 
         // On the web ⇧D is Duplicate (in the full UI's text scope), not
@@ -1297,9 +1361,182 @@ mod tests {
         let full = [Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text];
         keys.press(KeyCode::ShiftLeft);
         keys.press(KeyCode::KeyD);
-        assert_eq!(web.held(&keys, &full).count(), 0);
+        assert_eq!(web.held(Keys::new(&keys, None), &full).count(), 0);
         keys.press(KeyCode::KeyA);
-        assert_eq!(web.held(&keys, &full).filter_map(|b| b.action).count(), 1);
+        assert_eq!(
+            web.held(Keys::new(&keys, None), &full)
+                .filter_map(|b| b.action)
+                .count(),
+            1
+        );
+    }
+
+    /// The keys of a US keyboard's three letter rows, in order.
+    const ROWS: [KeyCode; 30] = [
+        KeyCode::KeyQ,
+        KeyCode::KeyW,
+        KeyCode::KeyE,
+        KeyCode::KeyR,
+        KeyCode::KeyT,
+        KeyCode::KeyY,
+        KeyCode::KeyU,
+        KeyCode::KeyI,
+        KeyCode::KeyO,
+        KeyCode::KeyP,
+        KeyCode::KeyA,
+        KeyCode::KeyS,
+        KeyCode::KeyD,
+        KeyCode::KeyF,
+        KeyCode::KeyG,
+        KeyCode::KeyH,
+        KeyCode::KeyJ,
+        KeyCode::KeyK,
+        KeyCode::KeyL,
+        KeyCode::Semicolon,
+        KeyCode::KeyZ,
+        KeyCode::KeyX,
+        KeyCode::KeyC,
+        KeyCode::KeyV,
+        KeyCode::KeyB,
+        KeyCode::KeyN,
+        KeyCode::KeyM,
+        KeyCode::Comma,
+        KeyCode::Period,
+        KeyCode::Slash,
+    ];
+
+    /// What [`ROWS`] type on some layouts, unshifted.
+    const LAYOUTS: [(&str, &str); 6] = [
+        ("us", "qwertyuiopasdfghjkl;zxcvbnm,./"),
+        ("azerty", "azertyuiopqsdfghjklmwxcvbn,;:!"),
+        ("qwertz", "qwertzuiopasdfghjklöyxcvbnm,.-"),
+        ("dvorak", "',.pyfgcrlaoeuidhtns;qjkxbmwvz"),
+        ("colemak", "qwfpgjluy;arstdhneiozxcvbkm,./"),
+        ("russian", "йцукенгшщзфывапролджячсмитьбю."),
+    ];
+
+    fn learned(rows: &str) -> KeyLayout {
+        let mut layout = KeyLayout::default();
+        for (k, c) in ROWS.iter().zip(rows.chars()) {
+            layout.learn(*k, &c.to_string());
+        }
+        layout
+    }
+
+    /// The bindings a press of `key` (with `mods` held) fires or holds.
+    fn fired(map: &InputMap, layout: &KeyLayout, mods: &[KeyCode], key: KeyCode) -> Vec<String> {
+        let full = [Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text];
+        let mut input = ButtonInput::<KeyCode>::default();
+        for m in mods {
+            input.press(*m);
+        }
+        input.press(key);
+        let keys = Keys::new(&input, Some(layout));
+        map.just_pressed(keys, &full)
+            .chain(map.held(keys, &full))
+            .map(|b| b.id.clone())
+            .collect()
+    }
+
+    /// D-119: a letter is the key that types it; the fly keys keep their
+    /// places, and a plain press of one is only the fly key's. No press
+    /// fires two bindings, on any of the layouts.
+    #[test]
+    fn letters_follow_the_layout_and_the_fly_keys_keep_their_places() {
+        let map = spec();
+        let shift = [KeyCode::ShiftLeft];
+        let ctrl = [KeyCode::ControlLeft];
+        for (name, rows) in LAYOUTS {
+            let layout = learned(rows);
+            for k in ROWS {
+                for mods in [&[][..], &shift, &ctrl] {
+                    let ids = fired(&map, &layout, mods, k);
+                    assert!(ids.len() <= 1, "{name} {mods:?} {k:?}: {ids:?}");
+                }
+            }
+            // The fly keys are W A S D Q E's places everywhere.
+            for (k, id) in [
+                (KeyCode::KeyW, "view.fly_forward"),
+                (KeyCode::KeyA, "view.fly_left"),
+                (KeyCode::KeyS, "view.fly_back"),
+                (KeyCode::KeyD, "view.fly_right"),
+                (KeyCode::KeyQ, "view.fly_down"),
+                (KeyCode::KeyE, "view.fly_up"),
+            ] {
+                assert_eq!(fired(&map, &layout, &[], k), [id], "{name} {k:?}");
+            }
+        }
+        let on = |layout: &str, mods: &[KeyCode], key: KeyCode| {
+            let rows = LAYOUTS.iter().find(|(n, _)| *n == layout).unwrap().1;
+            fired(&map, &learned(rows), mods, key)
+        };
+        // Dvorak's G and I are on `KeyU` and `KeyG`.
+        assert_eq!(on("dvorak", &[], KeyCode::KeyU), ["overlay.grid"]);
+        assert_eq!(on("dvorak", &[], KeyCode::KeyG), ["overlay.inertia"]);
+        // Ctrl and the key that types K is the palette; `KeyK` types T.
+        assert_eq!(on("dvorak", &ctrl, KeyCode::KeyV), ["ui.command_palette"]);
+        assert!(on("dvorak", &ctrl, KeyCode::KeyK).is_empty());
+        // QWERTZ swaps Y and Z.
+        assert_eq!(on("qwertz", &[], KeyCode::KeyY), ["tool.constrain_z"]);
+        assert_eq!(on("qwertz", &[], KeyCode::KeyZ), ["tool.constrain_y"]);
+        assert_eq!(on("qwertz", &ctrl, KeyCode::KeyY), ["edit.undo"]);
+        // AZERTY's Z is fly forward's place: the fly key's.
+        assert_eq!(on("azerty", &[], KeyCode::KeyW), ["view.fly_forward"]);
+        assert_eq!(on("azerty", &ctrl, KeyCode::KeyW), ["edit.undo"]);
+        assert!(on("azerty", &[], KeyCode::KeyM).is_empty());
+        assert!(on("azerty", &[], KeyCode::Semicolon).is_empty());
+        // Colemak's F is fly up's place; with Shift it is follow.
+        assert_eq!(on("colemak", &[], KeyCode::KeyT), ["overlay.grid"]);
+        assert_eq!(on("colemak", &shift, KeyCode::KeyE), ["view.follow"]);
+        // A layout that types no Latin letters keeps the US places.
+        assert_eq!(on("russian", &[], KeyCode::KeyG), ["overlay.grid"]);
+        assert_eq!(on("russian", &ctrl, KeyCode::KeyK), ["ui.command_palette"]);
+        assert_eq!(on("russian", &[], KeyCode::KeyE), ["view.fly_up"]);
+    }
+
+    /// The canvas swallows ⌘K on the key that types K, and Space, Tab and
+    /// the arrows by place.
+    #[test]
+    fn the_browser_swallows_letters_by_the_layout() {
+        let map = spec();
+        let ctrl = KeyMods {
+            ctrl: true,
+            ..default_mods()
+        };
+        let none = default_mods();
+        let cancels = |code: &str, key: &str, held: KeyMods| {
+            map.web_key(code, key, held)
+                .is_some_and(|k| map.web_cancels(k, held, false))
+        };
+        assert_eq!(map.web_key("KeyV", "k", ctrl), Some(KeyCode::KeyK));
+        assert!(cancels("KeyV", "k", ctrl));
+        // Dvorak's `KeyK` types T: the browser's new tab.
+        assert!(!cancels("KeyK", "t", ctrl));
+        assert!(cancels("KeyK", "л", ctrl));
+        assert_eq!(map.web_key("Space", " ", none), Some(KeyCode::Space));
+        assert!(cancels("Space", " ", none));
+        assert_eq!(map.web_key("Tab", "Tab", none), Some(KeyCode::Tab));
+        assert!(cancels("ArrowRight", "ArrowRight", ctrl));
+        assert_eq!(map.web_key("KeyM", ",", none), None);
+        assert_eq!(map.web_key("Digit1", "&", none), None);
+    }
+
+    #[test]
+    fn positional_bindings_read_as_their_caps() {
+        let map = spec();
+        let layout = learned(LAYOUTS[1].1);
+        let fly = map.binding("view.fly_forward").unwrap();
+        assert!(fly.positional);
+        assert_eq!(fly.chord_label(&fly.keys[0], map.platform, &layout), "Z");
+        assert_eq!(fly.chord_label(&fly.keys[1], map.platform, &layout), "Up");
+        assert!(map.binding("teleop.drive").unwrap().positional);
+        let grid = map.binding("overlay.grid").unwrap();
+        assert!(!grid.positional);
+        assert_eq!(grid.chord_label(&grid.keys[0], map.platform, &layout), "G");
+        // Every positional id is a binding.
+        for id in POSITIONAL {
+            assert!(map.binding(id).is_some_and(|b| b.positional), "{id}");
+        }
     }
 
     #[test]

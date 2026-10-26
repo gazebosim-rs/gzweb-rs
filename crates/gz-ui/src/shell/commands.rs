@@ -11,6 +11,7 @@ use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
 use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::layout::{KeyLayout, Keys};
 use gz_bevy::view::model_edits::{EditModels, ModelEdit};
 use gz_bevy::view::Selection;
 
@@ -88,6 +89,8 @@ pub enum UiCommand {
 #[derive(SystemParam)]
 pub(crate) struct Shortcuts<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
+    /// What the keys type: letters follow the layout (D-119).
+    layout: Option<Res<'w, KeyLayout>>,
     map: Option<Res<'w, InputMap>>,
     scopes: Option<Res<'w, ActiveScopes>>,
     routing: Res<'w, ViewRouting>,
@@ -130,7 +133,7 @@ impl Shortcuts<'_, '_> {
             || self.gizmo.as_ref().is_some_and(|g| g.takes_escape())
             || self.placing.as_ref().is_some_and(|p| p.0)
             || self.assets.as_ref().is_some_and(|a| a.takes_escape());
-        map.just_pressed(&self.keys, &scopes)
+        map.just_pressed(Keys::new(&self.keys, self.layout.as_deref()), &scopes)
             .filter(|b| {
                 !(esc_taken
                     && b.chords(map.platform)

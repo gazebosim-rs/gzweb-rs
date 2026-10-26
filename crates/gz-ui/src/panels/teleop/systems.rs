@@ -3,6 +3,7 @@
 //! sliders or a gamepad, published while armed, and the joints' commands
 //! (DECISIONS.md D-104).
 
+use bevy::a11y::AccessibilityNode;
 use bevy::ecs::system::SystemParam;
 use bevy::input::gamepad::{Gamepad, GamepadAxis};
 use bevy::input_focus::InputFocus;
@@ -18,6 +19,7 @@ use gz_bevy::spawn::{GzEntity, GzWorldRoot};
 use gz_bevy::topics::GzTopics;
 use gz_bevy::view::controls::ViewRouting;
 use gz_bevy::view::input::KeyMods;
+use gz_bevy::view::layout::{KeyLayout, Keys};
 use gz_bevy::view::{DriveArmed, Selection};
 use gz_core::teleop::{double, twist};
 
@@ -26,8 +28,9 @@ use super::model::{
     PUBLISH_HZ,
 };
 use super::view::{
-    spawn_joints, spawn_sliders, spawn_target, DriveSliders, GamepadStatus, JointsSection,
-    LimitField, ModeChoice, ModePane, PadKey, TargetRow, TargetSelect, TeleopSlider,
+    pad_note, spawn_joints, spawn_sliders, spawn_target, DriveSliders, GamepadStatus,
+    JointsSection, LimitField, ModeChoice, ModePane, PadKey, PadNote, TargetRow, TargetSelect,
+    TeleopSlider,
 };
 use super::{TeleopBody, TeleopStart, APPLY_FORCE, STOP, TELEOP};
 use crate::panels::{PanelActionActivated, PanelView};
@@ -279,6 +282,8 @@ pub(super) fn route_keys(
 #[derive(SystemParam)]
 pub(super) struct DriveInput<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
+    /// X stops by the letter the layout types (D-119).
+    layout: Option<Res<'w, KeyLayout>>,
     typing: Option<Res<'w, TextFocus>>,
     routing: Res<'w, ViewRouting>,
     panel_keys: Res<'w, TeleopKeys>,
@@ -299,7 +304,13 @@ impl DriveInput<'_, '_> {
         self.typing.as_ref().is_some_and(|t| t.0)
     }
 
-    /// The drive keys held (W A S D and the arrows). With Ctrl, Alt or ⌘
+    /// The stop key went down: the key that types X.
+    fn stop_pressed(&self) -> bool {
+        Keys::new(&self.keys, self.layout.as_deref()).letter_just_pressed(KeyCode::KeyX)
+    }
+
+    /// The drive keys held (W A S D and the arrows, by place: on AZERTY
+    /// Z Q S D). With Ctrl, Alt or ⌘
     /// down a command chord is being typed (⌘S saves), so nothing is.
     fn keys_held(&self) -> Held {
         if KeyMods::held(&self.keys).command() {
@@ -387,7 +398,7 @@ pub(super) fn drive(
     let can = publishes && input.hosts.is_shown(TELEOP) && state.target.is_some();
     // X stops wherever the keys are (shortcuts.json `teleop.stop`), only
     // not while typing; like Stop, it zeroes the sliders.
-    let stop = state.armed && !input.typing() && input.keys.just_pressed(KeyCode::KeyX);
+    let stop = state.armed && !input.typing() && input.stop_pressed();
     if stop {
         state.lin = 0.0;
         state.ang = 0.0;
@@ -694,6 +705,37 @@ pub(super) fn mode_states(
     };
     for mut t in &mut gamepad {
         set_text(&mut t, &say);
+    }
+}
+
+/// The pad's keys and its note, as the layout prints the drive keys, once
+/// a press or the browser says more about it (D-119).
+pub(super) fn pad_caps(
+    layout: Option<Res<KeyLayout>>,
+    mut pad: Query<(&PadKey, &mut AccessibilityNode, &Children)>,
+    mut texts: Query<&mut Text>,
+    notes: Query<Entity, With<PadNote>>,
+) {
+    let Some(layout) = layout.filter(|l| l.is_changed()) else {
+        return;
+    };
+    for (key, mut access, children) in &mut pad {
+        let cap = key.cap(&layout);
+        let label = format!("Drive {cap}");
+        if access.label() != Some(label.as_str()) {
+            access.set_label(label);
+        }
+        for &c in children {
+            if let Ok(mut t) = texts.get_mut(c) {
+                set_text(&mut t, &cap);
+            }
+        }
+    }
+    let note = pad_note(&layout);
+    for e in &notes {
+        if let Ok(mut t) = texts.get_mut(e) {
+            set_text(&mut t, &note);
+        }
     }
 }
 

@@ -7,7 +7,7 @@ use bevy::render::renderer::RenderAdapter;
 use gz_core::transport::Status;
 
 use crate::connection::GzStatus;
-use crate::view::InputMap;
+use crate::view::{InputMap, KeyLayout};
 
 #[derive(Component)]
 pub struct FpsText;
@@ -20,6 +20,10 @@ pub struct StatusText;
 
 #[derive(Component)]
 pub struct SimText;
+
+/// The controls hint.
+#[derive(Component)]
+pub struct HintText;
 
 /// The mouse part of the controls hint (the mouse isn't in the key map).
 pub const MOUSE_HINT: &str =
@@ -58,15 +62,18 @@ const KEY_HINTS: &[(&[&str], &str)] = &[
 ];
 
 /// The controls, as `map` binds them on its platform: each binding's first
-/// chord, so the hint follows `shortcuts.json`.
-pub fn hint(map: &InputMap) -> String {
+/// chord, so the hint follows `shortcuts.json`; the fly keys by what their
+/// caps show on `layout` (D-119).
+pub fn hint(map: &InputMap, layout: &KeyLayout) -> String {
     let mut parts = vec![MOUSE_HINT.to_string()];
     for (ids, what) in KEY_HINTS {
         let keys: Vec<String> = ids
             .iter()
             .filter_map(|id| map.binding(id))
-            .filter_map(|b| b.chords(map.platform).first())
-            .map(|c| c.label(map.platform))
+            .filter_map(|b| {
+                let c = b.chords(map.platform).first()?;
+                Some(b.chord_label(c, map.platform, layout))
+            })
             .collect();
         if !keys.is_empty() {
             parts.push(format!("{} {what}", keys.join(" ")));
@@ -75,8 +82,13 @@ pub fn hint(map: &InputMap) -> String {
     parts.join(" | ")
 }
 
-pub fn spawn_hud(mut commands: Commands, map: Option<Res<InputMap>>) {
-    let hint = map.map_or_else(|| hint(&InputMap::builtin()), |m| hint(&m));
+pub fn spawn_hud(
+    mut commands: Commands,
+    map: Option<Res<InputMap>>,
+    layout: Option<Res<KeyLayout>>,
+) {
+    let layout = layout.as_deref().unwrap_or(&crate::view::layout::US);
+    let hint = map.map_or_else(|| hint(&InputMap::builtin(), layout), |m| hint(&m, layout));
     let line = |top: f32| Node {
         position_type: PositionType::Absolute,
         top: Val::Px(top),
@@ -128,7 +140,28 @@ pub fn spawn_hud(mut commands: Commands, map: Option<Res<InputMap>>) {
             left: Val::Px(10.0),
             ..default()
         },
+        HintText,
     ));
+}
+
+/// The hint again once the layout says what the fly keys' caps show.
+pub fn update_hint(
+    map: Option<Res<InputMap>>,
+    layout: Option<Res<KeyLayout>>,
+    mut query: Query<&mut Text, With<HintText>>,
+) {
+    let Some(layout) = layout.filter(|l| l.is_changed()) else {
+        return;
+    };
+    let text = map.map_or_else(
+        || hint(&InputMap::builtin(), &layout),
+        |m| hint(&m, &layout),
+    );
+    for mut t in &mut query {
+        if t.0 != text {
+            t.0.clone_from(&text);
+        }
+    }
 }
 
 pub fn update_fps(diagnostics: Res<DiagnosticsStore>, mut query: Query<&mut Text, With<FpsText>>) {
@@ -287,19 +320,42 @@ mod tests {
         use crate::view::input::Platform;
         let mut map = InputMap::builtin();
         map.platform = Platform::Mac;
-        let mac = hint(&map);
+        let us = &crate::view::layout::US;
+        let mac = hint(&map, us);
         assert!(mac.starts_with(MOUSE_HINT));
         assert!(
             mac.contains("| F focus | H home | 5 ortho | 7 1 3 views (Shift: opposite) | G grid")
         );
         assert!(mac.contains("| W A S D Q E move | Space play/pause | Cmd+Right step"));
         map.platform = Platform::Linux;
-        assert!(hint(&map).ends_with("Ctrl+Right step"));
+        assert!(hint(&map, us).ends_with("Ctrl+Right step"));
         map.platform = Platform::Web;
-        assert!(hint(&map).ends_with("Ctrl/Cmd+Right step"));
+        assert!(hint(&map, us).ends_with("Ctrl/Cmd+Right step"));
         // A binding the map lacks drops out.
         map.bindings.retain(|b| b.id != "sim.step");
-        assert!(hint(&map).ends_with("Space play/pause"));
+        assert!(hint(&map, us).ends_with("Space play/pause"));
+    }
+
+    /// The fly keys read as their caps on the layout, once it is known.
+    #[test]
+    fn the_hint_names_the_fly_keys_by_the_layout() {
+        let mut world = hud_world();
+        world.insert_resource(InputMap::builtin());
+        let mut layout = KeyLayout::default();
+        for (k, s) in [
+            (KeyCode::KeyW, "z"),
+            (KeyCode::KeyA, "q"),
+            (KeyCode::KeyQ, "a"),
+            (KeyCode::KeyF, "f"),
+        ] {
+            layout.learn(k, s);
+        }
+        world.insert_resource(layout);
+        world.run_system_once(update_hint).unwrap();
+        let mut hints = world.query_filtered::<&Text, With<HintText>>();
+        let text = hints.single(&world).unwrap().0.clone();
+        assert!(text.contains("| F focus |"), "{text}");
+        assert!(text.contains("| Z Q S D A E move |"), "{text}");
     }
 
     #[test]

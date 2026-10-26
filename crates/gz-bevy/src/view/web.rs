@@ -15,19 +15,27 @@
 //!   shortcut, and so do the UI's own text fields inside the canvas while
 //!   one has focus ([`set_text_focus`]), except Tab and Shift+Tab: those
 //!   move focus between the UI's widgets, and the browser would also move
-//!   its own focus off the canvas.
+//!   its own focus off the canvas. A letter is the key that types it on
+//!   the user's layout ([`InputMap::web_key`], DECISIONS.md D-119): with
+//!   Dvorak, Ctrl and the key printed K opens the palette, and the key
+//!   printed T (`KeyK`) is the browser's new tab.
+//!
+//! Chromium's `navigator.keyboard.getLayoutMap()`, where the page has it,
+//! tells [`KeyLayout`] what every letter key types before any is pressed,
+//! so the fly keys' labels show the user's caps from the start.
 //!
 //! Listeners live as long as the page.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 
 use super::controls::BrowserWheel;
-use super::input::{InputMap, KeyMods};
+use super::input::{dom_code, InputMap, KeyMods, LETTERS};
+use super::layout::KeyLayout;
 
 thread_local! {
     /// What the listeners saw since the last frame: a `ctrlKey` wheel event,
@@ -37,6 +45,9 @@ thread_local! {
     static GESTURE_SCALE: Cell<f64> = const { Cell::new(1.0) };
     /// A UI text field in the canvas has keyboard focus.
     static TEXT_FOCUS: Cell<bool> = const { Cell::new(false) };
+    /// The browser's layout map, once it answers: each letter key's
+    /// `code` and what it types.
+    static LAYOUT_MAP: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The `localStorage` key of the last server the page connected to
@@ -115,7 +126,61 @@ pub fn install(app: &mut App) {
         .cloned()
         .unwrap_or_default();
     listen(selector.as_deref().unwrap_or("canvas"), &map);
-    app.add_systems(PreUpdate, pump);
+    read_layout_map();
+    app.add_systems(
+        PreUpdate,
+        (pump, learn_layout_map.before(super::layout::learn_layout)),
+    );
+}
+
+/// Asks Chromium for the keyboard's layout map (`navigator.keyboard`,
+/// missing in Firefox and Safari); its answer waits in [`LAYOUT_MAP`].
+fn read_layout_map() {
+    let get = |v: &JsValue, name: &str| js_sys::Reflect::get(v, &name.into()).ok();
+    let Some(keyboard) = web_sys::window()
+        .and_then(|w| get(&w, "navigator"))
+        .and_then(|n| get(&n, "keyboard"))
+        .filter(|k| !k.is_undefined())
+    else {
+        return;
+    };
+    let promise = get(&keyboard, "getLayoutMap")
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .and_then(|f| f.call0(&keyboard).ok())
+        .and_then(|p| p.dyn_into::<js_sys::Promise>().ok());
+    let Some(promise) = promise else {
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        // A page in a frame without the `keyboard-map` permission is
+        // refused.
+        let Ok(map) = wasm_bindgen_futures::JsFuture::from(promise).await else {
+            return;
+        };
+        let each = Closure::<dyn FnMut(JsValue, JsValue)>::new(|typed: JsValue, code: JsValue| {
+            if let (Some(code), Some(typed)) = (code.as_string(), typed.as_string()) {
+                LAYOUT_MAP.with(|m| m.borrow_mut().push((code, typed)));
+            }
+        });
+        if let Some(for_each) =
+            get(&map, "forEach").and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        {
+            let _ = for_each.call1(&map, each.as_ref());
+        }
+    });
+}
+
+/// Teaches [`KeyLayout`] the layout map's letter keys once it arrives.
+fn learn_layout_map(layout: Option<ResMut<KeyLayout>>) {
+    let entries = LAYOUT_MAP.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    let Some(mut layout) = layout.filter(|_| !entries.is_empty()) else {
+        return;
+    };
+    for (code, typed) in entries {
+        if let Some(key) = LETTERS.iter().copied().find(|k| dom_code(*k) == code) {
+            layout.learn(key, &typed);
+        }
+    }
 }
 
 /// Moves what the listeners saw into [`BrowserWheel`] for this frame.
@@ -188,11 +253,6 @@ fn listen(selector: &str, map: &InputMap) {
             }
         }),
     );
-    let swallow: Vec<_> = map
-        .web_prevent_default
-        .iter()
-        .map(|c| (super::input::dom_code(c.key), c.key))
-        .collect();
     let map = map.clone();
     on(
         "keydown",
@@ -206,11 +266,10 @@ fn listen(selector: &str, map: &InputMap) {
                 alt: k.alt_key(),
                 super_key: k.meta_key(),
             };
-            let code = k.code();
             let typing = TEXT_FOCUS.with(Cell::get);
-            if swallow
-                .iter()
-                .any(|(c, key)| *c == code && map.web_cancels(*key, held, typing))
+            if map
+                .web_key(&k.code(), &k.key(), held)
+                .is_some_and(|key| map.web_cancels(key, held, typing))
             {
                 e.prevent_default();
             }

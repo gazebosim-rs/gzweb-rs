@@ -89,6 +89,12 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .init_resource::<gz_bevy::view::Marquee>()
         .init_resource::<gz_bevy::camera::GzCameraTarget>()
         .init_resource::<gz_bevy::view::LinkedViews>()
+        // What the keys type (D-119), as ViewerControls learns it.
+        .init_resource::<gz_bevy::view::KeyLayout>()
+        .add_systems(
+            PreUpdate,
+            gz_bevy::view::layout::learn_layout.after(bevy::input::InputSystems),
+        )
         .add_systems(
             Update,
             (
@@ -233,6 +239,27 @@ pub(crate) fn key(app: &mut App, key_code: KeyCode, state: ButtonState) {
         repeat: false,
         window,
     });
+}
+
+/// A key that types `typed` on the user's layout (D-119).
+pub(crate) fn typed_key(app: &mut App, key_code: KeyCode, typed: &str, state: ButtonState) {
+    let window = find::<Window>(app);
+    app.world_mut().write_message(KeyboardInput {
+        key_code,
+        logical_key: Key::Character(typed.into()),
+        state,
+        text: Some(typed.into()),
+        repeat: false,
+        window,
+    });
+}
+
+/// Presses and releases a key that types `typed`.
+pub(crate) fn tap_typed(app: &mut App, key_code: KeyCode, typed: &str) {
+    typed_key(app, key_code, typed, ButtonState::Pressed);
+    app.update();
+    typed_key(app, key_code, typed, ButtonState::Released);
+    app.update();
 }
 
 /// Focuses `e` (as Tab would) and presses `key_code` in it.
