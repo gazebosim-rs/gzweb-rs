@@ -22,7 +22,7 @@ use super::top_bar::tools::Tool;
 use super::viewport::views::LayoutCommand;
 use super::{PanelStatus, ShownPanels};
 use crate::panels::{PanelActionActivated, PanelId, PanelRegistry};
-use crate::theme::{Theme, ThemeMode};
+use crate::theme::{MotionMode, Theme, ThemeMode};
 use crate::widgets::focus::MenuTakesEscape;
 
 /// What the shell's controls and keys ask for.
@@ -48,6 +48,11 @@ pub enum UiCommand {
     /// follow system" (D-107), and Settings.
     SetTheme(ThemeMode),
     ToggleTheme,
+    /// The palette's "UI scale: 125%" (kept to 80 to 200%; D-118), and
+    /// Settings › Appearance once it exists.
+    SetUiScale(f32),
+    /// The palette's "Motion: reduce / full / follow system" (D-118).
+    SetMotion(MotionMode),
     /// A splitter double-click.
     ResetWidth(Side),
     /// A collapsed panel's bar button: expand it at its previous width.
@@ -343,6 +348,8 @@ pub(crate) fn apply_ui_commands(
             }
             UiCommand::SetTheme(mode) => theme.set_mode(mode),
             UiCommand::ToggleTheme => theme.toggle(),
+            UiCommand::SetUiScale(scale) => theme.set_scale(scale),
+            UiCommand::SetMotion(motion) => theme.set_motion(motion),
             UiCommand::ResetWidth(side) => layout.reset_width(side),
             UiCommand::Show(side) => layout.show(side, true),
             UiCommand::PopOut(panel) => {

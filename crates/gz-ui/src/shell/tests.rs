@@ -1073,6 +1073,225 @@ fn tab_to_reset_then_space_resets_once() {
     assert_eq!(sent(&mut app), [GzCommand::Reset]);
 }
 
+// The arrow keys within groups (§6.5, DECISIONS.md D-117).
+
+/// The activity bar's buttons, top to bottom.
+fn activity_buttons(app: &mut App) -> Vec<Entity> {
+    let bar = region(app, Region::ActivityBar);
+    let world = app.world();
+    let mut out: Vec<Entity> = world
+        .get::<Children>(bar)
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            world.get::<ActivityFor>(*e).is_some()
+                || world
+                    .get::<super::activity_bar::SettingsButton>(*e)
+                    .is_some()
+        })
+        .collect();
+    out.dedup();
+    out
+}
+
+/// ↑ and ↓ move focus along the activity bar, wrapping, and Home and End
+/// go to its ends; moving opens nothing (Enter does), and ← and → aren't
+/// the bar's.
+#[test]
+fn the_arrows_move_along_the_activity_bar() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 3);
+    let buttons = activity_buttons(&mut app);
+    assert!(buttons.len() > 3);
+    let last = *buttons.last().unwrap();
+    let before = layout(&app);
+    tab_to(&mut app, buttons[0]);
+    chord(&mut app, &[KeyCode::ArrowDown]);
+    assert_eq!(focused(&app), Some(buttons[1]));
+    assert!(
+        app.world()
+            .resource::<bevy::input_focus::InputFocusVisible>()
+            .0
+    );
+    chord(&mut app, &[KeyCode::ArrowUp]);
+    chord(&mut app, &[KeyCode::ArrowUp]);
+    assert_eq!(focused(&app), Some(last), "wraps round");
+    chord(&mut app, &[KeyCode::Home]);
+    assert_eq!(focused(&app), Some(buttons[0]));
+    chord(&mut app, &[KeyCode::End]);
+    assert_eq!(focused(&app), Some(last));
+    chord(&mut app, &[KeyCode::ArrowDown]);
+    assert_eq!(focused(&app), Some(buttons[0]));
+    chord(&mut app, &[KeyCode::ArrowRight]);
+    assert_eq!(focused(&app), Some(buttons[0]), "not the bar's axis");
+    assert_eq!(layout(&app), before, "moving opens nothing");
+    // Enter on the second (Assets) opens it.
+    chord(&mut app, &[KeyCode::ArrowDown]);
+    chord(&mut app, &[KeyCode::Enter]);
+    frames(&mut app, 1);
+    assert_ne!(layout(&app), before);
+}
+
+/// In the tool group (a radio group) the arrows move focus and check the
+/// tool they land on, skipping disabled tools; Bevy's own radio group
+/// checked from the checked tool and left focus behind.
+#[test]
+fn the_arrows_move_and_check_in_the_tool_group() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    go_live(&mut app, false);
+    let mut tool_button = |tool: Tool| {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &ToolChoice)>()
+            .iter(world)
+            .find(|(_, c)| c.0 == tool)
+            .unwrap()
+            .0
+    };
+    let (navigate, boxes, translate) = (
+        tool_button(Tool::Navigate),
+        tool_button(Tool::BoxSelect),
+        tool_button(Tool::Translate),
+    );
+    // No edits on this server: Translate and Rotate are disabled.
+    assert!(app.world().get::<InteractionDisabled>(translate).is_some());
+    let tool = |app: &App| *app.world().resource::<Tool>();
+    tab_to(&mut app, navigate);
+    chord(&mut app, &[KeyCode::ArrowRight]);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(boxes));
+    assert_eq!(tool(&app), Tool::BoxSelect);
+    chord(&mut app, &[KeyCode::ArrowDown]);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(navigate), "past the disabled tools");
+    assert_eq!(tool(&app), Tool::Navigate);
+    chord(&mut app, &[KeyCode::End]);
+    frames(&mut app, 1);
+    assert_eq!((focused(&app), tool(&app)), (Some(boxes), Tool::BoxSelect));
+    // From a focused tool that isn't the checked one, the arrows start
+    // from the focused one.
+    tab_to(&mut app, navigate);
+    chord(&mut app, &[KeyCode::ArrowLeft]);
+    frames(&mut app, 1);
+    assert_eq!((focused(&app), tool(&app)), (Some(boxes), Tool::BoxSelect));
+}
+
+/// An arrow with a modifier in a group stays the shortcuts': ⌘→ (Ctrl on
+/// Linux) on a focused tool steps the paused sim and leaves the tool, and
+/// on an activity button too.
+#[test]
+fn a_modified_arrow_in_a_group_is_still_a_shortcut() {
+    use gz_bevy::connection::GzCommand;
+    let mut app = shell_app((1440, 900), 1.0);
+    with_viewer_keys(&mut app);
+    frames(&mut app, 2);
+    go_live(&mut app, true);
+    let navigate = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &ToolChoice)>()
+            .iter(world)
+            .find(|(_, c)| c.0 == Tool::Navigate)
+            .unwrap()
+            .0
+    };
+    let step = |app: &mut App| {
+        sent(app);
+        chord(app, &[KeyCode::ControlLeft, KeyCode::ArrowRight]);
+        frames(app, 1);
+        sent(app)
+    };
+    tab_to(&mut app, navigate);
+    assert_eq!(step(&mut app), [GzCommand::Step(1)]);
+    assert_eq!(focused(&app), Some(navigate));
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    let activity = activity_buttons(&mut app)[0];
+    tab_to(&mut app, activity);
+    assert_eq!(step(&mut app), [GzCommand::Step(1)]);
+    assert_eq!(focused(&app), Some(activity));
+}
+
+/// Arrows outside a group aren't taken: with a view focused they reach
+/// the viewer's keys (the Teleop drive reads them), and focus stays.
+#[test]
+fn arrows_on_a_focused_view_reach_the_viewer() {
+    let mut app = live_view(900);
+    let view = find::<ViewNode>(&mut app);
+    tab_to(&mut app, view);
+    app.update();
+    key(&mut app, KeyCode::ArrowLeft, ButtonState::Pressed);
+    app.update();
+    assert!(app
+        .world()
+        .resource::<ButtonInput<KeyCode>>()
+        .pressed(KeyCode::ArrowLeft));
+    key(&mut app, KeyCode::ArrowLeft, ButtonState::Released);
+    app.update();
+    assert_eq!(focused(&app), Some(view));
+}
+
+/// `--keys` reads chords of named keys, and presses them in turn once
+/// the world is live: two Tabs land where two Tabs do.
+#[test]
+fn start_keys_are_read_and_pressed_once_live() {
+    use super::StartKeys;
+    assert_eq!(
+        StartKeys::parse("tab, Shift+Tab,ctrl+right,g").unwrap().0,
+        [
+            vec![KeyCode::Tab],
+            vec![KeyCode::ShiftLeft, KeyCode::Tab],
+            vec![KeyCode::ControlLeft, KeyCode::ArrowRight],
+            vec![KeyCode::KeyG],
+        ]
+    );
+    assert_eq!(StartKeys::parse(" , ").unwrap_err(), "no keys");
+    assert_eq!(StartKeys::parse("tab,f13").unwrap_err(), "no key 'f13'");
+    let names = "up,down,left,home,end,enter,space,esc,alt,cmd";
+    assert_eq!(StartKeys::parse(names).unwrap().0.len(), 10);
+
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    chord(&mut app, &[KeyCode::Tab]);
+    chord(&mut app, &[KeyCode::Tab]);
+    let want = focused(&app);
+    app.world_mut()
+        .resource_mut::<bevy::input_focus::InputFocus>()
+        .clear();
+    app.insert_resource(StartKeys::parse("tab,tab").unwrap());
+    frames(&mut app, 30);
+    assert_eq!(focused(&app), None, "not before the world is live");
+    go_live(&mut app, false);
+    frames(&mut app, 30);
+    assert_eq!(focused(&app), want);
+    assert!(!app.world().contains_resource::<StartKeys>());
+    assert_eq!(
+        app.world()
+            .get_resource::<gz_bevy::snapshot::SnapshotHold>(),
+        Some(&gz_bevy::snapshot::SnapshotHold(false)),
+        "a screenshot may go now"
+    );
+    // A chord down when the world stops being live is released anyway.
+    app.insert_resource(StartKeys::parse("shift+tab").unwrap());
+    let held = |app: &App| {
+        app.world()
+            .resource::<ButtonInput<KeyCode>>()
+            .pressed(KeyCode::ShiftLeft)
+    };
+    let mut down = false;
+    for _ in 0..40 {
+        app.update();
+        if held(&app) {
+            down = true;
+            break;
+        }
+    }
+    assert!(down, "the chord went down");
+    app.world_mut().resource_mut::<GzStatus>().status = Status::Disconnected;
+    frames(&mut app, 3);
+    assert!(!held(&app), "not stuck");
+}
+
 /// Reset works in the top bar and the inspector alike: with a live world,
 /// stats or not. Play/Pause needs the stats.
 #[test]
@@ -1243,4 +1462,124 @@ fn the_shell_never_grows_past_a_short_window() {
     let status = region(&mut app, Region::StatusBar);
     let (min, size) = rect(&app, status);
     assert_eq!(min.y + size.y, 520.0);
+}
+
+/// Every control has an accessible name and shows keyboard focus (spec
+/// §10, §6.5, §13: "every icon-only button has a tooltip and accessible
+/// label"): every tab stop, and every node with a control's role, in each
+/// panel with content, each inspector and the command palette, is named
+/// (or, doing nothing, hidden from AccessKit: a leaf's caret), and every
+/// tab stop draws a focus ring (its own, its row's, a field's or a menu
+/// item's look, or a view's frame).
+#[test]
+fn every_control_is_named_and_shows_focus() {
+    use accesskit::Role;
+    use bevy::a11y::AccessibilityNode;
+    use bevy::input_focus::tab_navigation::TabIndex;
+    use bevy::ui_widgets::TextInput;
+
+    use super::viewport::view::FocusFrame;
+    use crate::theme::visuals::HoverOnFocus;
+    use crate::theme::{FocusRing, Ring};
+
+    let mut app = live_view(900);
+    // Content for the lists.
+    app.world_mut()
+        .resource_mut::<gz_bevy::topics::GzTopics>()
+        .set(vec![("/clock".into(), "gz.msgs.Clock".into())]);
+    app.world_mut()
+        .resource_mut::<gz_bevy::messages::SystemMessages>()
+        .push(gz_bevy::messages::SystemMessage {
+            level: gz_bevy::messages::MessageLevel::Warning,
+            text: "a warning".into(),
+            ..default()
+        });
+    let scene = crate::inspectors::common::fixture::scene(&mut app);
+    let panels = [
+        SCENE,
+        crate::panels::ASSETS,
+        crate::panels::TOPICS,
+        crate::panels::PLOT,
+        CONSOLE,
+        crate::panels::SENSORS,
+        crate::panels::TELEOP,
+        crate::shell::workspaces::WORKSPACES_PANEL,
+    ];
+    let control = |role: Role| {
+        matches!(
+            role,
+            Role::Button
+                | Role::CheckBox
+                | Role::RadioButton
+                | Role::Switch
+                | Role::MenuItem
+                | Role::MenuItemCheckBox
+                | Role::MenuItemRadio
+                | Role::TextInput
+                | Role::SpinButton
+                | Role::Slider
+                | Role::ComboBox
+                | Role::TreeItem
+                | Role::ListBoxOption
+                | Role::Tab
+        )
+    };
+    type Step = Box<dyn Fn(&mut App)>;
+    let mut steps: Vec<Step> = Vec::new();
+    for panel in panels {
+        steps.push(Box::new(move |app: &mut App| {
+            app.world_mut().write_message(UiCommand::OpenPanel {
+                panel,
+                slot: crate::shell::Slot::Primary,
+            });
+        }));
+    }
+    for e in [scene.cart, scene.base, scene.krate, scene.sun] {
+        steps.push(Box::new(move |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<gz_bevy::view::Selection>()
+                .entities = vec![e];
+        }));
+    }
+    steps.push(Box::new(|app: &mut App| {
+        app.world_mut().write_message(UiCommand::OpenPalette);
+    }));
+    let mut checked = 0;
+    for step in steps {
+        step(&mut app);
+        frames(&mut app, 3);
+        let world = app.world_mut();
+        let mut q = world.query::<(
+            Entity,
+            Option<&TabIndex>,
+            Option<&AccessibilityNode>,
+            Option<&Children>,
+            Has<FocusRing>,
+            Has<Ring>,
+            Has<TextInput>,
+            Has<HoverOnFocus>,
+        )>();
+        let frames_of: Vec<Entity> = world
+            .query_filtered::<&ChildOf, With<FocusFrame>>()
+            .iter(world)
+            .map(ChildOf::parent)
+            .collect();
+        for (e, index, access, _, ring, own, field, hover) in q.iter(world) {
+            let stop = index.is_some_and(|i| i.0 >= 0);
+            let role = access.map(|a| a.0.role());
+            if !stop && !role.is_some_and(control) {
+                continue;
+            }
+            checked += 1;
+            let named = access.is_some_and(|a| {
+                a.0.is_hidden() || a.0.label().is_some_and(|l| !l.trim().is_empty())
+            });
+            assert!(named, "{e} ({role:?}) has no accessible name");
+            if stop {
+                let shows = ring || own || field || hover || frames_of.contains(&e);
+                assert!(shows, "{e} ({role:?}) is a tab stop with no focus ring");
+            }
+        }
+    }
+    assert!(checked > 500, "{checked} checked");
 }

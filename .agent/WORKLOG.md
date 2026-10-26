@@ -2128,6 +2128,75 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   - a test checks `report_filtered` is in the render world's schedule;
   - D-116 notes that a cubemap changed in place isn't refiltered.
 
+## 2026-10-25: M10b keyboard and AccessKit (D-117)
+
+- **Audit:** a test walks every tab stop and every node with a control's
+  role in each panel with content, each inspector and the palette. It
+  found a leaf's caret and an unhideable row's eye as nameless buttons,
+  the Workspaces panel's scroll area as a nameless tab stop with no keys,
+  and no focus ring on the Topics list, the Console log or a tree with no
+  cursor. All fixed; the test keeps them so.
+- **Arrows within groups:** `focus::arrow_keys`. The activity bar is an
+  `ArrowGroup` (↑ ↓, Home, End; moving opens nothing). Radio groups (the
+  tool group, the rail's drag group, the chips) move from the focused
+  button and check where they land; Bevy's own group checked from the
+  checked one and left focus behind. A modified arrow stays a shortcut:
+  ⌘→ on a focused tool used to be taken by Bevy's radio group.
+- **The views:** each view is a tab stop before its rail, an AccessKit
+  application ("View 1"); focus there gives the views the keys and makes
+  it active; its ring is `FocusFrame`, 4 px inside its edge. Bevy renames
+  a node whose image changes, so `keep_view_access` puts the view's back.
+- **Flag:** `gzweb --keys tab,shift+tab,down` presses chords once live.
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive`
+  on :9041, `--keys`): 32 Tabs land on the view with its ring (light);
+  then G turns the grid off (dark); 12 Tabs and ↓↓↓ move along the
+  activity bar with the Scene panel still open; Tab Tab → → focuses and
+  checks Translate.
+- **Tests:** workspace 981 → 990 passing.
+- **Review fixes** (PR #64):
+  - the view's AccessKit role and name are put back in place, keeping its
+    bounds;
+  - a view Tab focuses, or its rail, takes the single-key shortcuts from
+    the hovered one, and is active;
+  - `--keys` sends logical keys and text, releases a chord on leaving
+    Live, and holds `--screenshot` until done.
+
+## 2026-10-25: M10c UI scale and reduce-motion (D-118)
+
+- **UI scale:** ⌘K's Settings group lists "UI scale: 80%" to "200%" (the
+  one in effect says "current"); `gzweb --ui-scale PERCENT` (80 to 200)
+  and `?ui_scale=` pick it at start. `Theme::set_scale` keeps any value to
+  80 to 200%.
+- **Pixels:** the context menu, the selection marquee and the outline
+  overlay took window pixels as UI pixels, so above 100% they landed the
+  scale times too far; they divide by `UiScale` now. The Scene tree's
+  first row pool counts UI pixels. The views' placement already followed
+  its node; tests now hold it through scale changes.
+- **Reduce-motion:** "Motion: reduce / full / follow system", `--motion`
+  and `?motion=`. Follow system reads the browser's
+  `prefers-reduced-motion` (natively: full). Reduced, the camera's snaps,
+  focus, home, look-from and mode turns land at once
+  (`gz_bevy::view::ReduceMotion`), the card's fade and the views' reveal
+  are instant, and the Assets panel's bars hold still.
+- **Persistence:** `ui_scale` and `motion` in `workspaces.json`; one asked
+  for by a flag wins and isn't saved.
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive` on
+  :9051, `--screenshot`): 80%, 100% and 200% at 1440x900, text and icons
+  sharp; 200% at 2880x1800 with `--menu context --select vehicle_blue`
+  looks as 100% does at 1440x900, the outline on the model (before the fix
+  it was drawn a view away from it); 125% with `--palette "ui scale"`;
+  150% with `--motion reduce --view top --palette motion`.
+- **Left:** the full UI needs 1024x640 UI pixels, so above 100% a smaller
+  window (200% at 1440x900) clips the top bar's right end as a narrow
+  window does.
+- **Tests:** workspace 981 → 993 passing; coverage 97.5% lines. check.sh passes.
+- **Review fixes** (PR #65):
+  - the gizmo's snapping readout divides by the UI scale;
+  - minimal mode keeps the motion setting in its views (`--motion`, the
+    browser's preference) and refuses `--ui-scale`;
+  - the file's scale reads leniently (a hand-written percentage, or a bad
+    value dropped without losing the file).
+
 ## 2026-10-25: M10d layout-aware letters (D-119)
 
 - **gz-bevy:** `view::layout::KeyLayout` learns what each key typed as it

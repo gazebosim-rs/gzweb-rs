@@ -19,7 +19,7 @@ use super::SceneTree;
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Active, Visuals};
-use crate::theme::{border, radius, ColorRole, Theme, TypeStyle, SPACE};
+use crate::theme::{border, radius, ColorRole, Ring, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, display, row};
 use crate::widgets::{
     a11y, choice_chip, clickable, filter_field, rounded, tree_row, Tooltip, TreeRowSpec,
@@ -131,10 +131,10 @@ impl TreeSources<'_, '_> {
         self.theme.s.tree_row_h
     }
 
-    /// Rows a list as tall as the window shows: the pool a new body starts
-    /// with, so it shows its rows in its first frame.
+    /// Rows a list as tall as the window (in UI pixels) shows: the pool a
+    /// new body starts with, so it shows its rows in its first frame.
     fn first_pool(&self) -> usize {
-        let h = self.windows.single().map_or(900.0, Window::height);
+        let h = self.windows.single().map_or(900.0, Window::height) / self.theme.scale;
         pool_size(h, self.row_h())
     }
 }
@@ -229,6 +229,9 @@ pub(crate) fn build_tree(
                 ScrollArea,
                 ScrollPosition(Vec2::new(0.0, scroll.0)),
                 TabIndex(0),
+                // Drawn by `cursor_ring` while no cursor row shows it.
+                Ring(ColorRole::Clear),
+                Outline::new(px(border::FOCUS_RING), px(-border::FOCUS_RING), Color::NONE),
                 a11y(Role::Tree, "Entities"),
                 Node {
                     flex_grow: 1.0,

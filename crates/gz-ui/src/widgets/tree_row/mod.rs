@@ -184,7 +184,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                     ..default()
                 },
                 Headless,
-                a11y(Role::Button, caret_label(row.expanded)),
+                part_access(caret_label(&row)),
                 children![(
                     TreeRowPart::CaretGlyph,
                     icon(
@@ -237,7 +237,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                 },
                 Headless,
                 Hovered::default(),
-                a11y(Role::Button, eye_label(&row)),
+                part_access(eye_label(&row)),
                 children![(
                     TreeRowPart::EyeGlyph,
                     icon(IconId::Eye, EYE_ICON, ColorRole::Clear)
@@ -269,17 +269,44 @@ fn caret_ink(expanded: Option<bool>) -> ColorRole {
     }
 }
 
-fn caret_label(expanded: Option<bool>) -> &'static str {
-    match expanded {
-        Some(true) => "Collapse",
-        Some(false) => "Expand",
-        None => "",
-    }
+/// The caret's accessible name: none on a leaf, whose caret does nothing.
+fn caret_label(spec: &TreeRowSpec) -> Option<String> {
+    let verb = if spec.expanded? { "Collapse" } else { "Expand" };
+    Some(format!("{verb} {}", spec.name))
 }
 
-fn eye_label(spec: &TreeRowSpec) -> String {
+/// The eye's accessible name: none on a row it can't hide.
+fn eye_label(spec: &TreeRowSpec) -> Option<String> {
     let verb = if spec.hidden { "Show" } else { "Hide" };
-    format!("{verb} {}", spec.name)
+    spec.hideable.then(|| format!("{verb} {}", spec.name))
+}
+
+/// A caret's or an eye's AccessKit button: named, or hidden from AccessKit
+/// while it does nothing (spec §10: no nameless button).
+fn part_access(label: Option<String>) -> AccessibilityNode {
+    let mut access = a11y(Role::Button, "");
+    set_part_label(&mut access, label);
+    access
+}
+
+/// Names a caret's or an eye's button, or hides it.
+fn set_part_label(access: &mut AccessibilityNode, label: Option<String>) {
+    let node = &mut access.0;
+    match label {
+        Some(label) => {
+            if node.is_hidden() {
+                node.clear_hidden();
+            }
+            if node.label() != Some(label.as_str()) {
+                node.set_label(label);
+            }
+        }
+        None => {
+            if !node.is_hidden() {
+                node.set_hidden();
+            }
+        }
+    }
 }
 
 fn display_eye(hideable: bool) -> Display {
@@ -349,7 +376,7 @@ impl RowParts<'_, '_> {
                     }
                 }
                 TreeRowPart::Caret => {
-                    self.label(part_entity, caret_label(spec.expanded));
+                    self.label(part_entity, caret_label(spec));
                 }
                 TreeRowPart::CaretGlyph => {
                     self.glyph(
@@ -390,7 +417,7 @@ impl RowParts<'_, '_> {
                             n.display = d;
                         }
                     }
-                    self.label(part_entity, &eye_label(spec));
+                    self.label(part_entity, eye_label(spec));
                 }
                 TreeRowPart::EyeGlyph => {
                     let id = if spec.hidden {
@@ -415,10 +442,11 @@ impl RowParts<'_, '_> {
         }
     }
 
-    fn label(&mut self, e: Entity, label: &str) {
+    fn label(&mut self, e: Entity, label: Option<String>) {
         if let Ok(mut a) = self.access.get_mut(e) {
-            if a.0.label() != Some(label) {
-                a.0.set_label(label.to_string());
+            let hidden = label.is_none();
+            if a.0.is_hidden() != hidden || (!hidden && a.0.label() != label.as_deref()) {
+                set_part_label(&mut a, label);
             }
         }
     }

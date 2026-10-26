@@ -8,9 +8,10 @@ use bevy::window::{PrimaryWindow, WindowTheme, WindowThemeChanged};
 
 use crate::test_support::{frames, ui_app};
 use crate::theme::{
-    elevation, CaretRoles, ColorRole, Fill, FocusRing, FontFamily, Ink, Opacity, OsTheme, Palette,
-    Ring, Shadow, Stroke, Theme, ThemeMode, TypeStyle,
+    elevation, CaretRoles, ColorRole, Fill, FocusRing, FontFamily, Ink, MotionMode, Opacity,
+    OsMotion, OsTheme, Palette, Ring, Shadow, Stroke, Theme, ThemeMode, TypeStyle, UI_SCALES,
 };
+use gz_bevy::view::ReduceMotion;
 
 #[test]
 fn modes_resolve_to_a_palette() {
@@ -180,6 +181,70 @@ fn ui_scale_follows_the_theme() {
     app.world_mut().resource_mut::<Theme>().scale = 1.5;
     frames(&mut app, 1);
     assert_eq!(app.world().resource::<UiScale>().0, 1.5);
+}
+
+/// The UI scale stays within 80 to 200% (spec §10, D-118).
+#[test]
+fn ui_scale_is_kept_to_80_to_200_percent() {
+    let mut t = Theme::default();
+    for (asked, got) in [(1.25, 1.25), (3.0, 2.0), (0.5, 0.8), (f32::NAN, 1.0)] {
+        t.set_scale(asked);
+        assert_eq!(t.scale, got, "{asked}");
+    }
+    assert_eq!(UI_SCALES.first(), Some(&0.8));
+    assert_eq!(UI_SCALES.last(), Some(&2.0));
+}
+
+/// Reduce-motion follows its setting, and in System the OS; `gz-bevy`'s
+/// camera gets it too. Reduced, a transition takes its whole length in one
+/// frame.
+#[test]
+fn motion_follows_its_setting_and_the_os() {
+    assert_eq!("Reduce".parse(), Ok(MotionMode::Reduce));
+    assert_eq!("full".parse(), Ok(MotionMode::Full));
+    assert_eq!("system".parse(), Ok(MotionMode::System));
+    assert_eq!(
+        "slow".parse::<MotionMode>(),
+        Err("unknown motion 'slow' (system, reduce or full)".into())
+    );
+    for m in [MotionMode::System, MotionMode::Reduce, MotionMode::Full] {
+        assert_eq!(m.id().parse(), Ok(m));
+    }
+    let mut t = Theme::default();
+    assert!(!t.reduce_motion && t.motion == MotionMode::System);
+    assert_eq!(t.motion_dt(0.01, 0.25), 0.01);
+    t.set_motion(MotionMode::Reduce);
+    assert!(t.reduce_motion);
+    assert_eq!(t.motion_dt(0.01, 0.25), 0.25);
+
+    let mut app = ui_app(ThemeMode::Light);
+    frames(&mut app, 1);
+    let reduced = |app: &App| {
+        (
+            app.world().resource::<Theme>().reduce_motion,
+            app.world().resource::<ReduceMotion>().0,
+        )
+    };
+    assert_eq!(reduced(&app), (false, false));
+    app.world_mut().insert_resource(OsMotion { reduce: true });
+    frames(&mut app, 1);
+    assert_eq!(reduced(&app), (true, true));
+    // Full whatever the OS says, and back to it.
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_motion(MotionMode::Full);
+    frames(&mut app, 1);
+    assert_eq!(reduced(&app), (false, false));
+    app.world_mut().insert_resource(OsMotion { reduce: false });
+    frames(&mut app, 1);
+    app.world_mut().insert_resource(OsMotion { reduce: true });
+    frames(&mut app, 1);
+    assert_eq!(reduced(&app), (false, false));
+    app.world_mut()
+        .resource_mut::<Theme>()
+        .set_motion(MotionMode::System);
+    frames(&mut app, 1);
+    assert_eq!(reduced(&app), (true, true));
 }
 
 #[test]

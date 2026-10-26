@@ -58,6 +58,7 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         app.add_plugins((
             crate::GzUiPlugin {
                 theme: ThemeMode::Light,
+                ..default()
             },
             plugins.set(ShellPlugin { camera: false }),
         ));
@@ -393,10 +394,13 @@ pub(crate) fn focused(app: &App) -> Option<Entity> {
         .get()
 }
 
-/// Focus `e` as Tab would: no pointer press involved.
+/// Focus `e` as Tab would: no pointer press involved, and focus shows.
 pub(crate) fn tab_to(app: &mut App, e: Entity) {
     let world = app.world_mut();
     world.resource_mut::<crate::widgets::focus::PointerLed>().0 = false;
+    world
+        .resource_mut::<bevy::input_focus::InputFocusVisible>()
+        .0 = true;
     world
         .resource_mut::<bevy::input_focus::InputFocus>()
         .set(e, bevy::input_focus::FocusCause::Navigated);

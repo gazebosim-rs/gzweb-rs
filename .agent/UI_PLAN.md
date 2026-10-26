@@ -494,11 +494,20 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
   Space chord, is resolved: D-58a).
+- **M10b notes:** keyboard and AccessKit (D-117): `focus::arrow_keys` and `ArrowGroup` (the
+  activity bar; radio groups move and check), each view a tab stop with `FocusFrame` and the
+  active view on focus, `keep_view_access`; nameless carets and eyes hidden from AccessKit,
+  `inset_focus_ring` on the Topics list and the Console log, the tree list's ring;
+  `gzweb --keys`. Workspace 990 passing.
 - Moved to M0 (done there, `gz-bevy::view::web`): context-menu suppression on the canvas,
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
   the page's status lines. Text-field focus inside the canvas was done in M1 (bevy_ui text
   inputs keep the browser's chords). Layout-aware letters are M10d's (D-119).
+- **M10c notes:** UI scale and reduce-motion (D-118): ⌘K's "UI scale: N%" and "Motion: …",
+  `gzweb --ui-scale`, `--motion`; `Theme::set_scale` (80 to 200%), `Theme::motion_dt`,
+  `gz_bevy::view::ReduceMotion`; the menu, marquee and outline divide by `UiScale`; persisted
+  in `workspaces.json`.
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 
