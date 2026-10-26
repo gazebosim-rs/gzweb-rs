@@ -453,6 +453,11 @@ visual / collision / sensor, Reparent).
   extras with the draft's parts); Link, Visual, Collision and Sensor by a click, a joint by
   two with its rubber band, Plugin by name; a Shapes tile adds a link while editing; undo and
   redo take parts back. Left: M9c writes the draft back (Done drops it until then), M9d.
+- **M9d notes:** the inspectors' quick actions (D-115): Add visual, Add collision and Add sensor
+  on the Link inspector put the Parts tab's shape or sensor at the link's origin; Reparent on
+  the Joint inspector has the next click pick the joint's new parent (`Part::Reparent`, D-113's
+  rules). Live only while the model is edited. Left: M9c's write-back, which also writes a
+  reparent into its joint's `<parent>`.
 
 ### M10 — Hardening
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's

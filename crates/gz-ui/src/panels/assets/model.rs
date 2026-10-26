@@ -104,6 +104,16 @@ impl PartTool {
 /// The hint once a joint's parent is chosen.
 pub(crate) const JOINT_CHILD_HINT: &str = "Now click the child link · Esc cancels";
 
+/// A joint whose new parent link the next click picks (the Joint
+/// inspector's Reparent): its name, its model's scene path and its child
+/// link's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Reparenting {
+    pub joint: String,
+    pub model: String,
+    pub child: String,
+}
+
 /// The Parts tab's choices.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PartsState {
@@ -114,6 +124,8 @@ pub(crate) struct PartsState {
     pub sensor: SensorKind,
     /// The joint's parent link, once clicked.
     pub parent: Option<Entity>,
+    /// Reparenting a joint: the next click picks its parent.
+    pub reparent: Option<Reparenting>,
     /// The plugin's library and class, as typed.
     pub plugin_file: String,
     pub plugin_name: String,
@@ -127,6 +139,7 @@ impl Default for PartsState {
             joint: JointKind::Revolute,
             sensor: SensorKind::Camera,
             parent: None,
+            reparent: None,
             plugin_file: String::new(),
             plugin_name: String::new(),
         }
@@ -152,7 +165,10 @@ impl AssetsState {
     /// Something is armed (to insert, or a part, a plugin too): Esc
     /// disarms it, and does only that.
     pub(crate) fn takes_escape(&self) -> bool {
-        self.armed.is_some() || self.parts.armed.is_some() || self.parts.parent.is_some()
+        self.armed.is_some()
+            || self.parts.armed.is_some()
+            || self.parts.parent.is_some()
+            || self.parts.reparent.is_some()
     }
 }
 

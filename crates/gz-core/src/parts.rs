@@ -184,6 +184,15 @@ pub enum Part {
         name: String,
         filename: String,
     },
+    /// Joint `joint` of model `model` (a scene path: the edited model or
+    /// one nested in it) takes `parent` as its parent link (its child
+    /// stays `child`). Not an element: it changes its joint's.
+    Reparent {
+        joint: String,
+        model: String,
+        child: String,
+        parent: String,
+    },
 }
 
 /// `size` of a shape: its SDFormat geometry, how it draws, and its
@@ -315,7 +324,16 @@ impl Part {
             | Part::Collision { name, .. }
             | Part::Sensor { name, .. }
             | Part::Joint { name, .. }
-            | Part::Plugin { name, .. } => name,
+            | Part::Plugin { name, .. }
+            | Part::Reparent { joint: name, .. } => name,
+        }
+    }
+
+    /// What adding it does, as undo names it: "add", "reparent".
+    pub fn verb(&self) -> &'static str {
+        match self {
+            Part::Reparent { .. } => "reparent",
+            _ => "add",
         }
     }
 
@@ -326,7 +344,7 @@ impl Part {
             Part::Visual { .. } => "visual",
             Part::Collision { .. } => "collision",
             Part::Sensor { .. } => "sensor",
-            Part::Joint { .. } => "joint",
+            Part::Joint { .. } | Part::Reparent { .. } => "joint",
             Part::Plugin { .. } => "plugin",
         }
     }
@@ -338,14 +356,14 @@ impl Part {
             Part::Visual { link, .. }
             | Part::Collision { link, .. }
             | Part::Sensor { link, .. } => Some(link),
-            Part::Joint { child, .. } => Some(child),
+            Part::Joint { child, .. } | Part::Reparent { child, .. } => Some(child),
             Part::Link { .. } | Part::Plugin { .. } => None,
         }
     }
 
     /// Its SDFormat element, in model `model` (a scene path): a link, a
     /// visual, collision or sensor for its link, a joint or a plugin for
-    /// the model.
+    /// the model; none for a reparent (it changes its joint's `<parent>`).
     pub fn sdf(&self, model: &str) -> String {
         match self {
             Part::Link { name, shape, pose } => {
@@ -419,6 +437,7 @@ impl Part {
                 let (filename, name) = (xml_escape(filename), xml_escape(name));
                 format!("<plugin filename=\"{filename}\" name=\"{name}\"/>")
             }
+            Part::Reparent { .. } => String::new(),
         }
     }
 
@@ -481,6 +500,21 @@ impl Part {
                     .or_default()
                     .plugins
                     .push(name.clone());
+            }
+            Part::Reparent {
+                joint,
+                model,
+                child,
+                parent,
+            } => {
+                let joints = extras.links.get_mut(child).map(|l| &mut l.joints);
+                let found = joints
+                    .into_iter()
+                    .flatten()
+                    .find(|j| j.name == *joint && j.model == *model);
+                if let Some(j) = found {
+                    j.parent = sdf_link_name(model, parent);
+                }
             }
         }
     }
@@ -564,12 +598,16 @@ impl Draft {
 
     /// What undo would take back: "add link_2".
     pub fn undo_label(&self) -> Option<String> {
-        self.parts.last().map(|p| format!("add {}", p.name()))
+        self.parts
+            .last()
+            .map(|p| format!("{} {}", p.verb(), p.name()))
     }
 
     /// What redo would put back.
     pub fn redo_label(&self) -> Option<String> {
-        self.undone.last().map(|p| format!("add {}", p.name()))
+        self.undone
+            .last()
+            .map(|p| format!("{} {}", p.verb(), p.name()))
     }
 
     /// `base_N` with the lowest N from 1 that `taken` doesn't hold.

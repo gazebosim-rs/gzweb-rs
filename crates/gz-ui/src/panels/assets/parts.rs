@@ -31,10 +31,12 @@ use gz_core::parts::{
 use gz_core::scene::{NodeKind, Pose};
 use gz_core::sdf::{Joint, WorldExtras};
 
-use super::model::{AssetTab, AssetsState, PartTool, JOINT_CHILD_HINT};
+use super::model::{AssetTab, AssetsState, PartTool, PartsState, Reparenting, JOINT_CHILD_HINT};
 use super::view::{TabChoice, TabPane, TILE_H};
 use crate::assets::fonts::text;
 use crate::assets::icons::{content_icon, IconId};
+use crate::inspectors::common::Disabled;
+use crate::inspectors::Inspected;
 use crate::shell::status_bar::readouts::StatusNote;
 use crate::theme::visuals::{Active, Content, Visuals};
 use crate::theme::{border, radius, ColorRole, Theme, TypeStyle, SPACE};
@@ -83,6 +85,41 @@ pub(crate) struct PartGhost {
     pub shape: Shape,
     pub size: f64,
 }
+
+/// A Link or Joint inspector quick action that changes the model being
+/// edited (§6.6): Add visual, Add collision and Add sensor put the Parts
+/// tab's shape or sensor at the link's origin; Reparent has the next click
+/// pick the joint's new parent link.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PartAction {
+    Visual,
+    Collision,
+    Sensor,
+    Reparent,
+}
+
+impl PartAction {
+    /// What its button says.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            PartAction::Visual => "Add visual",
+            PartAction::Collision => "Add collision",
+            PartAction::Sensor => "Add sensor",
+            PartAction::Reparent => "Reparent",
+        }
+    }
+
+    /// Why it can't run outside editing.
+    pub(crate) fn unavailable(self) -> &'static str {
+        match self {
+            PartAction::Reparent => "Edit the model to reparent its joints",
+            _ => "Edit the model to add parts",
+        }
+    }
+}
+
+/// What the status bar says while a joint's new parent is picked.
+pub(crate) const REPARENT_HINT: &str = "Click the joint's new parent link · Esc cancels";
 
 /// The hint before a part is chosen.
 pub(crate) const PARTS_HINT: &str = "Choose a part, then click in the view";
@@ -271,18 +308,26 @@ pub(super) fn parts_tab(
         }
         state.parts.armed = None;
         state.parts.parent = None;
+        state.parts.reparent = None;
     }
 }
 
 /// A joint's parent that is no longer a link of the model being edited
 /// (another model is, or undo took it back) is forgotten: the next click
-/// chooses the parent again.
+/// chooses the parent again. So is a joint to reparent that the model no
+/// longer has.
 pub(super) fn forget_parent(model: EditedModel, mut state: ResMut<AssetsState>) {
-    let Some(parent) = state.parts.parent else {
-        return;
-    };
-    if model.link_of(Some(parent)) != Some(parent) {
-        state.parts.parent = None;
+    if let Some(parent) = state.parts.parent {
+        if model.link_of(Some(parent)) != Some(parent) {
+            state.parts.parent = None;
+        }
+    }
+    if let Some(r) = &state.parts.reparent {
+        let owner = model.at_path(&r.model);
+        let still = owner.and_then(|o| model.reparenting(o, &r.joint));
+        if still.as_ref() != Some(r) {
+            state.parts.reparent = None;
+        }
     }
 }
 
@@ -342,6 +387,7 @@ pub(super) fn on_part_tile(
         Some(tile.0)
     };
     parts.parent = None;
+    parts.reparent = None;
     state.armed = None;
 }
 
@@ -397,6 +443,7 @@ pub(super) fn plugin_text(
 pub(super) struct EditedModel<'w, 's> {
     editing: Option<Res<'w, EditingModel>>,
     entities: Query<'w, 's, (&'static GzEntity, Option<&'static GzSensors>)>,
+    named: Query<'w, 's, (Entity, &'static GzEntity)>,
     globals: Query<'w, 's, &'static GlobalTransform>,
     parents: Query<'w, 's, &'static ChildOf>,
     children: Query<'w, 's, &'static Children>,
@@ -427,6 +474,95 @@ impl EditedModel<'_, '_> {
 
     fn path(&self, e: Entity) -> Option<String> {
         self.entities.get(e).ok().map(|(g, _)| g.path.clone())
+    }
+
+    /// The entity at scene path `path`.
+    fn at_path(&self, path: &str) -> Option<Entity> {
+        self.named
+            .iter()
+            .find(|(_, g)| g.path == path)
+            .map(|(e, _)| e)
+    }
+
+    /// A visual, collision or sensor (`tool`) on link `l`, at `at` in its
+    /// frame (a shape `lift` further), named free on the link, as `parts`
+    /// chooses.
+    fn part_on(
+        &self,
+        tool: PartTool,
+        l: Entity,
+        at: Vec3,
+        lift: Vec3,
+        parts: &PartsState,
+    ) -> Option<Part> {
+        let link = self.path(l)?;
+        let taken = self.link_names(l);
+        let free = |base: &str| Draft::free_name(base, |n| taken.iter().any(|t| t == n));
+        Some(match tool {
+            PartTool::Visual => Part::Visual {
+                link,
+                name: free("visual"),
+                shape: parts.shape,
+                pose: pose_at(at + lift),
+            },
+            PartTool::Collision => Part::Collision {
+                link,
+                name: free("collision"),
+                shape: parts.shape,
+                pose: pose_at(at + lift),
+            },
+            PartTool::Sensor => Part::Sensor {
+                link,
+                name: free(parts.sensor.ty()),
+                kind: parts.sensor,
+                pose: pose_at(at),
+            },
+            PartTool::Link | PartTool::Joint | PartTool::Plugin => return None,
+        })
+    }
+
+    /// Joint `joint` of `owner` (the edited model or one nested in it), to
+    /// reparent: none unless it is in the model being edited and the
+    /// server's SDFormat has it.
+    fn reparenting(&self, owner: Entity, joint: &str) -> Option<Reparenting> {
+        let (model, _) = self.model()?;
+        if !is_under(&self.parents, owner, model) {
+            return None;
+        }
+        let path = self.path(owner)?;
+        let j = self.known_extras()?.joint(&path, joint)?;
+        Some(Reparenting {
+            joint: joint.to_string(),
+            child: format!("{}/{}", j.model, j.child.replace("::", "/")),
+            model: path,
+        })
+    }
+
+    /// `r`'s joint with link `l` as its parent: a link of the joint's model,
+    /// not its parent already, and not one that would close a loop.
+    fn reparent(&self, r: &Reparenting, l: Entity) -> Result<Part, String> {
+        let (_, top) = self.model().ok_or(NOT_A_LINK)?;
+        let to = self.path(l).ok_or(NOT_A_LINK)?;
+        if !to.starts_with(&format!("{}/", r.model)) {
+            let model = r.model.rsplit('/').next().unwrap_or(&r.model);
+            return Err(format!("Click a link of {model}"));
+        }
+        let (joints, _) = self.joints(&top).ok_or(NO_SDF)?;
+        let leaf = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
+        if joints.iter().any(|(p, c)| *c == r.child && *p == to) {
+            return Err(format!("{} is {}'s parent already", leaf(&to), r.joint));
+        }
+        let others: Vec<(String, String)> =
+            joints.into_iter().filter(|(_, c)| *c != r.child).collect();
+        if let Some(why) = joint_problem(&to, &r.child, &others) {
+            return Err(why);
+        }
+        Ok(Part::Reparent {
+            joint: r.joint.clone(),
+            model: r.model.clone(),
+            child: r.child.clone(),
+            parent: to,
+        })
     }
 
     /// The names of `e`'s children that are Gazebo entities.
@@ -547,6 +683,21 @@ pub(super) fn place_part(
     };
     let now = time.elapsed_secs_f64();
     for p in places.read() {
+        // Reparenting a joint: the link clicked is its new parent.
+        if let Some(r) = state.parts.reparent.clone() {
+            let Some(l) = model.link_of(p.hit) else {
+                note.show(NOT_A_LINK, now);
+                continue;
+            };
+            match model.reparent(&r, l) {
+                Ok(part) => {
+                    out.write(PartCommand::Add(part));
+                    state.parts.reparent = None;
+                }
+                Err(why) => note.show(why, now),
+            }
+            continue;
+        }
         let shape_link = match &state.armed {
             Some(Insertable::Shape(s)) if *s != Shape::Plane => Some(*s),
             _ => None,
@@ -580,31 +731,9 @@ pub(super) fn place_part(
             }
             PartTool::Visual | PartTool::Collision | PartTool::Sensor => link.and_then(|l| {
                 let (at, n) = model.local(l, p.point, p.normal)?;
-                let link = model.path(l)?;
-                let taken = model.link_names(l);
-                let free = |base: &str| Draft::free_name(base, |n| taken.iter().any(|t| t == n));
                 #[allow(clippy::cast_possible_truncation)]
                 let lift = (PART_SIZE / 2.0) as f32;
-                Some(match tool {
-                    PartTool::Visual => Part::Visual {
-                        link,
-                        name: free("visual"),
-                        shape: parts.shape,
-                        pose: pose_at(at + n * lift),
-                    },
-                    PartTool::Collision => Part::Collision {
-                        link,
-                        name: free("collision"),
-                        shape: parts.shape,
-                        pose: pose_at(at + n * lift),
-                    },
-                    _ => Part::Sensor {
-                        link,
-                        name: free(parts.sensor.ty()),
-                        kind: parts.sensor,
-                        pose: pose_at(at),
-                    },
-                })
+                model.part_on(tool, l, at, n * lift, &parts)
             }),
             PartTool::Joint => {
                 let Some(l) = link else {
@@ -694,9 +823,10 @@ pub(super) fn parts_discarded(
     mut note: ResMut<StatusNote>,
 ) {
     for PartsDiscarded(n) in dropped.read() {
-        let parts = if *n == 1 { "part" } else { "parts" };
+        // A reparent is a change, not a part.
+        let changes = if *n == 1 { "change" } else { "changes" };
         note.show(
-            format!("{n} {parts} not kept: writing parts to the model comes later"),
+            format!("{n} {changes} not kept: writing parts to the model comes later"),
             time.elapsed_secs_f64(),
         );
     }
@@ -802,24 +932,128 @@ pub(super) fn part_ghost(
 }
 
 /// Choosing a joint's child, a line in `entity_joint` runs from its
-/// parent link to the pointer.
+/// parent link to the pointer; choosing a joint's new parent, from its
+/// child link.
 pub(super) fn joint_band(
     state: Res<AssetsState>,
     hover: Res<PlaceHover>,
     theme: Res<Theme>,
-    globals: Query<&GlobalTransform>,
+    model: EditedModel,
     gizmos: Option<Gizmos<JointGizmos>>,
 ) {
-    let (Some(mut gizmos), Some(parent)) = (gizmos, state.parts.parent) else {
+    let child = || {
+        let r = state.parts.reparent.as_ref()?;
+        model.at_path(&r.child)
+    };
+    let (Some(mut gizmos), Some(from)) = (gizmos, state.parts.parent.or_else(child)) else {
         return;
     };
-    let Ok(from) = globals.get(parent).map(GlobalTransform::translation) else {
+    let Ok(from) = model.globals.get(from).map(GlobalTransform::translation) else {
         return;
     };
     let color = theme.color(ColorRole::EntityJoint);
     gizmos.sphere(Isometry3d::from_translation(from), 0.04, color);
     if let Some((to, ..)) = hover.0 {
         gizmos.line(from, to, color);
+    }
+}
+
+/// An inspector's [`PartAction`]: a visual, collision or sensor on the
+/// inspected link, or the inspected joint's next click picking its parent.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn on_part_action(
+    ev: On<Activate>,
+    actions: Query<&PartAction, Without<InteractionDisabled>>,
+    inspected: Res<Inspected>,
+    time: Res<Time<Real>>,
+    model: EditedModel,
+    mut state: ResMut<AssetsState>,
+    mut note: ResMut<StatusNote>,
+    mut out: MessageWriter<PartCommand>,
+) {
+    let Ok(action) = actions.get(ev.entity) else {
+        return;
+    };
+    let now = time.elapsed_secs_f64();
+    let tool = match action {
+        PartAction::Visual => PartTool::Visual,
+        PartAction::Collision => PartTool::Collision,
+        PartAction::Sensor => PartTool::Sensor,
+        PartAction::Reparent => {
+            let (Some(owner), Some(joint)) = (inspected.entity, inspected.part.as_ref()) else {
+                return;
+            };
+            let Some(r) = model.reparenting(owner, &joint.name) else {
+                note.show(NO_SDF, now);
+                return;
+            };
+            let parts = &mut state.parts;
+            parts.armed = None;
+            parts.parent = None;
+            parts.reparent = Some(r);
+            state.armed = None;
+            return;
+        }
+    };
+    let Some(link) = inspected
+        .entity
+        .filter(|l| model.link_of(Some(*l)) == Some(*l))
+    else {
+        note.show(NOT_A_LINK, now);
+        return;
+    };
+    if tool == PartTool::Collision && model.known_extras().is_none() {
+        note.show(NO_SDF, now);
+        return;
+    }
+    if let Some(part) = model.part_on(tool, link, Vec3::ZERO, Vec3::ZERO, &state.parts) {
+        out.write(PartCommand::AddKept(part));
+    }
+}
+
+/// The inspector's [`PartAction`]s run while their link or joint is in
+/// the model being edited; outside it they say to edit it first.
+#[allow(clippy::type_complexity)]
+pub(super) fn part_action_states(
+    inspected: Res<Inspected>,
+    model: EditedModel,
+    added: Query<(), Added<PartAction>>,
+    mut actions: Query<(Entity, &PartAction, &mut Disabled, &mut Tooltip)>,
+    mut commands: Commands,
+) {
+    let changed = inspected.is_changed()
+        || model.editing.as_ref().is_some_and(Res::is_changed)
+        || model.extras.as_ref().is_some_and(Res::is_changed);
+    if !changed && added.is_empty() {
+        return;
+    }
+    for (e, action, mut disabled, mut tooltip) in &mut actions {
+        let live = match action {
+            PartAction::Reparent => inspected
+                .entity
+                .zip(inspected.part.as_ref())
+                .is_some_and(|(o, j)| model.reparenting(o, &j.name).is_some()),
+            _ => inspected
+                .entity
+                .is_some_and(|l| model.link_of(Some(l)) == Some(l)),
+        };
+        let off = !live || inspected.removed;
+        if disabled.0 != off {
+            disabled.0 = off;
+            if off {
+                commands.entity(e).insert(InteractionDisabled);
+            } else {
+                commands.entity(e).remove::<InteractionDisabled>();
+            }
+        }
+        let detail = match (live, inspected.removed) {
+            (false, _) => Some(action.unavailable().to_string()),
+            (true, true) => Some("It was removed".to_string()),
+            (true, false) => None,
+        };
+        if tooltip.detail != detail {
+            tooltip.detail = detail;
+        }
     }
 }
 
@@ -831,6 +1065,7 @@ pub(super) fn tab_systems() -> impl IntoScheduleConfigs<bevy::ecs::system::Sched
 /// Registers the tab's observers.
 pub(super) fn observers(app: &mut App) {
     app.add_observer(on_part_tile)
+        .add_observer(on_part_action)
         .add_observer(on_part_choice)
         .add_observer(on_plugin_add)
         .add_observer(on_plugin_submit);
