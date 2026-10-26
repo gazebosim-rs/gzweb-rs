@@ -1218,6 +1218,31 @@ fn start_keys_are_read_and_pressed_once_live() {
     frames(&mut app, 30);
     assert_eq!(focused(&app), want);
     assert!(!app.world().contains_resource::<StartKeys>());
+    assert_eq!(
+        app.world()
+            .get_resource::<gz_bevy::snapshot::SnapshotHold>(),
+        Some(&gz_bevy::snapshot::SnapshotHold(false)),
+        "a screenshot may go now"
+    );
+    // A chord down when the world stops being live is released anyway.
+    app.insert_resource(StartKeys::parse("shift+tab").unwrap());
+    let held = |app: &App| {
+        app.world()
+            .resource::<ButtonInput<KeyCode>>()
+            .pressed(KeyCode::ShiftLeft)
+    };
+    let mut down = false;
+    for _ in 0..40 {
+        app.update();
+        if held(&app) {
+            down = true;
+            break;
+        }
+    }
+    assert!(down, "the chord went down");
+    app.world_mut().resource_mut::<GzStatus>().status = Status::Disconnected;
+    frames(&mut app, 3);
+    assert!(!held(&app), "not stuck");
 }
 
 /// Reset works in the top bar and the inspector alike: with a live world,

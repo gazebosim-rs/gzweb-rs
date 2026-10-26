@@ -32,13 +32,22 @@ pub(crate) fn view_access(id: ViewId) -> AccessibilityNode {
     access
 }
 
-/// Keeps each view's AccessKit node: Bevy makes a node whose `ImageNode`
-/// changes an unnamed image, and the view's changes with its texture.
-/// Runs in PostUpdate after Bevy's UI accessibility.
+/// Keeps each view's AccessKit role and name: Bevy makes a node whose
+/// `ImageNode` changes an unnamed image, and the view's changes with its
+/// texture. Only those are set again, in place: the bounds and transform
+/// Bevy has just synced stay. Runs in PostUpdate after Bevy's UI
+/// accessibility.
 pub(crate) fn keep_view_access(mut views: Query<(&ViewNode, &mut AccessibilityNode)>) {
     for (view, mut access) in &mut views {
         if access.0.role() != Role::Application {
-            *access = view_access(view.0);
+            let want = view_access(view.0);
+            access.0.set_role(Role::Application);
+            if let Some(label) = want.0.label() {
+                access.0.set_label(label);
+            }
+            if let Some(description) = want.0.description() {
+                access.0.set_description(description);
+            }
         }
     }
 }

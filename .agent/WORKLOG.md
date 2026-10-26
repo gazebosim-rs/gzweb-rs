@@ -2108,3 +2108,10 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   activity bar with the Scene panel still open; Tab Tab → → focuses and
   checks Translate.
 - **Tests:** workspace 981 → 990 passing.
+- **Review fixes** (PR #64):
+  - the view's AccessKit role and name are put back in place, keeping its
+    bounds;
+  - a view Tab focuses, or its rail, takes the single-key shortcuts from
+    the hovered one, and is active;
+  - `--keys` sends logical keys and text, releases a chord on leaving
+    Live, and holds `--screenshot` until done.

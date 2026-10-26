@@ -936,3 +936,70 @@ fn focusing_a_split_view_makes_it_active() {
     };
     assert_eq!(label(&app, views[1].1).as_deref(), Some("View 2"));
 }
+
+/// A view Tab put focus in takes the single-key shortcuts from the one
+/// under the pointer, until a press puts the pointer first again.
+#[test]
+fn a_tabbed_view_takes_the_shortcuts_from_the_hovered_one() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let left = n[0].2 .0 + n[0].2 .1 / 2.0;
+    cursor(&mut app, left);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(0)), "hovered");
+    tab_to(&mut app, n[1].1);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(1)), "tabbed");
+    mouse(&mut app, ButtonState::Pressed);
+    cursor(&mut app, left);
+    mouse(&mut app, ButtonState::Released);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(0)), "pressed");
+}
+
+/// Putting a view's role and name back keeps the bounds Bevy synced: a
+/// screen reader places it, and what's in it, where it is.
+#[test]
+fn a_views_access_keeps_its_bounds() {
+    let mut app = split(900, LayoutPreset::Single);
+    let view = nodes(&mut app)[0].1;
+    let bounds = accesskit::Rect::new(10.0, 20.0, 300.0, 400.0);
+    {
+        let mut access = app
+            .world_mut()
+            .get_mut::<bevy::a11y::AccessibilityNode>(view)
+            .unwrap();
+        // As Bevy leaves it when the view's image changes.
+        access.0.set_role(accesskit::Role::Image);
+        access.0.set_bounds(bounds);
+    }
+    app.update();
+    let access = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(view)
+        .unwrap();
+    assert_eq!(access.0.role(), accesskit::Role::Application);
+    assert_eq!(access.0.label(), Some("View 1"));
+    assert_eq!(access.0.bounds(), Some(bounds));
+}
+
+/// Tab into a view's own rail makes that view the active one too.
+#[test]
+fn tabbing_into_a_views_rail_makes_it_active() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let world = app.world_mut();
+    let stop = crate::test_support::descendants(world, n[1].1)
+        .into_iter()
+        .find(|e| {
+            *e != n[1].1
+                && world
+                    .get::<bevy::input_focus::tab_navigation::TabIndex>(*e)
+                    .is_some_and(|t| t.0 >= 0)
+        })
+        .expect("a stop in view 2's rail");
+    assert_eq!(routing(&app).active, Some(ViewId(0)));
+    tab_to(&mut app, stop);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).active, Some(ViewId(1)));
+    assert_eq!(routing(&app).key_view(), Some(ViewId(1)));
+}

@@ -6,6 +6,7 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
+use gz_bevy::snapshot::SnapshotHold;
 
 use super::{CurrentPhase, Phase};
 
@@ -106,6 +107,42 @@ pub(crate) struct Pressing {
     frames: u32,
     /// The chord down now, released next frame.
     down: Option<Vec<KeyCode>>,
+    /// A screenshot is held until the keys are pressed.
+    held: bool,
+}
+
+/// What `key` means and types, as a keyboard would send it (`shift` held
+/// or not): a letter its character, the named keys theirs.
+fn logical(key: KeyCode, shift: bool) -> (Key, Option<String>) {
+    let named = |k: Key| (k, None);
+    match key {
+        KeyCode::ArrowUp => named(Key::ArrowUp),
+        KeyCode::ArrowDown => named(Key::ArrowDown),
+        KeyCode::ArrowLeft => named(Key::ArrowLeft),
+        KeyCode::ArrowRight => named(Key::ArrowRight),
+        KeyCode::Tab => named(Key::Tab),
+        KeyCode::Home => named(Key::Home),
+        KeyCode::End => named(Key::End),
+        KeyCode::Enter => (Key::Enter, Some("\r".to_string())),
+        KeyCode::Space => (Key::Space, Some(" ".to_string())),
+        KeyCode::Escape => named(Key::Escape),
+        KeyCode::ShiftLeft => named(Key::Shift),
+        KeyCode::ControlLeft => named(Key::Control),
+        KeyCode::AltLeft => named(Key::Alt),
+        KeyCode::SuperLeft => named(Key::Super),
+        _ => {
+            let Some(c) = letter_of(key) else {
+                return named(Key::Unidentified(NativeKey::Unidentified));
+            };
+            let c = if shift { c.to_ascii_uppercase() } else { c }.to_string();
+            (Key::Character(c.as_str().into()), Some(c))
+        }
+    }
+}
+
+/// The letter `key` types, for the letters.
+fn letter_of(key: KeyCode) -> Option<char> {
+    ('a'..='z').find(|c| letter(&c.to_string()) == Some(key))
 }
 
 /// Presses the [`StartKeys`] once the world is live: a chord's keys down
@@ -125,26 +162,38 @@ pub(crate) fn press_start_keys(
     let Ok(window) = windows.single() else {
         return;
     };
-    if phase.0 != Phase::Live {
-        return;
+    // A screenshot waits for the keys.
+    if !pressing.held {
+        pressing.held = true;
+        commands.insert_resource(SnapshotHold(true));
     }
-    let mut send = |key_code: KeyCode, state: ButtonState| {
+    let mut send = |key_code: KeyCode, state: ButtonState, shift: bool| {
+        let (logical_key, text) = logical(key_code, shift);
         input.write(KeyboardInput {
             key_code,
-            logical_key: Key::Unidentified(NativeKey::Unidentified),
+            logical_key,
             state,
-            text: None,
+            // Only a press types.
+            text: text
+                .filter(|_| state == ButtonState::Pressed)
+                .map(|t| t.as_str().into()),
             repeat: false,
             window,
         });
     };
+    // A chord down is released whatever the phase (none stays held).
     if let Some(chord) = pressing.down.take() {
+        let shift = chord.contains(&KeyCode::ShiftLeft);
         for k in chord.into_iter().rev() {
-            send(k, ButtonState::Released);
+            send(k, ButtonState::Released, shift);
         }
         if keys.0.is_empty() {
             commands.remove_resource::<StartKeys>();
+            commands.insert_resource(SnapshotHold(false));
         }
+        return;
+    }
+    if phase.0 != Phase::Live {
         return;
     }
     pressing.frames += 1;
@@ -152,12 +201,38 @@ pub(crate) fn press_start_keys(
         return;
     }
     let chord = keys.0.remove(0);
+    let shift = chord.contains(&KeyCode::ShiftLeft);
     for k in &chord {
-        send(*k, ButtonState::Pressed);
+        send(*k, ButtonState::Pressed, shift);
     }
     pressing.down = Some(chord);
 }
 
 pub(crate) fn build(app: &mut App) {
     app.add_systems(First, press_start_keys);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pressed key says what it means and types, as a keyboard's would.
+    #[test]
+    fn keys_carry_what_they_mean() {
+        assert_eq!(logical(KeyCode::Escape, false), (Key::Escape, None));
+        assert_eq!(logical(KeyCode::ArrowDown, false), (Key::ArrowDown, None));
+        assert_eq!(
+            logical(KeyCode::KeyG, false),
+            (Key::Character("g".into()), Some("g".into()))
+        );
+        assert_eq!(
+            logical(KeyCode::KeyG, true),
+            (Key::Character("G".into()), Some("G".into()))
+        );
+        assert_eq!(
+            logical(KeyCode::Space, false),
+            (Key::Space, Some(" ".into()))
+        );
+        assert_eq!(logical(KeyCode::ShiftLeft, false), (Key::Shift, None));
+    }
 }
