@@ -2215,3 +2215,20 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   | No glyph for two actions | partly | Left: `icons.json` gives Revert and Undo one glyph, Track and Eye one, and Paste borrows Copy's; they need artwork from the design |
 
 - **Tests:** workspace 1,007 passing (4 ignored).
+- **Review fixes:**
+  - a cancelled insert claims no name: a retry of the same model ends
+    when one shows up (one the server took goes at once; one it hasn't
+    answered waits, unseen, for its reply);
+  - a cancelled pointer ends the cube's press (its tooltip came back
+    only on a release or a drag's end); the test checks a press hides
+    the card;
+  - the cube leaves AccessKit's tree, actions and all, under the connect
+    card and in a split view that isn't showing its controls; a test
+    routes an action in two views;
+  - the Workspaces footer follows the store (a footer built before the
+    read catches up), and the failure goes once a good file is written;
+    the defaults aren't written at start over a file kept apart;
+  - the browser's message names its saved workspaces and where the bad
+    copy is kept; natively a browser store says there's none;
+  - the workspaces tests write under `target/test-dirs`, removed by a
+    guard, not the system's temp directory.

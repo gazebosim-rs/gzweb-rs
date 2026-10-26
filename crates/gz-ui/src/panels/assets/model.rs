@@ -195,10 +195,12 @@ pub(crate) struct Insert {
     /// The scene's names that were already its own when it was sent, so
     /// only a new one counts as it showing up.
     pub taken: Vec<String>,
-    /// The user stopped waiting for it (D-121). A `create` can't be
-    /// withdrawn, so it still takes its reply and the name it shows up
-    /// as (not a later insert's), unseen, and goes once it does, fails or
-    /// times out; a model that shows up stays in the world.
+    /// The user stopped waiting for it before the server answered
+    /// (D-121). A `create` can't be withdrawn, so it still takes its reply
+    /// (replies come in order, naming no insert), unseen, and goes then
+    /// or when it times out. It claims no name: a model that shows up
+    /// stays in the world, and a later insert of its name never waits on
+    /// it.
     pub cancelled: bool,
 }
 
@@ -255,17 +257,22 @@ impl Inserts {
         self.list.iter().filter(|i| !i.cancelled)
     }
 
-    /// Stops waiting for insert `id`, still under way (D-121); `false`
-    /// if there is no such insert.
+    /// Stops waiting for insert `id`, still under way (D-121): one the
+    /// server took goes, one it hasn't answered waits, unseen, for its
+    /// reply. `false` if there is no such insert.
     pub(crate) fn cancel(&mut self, id: u32) -> bool {
-        let Some(i) = self
+        let Some(at) = self
             .list
-            .iter_mut()
-            .find(|i| i.id == id && !i.failed() && !i.cancelled)
+            .iter()
+            .position(|i| i.id == id && !i.failed() && !i.cancelled)
         else {
             return false;
         };
-        i.cancelled = true;
+        if self.list[at].stage == InsertStage::Sent {
+            self.list[at].cancelled = true;
+        } else {
+            self.list.remove(at);
+        }
         true
     }
 
@@ -280,8 +287,9 @@ impl Inserts {
             .collect();
         let mut labels = vec![];
         for id in ids {
+            let label = self.list.iter().find(|i| i.id == id).map(Insert::label);
             if self.cancel(id) {
-                labels.extend(self.list.iter().find(|i| i.id == id).map(Insert::label));
+                labels.extend(label);
             }
         }
         labels
@@ -302,7 +310,9 @@ impl Inserts {
             };
             i.since = now;
         }
-        self.list.retain(|i| !(i.cancelled && i.failed()));
+        // A cancelled one's reply is all it waited for.
+        self.list
+            .retain(|i| !(i.cancelled && i.stage != InsertStage::Sent));
     }
 
     /// Ends the accepted inserts that `names` (the scene's) now hold, the

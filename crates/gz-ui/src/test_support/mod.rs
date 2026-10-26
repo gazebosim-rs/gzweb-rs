@@ -124,3 +124,25 @@ pub(crate) fn descendants(world: &World, e: Entity) -> Vec<Entity> {
     }
     out
 }
+
+/// A test's own directory under the workspace's `target/test-dirs` (not
+/// the system's temp directory), removed when the guard drops, a failed
+/// assertion's unwinding too.
+pub(crate) struct TestDir(pub std::path::PathBuf);
+
+impl TestDir {
+    pub(crate) fn new(name: &str) -> Self {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-dirs")
+            .join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        TestDir(dir)
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

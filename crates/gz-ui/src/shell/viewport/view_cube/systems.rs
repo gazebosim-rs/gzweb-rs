@@ -4,8 +4,8 @@
 use accesskit::{Action, ActionData, CustomAction, NodeId, Role};
 use bevy::a11y::{AccessibilityNode, ActionRequest};
 use bevy::picking::events::{
-    PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerMove, PointerOut,
-    PointerPress, PointerRelease,
+    PointerCancel, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerMove,
+    PointerOut, PointerPress, PointerRelease,
 };
 use bevy::picking::Pickable;
 use bevy::prelude::*;
@@ -18,6 +18,7 @@ use super::pick::{self, CubeRegion};
 use super::{CubeImage, CubeLabel, CubeShadow, ViewCube};
 use crate::assets::fonts::text;
 use crate::shell::viewport::ViewCameras;
+use crate::shell::CurrentPhase;
 use crate::theme::{elevation, ColorRole, FontFamily, Theme, TypeStyle};
 use crate::widgets::layout::node_rect;
 use crate::widgets::{a11y, Tooltip, TooltipSide};
@@ -147,11 +148,32 @@ pub(crate) fn name_hover(
     }
 }
 
+/// A cube is in AccessKit's tree, its actions with it, only while it
+/// shows: a world is loaded (not under the connect card) and its view
+/// shows its controls (the active view's, in a split layout; D-95).
+pub(crate) fn cube_access_shown(
+    phase: Option<Res<CurrentPhase>>,
+    mut cubes: Query<(&InheritedVisibility, &mut AccessibilityNode), With<ViewCube>>,
+) {
+    let world = !phase.is_some_and(|p| p.0.no_world());
+    for (visibility, mut access) in &mut cubes {
+        let shown = world && visibility.get();
+        if access.is_hidden() == shown {
+            if shown {
+                access.clear_hidden();
+            } else {
+                access.set_hidden();
+            }
+        }
+    }
+}
+
 /// A screen reader's action on a cube (one of [`cube_access`]'s) snaps
-/// its view to that face's view, as a click on the face does.
+/// its view to that face's view, as a click on the face does; a hidden
+/// cube ([`cube_access_shown`]) takes none.
 pub(crate) fn cube_actions(
     mut requests: MessageReader<ActionRequest>,
-    cubes: Query<Entity, With<ViewCube>>,
+    cubes: Query<(Entity, &AccessibilityNode), With<ViewCube>>,
     views: ViewCameras,
     mut out: MessageWriter<ViewCommand>,
 ) {
@@ -161,9 +183,9 @@ pub(crate) fn cube_actions(
         else {
             continue;
         };
-        let Some(cube) = cubes
+        let Some((cube, _)) = cubes
             .iter()
-            .find(|c| NodeId(c.to_bits()) == request.target_node)
+            .find(|(c, a)| NodeId(c.to_bits()) == request.target_node && !a.is_hidden())
         else {
             continue;
         };
@@ -232,7 +254,8 @@ pub(crate) fn on_cube_press(
     }
 }
 
-/// A release on the cube, or the end of a drag from it, ends its press.
+/// A release on the cube, or the end of a drag from it, ends its press
+/// (a cancelled pointer, [`on_pointer_cancel`], too).
 pub(crate) fn on_cube_release(
     ev: On<PointerRelease>,
     cubes: Query<(), (With<ViewCube>, With<Pressed>)>,
@@ -240,6 +263,19 @@ pub(crate) fn on_cube_release(
 ) {
     if cubes.contains(ev.event_target()) {
         commands.entity(ev.event_target()).remove::<Pressed>();
+    }
+}
+
+/// A cancelled pointer (a touch cancelled, capture lost) sends no release
+/// or drag end, and may be over anything by then: every cube's press
+/// ends, or its tooltip would stay hidden.
+pub(crate) fn on_pointer_cancel(
+    _: On<PointerCancel>,
+    cubes: Query<Entity, (With<ViewCube>, With<Pressed>)>,
+    mut commands: Commands,
+) {
+    for cube in &cubes {
+        commands.entity(cube).remove::<Pressed>();
     }
 }
 

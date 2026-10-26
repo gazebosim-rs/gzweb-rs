@@ -93,59 +93,69 @@ fn a_late_reply_is_not_the_next_inserts() {
 }
 
 /// A cancelled insert stops showing, but a `create` can't be withdrawn
-/// (D-121): it still takes its reply and the name it shows up as, so a
-/// later insert's isn't ended by it; refused, or out of time, it goes
-/// without a failed row.
+/// (D-121): one the server hasn't answered still takes its reply, so the
+/// next insert's isn't taken for it, and goes then (refused, accepted or
+/// out of time) without a failed row. It claims no name: a later insert
+/// of the same model ends when one shows up.
 #[test]
-fn a_cancelled_insert_keeps_its_reply_and_its_name() {
+fn a_cancelled_insert_keeps_its_reply_but_claims_no_name() {
     let mut inserts = Inserts::default();
     let boxed = Insertable::Shape(Shape::Box);
+    // Accepted, cancelled (its download failed, say), retried: the retry
+    // ends on the first new box.
     let a = inserts.sent(boxed.clone(), 0.0, vec![]);
+    inserts.answered(true, 1.0);
     assert!(inserts.cancel(a));
     assert!(!inserts.cancel(a), "once");
-    assert_eq!(inserts.shown().count(), 0);
-    let b = inserts.sent(boxed.clone(), 1.0, vec![]);
-    inserts.answered(true, 2.0);
-    inserts.answered(true, 2.0);
-    assert!(inserts
-        .list
-        .iter()
-        .all(|i| i.stage == InsertStage::Accepted));
-    // The first new box is the cancelled one's: the second still waits.
-    inserts.settle(["box"].into_iter(), 3.0);
-    let ids: Vec<u32> = inserts.list.iter().map(|i| i.id).collect();
-    assert_eq!(ids, [b]);
-    inserts.settle(["box", "box_0"].into_iter(), 3.0);
     assert!(inserts.list.is_empty());
+    let b = inserts.sent(boxed.clone(), 2.0, vec![]);
+    inserts.answered(true, 3.0);
+    inserts.settle(["box"].into_iter(), 4.0);
+    assert!(inserts.list.is_empty(), "{b} ended");
 
-    // Refused, or out of time: gone, unseen; a failed one can't be
-    // cancelled.
+    // Cancelled before the answer: the first reply is its own, the second
+    // the retry's, which then ends on the first new box.
     let c = inserts.sent(boxed.clone(), 10.0, vec![]);
     inserts.cancel(c);
-    inserts.answered(false, 11.0);
+    assert_eq!(inserts.shown().count(), 0);
+    let d = inserts.sent(boxed.clone(), 11.0, vec![]);
+    inserts.answered(true, 12.0);
+    let left: Vec<(u32, InsertStage)> = inserts
+        .list
+        .iter()
+        .map(|i| (i.id, i.stage.clone()))
+        .collect();
+    assert_eq!(left, [(d, InsertStage::Sent)]);
+    inserts.answered(true, 12.0);
+    inserts.settle(["box_0"].into_iter(), 13.0);
     assert!(inserts.list.is_empty());
+    // Refused: gone, unseen.
+    let e = inserts.sent(boxed.clone(), 20.0, vec![]);
+    inserts.cancel(e);
+    inserts.answered(false, 21.0);
+    assert!(inserts.list.is_empty());
+
     let model = Insertable::Model {
         uri: "https://fuel/x".into(),
         name: "x".into(),
     };
-    inserts.sent(model.clone(), 20.0, vec![]);
-    inserts.sent(model, 20.0, vec![]);
-    inserts.answered(true, 21.0);
+    inserts.sent(model.clone(), 30.0, vec![]);
+    inserts.sent(model, 30.0, vec![]);
+    inserts.answered(true, 31.0);
     assert!(inserts.loading("https://fuel/x"));
     assert_eq!(inserts.cancel_model("https://fuel/x"), ["x", "x"]);
     assert!(!inserts.loading("https://fuel/x"));
     assert!(inserts.cancel_model("https://fuel/x").is_empty());
-    inserts.settle([].into_iter(), 21.0 + REPLY_SECS + 1.0);
-    assert_eq!(inserts.list.len(), 1, "the accepted one waits on");
-    inserts.settle([].into_iter(), 21.0 + APPEAR_SECS + 1.0);
+    assert_eq!(inserts.list.len(), 1, "the unanswered one waits");
+    // Out of time, it owes its reply: the next isn't it.
+    inserts.settle([].into_iter(), 31.0 + REPLY_SECS + 1.0);
     assert!(inserts.list.is_empty());
-    // The one that never answered owes its reply: the next isn't it.
-    let d = inserts.sent(boxed, 200.0, vec![]);
+    let f = inserts.sent(boxed, 200.0, vec![]);
     inserts.answered(true, 201.0);
     assert_eq!(inserts.list[0].stage, InsertStage::Sent);
     inserts.settle([].into_iter(), 300.0);
     assert!(inserts.list[0].failed());
-    assert!(!inserts.cancel(d));
+    assert!(!inserts.cancel(f));
 }
 
 /// A local model is named after its URI's last part.

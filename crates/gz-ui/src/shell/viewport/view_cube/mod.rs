@@ -97,8 +97,10 @@ pub(crate) fn build(app: &mut App) {
             (
                 systems::spawn_parts,
                 scene::spawn_cube_scenes,
+                systems::cube_access_shown,
                 systems::cube_actions,
             )
+                .chain()
                 .in_set(GzUiSystems::Behaviour),
         )
         .add_observer(scene::on_cube_removed)
@@ -125,6 +127,7 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(systems::on_cube_press)
         .add_observer(systems::on_cube_release)
         .add_observer(systems::on_cube_drag_end)
+        .add_observer(systems::on_pointer_cancel)
         .add_observer(systems::on_cube_drag_start)
         .add_observer(systems::on_cube_drag)
         .add_observer(systems::on_cube_click);

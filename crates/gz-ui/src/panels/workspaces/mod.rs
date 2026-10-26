@@ -70,6 +70,7 @@ impl Plugin for WorkspacesPanelPlugin {
                     systems::sync_summary,
                     systems::sync_naming,
                     systems::focus_name,
+                    systems::sync_store,
                 )
                     .chain()
                     .run_if(panel_shown(WORKSPACES_PANEL)),

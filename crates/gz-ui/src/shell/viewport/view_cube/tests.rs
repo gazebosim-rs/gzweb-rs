@@ -4,8 +4,8 @@
 
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{
-    Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerMove, PointerOut,
-    PointerPress, PointerRelease,
+    Pointer, PointerCancel, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart,
+    PointerMove, PointerOut, PointerPress, PointerRelease,
 };
 use bevy::picking::hover::Hovered;
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
@@ -757,6 +757,21 @@ fn the_cube_has_a_tooltip_and_an_accessible_name() {
     });
     frames(&mut app, 2);
     assert_eq!(tip(&app).title, CUBE_NAME);
+    // Hovered past the delay, its card shows; a press hides it.
+    use crate::widgets::tooltip::{TooltipCard, TooltipTimer};
+    let card = |app: &mut App| {
+        let w = app.world_mut();
+        w.query_filtered::<&ChildOf, With<TooltipCard>>()
+            .iter(w)
+            .any(|p| p.parent() == entity)
+    };
+    app.world_mut().entity_mut(entity).insert(Hovered(true));
+    frames(&mut app, 1);
+    let mut timer = *app.world().resource::<TooltipTimer>();
+    timer.target = timer.target.map(|(e, _)| (e, -1.0));
+    app.insert_resource(timer);
+    frames(&mut app, 2);
+    assert!(card(&mut app), "the cube's tooltip shows");
     // Pressed until the release, or the end of a drag from it.
     let p = at_uv(&mut app, Vec2::ZERO);
     let press = |app: &mut App| {
@@ -771,6 +786,8 @@ fn the_cube_has_a_tooltip_and_an_accessible_name() {
         assert!(app.world().get::<Pressed>(entity).is_some());
     };
     press(&mut app);
+    frames(&mut app, 2);
+    assert!(!card(&mut app), "a press hides the tooltip");
     app.world_mut().trigger(PointerRelease {
         entity,
         pointer: pointer_at(p),
@@ -785,6 +802,16 @@ fn the_cube_has_a_tooltip_and_an_accessible_name() {
         pointer: pointer_at(p),
         button: PointerButton::Primary,
         distance: Vec2::ZERO,
+    });
+    frames(&mut app, 1);
+    assert!(app.world().get::<Pressed>(entity).is_none());
+    // A cancelled pointer, over anything by then, ends it too.
+    press(&mut app);
+    let image = find::<CubeImage>(&mut app);
+    app.world_mut().trigger(PointerCancel {
+        entity: image,
+        pointer: pointer_at(p),
+        hit: hit(),
     });
     frames(&mut app, 1);
     assert!(app.world().get::<Pressed>(entity).is_none());
@@ -824,4 +851,113 @@ fn the_cubes_actions_snap_its_view() {
         .write_message(request(cube, Action::CustomAction, custom(2)));
     frames(&mut app, 2);
     assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Front)]);
+}
+
+/// A cube is in AccessKit's tree, and takes actions, only while it
+/// shows: not under the connect card, and in a split layout only in the
+/// view that shows its controls (the active one); each routes to its own
+/// view.
+#[test]
+fn only_a_shown_cube_is_named_and_takes_actions() {
+    use crate::shell::viewport::views::{LayoutCommand, LayoutPreset};
+    use crate::shell::CurrentPhase;
+    use accesskit::{Action, ActionData, NodeId, TreeId};
+    use bevy::a11y::{AccessibilityNode, ActionRequest};
+    use gz_bevy::view::controls::ViewRouting;
+    use gz_bevy::view::ViewId;
+
+    #[derive(Resource, Default)]
+    struct Sent(Vec<(Entity, ViewOp)>);
+    let mut app = cube_app(1.0);
+    app.init_resource::<Sent>().add_systems(
+        Last,
+        |mut r: MessageReader<ViewCommand>, mut sent: ResMut<Sent>| {
+            sent.0.extend(r.read().map(|c| (c.view, c.op)));
+        },
+    );
+    let front = |cube: Entity| {
+        ActionRequest(accesskit::ActionRequest {
+            action: Action::CustomAction,
+            target_tree: TreeId::ROOT,
+            target_node: NodeId(cube.to_bits()),
+            data: Some(ActionData::CustomAction(2)),
+        })
+    };
+    let hidden = |app: &App, cube: Entity| {
+        app.world()
+            .get::<AccessibilityNode>(cube)
+            .unwrap()
+            .is_hidden()
+    };
+    let take = |app: &mut App| std::mem::take(&mut app.world_mut().resource_mut::<Sent>().0);
+    // Under the connect card: hidden, and deaf.
+    let mut card = shell_app((1440, 900), 1.0);
+    card.init_resource::<Ops>().add_systems(Last, record);
+    frames(&mut card, 3);
+    assert!(card.world().resource::<CurrentPhase>().0.no_world());
+    let cube = find::<ViewCube>(&mut card);
+    assert!(hidden(&card, cube));
+    card.world_mut().write_message(front(cube));
+    frames(&mut card, 2);
+    assert_eq!(ops(&mut card), []);
+    go_live(&mut card, true);
+    frames(&mut card, 2);
+    assert!(!hidden(&card, cube));
+    let cube = find::<ViewCube>(&mut app);
+    assert!(!hidden(&app, cube));
+
+    // Two views: the active one's cube shows, and routes to its view.
+    app.world_mut()
+        .write_message(LayoutCommand::Preset(LayoutPreset::TwoColumns));
+    frames(&mut app, 30);
+    let cubes = |app: &mut App| {
+        let w = app.world_mut();
+        let cameras: Vec<(Entity, ViewId)> = w
+            .query_filtered::<(Entity, &ViewId), With<MainCamera>>()
+            .iter(w)
+            .map(|(e, v)| (e, *v))
+            .collect();
+        let cubes: Vec<Entity> = w
+            .query_filtered::<Entity, With<ViewCube>>()
+            .iter(w)
+            .collect();
+        let mut by_view: Vec<(ViewId, Entity, Entity)> = cubes
+            .into_iter()
+            .map(|c| {
+                let id =
+                    std::iter::successors(Some(c), |e| w.get::<ChildOf>(*e).map(ChildOf::parent))
+                        .find_map(|e| {
+                            w.get::<crate::shell::viewport::view::ViewNode>(e)
+                                .map(|n| n.0)
+                        })
+                        .unwrap();
+                let camera = cameras.iter().find(|(_, v)| *v == id).unwrap().0;
+                (id, c, camera)
+            })
+            .collect();
+        by_view.sort_by_key(|v| v.0 .0);
+        by_view
+    };
+    let both = cubes(&mut app);
+    assert_eq!(both.len(), 2);
+    let active = app.world().resource::<ViewRouting>().active.unwrap();
+    for (id, cube, camera) in both.iter().copied() {
+        assert_eq!(hidden(&app, cube), id != active, "view {id:?}");
+        app.world_mut().write_message(front(cube));
+        frames(&mut app, 2);
+        let want: Vec<(Entity, ViewOp)> = if id == active {
+            vec![(camera, ViewOp::Snap(SnapView::Front))]
+        } else {
+            vec![]
+        };
+        assert_eq!(take(&mut app), want, "view {id:?}");
+    }
+    // The other view made active: its cube shows and takes the action.
+    let (other, cube, camera) = both.iter().copied().find(|v| v.0 != active).unwrap();
+    app.world_mut().resource_mut::<ViewRouting>().active = Some(other);
+    frames(&mut app, 30);
+    assert!(!hidden(&app, cube));
+    app.world_mut().write_message(front(cube));
+    frames(&mut app, 2);
+    assert_eq!(take(&mut app), [(camera, ViewOp::Snap(SnapView::Front))]);
 }
