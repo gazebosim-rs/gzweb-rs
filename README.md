@@ -115,6 +115,11 @@ snapshot once everything has loaded, then exits.
 ./run.sh       # serves the repo on http://localhost:8000
 ```
 
+`build.sh` drops the wasm's function names and ends with
+`scripts/wasm-budget.sh`, which fails if `gzweb_bg.wasm` gzipped is over its
+budget (14 MB; DECISIONS.md D-120). `KEEP_WASM_NAMES=1 ./build.sh` keeps the
+names, for readable stack traces, and only reports the size.
+
 Open `http://localhost:8000/?url=ws://localhost:9002` in a WebGPU-capable
 browser. `?key=KEY` and `?port=N` are also accepted. Without `url`, the page
 connects to the last server it connected to, else port 9002 on its own host. `?ui=full|minimal` picks the UI mode

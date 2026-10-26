@@ -490,6 +490,14 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   fly keys. The browser swallows chords by the same rule, and the HUD's fly hint and the Teleop
   pad show the layout's caps (Chromium's layout map at start). D-119. Workspace 1006 passing;
   coverage 97.5% lines. check.sh passes.
+- **M10e notes:** performance and the §13 checklist (D-120). `scripts/stress-world.sh` (5,000
+  tree entities); `panels::scene::stress` (a test of the tree's work a frame, `TreeWork`, and an
+  ignored bench). Natively 2.6 to 4.0 ms a frame at 5,000; the quadratic work at a click (undo of
+  Hide others and Isolate, ending Isolate, the footer's selection walk) is linear. The wasm drops
+  its function names and Bevy's audio: 16.5 → 12.78 MB gzipped, budget 14 MB
+  (`scripts/wasm-budget.sh`). Checklist status in the WORKLOG; new tests for the resize and
+  splitter, Esc and the drag action, and §13's icon pairs. Left: a GPU-bound target, the gaps
+  the checklist lists. Workspace 988 passing; coverage 97.2% lines. check.sh passes.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global

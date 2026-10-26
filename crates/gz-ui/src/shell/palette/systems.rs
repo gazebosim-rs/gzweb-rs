@@ -89,7 +89,7 @@ const COMMANDS: &[&str] = &[
 const SETTINGS: &[&str] = &["ui.theme_light", "ui.theme_dark", "ui.theme_system"];
 
 /// A command's icon.
-fn command_icon(id: &str) -> IconId {
+pub(crate) fn command_icon(id: &str) -> IconId {
     match id {
         "file.save" | "file.save_as" => IconId::Save,
         "sim.play_pause" => IconId::Play,

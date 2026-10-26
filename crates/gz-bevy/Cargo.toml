@@ -11,7 +11,11 @@ gz-collada.workspace = true
 prost.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-bevy = { version = "0.20", features = ["webgpu", "webgl2", "dds", "jpeg", "tga"] }
+# Bevy's 3D and UI profiles, without its audio (D-120). The 2D profile adds
+# nothing to these: bevy_ui and bevy_ui_render bring the sprite crates.
+bevy = { version = "0.20", default-features = false, features = [
+    "3d", "ui", "webgpu", "webgl2", "dds", "jpeg", "tga",
+] }
 async-channel = "2"
 crossbeam-channel = "0.5"
 tobj = { version = "4.0.5", default-features = false }

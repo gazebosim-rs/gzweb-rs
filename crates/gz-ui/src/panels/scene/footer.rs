@@ -4,6 +4,7 @@
 //! builds its buttons into it, since Isolate has an on state and each
 //! button's tooltip follows the selection.
 
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::Activate;
@@ -69,33 +70,42 @@ pub(crate) fn build_footer(ev: On<Add<SceneFooter>>, theme: Res<Theme>, mut comm
     });
 }
 
-/// The world's top-level models, and those the selection is part of.
-fn models(
+/// The world's top-level models.
+fn models(index: &GzIndex, nodes: &Query<(Entity, &GzEntity, &ChildOf)>) -> Vec<Entity> {
+    nodes
+        .iter()
+        .filter(|(_, g, c)| is_model(index, g, c))
+        .map(|(e, ..)| e)
+        .collect()
+}
+
+fn is_model(index: &GzIndex, g: &GzEntity, parent: &ChildOf) -> bool {
+    g.kind == NodeKind::Model && Some(parent.parent()) == index.root
+}
+
+/// The top-level models the selection is part of: each selected entity's
+/// ancestors up to its model, so the cost follows the selection, not the
+/// world.
+fn picked(
     index: &GzIndex,
     selection: &Selection,
     nodes: &Query<(Entity, &GzEntity, &ChildOf)>,
     parents: &Query<&ChildOf>,
-) -> (Vec<Entity>, Vec<Entity>) {
-    let all: Vec<Entity> = nodes
-        .iter()
-        .filter(|(_, g, c)| g.kind == NodeKind::Model && Some(c.parent()) == index.root)
-        .map(|(e, ..)| e)
-        .collect();
-    let picked = selection
+) -> HashSet<Entity> {
+    selection
         .entities
         .iter()
         .chain(selection.parts.iter().map(|p| &p.owner))
         .filter_map(|e| {
             let mut e = *e;
             loop {
-                if all.contains(&e) {
+                if nodes.get(e).is_ok_and(|(_, g, c)| is_model(index, g, c)) {
                     return Some(e);
                 }
                 e = parents.get(e).ok()?.parent();
             }
         })
-        .collect();
-    (all, picked)
+        .collect()
 }
 
 /// Enabled while the selection is part of a model (Isolate also while
@@ -111,20 +121,26 @@ pub(crate) fn footer_states(
     mut isolated: ResMut<Isolated>,
     buttons: Query<(Entity, &FooterButton, Has<InteractionDisabled>, Has<Active>)>,
     added: Query<(), Added<FooterButton>>,
+    mut gone: RemovedComponents<GzEntity>,
     mut commands: Commands,
 ) {
-    let stale = isolated.0.as_ref().is_some_and(|saved| {
-        !saved
-            .iter()
-            .any(|(p, _)| nodes.iter().any(|(_, g, _)| &g.path == p))
-    });
+    // Looked at as entities go or the scene changes (while the panel was
+    // closed too) and as Isolate starts, not every frame.
+    let went = gone.read().count() > 0;
+    let stale = (went || index.is_changed() || isolated.is_changed())
+        && isolated.0.as_ref().is_some_and(|saved| {
+            let paths: HashSet<&str> = saved.iter().map(|(p, _)| p.as_str()).collect();
+            !nodes
+                .iter()
+                .any(|(_, g, _)| paths.contains(g.path.as_str()))
+        });
     if stale {
         isolated.0 = None;
     }
     if !selection.is_changed() && !isolated.is_changed() && added.is_empty() {
         return;
     }
-    let (_, picked) = models(&index, &selection, &nodes, &parents);
+    let picked = picked(&index, &selection, &nodes, &parents);
     let on = isolated.0.is_some();
     for (e, which, disabled, active) in &buttons {
         let enabled = match which {
@@ -173,10 +189,11 @@ pub(crate) fn on_footer(
     let Ok(which) = buttons.get(ev.entity) else {
         return;
     };
-    let (all, picked) = models(&index, &selection, &nodes, &parents);
+    let picked = picked(&index, &selection, &nodes, &parents);
     if picked.is_empty() && isolated.0.is_none() {
         return;
     }
+    let all = models(&index, &nodes);
     // What Isolate saves: every model's visibility, by path.
     let saved: Vec<(String, Visibility)> = all
         .iter()
@@ -202,16 +219,18 @@ pub(crate) fn on_footer(
     let verb = match which {
         FooterButton::NewGroup => return,
         FooterButton::HideOthers => {
-            for e in all.iter().filter(|e| !picked.contains(e)) {
+            for e in all.iter().filter(|e| !picked.contains(*e)) {
                 set(*e, Visibility::Hidden);
             }
             "hide others"
         }
         FooterButton::Isolate => {
             if let Some(saved) = isolated.0.take() {
+                let by_path: HashMap<&str, Entity> =
+                    nodes.iter().map(|(e, g, _)| (g.path.as_str(), e)).collect();
                 for (path, v) in &saved {
-                    if let Some((e, ..)) = nodes.iter().find(|(_, g, _)| &g.path == path) {
-                        set(e, *v);
+                    if let Some(e) = by_path.get(path.as_str()) {
+                        set(*e, *v);
                     }
                 }
                 changes.push(Change::Isolated {

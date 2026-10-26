@@ -81,7 +81,7 @@ const NO_LOADING: &str = "The websocket server can't load a world";
 
 impl WorldItem {
     /// Its label, icon, binding and, for one the server never allows, why.
-    fn parts(
+    pub(crate) fn parts(
         self,
     ) -> (
         &'static str,

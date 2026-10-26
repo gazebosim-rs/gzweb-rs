@@ -9,7 +9,9 @@ license = "Apache-2.0"
 [dependencies]
 gz-bevy.workspace = true
 gz-core.workspace = true
-bevy = "0.20"
+# Bevy's 3D and UI profiles, without its audio (D-120). The 2D profile adds
+# nothing to these: bevy_ui and bevy_ui_render bring the sprite crates.
+bevy = { version = "0.20", default-features = false, features = ["3d", "ui"] }
 # AccessKit node types; the same version Bevy's bevy_a11y uses.
 accesskit = { version = "0.24", default-features = false }
 # The World menu's screenshot as a PNG (Bevy's image loading has it already).
