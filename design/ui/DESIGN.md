@@ -464,7 +464,7 @@ As built (D-115, M9d): the Link inspector's Add visual, Add collision and Add se
 One shared selection across views, tree and inspector (option in Layout popover to unsync later). Selecting in the tree frames nothing automatically; F frames. Hover in the tree highlights the entity in all views with a 1px `selection_outline` at 50% alpha.
 
 ### 6.5 Focus and keyboard navigation
-Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar; disabled controls are skipped. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5. A focused control takes Space and Enter (DECISIONS.md D-58a).
+Tab order: top bar → activity bar → sidebar → viewport (receives keys) → inspector → status bar; disabled controls are skipped. Arrow keys move within the tool group, activity bar, tree and menus. Focus-visible ring per §5. A focused control takes Space and Enter (DECISIONS.md D-58a). As built (D-117): each view is a tab stop that takes the viewport's keys and becomes the active view, its ring inside its edge; the arrows move focus along the activity bar and, checking as they go, through radio groups (the tool group, the rail's drag group, chips); an arrow with a modifier stays a shortcut.
 
 ---
 

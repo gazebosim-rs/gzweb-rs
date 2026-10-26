@@ -45,7 +45,7 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
 use crate::theme::visuals::Visuals;
-use crate::theme::{radius, Fill, FocusRing};
+use crate::theme::{border, radius, ColorRole, Fill, FocusRing, Ring};
 
 pub use activity::activity_button;
 pub use badge::{badge, BadgeKind};
@@ -89,6 +89,16 @@ pub fn clickable(visuals: Visuals, role: Role, label: impl Into<String>) -> impl
         visuals,
         Fill(visuals.fill),
         a11y(role, label),
+    )
+}
+
+/// The focus ring inside a tab stop's edge, for one that fills its place
+/// (a list): the §5 ring outside it would fall on its neighbours.
+pub fn inset_focus_ring() -> impl Bundle {
+    (
+        FocusRing,
+        Ring(ColorRole::Clear),
+        Outline::new(px(border::FOCUS_RING), px(-border::FOCUS_RING), Color::NONE),
     )
 }
 

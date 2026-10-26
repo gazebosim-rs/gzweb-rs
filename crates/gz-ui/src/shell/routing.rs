@@ -8,10 +8,13 @@
 //! pointer like any UI, but a press on them or keyboard focus in them keeps
 //! the view's keys (§3.4: the active view is the one that got the last
 //! press, "including on its rail or cube"; shortcuts.json: viewport keys
-//! fire while "viewport or its rail has focus").
+//! fire while "viewport or its rail has focus"). A view is a tab stop
+//! itself (§6.5: the viewport receives keys; DECISIONS.md D-117): keyboard
+//! focus on it, from Tab or a press, gives the views the keys and makes
+//! it the active view.
 
 use bevy::ecs::system::SystemParam;
-use bevy::input_focus::InputFocus;
+use bevy::input_focus::{InputFocus, InputFocusVisible};
 use bevy::picking::hover::HoverMap;
 use bevy::picking::pointer::PointerId;
 use bevy::prelude::*;
@@ -96,6 +99,18 @@ impl PointerOver<'_, '_> {
         self.hits().any(|e| self.is_view_control(e))
     }
 
+    /// The view whose node `e` is.
+    fn view_of(&self, e: Entity) -> Option<ViewId> {
+        self.views.get(e).ok().map(|(v, ..)| v.0)
+    }
+
+    /// The view `e` is in: its node, or one of its controls (rail, cube).
+    fn view_holding(&self, e: Entity) -> Option<ViewId> {
+        std::iter::once(e)
+            .chain(self.parents.iter_ancestors(e))
+            .find_map(|a| self.view_of(a))
+    }
+
     /// `e` is a UI node other than the view's.
     fn is_ui(&self, e: Entity) -> bool {
         self.nodes.contains(e)
@@ -112,28 +127,48 @@ impl PointerOver<'_, '_> {
 /// Pointer and key routing (spec §3.4, §9.3): the camera gets the pointer
 /// only over the view's node and not over any UI node; the view keeps the
 /// keys after a press in it, and loses them to a press elsewhere.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn route_pointer(
     over: PointerOver,
     buttons: Res<ButtonInput<MouseButton>>,
     focus: Option<Res<InputFocus>>,
+    visible: Option<Res<InputFocusVisible>>,
     mut view_focus: ResMut<ViewFocus>,
     mut routing: ResMut<ViewRouting>,
 ) {
     let hovered = over.view();
     let pointer = hovered.is_some() && !over.over_ui();
     let mut active = routing.active;
+    let mut focused = routing.focused;
     if buttons.get_just_pressed().next().is_some() {
         view_focus.0 = pointer || over.over_view_controls();
         // A press in a view, its rail or cube included, makes it active.
         if hovered.is_some() && (pointer || over.over_view_controls()) {
             active = hovered;
         }
+        // The pointer leads again: shortcuts go to the view under it.
+        focused = None;
     }
     // A widget that takes keyboard focus takes the keys too (the window
-    // itself holds the focus at start), unless it is one of the view's.
-    if let Some(e) = focus.filter(|f| f.is_changed()).and_then(|f| f.get()) {
-        if over.is_ui(e) {
-            view_focus.0 = over.is_view_control(e);
+    // itself holds the focus at start), unless it is one of the view's; a
+    // view, or one of its controls, that takes it has them, and is the
+    // active one. Tab there also gives it the view's shortcuts.
+    if let Some(f) = focus.filter(|f| f.is_changed()) {
+        let tabbed = visible.as_ref().is_some_and(|v| v.0);
+        match f.get() {
+            Some(e) => {
+                if let Some(view) = over.view_holding(e) {
+                    view_focus.0 = true;
+                    active = Some(view);
+                    focused = tabbed.then_some(view);
+                } else {
+                    if over.is_ui(e) {
+                        view_focus.0 = false;
+                    }
+                    focused = None;
+                }
+            }
+            None => focused = None,
         }
     }
     routing.set_if_neq(ViewRouting {
@@ -141,6 +176,7 @@ pub(crate) fn route_pointer(
         keys: pointer || view_focus.0,
         hovered,
         active: active.or(Some(ViewId(0))),
+        focused,
     });
 }
 

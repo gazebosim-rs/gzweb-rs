@@ -55,6 +55,9 @@
 //!   TOPIC's fields. With `--echo`, Plot opens under Topics.
 //! - `--layout single|two-columns|two-rows|one-plus-two|quad` starts the
 //!   full UI's viewport in that layout (DECISIONS.md D-90).
+//! - `--keys KEY,…` presses those keys in turn once the world is live
+//!   (`tab`, `shift+tab`, `down`, …), so a capture can show keyboard
+//!   focus (DECISIONS.md D-117).
 //! - `--no-vsync` presents frames as fast as they render, to measure.
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
@@ -108,6 +111,8 @@ struct Args {
     palette: Option<String>,
     /// `--menu`.
     menu: Option<String>,
+    /// `--keys`.
+    keys: Option<gz_ui::shell::StartKeys>,
     /// `--layout`.
     layout: Option<gz_ui::shell::LayoutPreset>,
     /// `--no-vsync`: frames as fast as they render (measuring).
@@ -124,7 +129,7 @@ const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert 
                      [--select MODEL,…] [--edit] [--scene-filter TEXT] [--scene-expand] [--echo TOPIC] \
                      [--plot TOPIC[:FIELD,…]] [--assets TAB[:QUERY]] \
                      [--sensors [NAME]] [--teleop] [--console] [--workspaces] [--pop-out PANEL,…] [--palette QUERY] [--menu world|snap|context|workspace] \
-                     [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
+                     [--keys KEY,…] [--layout single|two-columns|two-rows|one-plus-two|quad] [--no-vsync]\n\
                      --ui: full (default) is the workbench, minimal the 3D view with camera and \
                      sim keys only, gallery the widget gallery (no server; --screenshot works); \
                      --snapshot runs with no UI, and so does --screenshot unless --ui is given.\n\
@@ -258,6 +263,7 @@ fn parse_args(
     let mut pop_out = vec![];
     let mut palette = None;
     let mut menu = None;
+    let mut keys = None;
     let mut timeout_ms = 60000.0;
     let mut layout = None;
     let mut no_vsync = false;
@@ -349,6 +355,12 @@ fn parse_args(
                     ));
                 }
                 menu = Some(m);
+            }
+            "--keys" => {
+                keys = Some(
+                    gz_ui::shell::StartKeys::parse(&value()?)
+                        .map_err(|e| format!("--keys: {e}"))?,
+                );
             }
             "--pop-out" => {
                 pop_out = value()?
@@ -442,6 +454,9 @@ fn parse_args(
     if menu.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--menu needs --ui full".into());
     }
+    if keys.is_some() && (no_ui || gallery || ui != UiMode::Full) {
+        return Err("--keys needs --ui full".into());
+    }
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
@@ -504,6 +519,7 @@ fn parse_args(
         pop_out,
         palette,
         menu,
+        keys,
         layout,
         no_vsync,
     })))
@@ -602,6 +618,7 @@ fn command() -> Result<Command, String> {
         pop_out: vec![],
         palette: None,
         menu: None,
+        keys: None,
         no_vsync: false,
         layout: get("layout")
             .and_then(|l| l.parse().map_err(|e| bevy::log::warn!("?layout: {e}")).ok()),
@@ -858,6 +875,9 @@ fn main() -> AppExit {
         }
         if let Some(menu) = args.menu {
             app.insert_resource(gz_ui::shell::StartMenu(menu));
+        }
+        if let Some(keys) = args.keys {
+            app.insert_resource(keys);
         }
         if let Some(layout) = args.layout {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
@@ -1174,6 +1194,21 @@ mod tests {
         assert_eq!(
             run_args(&["--menu", "context"], None).menu.as_deref(),
             Some("context")
+        );
+        assert_eq!(
+            run_args(&["--keys", "tab,shift+tab"], None).keys,
+            Some(gz_ui::shell::StartKeys(vec![
+                vec![KeyCode::Tab],
+                vec![KeyCode::ShiftLeft, KeyCode::Tab]
+            ]))
+        );
+        assert_eq!(
+            parse(&["--keys", "tab,meta"], None).unwrap_err(),
+            "--keys: no key 'meta'"
+        );
+        assert_eq!(
+            parse(&["--keys", "tab", "--ui", "minimal"], None).unwrap_err(),
+            "--keys needs --ui full"
         );
         assert!(parse(&["--menu", "edit"], None)
             .unwrap_err()

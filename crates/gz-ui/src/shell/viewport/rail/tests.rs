@@ -468,10 +468,9 @@ fn tab_walks_top_bar_to_status_bar_through_the_rail_in_order() {
         .into_iter()
         .filter(|e| region_of(app.world(), *e) == ViewportArea)
         .collect();
-    let mut want: Vec<Entity> = DRAG_ACTIONS
-        .into_iter()
-        .map(|a| radio(&mut app, a))
-        .collect();
+    // The view first, a tab stop of its own (D-117), then its rail.
+    let mut want = vec![find::<ViewNode>(&mut app)];
+    want.extend(DRAG_ACTIONS.into_iter().map(|a| radio(&mut app, a)));
     want.push(with(&mut app, RailButton::Projection));
     want.push(find::<CameraModeButton>(&mut app));
     want.push(with(&mut app, RailButton::Focus));

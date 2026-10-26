@@ -40,9 +40,15 @@ pub struct SnapshotRequest {
     pub capture_at_secs: Option<f64>,
 }
 
+/// While on, a screenshot waits (the UI's `--keys` still pressing):
+/// settling isn't enough.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SnapshotHold(pub bool);
+
 #[allow(clippy::too_many_arguments)]
 pub fn snapshot_when_settled(
     req: Res<SnapshotRequest>,
+    hold: Option<Res<SnapshotHold>>,
     time: Res<Time<Real>>,
     status: Res<GzStatus>,
     inbox: Res<GzInbox>,
@@ -106,7 +112,8 @@ pub fn snapshot_when_settled(
         && scenes_instanced
         && terrains.iter().all(|t| t.built)
         && gz_materials.settled()
-        && now - inbox.last_activity_secs >= req.settle_secs;
+        && now - inbox.last_activity_secs >= req.settle_secs
+        && !hold.is_some_and(|h| h.0);
 
     // A capture time replaces the settling rule.
     let ready = if req.capture_at_secs.is_some() {
@@ -749,6 +756,35 @@ mod tests {
             .cloned()
             .collect();
         assert_eq!(exits, [AppExit::from_code(1)]);
+    }
+
+    /// A hold (the UI's `--keys` still pressing) keeps a settled scene
+    /// from being captured until it goes.
+    #[test]
+    fn a_hold_waits_before_capturing() {
+        let out = out_path("held");
+        let mut app = app_with(SnapshotRequest {
+            out: Some(out.clone()),
+            screenshot: None,
+            settle_secs: 0.0,
+            timeout_secs: 1e9,
+            capture_at_secs: None,
+        });
+        app.insert_resource(SnapshotHold(true));
+        app.update();
+        app.world_mut().resource_mut::<GzIndex>().scene = Some(
+            gz_core::scene::SceneDesc::from_msg(&Default::default(), Default::default()),
+        );
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(exit_code(&mut app), None, "held");
+        assert!(!out.exists());
+        app.insert_resource(SnapshotHold(false));
+        app.update();
+        assert!(exit_code(&mut app).is_some());
+        assert!(out.exists());
+        std::fs::remove_file(out).unwrap();
     }
 
     #[test]
