@@ -15,8 +15,9 @@ if [ ! -f "$WASM" ]; then
   exit 2
 fi
 
-raw=$(stat -c %s "$WASM")
-gz=$(gzip -9 -c "$WASM" | wc -c)
+# Byte counts by wc, as numbers (BSD's wc pads them with spaces).
+raw=$(($(wc -c <"$WASM")))
+gz=$(($(gzip -9 -c "$WASM" | wc -c)))
 mb() { awk -v b="$1" 'BEGIN { printf "%.2f MB", b / 1e6 }'; }
 echo "gzweb_bg.wasm: $(mb "$raw") raw, $(mb "$gz") gzipped (budget $(mb "$BUDGET"))"
 if [ "$gz" -gt "$BUDGET" ]; then

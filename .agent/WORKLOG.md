@@ -2133,8 +2133,11 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Stress world:** `scripts/stress-world.sh [MODELS] [--dynamic]` writes a
   world of 1,250 models (base and arm links, a box visual each, the hinge
   between them): 5,000 tree entities, 5,003 with the sun and the ground.
-  `--dynamic` fixes each base to the world and lets the arms swing, so the
-  server streams every link's pose. Served by a fresh Jetty
+  `--dynamic` fixes each base to the world and starts each arm tilted 0.2
+  rad about its hinge (upright it is balanced and never moves), so the arms
+  swing and the server streams their poses; two snapshots of a 4-model copy
+  a few seconds apart found `unit_0/arm` at z 0.26 and then 0.73. Served by
+  a fresh Jetty
   (`gz-websocket-jetty-pub`) on 127.0.0.1:9040, a 50-model copy on 9041.
 - **Live measurement** (`--release`, `--no-vsync`, 1440 × 900, Ryzen 9
   9950X3D, RTX 5090; a temporary patch, kept in
@@ -2198,10 +2201,13 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   |---|---|---|
   | main | 88.57 MB | 16.50 MB |
   | without the name section | 48.00 MB | 12.92 MB |
-  | and without Bevy's 2D and audio | 47.40 MB | 12.78 MB |
+  | and without Bevy's audio | 47.40 MB | 12.78 MB |
   | `wasm-opt -Oz` (not used) | 39.56 MB | 12.85 MB (of 12.92) |
 
-  zstd -19 makes the shipped one 8.4 MB; `gzweb.js` is 176 KB. `build.sh`
+  Only the audio went (bevy_audio, and with it lewton and ogg): `bevy_ui`
+  turns on `bevy_sprite` and `bevy_ui_render` turns on
+  `bevy_sprite_render`, so dropping the 2D profile removes no crate. zstd
+  -19 makes the shipped one 8.4 MB; `gzweb.js` is 176 KB. `build.sh`
   removes the names (`KEEP_WASM_NAMES=1` keeps them) and runs
   `scripts/wasm-budget.sh`: 14 MB gzipped. `wasm-opt` came from a Dart
   SDK's binaryen 128 (`-O2` 45.29 MB, 13.00 gzipped); not installed here.
@@ -2228,9 +2234,14 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   | Panel states, no-world card, banner | partly | Scene, Topics, Plot, Sensors, Console, Inspector, card and banner tested. Missing: Teleop's "Nobody is listening" banner (the server gives no subscriber counts, D-104), Workspaces' load-failure state (a `warn!` only), Fuel's spinner in the input and download progress with cancel |
   | A focused live field freezes | done | `unedited_text_commits_nothing` (the NumberField) |
   | Delete's Undo chip, ⌘Z | done | `a_delete_shows_an_undo_chip`, `a_delete_or_a_spawn_is_undone_through_the_server` |
-  | No glyph for two actions | partly | new `the_named_icon_pairs_differ` (§13's pairs). Missing: `icons.json` itself gives revert and undo one glyph (both in the World menu) and track and eye one (Track beside Show in the context menu); Paste borrows Copy. They need glyphs from the design |
-  | Camera regions after resize, splitter, UI scale | done (M10e); UI scale #65 | new `the_camera_matches_its_node_after_a_resize_and_a_splitter_drag`; scale at start in `the_3d_view_follows_the_view_node_at_any_scale`; a runtime scale change is #65's |
+  | No glyph for two actions | partly | new `the_named_icon_pairs_differ`: §13's pairs have different shapes (paths, rects, circles; the notes aside), and so do the icons the UI gives those actions (palette commands, the Rotate tool, the World menu's Revert, the panels). Missing: `icons.json` itself gives revert and undo one glyph (both in the World menu) and track and eye one (Track beside Show in the context menu); Paste borrows Copy. They need glyphs from the design |
+  | Camera regions after resize, splitter, UI scale | done (M10e); UI scale #65 | new `the_camera_matches_its_node_after_a_resize_and_a_splitter_drag` (headless: the resize writes the window's size, sends `WindowResized` and sets the UI camera's target size by hand, as the renderer would; the drag is bevy_picking's drag events on the sidebar's splitter); scale at start in `the_3d_view_follows_the_view_node_at_any_scale`; a runtime scale change is #65's |
   | Theme, workspace, layout persist | done | `switching_and_saving_persist`, `the_store_is_read_at_start` (native); the web's `localStorage` path has no browser test |
   | Web: right-drag, browser alternates | done | `the_canvas_swallows_only_the_listed_chords`, `right_drag_pans_and_middle_drag_zooms`; no browser run |
 
 - **Tests:** workspace 988 passing (5 ignored); coverage 97.2% lines. check.sh passes.
+- **Review fixes:** `wasm-budget.sh` counts bytes with `wc -c` (BSD has no
+  `stat -c`); the payload notes say only Bevy's audio went (the 2D
+  profile's crates come with `bevy_ui`); `--dynamic` tilts the arms so they
+  swing; the icon test compares the shapes only (not the notes), and the icons the actions
+  use; the splitter step of the camera-region test is a pointer drag.

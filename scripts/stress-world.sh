@@ -9,8 +9,8 @@
 # entities a model, so the default's tree has 5,000 entities plus the sun
 # and the ground plane's two. The models are static unless --dynamic, so
 # the server sends no pose stream; with it, each base is fixed to the world
-# by a joint (a fifth entity) and each arm swings, so the server streams
-# every link's pose.
+# by a joint (a fifth entity) and each arm starts tilted 0.2 rad about its
+# hinge, so it swings under gravity and the server streams the arms' poses.
 #
 # Serve it with the Jetty image (README "Running Gazebo (Docker)"):
 #
@@ -70,8 +70,14 @@ for ((i = 0; i < models; i++)); do
   x=$(metres $(((i % side - side / 2) * step)))
   y=$(metres $(((i / side - side / 2) * step)))
   fixed=
+  # Upright, the arm's centre (z 0.75) is straight above the hinge (z 0.5):
+  # balanced, it would never move.
+  arm='0 0 0.75 0 0 0'
   if [ "$static" = false ]; then
     fixed='<joint name="fixed" type="fixed"><parent>world</parent><child>base</child></joint>'
+    # Rolled 0.2 rad about the hinge: the centre 0.25 m from it, at
+    # (0, -0.25 sin 0.2, 0.5 + 0.25 cos 0.2).
+    arm='0 -0.0497 0.745 0.2 0 0'
   fi
   cat <<EOF
     <model name="unit_$i">
@@ -85,7 +91,7 @@ for ((i = 0; i < models; i++)); do
         </visual>
       </link>
       <link name="arm">
-        <pose>0 0 0.75 0 0 0</pose>
+        <pose>$arm</pose>
         <visual name="visual">
           <geometry><box><size>0.1 0.1 0.5</size></box></geometry>
           <material><diffuse>0.9 0.6 0.2 1</diffuse></material>

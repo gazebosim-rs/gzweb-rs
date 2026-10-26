@@ -487,7 +487,7 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   tree entities); `panels::scene::stress` (a test of the tree's work a frame, `TreeWork`, and an
   ignored bench). Natively 2.6 to 4.0 ms a frame at 5,000; the quadratic work at a click (undo of
   Hide others and Isolate, ending Isolate, the footer's selection walk) is linear. The wasm drops
-  its function names and Bevy's 2D and audio: 16.5 → 12.78 MB gzipped, budget 14 MB
+  its function names and Bevy's audio: 16.5 → 12.78 MB gzipped, budget 14 MB
   (`scripts/wasm-budget.sh`). Checklist status in the WORKLOG; new tests for the resize and
   splitter, Esc and the drag action, and §13's icon pairs. Left: a GPU-bound target, the gaps
   the checklist lists. Workspace 988 passing; coverage 97.2% lines. check.sh passes.

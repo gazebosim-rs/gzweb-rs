@@ -422,14 +422,47 @@ fn icon_ids_follow_icons_json() {
     }
 }
 
+/// An icon's glyph in `icons.json`: its shapes (paths, rects, circles)
+/// and fill, without its note.
+fn glyph(icons: &Value, name: &str) -> String {
+    let mut shape = icons["icons"][name]
+        .as_object()
+        .unwrap_or_else(|| panic!("no icon {name}"))
+        .clone();
+    shape.remove("note");
+    assert!(
+        ["paths", "rects", "circles"]
+            .iter()
+            .any(|k| shape.contains_key(*k)),
+        "{name} has no shapes"
+    );
+    Value::Object(shape).to_string()
+}
+
 /// §13: no glyph does two different actions. The pairs the spec names
-/// differ (Scene against the menu's "more", the nearest it has to a
-/// hamburger). Two pairs in `icons.json` itself share a glyph, revert and
-/// undo, track and eye; they wait on the design (WORKLOG M10e).
+/// have different shapes (Scene against the menu's "more", the nearest
+/// it has to a hamburger), and so do the icons the UI gives those actions:
+/// the palette's commands, the tool, the World menu's item and the panels.
+/// Two pairs in `icons.json` itself share a glyph, revert and undo, track
+/// and eye; they wait on the design (WORKLOG M10e).
 #[test]
 fn the_named_icon_pairs_differ() {
+    use crate::panels::{PanelRegistry, SCENE, TELEOP};
+    use crate::shell::palette::command_icon;
+    use crate::shell::top_bar::world_menu::WorldItem;
+    use crate::shell::{Tool, WORKSPACES_PANEL};
     let icons = json("icons.json");
-    let glyph = |name: &str| icons["icons"][name].to_string();
+    let differ = |group: &[&str]| {
+        for (i, a) in group.iter().enumerate() {
+            for b in &group[i + 1..] {
+                assert_ne!(
+                    glyph(&icons, a),
+                    glyph(&icons, b),
+                    "{a} and {b} share a glyph"
+                );
+            }
+        }
+    };
     let groups: [&[&str]; 4] = [
         &["reset", "rotate", "revert"],
         &["activity_scene", "more"],
@@ -437,13 +470,28 @@ fn the_named_icon_pairs_differ() {
         &["focus", "track", "activity_teleop"],
     ];
     for group in groups {
-        for (i, a) in group.iter().enumerate() {
-            assert_ne!(glyph(a), "null", "{a}");
-            for b in &group[i + 1..] {
-                assert_ne!(glyph(a), glyph(b), "{a} and {b} share a glyph");
-            }
-        }
+        differ(group);
     }
+    // The icons the actions show.
+    let app = crate::test_support::shell::shell_app((1440, 900), 1.0);
+    let panels = app.world().resource::<PanelRegistry>();
+    let panel = |id| panels.get(id).expect("registered").icon.name();
+    let revert = WorldItem::Revert.parts().1.expect("an icon").name();
+    differ(&[
+        command_icon("sim.reset").name(),
+        Tool::Rotate.icon().name(),
+        revert,
+    ]);
+    differ(&[panel(SCENE), "more"]);
+    differ(&[
+        panel(WORKSPACES_PANEL),
+        command_icon("view.split_right").name(),
+    ]);
+    differ(&[
+        command_icon("view.focus").name(),
+        command_icon("view.track").name(),
+        panel(TELEOP),
+    ]);
 }
 
 /// The string literals in `code`, in order (escapes left as written):

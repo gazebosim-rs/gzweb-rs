@@ -1,11 +1,16 @@
 //! The spec's §13 checklist items for the view that the other tests leave
 //! out (M10e): the camera's region matches the view's node after a window
-//! resize and a splitter drag, and Esc never changes the camera's drag
-//! action.
+//! resize and a pointer drag of the sidebar's splitter, and Esc never
+//! changes the camera's drag action. Without a renderer, the resize is the
+//! window's new size, winit's `WindowResized` and the UI camera's target
+//! size written by hand (what the renderer would compute); the drag is
+//! bevy_picking's drag events on the splitter, as a pointer sends them.
 
 use bevy::camera::RenderTargetInfo;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::ButtonState;
+use bevy::picking::events::{PointerDrag, PointerDragEnd, PointerDragStart};
+use bevy::picking::pointer::PointerButton;
 use bevy::prelude::*;
 use bevy::window::WindowResized;
 use gz_bevy::camera::MainCamera;
@@ -78,7 +83,7 @@ fn the_camera_matches_its_node_after_a_resize_and_a_splitter_drag() {
     frames(&mut app, 3);
     let resized = matches_its_node(&mut app, "resized");
     assert!(resized.width() < start.width() && resized.height() < start.height());
-    // The sidebar's splitter moves right, by its keys.
+    // The sidebar's splitter is dragged 60 px right.
     let bar = {
         let world = app.world_mut();
         world
@@ -88,13 +93,30 @@ fn the_camera_matches_its_node_after_a_resize_and_a_splitter_drag() {
             .expect("the sidebar's splitter")
             .0
     };
-    for _ in 0..3 {
-        focused_key(&mut app, bar, KeyCode::ArrowRight);
-    }
+    let world = app.world_mut();
+    world.trigger(PointerDragStart {
+        entity: bar,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        hit: hit(),
+    });
+    world.flush();
+    world.trigger(PointerDrag {
+        entity: bar,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(60.0, 0.0),
+        delta: Vec2::new(60.0, 0.0),
+    });
+    world.trigger(PointerDragEnd {
+        entity: bar,
+        pointer: pointer(),
+        button: PointerButton::Primary,
+        distance: Vec2::new(60.0, 0.0),
+    });
     frames(&mut app, 2);
-    let dragged = matches_its_node(&mut app, "after the splitter");
-    let step = 3.0 * crate::widgets::splitter::KEY_STEP;
-    assert_eq!(dragged.min.x, resized.min.x + step);
+    let dragged = matches_its_node(&mut app, "after the drag");
+    assert_eq!(dragged.min.x, resized.min.x + 60.0);
     assert_eq!(dragged.max.x, resized.max.x);
 }
 
