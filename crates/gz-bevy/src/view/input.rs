@@ -150,6 +150,19 @@ impl KeyMods {
         }
     }
 
+    /// Follows a modifier key going down or up; whether `key` is one.
+    pub fn note(&mut self, key: KeyCode, down: bool) -> bool {
+        let held = match key {
+            KeyCode::ControlLeft | KeyCode::ControlRight => &mut self.ctrl,
+            KeyCode::ShiftLeft | KeyCode::ShiftRight => &mut self.shift,
+            KeyCode::AltLeft | KeyCode::AltRight => &mut self.alt,
+            KeyCode::SuperLeft | KeyCode::SuperRight => &mut self.super_key,
+            _ => return false,
+        };
+        *held = down;
+        true
+    }
+
     /// Ctrl, Alt or ⌘ (not Shift): a command chord is being typed.
     pub fn command(self) -> bool {
         self.ctrl || self.alt || self.super_key
@@ -391,6 +404,12 @@ pub struct InputMap {
     /// browser's own shortcuts keep working everywhere else.
     pub web_prevent_default: Vec<Chord>,
     pub platform: Platform,
+    /// Letters no free key types on the user's layout: every key that
+    /// types one is a positional binding's (Colemak's F is fly up's
+    /// `KeyE`), so a plain press of it never fires the letter's binding,
+    /// and labels don't offer it ([`shown_chords`](Self::shown_chords)).
+    /// Kept from the [`KeyLayout`] by [`super::layout::mark_unreachable`].
+    pub unreachable: Vec<KeyCode>,
 }
 
 /// The file's layout. Unknown fields are errors, so a typo (`"triger"`)
@@ -484,6 +503,7 @@ impl InputMap {
             web_reserved,
             web_prevent_default,
             platform,
+            unreachable: Vec::new(),
         };
         map.mark_taps();
         Ok(map)
@@ -508,6 +528,31 @@ impl InputMap {
 
     pub fn binding(&self, id: &str) -> Option<&Binding> {
         self.bindings.iter().find(|b| b.id == id)
+    }
+
+    /// The chords of `b` that labels show on this platform: all but a
+    /// plain letter that is [`unreachable`](Self::unreachable) on the
+    /// user's layout (D-119; Colemak's ⇧F still follows).
+    pub fn shown_chords<'a>(&'a self, b: &'a Binding) -> impl Iterator<Item = &'a Chord> + 'a {
+        b.chords(self.platform).iter().filter(move |c| {
+            b.positional || c.mods != Mods::default() || !self.unreachable.contains(&c.key)
+        })
+    }
+
+    /// The letters [`unreachable`](Self::unreachable) on `layout`: every
+    /// key that types one is a positional binding's.
+    pub fn unreachable_on(&self, layout: &KeyLayout) -> Vec<KeyCode> {
+        let placed: Vec<KeyCode> = self
+            .bindings
+            .iter()
+            .filter(|b| b.positional)
+            .flat_map(|b| b.chords(self.platform).iter().map(|c| c.key))
+            .collect();
+        LETTERS
+            .iter()
+            .copied()
+            .filter(|l| layout.typing(*l).all(|p| placed.contains(&p)))
+            .collect()
     }
 
     fn live<'a>(&'a self, scopes: &'a [Scope]) -> impl Iterator<Item = &'a Binding> + 'a {
@@ -603,12 +648,24 @@ impl InputMap {
     }
 
     /// The key a browser `keydown` is to the chords the canvas swallows
-    /// ([`web_cancels`](Self::web_cancels)), from its `code` and `key`: the
-    /// letter it types on the user's layout ([`super::layout::dom_letter`]:
-    /// Ctrl+K is the key that types K), else the physical key for the
-    /// listed keys that aren't letters (Space, Tab, the arrows).
-    pub fn web_key(&self, code: &str, key: &str, held: KeyMods) -> Option<KeyCode> {
-        super::layout::dom_letter(code, key, held.command()).or_else(|| {
+    /// ([`web_cancels`](Self::web_cancels)), from its `code` and `key`,
+    /// once `layout` (the listener's own) has noted the press as the app's
+    /// does ([`KeyLayout::press`]): the letter it types on the user's
+    /// layout (Ctrl+K is the key that types K), else the physical key for
+    /// the listed keys that aren't letters (Space, Tab, the arrows). The
+    /// listener sees the same keydowns as the app, so they agree.
+    pub fn web_key(
+        &self,
+        code: &str,
+        key: &str,
+        held: KeyMods,
+        layout: &mut KeyLayout,
+    ) -> Option<KeyCode> {
+        let physical = super::layout::dom_physical(code);
+        if let Some(p) = physical {
+            layout.press(p, &super::layout::dom_key(key), held);
+        }
+        physical.and_then(|p| layout.letter(p)).or_else(|| {
             self.web_prevent_default
                 .iter()
                 .map(|c| c.key)
@@ -1446,10 +1503,13 @@ mod tests {
         let map = spec();
         let shift = [KeyCode::ShiftLeft];
         let ctrl = [KeyCode::ControlLeft];
+        let alt = [KeyCode::AltLeft];
+        // AltGr arrives as Ctrl+Alt on Windows.
+        let altgr = [KeyCode::ControlLeft, KeyCode::AltLeft];
         for (name, rows) in LAYOUTS {
             let layout = learned(rows);
             for k in ROWS {
-                for mods in [&[][..], &shift, &ctrl] {
+                for mods in [&[][..], &shift, &ctrl, &alt, &altgr] {
                     let ids = fired(&map, &layout, mods, k);
                     assert!(ids.len() <= 1, "{name} {mods:?} {k:?}: {ids:?}");
                 }
@@ -1494,31 +1554,173 @@ mod tests {
         assert_eq!(on("russian", &[], KeyCode::KeyE), ["view.fly_up"]);
     }
 
+    fn held(ctrl: bool, alt: bool, super_key: bool) -> KeyMods {
+        KeyMods {
+            ctrl,
+            alt,
+            super_key,
+            shift: false,
+        }
+    }
+
     /// The canvas swallows ⌘K on the key that types K, and Space, Tab and
     /// the arrows by place.
     #[test]
     fn the_browser_swallows_letters_by_the_layout() {
         let map = spec();
-        let ctrl = KeyMods {
-            ctrl: true,
-            ..default_mods()
-        };
+        let ctrl = held(true, false, false);
         let none = default_mods();
         let cancels = |code: &str, key: &str, held: KeyMods| {
-            map.web_key(code, key, held)
+            map.web_key(code, key, held, &mut KeyLayout::default())
                 .is_some_and(|k| map.web_cancels(k, held, false))
         };
-        assert_eq!(map.web_key("KeyV", "k", ctrl), Some(KeyCode::KeyK));
+        let web_key = |code: &str, key: &str, held: KeyMods| {
+            map.web_key(code, key, held, &mut KeyLayout::default())
+        };
+        assert_eq!(web_key("KeyV", "k", ctrl), Some(KeyCode::KeyK));
         assert!(cancels("KeyV", "k", ctrl));
         // Dvorak's `KeyK` types T: the browser's new tab.
         assert!(!cancels("KeyK", "t", ctrl));
         assert!(cancels("KeyK", "л", ctrl));
-        assert_eq!(map.web_key("Space", " ", none), Some(KeyCode::Space));
+        assert_eq!(web_key("Space", " ", none), Some(KeyCode::Space));
         assert!(cancels("Space", " ", none));
-        assert_eq!(map.web_key("Tab", "Tab", none), Some(KeyCode::Tab));
+        assert_eq!(web_key("Tab", "Tab", none), Some(KeyCode::Tab));
         assert!(cancels("ArrowRight", "ArrowRight", ctrl));
-        assert_eq!(map.web_key("KeyM", ",", none), None);
-        assert_eq!(map.web_key("Digit1", "&", none), None);
+        assert_eq!(web_key("KeyM", ",", none), None);
+        assert_eq!(web_key("Digit1", "&", none), None);
+    }
+
+    /// The listener and the app learn from the same keydowns by the same
+    /// rules, so what the canvas swallows is what the app runs: across a
+    /// switch from Dvorak to Russian with Ctrl, Option chords on a Mac
+    /// AZERTY, and non-Latin keys with Ctrl.
+    #[test]
+    fn the_browser_and_the_app_agree() {
+        let map = InputMap {
+            platform: Platform::Web,
+            ..spec()
+        };
+        let ctrl = held(true, false, false);
+        let option = held(false, true, false);
+        let cmd_option = held(false, true, true);
+        let plain = default_mods();
+        let presses: &[(&str, KeyCode, &str, KeyMods)] = &[
+            // Dvorak: `KeyS` types O, `KeyV` K.
+            ("KeyS", KeyCode::KeyS, "o", plain),
+            ("KeyV", KeyCode::KeyV, "k", ctrl),
+            ("KeyS", KeyCode::KeyS, "o", ctrl),
+            // Russian: the US places.
+            ("KeyS", KeyCode::KeyS, "ы", ctrl),
+            ("KeyK", KeyCode::KeyK, "л", ctrl),
+            ("KeyV", KeyCode::KeyV, "м", ctrl),
+            // Back to a Latin layout (AZERTY), then Option chords.
+            ("KeyQ", KeyCode::KeyQ, "a", plain),
+            ("KeyW", KeyCode::KeyW, "∑", option),
+            ("KeyW", KeyCode::KeyW, "z", plain),
+            ("KeyW", KeyCode::KeyW, "∑", option),
+            ("KeyW", KeyCode::KeyW, "Ω", cmd_option),
+            ("KeyS", KeyCode::KeyS, "ß", option),
+        ];
+        let mut app = KeyLayout::default();
+        let mut listener = KeyLayout::default();
+        let full = [Scope::Global, Scope::Viewport, Scope::Minimal, Scope::Text];
+        let mut fired = Vec::new();
+        for (code, key, typed, mods) in presses {
+            app.press(*key, &super::super::layout::dom_key(typed), *mods);
+            let web = map.web_key(code, typed, *mods, &mut listener);
+            assert_eq!(web, app.letter(*key), "{code} {typed} {mods:?}");
+            let mut input = ButtonInput::<KeyCode>::default();
+            for (on, k) in [
+                (mods.ctrl, KeyCode::ControlLeft),
+                (mods.alt, KeyCode::AltLeft),
+                (mods.super_key, KeyCode::SuperLeft),
+            ] {
+                if on {
+                    input.press(k);
+                }
+            }
+            input.press(*key);
+            let ids: Vec<String> = map
+                .just_pressed(Keys::new(&input, Some(&app)), &full)
+                .map(|b| b.id.clone())
+                .collect();
+            // A chord the canvas swallows is one the app runs.
+            let swallowed = web.is_some_and(|k| map.web_cancels(k, *mods, false));
+            let listed = ["ui.command_palette", "file.save", "file.open"];
+            assert_eq!(
+                swallowed,
+                ids.iter().any(|id| listed.contains(&id.as_str())),
+                "{code} {typed} {mods:?}: {ids:?}"
+            );
+            fired.push(ids);
+        }
+        assert_eq!(fired[2], ["file.open"]);
+        // After the switch, Ctrl and `KeyS` is Save, not Dvorak's O.
+        assert_eq!(fired[3], ["file.save"]);
+        assert_eq!(fired[4], ["ui.command_palette"]);
+        // Option+W is Close view (web's Alt+W) on AZERTY's Z key only once
+        // the key has been pressed plain: before, it is the US place
+        // (D-119's limit without a layout map).
+        assert_eq!(fired[7], ["view.close"]);
+        assert!(fired[9].is_empty());
+    }
+
+    /// D-119: a letter a fly key takes on the layout isn't offered by the
+    /// labels (Colemak's F and R); Shift's chords still are.
+    #[test]
+    fn labels_leave_out_letters_the_fly_keys_take() {
+        let mut map = spec();
+        let colemak = learned(LAYOUTS[4].1);
+        map.unreachable = map.unreachable_on(&colemak);
+        assert!(map.unreachable.contains(&KeyCode::KeyF));
+        assert!(map.unreachable.contains(&KeyCode::KeyR));
+        assert!(!map.unreachable.contains(&KeyCode::KeyG));
+        let shown = |map: &InputMap, id: &str| {
+            map.shown_chords(map.binding(id).unwrap())
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert!(shown(&map, "view.focus").is_empty());
+        assert!(shown(&map, "tool.rotate").is_empty());
+        assert_eq!(shown(&map, "view.follow"), [chord("shift+F")]);
+        assert_eq!(shown(&map, "overlay.grid"), [chord("G")]);
+        assert_eq!(shown(&map, "view.fly_up").len(), 1);
+        // Until a key is known, it types its own letter: nothing is taken
+        // but the fly keys' own letters.
+        let us = map.unreachable_on(&KeyLayout::default());
+        assert!(us.iter().all(|k| matches!(
+            k,
+            KeyCode::KeyW
+                | KeyCode::KeyA
+                | KeyCode::KeyS
+                | KeyCode::KeyD
+                | KeyCode::KeyQ
+                | KeyCode::KeyE
+        )));
+        map.unreachable = us;
+        assert_eq!(shown(&map, "view.focus"), [chord("F")]);
+        // Ctrl and the key are a chord, not the fly key's.
+        assert_eq!(shown(&map, "file.save"), [chord("mod+S")]);
+    }
+
+    /// Dvorak, then Russian: Ctrl and `KeyS` (`ы`) is Save.
+    #[test]
+    fn a_chord_after_a_layout_switch_uses_the_new_layout() {
+        let map = spec();
+        let mut layout = learned(LAYOUTS[3].1);
+        let ctrl = [KeyCode::ControlLeft];
+        assert_eq!(fired(&map, &layout, &ctrl, KeyCode::KeyS), ["file.open"]);
+        layout.press(
+            KeyCode::KeyS,
+            &bevy::input::keyboard::Key::Character("ы".into()),
+            held(true, false, false),
+        );
+        assert_eq!(fired(&map, &layout, &ctrl, KeyCode::KeyS), ["file.save"]);
+        assert_eq!(
+            fired(&map, &layout, &[], KeyCode::KeyU),
+            Vec::<String>::new()
+        );
+        assert_eq!(fired(&map, &layout, &[], KeyCode::KeyG), ["overlay.grid"]);
     }
 
     #[test]

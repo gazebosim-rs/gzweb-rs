@@ -298,7 +298,9 @@ impl Plugin for ViewerControls {
             .insert_resource(ActiveScopes(Self::scopes(self.mode)))
             .add_systems(
                 PreUpdate,
-                super::layout::learn_layout.after(bevy::input::InputSystems),
+                (super::layout::learn_layout, super::layout::mark_unreachable)
+                    .chain()
+                    .after(bevy::input::InputSystems),
             )
             .add_systems(
                 Update,
@@ -925,16 +927,38 @@ pub fn fly_input(
         Option<Res<super::gizmo::GizmoState>>,
     ),
     mut out: MessageWriter<ViewCommand>,
+    mut held_by_drag: Local<Vec<KeyCode>>,
 ) {
-    // An armed Teleop drives with these keys instead. A gizmo drag takes
-    // X, Y and Z, which a layout can put on a fly key (AZERTY's Z is
-    // `KeyW`), and the camera stays put under the drag (D-119).
-    if driving.is_some_and(|d| d.0) || gizmo.is_some_and(|g| g.captures()) {
+    // An armed Teleop drives with these keys instead.
+    if driving.is_some_and(|d| d.0) {
         return;
     }
+    // A gizmo drag takes X, Y and Z, which a layout can put on a fly key
+    // (AZERTY's Z is `KeyW`), and the camera stays put under the drag. A
+    // key held through it flies only once pressed again (D-119).
+    if gizmo.is_some_and(|g| g.captures()) {
+        let new: Vec<KeyCode> = keys
+            .get_pressed()
+            .copied()
+            .filter(|k| !is_modifier(*k) && !held_by_drag.contains(k))
+            .collect();
+        held_by_drag.extend(new);
+        return;
+    }
+    held_by_drag.retain(|k| keys.pressed(*k));
+    let mut fresh;
+    let keys = if held_by_drag.is_empty() {
+        &*keys
+    } else {
+        fresh = keys.clone();
+        for k in held_by_drag.iter().copied() {
+            fresh.release(k);
+        }
+        &fresh
+    };
     let scopes = routing.key_scopes(&scopes.0);
     let dir: Vec3 = map
-        .held(Keys::new(&keys, Some(&layout)), &scopes)
+        .held(Keys::new(keys, Some(&layout)), &scopes)
         .filter_map(|b| match b.action {
             Some(Action::Fly(d)) => Some(d.vector()),
             _ => None,

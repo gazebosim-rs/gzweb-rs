@@ -488,7 +488,7 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   letter); digits, arrows and named keys stay physical. The fly keys and `teleop.drive` are
   positional (`input::POSITIONAL`) and win a plain press of their keys; a gizmo drag holds the
   fly keys. The browser swallows chords by the same rule, and the HUD's fly hint and the Teleop
-  pad show the layout's caps (Chromium's layout map at start). D-119. Workspace 999 passing;
+  pad show the layout's caps (Chromium's layout map at start). D-119. Workspace 1006 passing;
   coverage 97.5% lines. check.sh passes.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the

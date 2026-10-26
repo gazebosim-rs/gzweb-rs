@@ -63,7 +63,7 @@ const KEY_HINTS: &[(&[&str], &str)] = &[
 
 /// The controls, as `map` binds them on its platform: each binding's first
 /// chord, so the hint follows `shortcuts.json`; the fly keys by what their
-/// caps show on `layout` (D-119).
+/// caps show on `layout`, and no letter a fly key takes there (D-119).
 pub fn hint(map: &InputMap, layout: &KeyLayout) -> String {
     let mut parts = vec![MOUSE_HINT.to_string()];
     for (ids, what) in KEY_HINTS {
@@ -71,7 +71,7 @@ pub fn hint(map: &InputMap, layout: &KeyLayout) -> String {
             .iter()
             .filter_map(|id| map.binding(id))
             .filter_map(|b| {
-                let c = b.chords(map.platform).first()?;
+                let c = map.shown_chords(b).next()?;
                 Some(b.chord_label(c, map.platform, layout))
             })
             .collect();
@@ -150,7 +150,8 @@ pub fn update_hint(
     layout: Option<Res<KeyLayout>>,
     mut query: Query<&mut Text, With<HintText>>,
 ) {
-    let Some(layout) = layout.filter(|l| l.is_changed()) else {
+    let changed = map.as_ref().is_some_and(|m| m.is_changed());
+    let Some(layout) = layout.filter(|l| changed || l.is_changed()) else {
         return;
     };
     let text = map.map_or_else(
@@ -356,6 +357,33 @@ mod tests {
         let text = hints.single(&world).unwrap().0.clone();
         assert!(text.contains("| F focus |"), "{text}");
         assert!(text.contains("| Z Q S D A E move |"), "{text}");
+    }
+
+    /// On Colemak F is fly up's key: the hint doesn't offer F for focus.
+    #[test]
+    fn the_hint_leaves_out_a_letter_a_fly_key_takes() {
+        let mut world = hud_world();
+        world.insert_resource(InputMap::builtin());
+        let mut layout = KeyLayout::default();
+        for (k, s) in [
+            (KeyCode::KeyE, "f"),
+            (KeyCode::KeyF, "t"),
+            (KeyCode::KeyS, "r"),
+            (KeyCode::KeyD, "s"),
+        ] {
+            layout.learn(k, s);
+        }
+        world.insert_resource(layout);
+        world
+            .run_system_once(crate::view::layout::mark_unreachable)
+            .unwrap();
+        world.run_system_once(update_hint).unwrap();
+        let mut hints = world.query_filtered::<&Text, With<HintText>>();
+        let text = hints.single(&world).unwrap().0.clone();
+        assert!(!text.contains("F focus"), "{text}");
+        assert!(text.contains("| H home |"), "{text}");
+        assert!(text.contains("| W A R S Q F move |"), "{text}");
+        assert!(text.contains("| Shift+F follow |"), "{text}");
     }
 
     #[test]

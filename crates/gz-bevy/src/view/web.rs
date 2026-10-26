@@ -18,7 +18,9 @@
 //!   its own focus off the canvas. A letter is the key that types it on
 //!   the user's layout ([`InputMap::web_key`], DECISIONS.md D-119): with
 //!   Dvorak, Ctrl and the key printed K opens the palette, and the key
-//!   printed T (`KeyK`) is the browser's new tab.
+//!   printed T (`KeyK`) is the browser's new tab. The listener learns the
+//!   layout from the keydowns it sees, as the app does from the same ones
+//!   ([`KeyLayout::press`]), so it swallows what the app runs.
 //!
 //! Chromium's `navigator.keyboard.getLayoutMap()`, where the page has it,
 //! tells [`KeyLayout`] what every letter key types before any is pressed,
@@ -34,8 +36,8 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 
 use super::controls::BrowserWheel;
-use super::input::{dom_code, InputMap, KeyMods, LETTERS};
-use super::layout::KeyLayout;
+use super::input::{InputMap, KeyMods};
+use super::layout::{dom_physical, KeyLayout};
 
 thread_local! {
     /// What the listeners saw since the last frame: a `ctrlKey` wheel event,
@@ -45,9 +47,11 @@ thread_local! {
     static GESTURE_SCALE: Cell<f64> = const { Cell::new(1.0) };
     /// A UI text field in the canvas has keyboard focus.
     static TEXT_FOCUS: Cell<bool> = const { Cell::new(false) };
-    /// The browser's layout map, once it answers: each letter key's
-    /// `code` and what it types.
+    /// The browser's layout map, once it answers: each key's `code` and
+    /// what it types.
     static LAYOUT_MAP: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    /// What the canvas listener has learned of the layout.
+    static LISTENER_LAYOUT: RefCell<Option<KeyLayout>> = const { RefCell::new(None) };
 }
 
 /// The `localStorage` key of the last server the page connected to
@@ -159,6 +163,13 @@ fn read_layout_map() {
         };
         let each = Closure::<dyn FnMut(JsValue, JsValue)>::new(|typed: JsValue, code: JsValue| {
             if let (Some(code), Some(typed)) = (code.as_string(), typed.as_string()) {
+                if let Some(key) = dom_physical(&code) {
+                    LISTENER_LAYOUT.with(|l| {
+                        l.borrow_mut()
+                            .get_or_insert_with(KeyLayout::default)
+                            .learn(key, &typed);
+                    });
+                }
                 LAYOUT_MAP.with(|m| m.borrow_mut().push((code, typed)));
             }
         });
@@ -170,14 +181,14 @@ fn read_layout_map() {
     });
 }
 
-/// Teaches [`KeyLayout`] the layout map's letter keys once it arrives.
+/// Teaches [`KeyLayout`] the layout map once it arrives.
 fn learn_layout_map(layout: Option<ResMut<KeyLayout>>) {
     let entries = LAYOUT_MAP.with(|m| std::mem::take(&mut *m.borrow_mut()));
     let Some(mut layout) = layout.filter(|_| !entries.is_empty()) else {
         return;
     };
     for (code, typed) in entries {
-        if let Some(key) = LETTERS.iter().copied().find(|k| dom_code(*k) == code) {
+        if let Some(key) = dom_physical(&code) {
             layout.learn(key, &typed);
         }
     }
@@ -267,10 +278,16 @@ fn listen(selector: &str, map: &InputMap) {
                 super_key: k.meta_key(),
             };
             let typing = TEXT_FOCUS.with(Cell::get);
-            if map
-                .web_key(&k.code(), &k.key(), held)
-                .is_some_and(|key| map.web_cancels(key, held, typing))
-            {
+            let key = LISTENER_LAYOUT.with(|l| {
+                let mut l = l.borrow_mut();
+                map.web_key(
+                    &k.code(),
+                    &k.key(),
+                    held,
+                    l.get_or_insert_with(KeyLayout::default),
+                )
+            });
+            if key.is_some_and(|key| map.web_cancels(key, held, typing)) {
                 e.prevent_default();
             }
         }),

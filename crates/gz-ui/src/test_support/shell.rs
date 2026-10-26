@@ -93,7 +93,12 @@ pub(crate) fn shell_app_from(size: (u32, u32), scale: f32, plugins: PluginGroupB
         .init_resource::<gz_bevy::view::KeyLayout>()
         .add_systems(
             PreUpdate,
-            gz_bevy::view::layout::learn_layout.after(bevy::input::InputSystems),
+            (
+                gz_bevy::view::layout::learn_layout,
+                gz_bevy::view::layout::mark_unreachable,
+            )
+                .chain()
+                .after(bevy::input::InputSystems),
         )
         .add_systems(
             Update,

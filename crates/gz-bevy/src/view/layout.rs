@@ -7,14 +7,20 @@
 //!
 //! What counts as a letter ([`typed_letter`]): a Latin letter typed, in
 //! either case, is that letter. Another ASCII character (`,` on AZERTY's
-//! `KeyM`) is no letter. Anything else (Cyrillic, Greek, a dead key, a key
-//! with no character) falls back to the key's own US letter, so ⌘K and G
-//! keep their places on a Russian layout, as other apps do. Positional
+//! `KeyM`) is no letter. Anything else (Cyrillic, Greek, an accented
+//! letter) falls back to the key's own US letter, so ⌘K and G keep their
+//! places on a Russian layout, as other apps do; a dead key or a key with
+//! no character says nothing new. A letter of another script typed without
+//! Alt (Russian's `ы`) means the user switched layouts, and so does a
+//! Latin letter typed plain after one: what was learned belonged to the
+//! other layout and is forgotten. The browser's canvas listener keeps a
+//! [`KeyLayout`] of its own, fed the same keydowns by the same rules, so
+//! what it swallows is what the app runs. Positional
 //! bindings ([`POSITIONAL`](super::input::POSITIONAL): the fly keys and
 //! the Teleop drive keys) and keys that aren't letters (digits, arrows,
 //! Space) match the physical key, as before.
 
-use bevy::input::keyboard::{Key, KeyCode, KeyboardInput, NativeKeyCode};
+use bevy::input::keyboard::{Key, KeyCode, KeyboardFocusLost, KeyboardInput, NativeKey};
 use bevy::input::{ButtonInput, ButtonState};
 use bevy::prelude::*;
 
@@ -28,29 +34,47 @@ pub struct KeyLayout {
     /// The letter each key typed as it last went down; `None` for a key
     /// that typed something else.
     letters: Vec<(KeyCode, Option<KeyCode>)>,
-    /// The character each key types without Ctrl, Alt or ⌘, as its cap
+    /// The character each key types with no modifier at all, as its cap
     /// shows it (`Z` on AZERTY's `KeyW`), for the positional keys' labels.
     caps: Vec<(KeyCode, char)>,
+    /// The layout in use types another script than Latin (Russian).
+    foreign: bool,
 }
 
 /// A US layout: every key types its own letter.
 pub static US: KeyLayout = KeyLayout {
     letters: Vec::new(),
     caps: Vec::new(),
+    foreign: false,
 };
 
 impl KeyLayout {
-    /// Notes `physical` going down, typing `logical`, with Ctrl, Alt or ⌘
-    /// held (`command`) or not. Whether that changed what it types.
-    pub fn press(&mut self, physical: KeyCode, logical: &Key, command: bool) -> bool {
+    /// Notes `physical` going down, typing `logical`, with `mods` held.
+    /// Whether that changed what the keys type.
+    pub fn press(&mut self, physical: KeyCode, logical: &Key, mods: KeyMods) -> bool {
         let typed = match logical {
             Key::Character(s) => Some(s.as_str()),
             _ => None,
         };
+        let mut changed = false;
+        // Alt (and AltGr, Ctrl+Alt) types symbols of any script (Option+P
+        // is π on a Mac); Ctrl and ⌘ leave the layout's letter, so they
+        // show a switch too.
+        if let Some(c) = typed.and_then(one_char).filter(|_| !mods.alt) {
+            let foreign = c.is_alphabetic() && !is_latin(c);
+            let latin = c.is_ascii_alphabetic() && !mods.command();
+            if (foreign && !self.foreign) || (latin && self.foreign) {
+                changed = !(self.letters.is_empty() && self.caps.is_empty());
+                self.letters.clear();
+                self.caps.clear();
+                self.foreign = foreign;
+            }
+        }
         let before = self.letters.iter().find(|(k, _)| *k == physical);
-        let letter = typed_letter(physical, typed, command, before.map(|(_, l)| *l));
-        let mut changed = set(&mut self.letters, physical, letter);
-        if let (false, Some(cap)) = (command, typed.and_then(cap)) {
+        let letter = typed_letter(physical, typed, mods.command(), before.map(|(_, l)| *l));
+        changed |= set(&mut self.letters, physical, letter);
+        let plain = mods == KeyMods::default();
+        if let (true, Some(cap)) = (plain, typed.and_then(cap)) {
             changed |= set(&mut self.caps, physical, cap);
         }
         changed
@@ -59,7 +83,18 @@ impl KeyLayout {
     /// Learns what `physical` types without modifiers (`typed`, as a
     /// `KeyboardEvent.key` or a layout map has it). Whether it changed.
     pub fn learn(&mut self, physical: KeyCode, typed: &str) -> bool {
-        self.press(physical, &Key::Character(typed.into()), false)
+        self.press(physical, &dom_key(typed), KeyMods::default())
+    }
+
+    /// The physical keys that type the letter `key`: those learned to,
+    /// and the key itself while nothing is known of it.
+    pub fn typing(&self, key: KeyCode) -> impl Iterator<Item = KeyCode> + '_ {
+        let own = own_letter(key).filter(|k| !self.letters.iter().any(|(p, _)| p == k));
+        self.letters
+            .iter()
+            .filter(move |(_, l)| *l == Some(key))
+            .map(|(p, _)| *p)
+            .chain(own)
     }
 
     /// The letter `physical` types for the shortcuts: as it last went
@@ -113,24 +148,84 @@ fn own_letter(key: KeyCode) -> Option<KeyCode> {
     LETTERS.contains(&key).then_some(key)
 }
 
-/// One printable character, as a cap shows it (upper case).
-fn cap(typed: &str) -> Option<char> {
+/// `typed` if it is one character.
+fn one_char(typed: &str) -> Option<char> {
     let mut chars = typed.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) if !c.is_control() && !c.is_whitespace() => {
-            Some(c.to_uppercase().next().unwrap_or(c))
-        }
+        (Some(c), None) => Some(c),
         _ => None,
     }
+}
+
+/// One printable character, as a cap shows it (upper case).
+fn cap(typed: &str) -> Option<char> {
+    one_char(typed)
+        .filter(|c| !c.is_control() && !c.is_whitespace())
+        .map(|c| c.to_uppercase().next().unwrap_or(c))
+}
+
+/// Whether `c` is written in the Latin script (accented letters too).
+fn is_latin(c: char) -> bool {
+    c <= '\u{24F}'
+        || ('\u{1E00}'..='\u{1EFF}').contains(&c)
+        || ('\u{2C60}'..='\u{2C7F}').contains(&c)
+        || ('\u{A720}'..='\u{A7FF}').contains(&c)
+        || ('\u{AB30}'..='\u{AB6F}').contains(&c)
+}
+
+/// A `KeyboardEvent.key` as Bevy's logical key: one character, or a key
+/// without one (`Enter`, `Dead`).
+pub fn dom_key(key: &str) -> Key {
+    match one_char(key) {
+        Some(_) => Key::Character(key.into()),
+        None if key == "Dead" => Key::Dead(None),
+        None => Key::Unidentified(NativeKey::Unidentified),
+    }
+}
+
+/// The key a `KeyboardEvent.code` names, among those that can type a
+/// letter on some layout (the letters, digits and punctuation: AZERTY's
+/// `m` is on `Semicolon`, Dvorak's `z` on `Slash`).
+pub fn dom_physical(code: &str) -> Option<KeyCode> {
+    const OTHERS: [KeyCode; 22] = [
+        KeyCode::Digit0,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+        KeyCode::Semicolon,
+        KeyCode::Quote,
+        KeyCode::Comma,
+        KeyCode::Period,
+        KeyCode::Slash,
+        KeyCode::BracketLeft,
+        KeyCode::BracketRight,
+        KeyCode::Backslash,
+        KeyCode::Backquote,
+        KeyCode::Minus,
+        KeyCode::Equal,
+        KeyCode::IntlBackslash,
+    ];
+    LETTERS
+        .iter()
+        .chain(OTHERS.iter())
+        .copied()
+        .find(|k| dom_code(*k) == code)
 }
 
 /// The letter a press of `physical` types for the shortcuts, from the
 /// character the layout gives it (`typed`; `None` for a named or dead
 /// key): a Latin letter in either case is that letter's key; another ASCII
-/// character is no letter; anything else falls back to the key's own
-/// letter. With Ctrl, Alt or ⌘ held (`command`) a character that isn't a
-/// Latin letter says nothing about the layout (Option+W types `∑` on a
-/// Mac), so the key types what it typed `before`, if that is known.
+/// character is no letter; any other character falls back to the key's own
+/// letter. No character (a dead key, `Unidentified`) says nothing about
+/// the layout, and with Ctrl, Alt or ⌘ held (`command`) neither does a
+/// character that isn't a Latin letter (Option+W types `∑` on a Mac): the
+/// key types what it typed `before`, if that is known, else its own.
 pub fn typed_letter(
     physical: KeyCode,
     typed: Option<&str>,
@@ -147,23 +242,10 @@ pub fn typed_letter(
             Some(LETTERS[(c.to_ascii_lowercase() as u8 - b'a') as usize])
         }
         _ if command => before.unwrap_or_else(|| own_letter(physical)),
+        None => before.unwrap_or_else(|| own_letter(physical)),
         Some(c) if c.is_ascii() => None,
         _ => own_letter(physical),
     }
-}
-
-/// The letter a browser `keydown` types for the shortcuts, from its `code`
-/// (`KeyQ`) and `key` (`a`), as [`typed_letter`] reads a press: the page's
-/// canvas listener has no [`KeyLayout`] of its own.
-pub fn dom_letter(code: &str, key: &str, command: bool) -> Option<KeyCode> {
-    // A key that isn't a letter key types a letter only as a Latin letter
-    // (AZERTY's `m` is on `Semicolon`).
-    let physical = LETTERS
-        .iter()
-        .copied()
-        .find(|k| dom_code(*k) == code)
-        .unwrap_or(KeyCode::Unidentified(NativeKeyCode::Unidentified));
-    typed_letter(physical, Some(key), command, None)
 }
 
 /// The keys as the shortcuts read them: which are down, and the letters
@@ -213,21 +295,41 @@ impl<'a> Keys<'a> {
 }
 
 /// Notes what each key press this frame types ([`KeyLayout`]), once Bevy
-/// has read the frame's keys and before the shortcuts do.
+/// has read the frame's keys and before the shortcuts do. The modifiers
+/// are followed through the presses and releases in order (`held`), so
+/// Option let go in the frame of Option+W still held W.
 pub fn learn_layout(
     mut input: MessageReader<KeyboardInput>,
-    keys: Res<ButtonInput<KeyCode>>,
+    mut lost: MessageReader<KeyboardFocusLost>,
     mut layout: ResMut<KeyLayout>,
+    mut held: Local<KeyMods>,
 ) {
-    let command = KeyMods::held(&keys).command();
+    if lost.read().count() > 0 {
+        *held = KeyMods::default();
+    }
     let mut changed = false;
-    for ev in input.read().filter(|e| e.state == ButtonState::Pressed) {
-        changed |= layout
-            .bypass_change_detection()
-            .press(ev.key_code, &ev.logical_key, command);
+    for ev in input.read() {
+        let down = ev.state == ButtonState::Pressed;
+        if !held.note(ev.key_code, down) && down {
+            changed |= layout
+                .bypass_change_detection()
+                .press(ev.key_code, &ev.logical_key, *held);
+        }
     }
     if changed {
         layout.set_changed();
+    }
+}
+
+/// Keeps the input map's [`unreachable`](super::InputMap::unreachable)
+/// letters up with the layout, so labels don't offer them.
+pub fn mark_unreachable(layout: Res<KeyLayout>, map: Option<ResMut<super::InputMap>>) {
+    let Some(mut map) = map.filter(|_| layout.is_changed()) else {
+        return;
+    };
+    let unreachable = map.unreachable_on(&layout);
+    if map.unreachable != unreachable {
+        map.unreachable = unreachable;
     }
 }
 
@@ -250,6 +352,22 @@ mod tests {
         Key::Character(s.into())
     }
 
+    fn mods(ctrl: bool, shift: bool, alt: bool) -> KeyMods {
+        KeyMods {
+            ctrl,
+            shift,
+            alt,
+            super_key: false,
+        }
+    }
+
+    const PLAIN: KeyMods = KeyMods {
+        ctrl: false,
+        shift: false,
+        alt: false,
+        super_key: false,
+    };
+
     #[test]
     fn a_latin_letter_is_its_key_in_either_case() {
         let t = |p, s, cmd| typed_letter(p, Some(s), cmd, None);
@@ -259,12 +377,17 @@ mod tests {
         // Another ASCII character is no letter: AZERTY's `KeyM`.
         assert_eq!(t(KeyCode::KeyM, ",", false), None);
         assert_eq!(t(KeyCode::Digit2, "é", false), None);
-        // Cyrillic, an accented letter, a dead key, nothing: the key's own.
+        // Cyrillic, an accented letter: the key's own.
         assert_eq!(t(KeyCode::KeyK, "л", false), Some(KeyCode::KeyK));
         assert_eq!(t(KeyCode::KeyE, "é", false), Some(KeyCode::KeyE));
+        // No character: what it typed before, else its own.
         assert_eq!(
             typed_letter(KeyCode::KeyN, None, false, None),
             Some(KeyCode::KeyN)
+        );
+        assert_eq!(
+            typed_letter(KeyCode::KeyN, None, false, Some(Some(KeyCode::KeyB))),
+            Some(KeyCode::KeyB)
         );
         assert_eq!(t(KeyCode::KeyA, "ab", false), Some(KeyCode::KeyA));
         // With a command modifier, what it typed before.
@@ -292,26 +415,82 @@ mod tests {
             assert!(layout.learn(*k, s), "{k:?}");
         }
         assert!(!layout.learn(KeyCode::KeyQ, "a"));
-        assert!(!layout.press(KeyCode::KeyQ, &ch("A"), false));
+        assert!(!layout.press(KeyCode::KeyQ, &ch("A"), mods(false, true, false)));
         assert_eq!(layout.letter(KeyCode::KeyQ), Some(KeyCode::KeyA));
         assert_eq!(layout.letter(KeyCode::Semicolon), Some(KeyCode::KeyM));
         assert_eq!(layout.letter(KeyCode::KeyM), None);
-        // Option+W on a Mac AZERTY: still Z.
-        assert!(!layout.press(KeyCode::KeyW, &ch("∑"), true));
+        // Option+W on a Mac AZERTY: still Z, and the cap stays.
+        assert!(!layout.press(KeyCode::KeyW, &ch("∑"), mods(false, false, true)));
         assert_eq!(layout.letter(KeyCode::KeyW), Some(KeyCode::KeyZ));
-        // A command press doesn't change the cap.
-        assert!(layout.press(KeyCode::KeyE, &ch("€"), true));
+        assert!(layout.press(KeyCode::KeyE, &ch("€"), mods(true, false, true)));
         assert_eq!(layout.cap(KeyCode::KeyE), "E");
         assert_eq!(layout.cap(KeyCode::KeyW), "Z");
         assert_eq!(layout.cap(KeyCode::KeyM), ",");
         assert_eq!(layout.cap(KeyCode::ArrowUp), "Up");
-        // A dead key has no cap and its own letter.
-        assert!(layout.press(KeyCode::KeyY, &Key::Dead(Some('^')), false));
+        // A dead key has no cap, and an unidentified press keeps the letter.
+        assert!(layout.press(KeyCode::KeyY, &Key::Dead(Some('^')), PLAIN));
         assert_eq!(layout.cap(KeyCode::KeyY), "Y");
-        // Switching to Russian: the keys are their own letters again.
-        assert!(layout.learn(KeyCode::KeyQ, "й"));
-        assert_eq!(layout.letter(KeyCode::KeyQ), Some(KeyCode::KeyQ));
-        assert_eq!(layout.cap(KeyCode::KeyQ), "Й");
+        let unknown = Key::Unidentified(NativeKey::Unidentified);
+        assert!(!layout.press(KeyCode::KeyQ, &unknown, PLAIN));
+        assert_eq!(layout.letter(KeyCode::KeyQ), Some(KeyCode::KeyA));
+        // Which keys type a letter: those learned, and an unknown key its own.
+        assert_eq!(
+            layout.typing(KeyCode::KeyA).collect::<Vec<_>>(),
+            [KeyCode::KeyQ]
+        );
+        assert_eq!(
+            layout.typing(KeyCode::KeyF).collect::<Vec<_>>(),
+            [KeyCode::KeyF]
+        );
+    }
+
+    /// Shift types other characters on the same caps: the caps are learned
+    /// unshifted only (Dvorak's `KeyW` is `,`, not `<`).
+    #[test]
+    fn shift_leaves_the_caps_alone() {
+        let mut layout = KeyLayout::default();
+        layout.learn(KeyCode::KeyW, ",");
+        layout.press(KeyCode::KeyW, &ch("<"), mods(false, true, false));
+        assert_eq!(layout.cap(KeyCode::KeyW), ",");
+        // Nor does a seed get overwritten by a shifted press of a key.
+        layout.learn(KeyCode::KeyQ, "'");
+        layout.press(KeyCode::KeyQ, &ch("\""), mods(false, true, false));
+        assert_eq!(layout.cap(KeyCode::KeyQ), "'");
+        // A shifted letter still teaches the letter.
+        layout.press(KeyCode::KeyS, &ch("O"), mods(false, true, false));
+        assert_eq!(layout.letter(KeyCode::KeyS), Some(KeyCode::KeyO));
+        assert_eq!(layout.cap(KeyCode::KeyS), "S");
+    }
+
+    /// A letter of another script typed without Alt is a layout switch:
+    /// Dvorak's `KeyS` typed O, and after Russian's `ы` (with Ctrl or
+    /// without) it is S again; a plain Latin letter switches back.
+    #[test]
+    fn a_layout_switch_forgets_the_old_letters() {
+        for first in [PLAIN, mods(true, false, false)] {
+            let mut layout = KeyLayout::default();
+            layout.learn(KeyCode::KeyS, "o");
+            layout.learn(KeyCode::KeyW, ",");
+            assert!(layout.press(KeyCode::KeyS, &ch("ы"), first));
+            assert_eq!(layout.letter(KeyCode::KeyS), Some(KeyCode::KeyS));
+            assert_eq!(layout.letter(KeyCode::KeyW), Some(KeyCode::KeyW));
+            assert_eq!(layout.cap(KeyCode::KeyW), "W");
+            // Back to Dvorak.
+            assert!(layout.press(KeyCode::KeyF, &ch("u"), PLAIN));
+            assert_eq!(layout.letter(KeyCode::KeyF), Some(KeyCode::KeyU));
+            assert_eq!(layout.letter(KeyCode::KeyS), Some(KeyCode::KeyS));
+        }
+        // Alt's symbols are no switch (Option+P is π on a Mac), nor are
+        // accented Latin letters (AZERTY's é) or a command's Latin letter.
+        let mut layout = KeyLayout::default();
+        layout.learn(KeyCode::KeyS, "o");
+        layout.press(KeyCode::KeyP, &ch("π"), mods(false, false, true));
+        layout.learn(KeyCode::Digit2, "é");
+        assert_eq!(layout.letter(KeyCode::KeyS), Some(KeyCode::KeyO));
+        layout.learn(KeyCode::KeyK, "л");
+        layout.press(KeyCode::KeyS, &ch("s"), mods(true, false, false));
+        assert_eq!(layout.letter(KeyCode::KeyS), Some(KeyCode::KeyS));
+        assert_eq!(layout.cap(KeyCode::KeyK), "Л");
     }
 
     #[test]
@@ -331,15 +510,14 @@ mod tests {
     }
 
     #[test]
-    fn a_browser_keydown_types_as_a_press_does() {
-        assert_eq!(dom_letter("KeyQ", "a", false), Some(KeyCode::KeyA));
-        assert_eq!(dom_letter("KeyK", "K", true), Some(KeyCode::KeyK));
-        assert_eq!(dom_letter("KeyK", "л", true), Some(KeyCode::KeyK));
-        assert_eq!(dom_letter("KeyM", ",", false), None);
-        assert_eq!(dom_letter("Semicolon", "m", false), Some(KeyCode::KeyM));
-        assert_eq!(dom_letter("Semicolon", "ö", false), None);
-        assert_eq!(dom_letter("Space", " ", false), None);
-        assert_eq!(dom_letter("ArrowRight", "ArrowRight", true), None);
+    fn browser_codes_and_keys() {
+        assert_eq!(dom_physical("KeyQ"), Some(KeyCode::KeyQ));
+        assert_eq!(dom_physical("Semicolon"), Some(KeyCode::Semicolon));
+        assert_eq!(dom_physical("Digit2"), Some(KeyCode::Digit2));
+        assert_eq!(dom_physical("ArrowRight"), None);
+        assert_eq!(dom_key("a"), ch("a"));
+        assert_eq!(dom_key("Dead"), Key::Dead(None));
+        assert_eq!(dom_key("Enter"), Key::Unidentified(NativeKey::Unidentified));
     }
 
     #[test]
@@ -363,36 +541,51 @@ mod tests {
         assert_eq!(us.mods(), KeyMods::default());
     }
 
-    #[test]
-    fn learning_runs_on_the_frames_presses() {
-        use bevy::ecs::system::RunSystemOnce;
-        let mut world = World::new();
-        world.init_resource::<Messages<KeyboardInput>>();
-        world.init_resource::<ButtonInput<KeyCode>>();
-        world.init_resource::<KeyLayout>();
-        let press = |key_code, logical_key, state| KeyboardInput {
+    fn event(key_code: KeyCode, logical_key: Key, state: ButtonState) -> KeyboardInput {
+        KeyboardInput {
             key_code,
             logical_key,
             state,
             text: None,
             repeat: false,
             window: Entity::PLACEHOLDER,
+        }
+    }
+
+    #[test]
+    fn learning_runs_on_the_frames_presses_with_their_modifiers() {
+        let mut world = World::new();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.init_resource::<Messages<KeyboardFocusLost>>();
+        world.init_resource::<KeyLayout>();
+        world.write_message(event(KeyCode::KeyQ, ch("a"), ButtonState::Pressed));
+        world.write_message(event(KeyCode::KeyW, ch("z"), ButtonState::Released));
+        let mut system = IntoSystem::into_system(learn_layout);
+        system.initialize(&mut world);
+        let mut run = |world: &mut World| {
+            system.run((), world).unwrap();
         };
-        world.write_message(press(KeyCode::KeyQ, ch("a"), ButtonState::Pressed));
-        world.write_message(press(KeyCode::KeyW, ch("z"), ButtonState::Released));
-        world.run_system_once(learn_layout).unwrap();
+        run(&mut world);
         let layout = world.resource::<KeyLayout>();
         assert_eq!(layout.letter(KeyCode::KeyQ), Some(KeyCode::KeyA));
         assert_eq!(layout.letter(KeyCode::KeyW), Some(KeyCode::KeyW));
-        // With Ctrl held, a character that isn't a letter teaches nothing.
-        world
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::ControlLeft);
-        world.write_message(press(KeyCode::KeyE, ch("\u{5}"), ButtonState::Pressed));
-        world.run_system_once(learn_layout).unwrap();
-        assert_eq!(
-            world.resource::<KeyLayout>().letter(KeyCode::KeyE),
-            Some(KeyCode::KeyE)
-        );
+        // Option+W then Option up, in one frame: W was typed with Option,
+        // so `∑` teaches nothing.
+        world.write_message(event(KeyCode::KeyW, ch("z"), ButtonState::Pressed));
+        world.write_message(event(KeyCode::AltLeft, ch("x"), ButtonState::Pressed));
+        world.write_message(event(KeyCode::KeyW, ch("∑"), ButtonState::Pressed));
+        world.write_message(event(KeyCode::AltLeft, ch("x"), ButtonState::Released));
+        run(&mut world);
+        let layout = world.resource::<KeyLayout>();
+        assert_eq!(layout.letter(KeyCode::KeyW), Some(KeyCode::KeyZ));
+        assert_eq!(layout.cap(KeyCode::KeyW), "Z");
+        // Losing focus lets go of the modifiers.
+        world.write_message(event(KeyCode::ControlLeft, ch("x"), ButtonState::Pressed));
+        run(&mut world);
+        world.write_message(KeyboardFocusLost);
+        run(&mut world);
+        world.write_message(event(KeyCode::KeyE, ch("é"), ButtonState::Pressed));
+        run(&mut world);
+        assert_eq!(world.resource::<KeyLayout>().cap(KeyCode::KeyE), "É");
     }
 }

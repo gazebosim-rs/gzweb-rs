@@ -2943,6 +2943,17 @@ fn a_drag_constrains_by_the_letter_and_holds_the_fly_keys() {
     r.typed(KeyCode::KeyZ, "w", ButtonState::Pressed);
     r.app.update();
     assert_eq!(handle(&r), gizmo::Handle::Axis(1));
+    // Z still held as the drag ends: no flying until it is pressed again.
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.frames(4);
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    assert_eq!(r.transform(), before);
+    r.typed(KeyCode::KeyW, "z", ButtonState::Released);
+    r.frames(2);
+    assert_eq!(r.transform(), before);
+    r.typed(KeyCode::KeyW, "z", ButtonState::Pressed);
+    r.frames(3);
+    assert_ne!(r.transform(), before);
 }
 
 /// While Teleop drives, a press on an arrow doesn't start a drag.

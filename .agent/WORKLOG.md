@@ -2172,3 +2172,19 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   the app-level checks above; the hint's and the pad's caps. Workspace
   999 passing; coverage 97.5% lines (`view/layout.rs` 100%). check.sh
   passes.
+- **Review fixes:**
+  - a letter of another script typed without Alt, or a plain Latin
+    letter after one, is a layout switch that forgets what was learned
+    (Dvorak then Russian: Ctrl and `KeyS` is Save, not Open);
+  - the canvas listener keeps its own `KeyLayout`, fed the same
+    keydowns, so `web_key` and the app agree (a test runs both on one
+    stream: a switch, Option chords, non-Latin keys with Ctrl);
+  - caps are learned unshifted only; a key with no character keeps its
+    letter; the modifiers come from the frame's events in order;
+  - labels drop a plain letter only fly keys type (Colemak's F and R:
+    the HUD hint, the rail's and the tools' tooltips, which now follow
+    the map);
+  - a fly key held as a drag ends needs a fresh press;
+  - the layout sweep adds Alt and Ctrl+Alt (AltGr); D-119 records the
+    Option limit in Firefox and Safari.
+  Workspace 1006 passing; coverage 97.5% lines. check.sh passes.

@@ -485,6 +485,36 @@ fn shortcut_letters_follow_the_keyboard_layout() {
     assert!(!layout(&app).sidebar_open);
 }
 
+/// On Colemak F and R are fly keys' places: once the layout says so, the
+/// rail's Focus and the Rotate tool don't offer them (D-119).
+#[test]
+fn tooltips_leave_out_letters_the_fly_keys_take() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let shortcut = |app: &mut App, id: &str| {
+        let world = app.world_mut();
+        world
+            .query::<&crate::widgets::Tooltip>()
+            .iter(world)
+            .find(|t| t.binding.as_deref() == Some(id))
+            .map(|t| t.shortcut.clone())
+    };
+    assert_eq!(shortcut(&mut app, "view.focus"), Some(Some("F".into())));
+    assert_eq!(shortcut(&mut app, "tool.rotate"), Some(Some("R".into())));
+    for (k, typed) in [
+        (KeyCode::KeyE, "f"),
+        (KeyCode::KeyF, "t"),
+        (KeyCode::KeyS, "r"),
+        (KeyCode::KeyR, "p"),
+    ] {
+        tap_typed(&mut app, k, typed);
+    }
+    frames(&mut app, 1);
+    assert_eq!(shortcut(&mut app, "view.focus"), Some(None));
+    assert_eq!(shortcut(&mut app, "tool.rotate"), Some(None));
+    assert_eq!(shortcut(&mut app, "tool.translate"), Some(Some("T".into())));
+}
+
 #[test]
 fn camera_input_goes_to_the_view_only_when_the_pointer_is_over_it() {
     let mut app = shell_app((1440, 900), 1.0);
