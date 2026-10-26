@@ -191,6 +191,27 @@ impl Rig {
         });
     }
 
+    /// A key that types `typed` on the user's layout (D-119).
+    fn typed(&mut self, key_code: KeyCode, typed: &str, state: ButtonState) {
+        let window = self.window;
+        self.app.world_mut().write_message(KeyboardInput {
+            key_code,
+            logical_key: Key::Character(typed.into()),
+            state,
+            text: Some(typed.into()),
+            repeat: false,
+            window,
+        });
+    }
+
+    /// Presses and releases a key that types `typed`.
+    fn tap_typed(&mut self, key_code: KeyCode, typed: &str) {
+        self.typed(key_code, typed, ButtonState::Pressed);
+        self.app.update();
+        self.typed(key_code, typed, ButtonState::Released);
+        self.app.update();
+    }
+
     fn button(&mut self, button: MouseButton, state: ButtonState) {
         let window = self.window;
         self.app.world_mut().write_message(MouseButtonInput {
@@ -1264,6 +1285,29 @@ fn viewport_keys_drive_the_view_and_the_grid() {
     r.settle();
     assert_near(r.pivot(), Vec3::new(2.0, 0.5, 0.0), 1e-3);
     assert!(r.sent().is_empty());
+}
+
+/// D-119: a letter is the key that types it on the user's layout (Dvorak's
+/// G is `KeyU`, and its `KeyG` types I); the fly keys keep their places
+/// (AZERTY's `KeyW` types Z and flies forward; its `KeyZ`, W, doesn't).
+#[test]
+fn letters_follow_the_layout_and_the_fly_keys_their_places() {
+    use crate::overlays::Overlays;
+    let mut r = rig(default_view());
+    r.tap_typed(KeyCode::KeyU, "g");
+    assert!(r.app.world().resource::<Overlays>().grid);
+    r.tap_typed(KeyCode::KeyG, "i");
+    let o = r.app.world().resource::<Overlays>();
+    assert!(o.grid && o.inertia);
+
+    r.typed(KeyCode::KeyZ, "w", ButtonState::Pressed);
+    r.frames(5);
+    assert_eq!(r.transform(), default_view());
+    r.typed(KeyCode::KeyZ, "w", ButtonState::Released);
+    r.typed(KeyCode::KeyW, "z", ButtonState::Pressed);
+    r.frames(5);
+    let moved = r.transform().translation - default_view().translation;
+    assert!(moved.x > 0.0, "{moved}");
 }
 
 /// While Teleop drives (armed), W A S D are its: the camera stays.
@@ -2898,6 +2942,48 @@ fn dragging_an_arrow_moves_the_model_along_it_and_sends_its_pose() {
         r.app.world().get::<Transform>(a).unwrap().translation.x,
         0.0
     );
+}
+
+/// AZERTY's Z is on fly forward's key: during a drag it constrains to Z,
+/// and the camera stays (a drag holds the fly keys, D-119).
+#[test]
+fn a_drag_constrains_by_the_letter_and_holds_the_fly_keys() {
+    let (mut r, _) = gizmo_rig(gizmo::TransformTool::Translate);
+    let before = r.transform();
+    r.cursor(Some(arrow_point(&r, 0, 0.8)));
+    r.button(MouseButton::Left, ButtonState::Pressed);
+    r.app.update();
+    r.typed(KeyCode::KeyW, "z", ButtonState::Pressed);
+    r.frames(3);
+    let handle = |r: &Rig| {
+        r.app
+            .world()
+            .resource::<gizmo::GizmoState>()
+            .drag
+            .as_ref()
+            .unwrap()
+            .handle
+    };
+    assert_eq!(handle(&r), gizmo::Handle::Axis(2));
+    assert_eq!(r.transform(), before);
+    // `KeyZ` types W there: no axis.
+    r.typed(KeyCode::KeyY, "y", ButtonState::Pressed);
+    r.app.update();
+    assert_eq!(handle(&r), gizmo::Handle::Axis(1));
+    r.typed(KeyCode::KeyZ, "w", ButtonState::Pressed);
+    r.app.update();
+    assert_eq!(handle(&r), gizmo::Handle::Axis(1));
+    // Z still held as the drag ends: no flying until it is pressed again.
+    r.button(MouseButton::Left, ButtonState::Released);
+    r.frames(4);
+    assert!(!r.app.world().resource::<gizmo::GizmoState>().captures());
+    assert_eq!(r.transform(), before);
+    r.typed(KeyCode::KeyW, "z", ButtonState::Released);
+    r.frames(2);
+    assert_eq!(r.transform(), before);
+    r.typed(KeyCode::KeyW, "z", ButtonState::Pressed);
+    r.frames(3);
+    assert_ne!(r.transform(), before);
 }
 
 /// While Teleop drives, a press on an arrow doesn't start a drag.

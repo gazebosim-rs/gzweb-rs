@@ -2196,3 +2196,64 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
     browser's preference) and refuses `--ui-scale`;
   - the file's scale reads leniently (a hand-written percentage, or a bad
     value dropped without losing the file).
+
+## 2026-10-25: M10d layout-aware letters (D-119)
+
+- **gz-bevy:** `view::layout::KeyLayout` learns what each key typed as it
+  went down (`KeyboardInput.logical_key`, PreUpdate after Bevy's input),
+  and `layout::Keys` reads `ButtonInput<KeyCode>` through it. The input
+  map matches a letter by the key that types it, and digits, arrows and
+  named keys by place. A Latin letter in either case is that letter, other
+  ASCII is no letter, and anything else (Cyrillic, a dead key) falls back
+  to the key's US letter; with Ctrl, Alt or ⌘ held a non-letter keeps what
+  the key typed before.
+- **Positional:** the fly keys and `teleop.drive` (`input::POSITIONAL`)
+  keep W A S D Q E's places and win a plain press of their keys (Colemak's
+  F flies up; ⇧ with it follows). A gizmo drag holds the fly keys, so
+  AZERTY's Z constrains without flying. The gizmo's X, Y and Z and
+  Teleop's stop X follow the layout.
+- **Browser:** the canvas listener swallows chords by the same rule
+  (`InputMap::web_key`, from `code` and `key`). Chromium's
+  `navigator.keyboard.getLayoutMap()` seeds the layout at start.
+- **Labels:** letters read as before. The HUD's fly hint
+  (`hud::update_hint`), the Teleop pad's keys, their accessible names and
+  the pad's note show the layout's caps once known (`teleop::pad_caps`).
+- **Live check:** Xvfb (`:97`, lavapipe) with a fresh Jetty
+  `diff_drive` on 127.0.0.1:9047: the full UI with `--teleop` renders and
+  drives as before (the pad reads W A S D on an unlearned layout). The
+  Xvfb server ignored keymap changes (`setxkbmap`, `xkbcomp` and
+  `xmodmap` left it US), so no real layout switch was tried. The layouts
+  are checked with synthetic `KeyboardInput` carrying another logical
+  key, through Bevy's input and the app's systems: Dvorak's `KeyU` typing
+  g toggles the grid and its `KeyG` typing i toggles inertia; AZERTY's
+  `KeyW` typing z flies forward and its `KeyZ` typing w doesn't; a drag
+  constrains to Z on AZERTY's `KeyW` with the camera still; Dvorak's
+  `KeyN` typing b picks Box select and with Ctrl toggles the sidebar,
+  `KeyB` typing x does neither; Teleop stops on `KeyB` typing x, not on
+  `KeyX` typing q; the pad and its note read Z Q S D after AZERTY's
+  presses. With the learning system removed, the app-level tests fail.
+  Not tried: a real browser (the wasm32 build passes clippy).
+- **Tests:** what a press types (a Latin letter in either case, other
+  ASCII, a fallback, a command chord), the layout learned from presses,
+  the browser's keydown, and every letter-row key on six layouts (US,
+  AZERTY, QWERTZ, Dvorak, Colemak, Russian) plain, with Shift and with
+  Ctrl: no press fires two bindings and the fly keys keep their places;
+  the app-level checks above; the hint's and the pad's caps. Workspace
+  999 passing; coverage 97.5% lines (`view/layout.rs` 100%). check.sh
+  passes.
+- **Review fixes:**
+  - a letter of another script typed without Alt, or a plain Latin
+    letter after one, is a layout switch that forgets what was learned
+    (Dvorak then Russian: Ctrl and `KeyS` is Save, not Open);
+  - the canvas listener keeps its own `KeyLayout`, fed the same
+    keydowns, so `web_key` and the app agree (a test runs both on one
+    stream: a switch, Option chords, non-Latin keys with Ctrl);
+  - caps are learned unshifted only; a key with no character keeps its
+    letter; the modifiers come from the frame's events in order;
+  - labels drop a plain letter only fly keys type (Colemak's F and R:
+    the HUD hint, the rail's and the tools' tooltips, which now follow
+    the map);
+  - a fly key held as a drag ends needs a fresh press;
+  - the layout sweep adds Alt and Ctrl+Alt (AltGr); D-119 records the
+    Option limit in Firefox and Safari.
+  Workspace 1006 passing; coverage 97.5% lines. check.sh passes.

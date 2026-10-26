@@ -439,6 +439,8 @@ The rail's Orbit/Pan/Zoom sets the view's plain left-drag action; it persists pe
 
 Key table (abbreviated; see the file for scope and web alternates): Esc Navigate · B box select · T translate · R rotate · X/Y/Z constrain · F focus · H home · 5 projection · 7/1/3 top/front/right (Shift+ for bottom/back/left) · Space tap play-pause · Space-hold pan · ⇧F follow · ⇧T track · ⇧Space maximize · ⌥⌘→/↓ split · ⌘W close view · G/C/I/J overlays · ⌘→ step · ⌘⇧R reset · X stop (teleop armed) · ⌘Z/⇧⌘Z undo/redo · ⌘C/V/D copy/paste/duplicate · Delete · F2 rename · ⌘N/O/S/⇧S/I file · ⌘K palette · ⌘B sidebar · ⌘⌥I inspector · Alt+1–4 workspaces · ⌘⇧E/A/T/P/C panels.
 
+As built (D-119, M10d): the file names keys by their US places, and a letter binding is the key that types the letter on the user's layout (G toggles the grid on the key printed G on AZERTY, QWERTZ and Dvorak; on a layout without Latin letters, the US place). Digits, arrows and named keys stay physical. The fly keys and Teleop's drive keys are positional: they keep W A S D Q E's places (Z Q S D A E on AZERTY), win a plain press of their keys, and their labels show the user's caps. In the browser the canvas swallows ⌘K on the key that types K.
+
 ### 6.6 Model editing (decision Q6: in place)
 
 Entering: Model inspector › Edit model, context menu › Edit model, or double-click a model with Translate/Rotate active. Nothing changes frame. What changes:

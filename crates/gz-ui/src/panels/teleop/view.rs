@@ -7,6 +7,7 @@
 use accesskit::Role;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, RadioButton, RadioGroup};
+use gz_bevy::view::layout::{KeyLayout, US};
 
 use super::model::{DriveMode, DriveTarget, TeleopState};
 use super::TeleopBody;
@@ -48,14 +49,37 @@ pub(super) enum PadKey {
 }
 
 impl PadKey {
-    fn letter(self) -> &'static str {
+    pub(super) const ALL: [PadKey; 4] =
+        [PadKey::Forward, PadKey::Left, PadKey::Back, PadKey::Right];
+
+    /// Its drive key: a place on the keyboard, W A S D's on a US layout
+    /// (shortcuts.json `teleop.drive` is positional, D-119).
+    pub(super) fn key(self) -> KeyCode {
         match self {
-            PadKey::Forward => "W",
-            PadKey::Left => "A",
-            PadKey::Back => "S",
-            PadKey::Right => "D",
+            PadKey::Forward => KeyCode::KeyW,
+            PadKey::Left => KeyCode::KeyA,
+            PadKey::Back => KeyCode::KeyS,
+            PadKey::Right => KeyCode::KeyD,
         }
     }
+
+    /// What its key's cap shows on `layout` (`Z` for Forward on AZERTY).
+    pub(super) fn cap(self, layout: &KeyLayout) -> String {
+        layout.cap(self.key())
+    }
+}
+
+/// The pad's note, which names the drive keys.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(super) struct PadNote;
+
+/// The note under the pad, with the drive keys as `layout` prints them.
+pub(super) fn pad_note(layout: &KeyLayout) -> String {
+    let keys: Vec<String> = PadKey::ALL.iter().map(|k| k.cap(layout)).collect();
+    format!(
+        "Press a key to drive; then {} drive from the view too · X stops",
+        keys.join(" ")
+    )
 }
 
 /// The sliders' parent (rebuilt when the limits change).
@@ -91,10 +115,12 @@ pub(super) fn build_teleop(
     ev: On<Add<TeleopBody>>,
     theme: Res<Theme>,
     state: Res<TeleopState>,
+    layout: Option<Res<KeyLayout>>,
     mut commands: Commands,
 ) {
     let t = theme.clone();
     let state = state.clone();
+    let layout = layout.as_deref().unwrap_or(&US);
     commands.entity(ev.entity).with_children(|b| {
         b.spawn(Node {
             flex_grow: 1.0,
@@ -126,7 +152,7 @@ pub(super) fn build_teleop(
                     tabs.spawn((mode_tab(&t, m, m == state.mode), ModeChoice(m)));
                 }
             });
-            spawn_pad(c, &state);
+            spawn_pad(c, &state, layout);
             c.spawn((
                 ModePane(DriveMode::Sliders),
                 DriveSliders,
@@ -193,8 +219,8 @@ fn mode_tab(theme: &Theme, mode: DriveMode, chosen: bool) -> impl Bundle {
     )
 }
 
-/// The WASD pad: W over A S D.
-fn spawn_pad(c: &mut ChildSpawnerCommands, state: &TeleopState) {
+/// The WASD pad: W over A S D, as the layout prints them.
+fn spawn_pad(c: &mut ChildSpawnerCommands, state: &TeleopState, layout: &KeyLayout) {
     c.spawn((
         ModePane(DriveMode::Keyboard),
         Node {
@@ -205,22 +231,23 @@ fn spawn_pad(c: &mut ChildSpawnerCommands, state: &TeleopState) {
         },
     ))
     .with_children(|p| {
-        p.spawn(row(SPACE[3])).with_child(pad_key(PadKey::Forward));
+        p.spawn(row(SPACE[3]))
+            .with_child(pad_key(PadKey::Forward, layout));
         p.spawn(row(SPACE[3])).with_children(|r| {
             for k in [PadKey::Left, PadKey::Back, PadKey::Right] {
-                r.spawn(pad_key(k));
+                r.spawn(pad_key(k, layout));
             }
         });
-        p.spawn(text(
-            TypeStyle::SMALL,
-            ColorRole::Text2,
-            "Press a key to drive; then W A S D drive from the view too · X stops",
+        p.spawn((
+            text(TypeStyle::SMALL, ColorRole::Text2, pad_note(layout)),
+            PadNote,
         ));
     });
 }
 
 /// A 40 px pad key (§3.3: pressed = `accent_soft`).
-fn pad_key(key: PadKey) -> impl Bundle {
+fn pad_key(key: PadKey, layout: &KeyLayout) -> impl Bundle {
+    let cap = key.cap(layout);
     let visuals = Visuals::new(ColorRole::Surface, ColorRole::Text).stroked(ColorRole::Line);
     (
         Node {
@@ -233,12 +260,9 @@ fn pad_key(key: PadKey) -> impl Bundle {
             ..default()
         },
         Headless,
-        clickable(visuals, Role::Button, format!("Drive {}", key.letter())),
+        clickable(visuals, Role::Button, format!("Drive {cap}")),
         key,
-        children![(
-            text(TypeStyle::CLOCK, ColorRole::Text, key.letter()),
-            Content
-        )],
+        children![(text(TypeStyle::CLOCK, ColorRole::Text, cap), Content)],
     )
 }
 

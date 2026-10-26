@@ -23,6 +23,7 @@ pub mod controls;
 pub mod editing;
 pub mod gizmo;
 pub mod input;
+pub mod layout;
 pub mod model_edits;
 pub mod modes;
 pub mod outline;
@@ -45,6 +46,7 @@ use crate::spawn::{gz_to_bevy, GzVisual, GzWorldRoot};
 
 pub use controls::ViewerControls;
 pub use input::InputMap;
+pub use layout::KeyLayout;
 pub use modes::CameraMode;
 pub use select::{
     select, select_parts, BoxSelectTool, Marquee, MarqueeRect, SelectInViews, SelectMode,
