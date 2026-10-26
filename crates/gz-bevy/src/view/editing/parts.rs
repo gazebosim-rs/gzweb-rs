@@ -11,8 +11,11 @@
 //!   draft's parts added (a reply that comes while editing gets them
 //!   too); leaving puts the server's back.
 //!
-//! Nothing reaches the server yet: leaving drops the draft (writing it back
-//! is M9c's), saying how many parts went ([`PartsDiscarded`]).
+//! Done writes the draft into the model ([`mod@write`], D-114); Discard, or a
+//! model that goes, drops it, saying how many parts went
+//! ([`PartsDiscarded`]).
+
+pub mod write;
 
 use bevy::prelude::*;
 use gz_core::parts::{shape_visual, Draft, Part, LINK_SIZE, PART_SIZE};
@@ -32,13 +35,25 @@ pub struct DraftPart;
 /// Adds a part to the model being edited.
 #[derive(Message, Clone, Debug, PartialEq)]
 pub enum PartCommand {
+    /// Adds it, selecting it if it is an entity (a click in the view).
     Add(Part),
+    /// Adds it and leaves the selection as it is (an inspector's quick
+    /// action: the inspector stays on its link).
+    AddKept(Part),
 }
 
-/// Leaving editing dropped this many parts (they aren't written back
-/// yet).
+/// Leaving editing dropped this many parts (Discard, or the model went).
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PartsDiscarded(pub usize);
+
+/// Done with parts in the draft: write them into the model
+/// ([`write::start_writes`]).
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WriteParts;
+
+/// What editing says in the status bar: writing, written, or why not.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct EditNote(pub String);
 
 /// The parts added to the model being edited.
 #[derive(Resource, Debug, Default)]
@@ -54,12 +69,26 @@ pub struct EditParts {
     ours: Option<u32>,
     /// The draft changed since the extras were set.
     dirty: bool,
+    /// Writing the draft: when the world's SDFormat was asked for.
+    writing: Option<f64>,
+    /// The draft is written: leaving drops its entities, not its parts.
+    written: bool,
 }
 
 impl EditParts {
     /// The edited model's scene path, while one is edited.
     pub fn model_path(&self) -> Option<&str> {
         self.model.as_ref().map(|(_, p)| p.as_str())
+    }
+
+    /// The draft has parts not yet written: Done writes them first.
+    pub fn holds(&self) -> bool {
+        self.model.is_some() && !self.draft.is_empty() && !self.written
+    }
+
+    /// The draft is being written (the world's SDFormat is asked for).
+    pub fn writing(&self) -> bool {
+        self.writing.is_some()
     }
 
     /// The server's SDFormat came (`extras` holds it, the draft's parts
@@ -158,7 +187,10 @@ impl PartScene<'_, '_> {
                 }
                 None
             }
-            Part::Collision { .. } | Part::Joint { .. } | Part::Plugin { .. } => None,
+            Part::Collision { .. }
+            | Part::Joint { .. }
+            | Part::Plugin { .. }
+            | Part::Reparent { .. } => None,
         }
     }
 
@@ -226,7 +258,10 @@ pub fn run_parts(
             for (part, e) in gone.iter().rev() {
                 scene.hide(part, *e);
             }
-            discarded.write(PartsDiscarded(gone.len()));
+            // Written, they come back with the model.
+            if !parts.written {
+                discarded.write(PartsDiscarded(gone.len()));
+            }
         }
         let path = model.and_then(|m| scene.entities.get(m).ok().map(|(_, g)| g.path.clone()));
         let parts = &mut *parts;
@@ -234,15 +269,27 @@ pub fn run_parts(
         parts.spawned.clear();
         parts.model = model.zip(path);
         parts.dirty = true;
+        parts.writing = None;
+        parts.written = false;
     }
     let Some(path) = parts.model_path().map(str::to_string) else {
         adds.clear();
         undos.clear();
         return;
     };
-    for PartCommand::Add(part) in adds.read() {
+    // Written (leaving next), or being written: the draft stays as it is.
+    if parts.written || parts.writing.is_some() {
+        adds.clear();
+        undos.clear();
+        return;
+    }
+    for cmd in adds.read() {
+        let (part, select) = match cmd {
+            PartCommand::Add(part) => (part, true),
+            PartCommand::AddKept(part) => (part, false),
+        };
         let e = scene.show(part, &path);
-        if let Some(e) = e {
+        if let Some(e) = e.filter(|_| select) {
             *selection = Selection {
                 entities: vec![e],
                 parts: Vec::new(),

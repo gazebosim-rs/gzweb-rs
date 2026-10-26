@@ -50,7 +50,11 @@
 //! patch) publishes a `pub_in` frame's payload, kept whole after its third
 //! comma. [`Transport::probe_publishing`] finds out, and
 //! [`Transport::set_publishing`] then lets `pub_in` payloads hold any
-//! bytes (DECISIONS.md D-104).
+//! bytes (DECISIONS.md D-104). The patched server (whole-messages patch)
+//! joins a message's pieces before it reads the frame;
+//! [`Transport::probe_long_frames`] finds out, and
+//! [`Transport::set_long_frames`] then lets frames be as long as
+//! [`MAX_LONG_FRAME`] (DECISIONS.md D-114).
 //!
 //! Jetty answers `auth` even without a key configured (`authorized`, for any
 //! key); gz-launch didn't answer it at all.
@@ -171,6 +175,9 @@ pub struct Transport {
     binary_requests: bool,
     /// The server publishes `pub_in` payloads whole (D-104).
     publishing: bool,
+    /// The server joins a message's pieces: frames may be as long as
+    /// [`MAX_LONG_FRAME`] (D-114).
+    long_frames: bool,
 }
 
 /// The service the binary-request probe calls: gz-sim's world list, which
@@ -191,13 +198,38 @@ pub fn topics_show_publishing(pairs: &[(String, String)]) -> bool {
 /// which fails to parse, and replies with nothing.
 const BINARY_PROBE: &[u8] = &[0x7a, 0x02, 0x00, b','];
 
-/// Whether a probe's reply says the server keeps binary requests whole:
-/// the world list, which a mangled request doesn't get. Any other type
+/// Whether a probe's reply says the server kept the request whole (the
+/// binary one's zero and comma, or the long one's pieces): the world list,
+/// which a mangled request doesn't get. Any other type
 /// (`gz.msgs.StringMsg` "service_not_found", which also decodes as a
 /// one-entry list) is a no.
 pub fn probe_reply_supports_binary(msg_type: &str, payload: &[u8]) -> bool {
     msg_type == "gz.msgs.StringMsg_V"
         && msgs::StringMsgV::decode(payload).is_ok_and(|v| !v.data.is_empty())
+}
+
+/// How long the frame of [`Transport::probe_long_frames`] is: sixteen of
+/// the stock server's reads (see [`MAX_FRAME`]), and longer than a model's
+/// SDFormat usually is, so a server built with a larger read buffer that
+/// still cuts long messages answers no too.
+pub const LONG_PROBE_LEN: usize = 16 * 4096;
+
+/// The long probe's payload: an Empty with an unknown field 15 that makes
+/// the frame [`LONG_PROBE_LEN`] long, all `x` (no zero or comma, so any
+/// server can be asked; its length's bytes have none either). Cut short,
+/// the field fails to parse.
+fn long_probe() -> Vec<u8> {
+    let room = LONG_PROBE_LEN - frame_len("req", BINARY_PROBE_SERVICE, "gz.msgs.Empty", 0);
+    // The tag and the field's length (its varint's own bytes counted) come
+    // first.
+    let body = (1..=4)
+        .map(|n| room - 1 - n)
+        .find(|b| prost::encoding::encoded_len_varint(*b as u64) == room - 1 - b)
+        .expect("a length that fits");
+    let mut payload = vec![0x7a];
+    prost::encoding::encode_varint(body as u64, &mut payload);
+    payload.resize(room, b'x');
+    payload
 }
 
 impl Transport {
@@ -213,6 +245,7 @@ impl Transport {
             events: VecDeque::new(),
             binary_requests: false,
             publishing: false,
+            long_frames: false,
         }
     }
 
@@ -232,7 +265,15 @@ impl Transport {
     /// probe's topic once the server has advertised it; see
     /// [`topics_show_publishing`].
     pub fn probe_publishing(&mut self) -> Result<(), SendError> {
-        self.queue("pub_in", PUBLISH_PROBE_TOPIC, "gz.msgs.Empty", b"", true)?;
+        let max = self.max_frame();
+        self.queue(
+            "pub_in",
+            PUBLISH_PROBE_TOPIC,
+            "gz.msgs.Empty",
+            b"",
+            true,
+            max,
+        )?;
         self.request_topics_types()
     }
 
@@ -256,6 +297,43 @@ impl Transport {
             "gz.msgs.Empty",
             BINARY_PROBE,
             true,
+            MAX_FRAME,
+        )
+    }
+
+    /// Lets frames be as long as [`MAX_LONG_FRAME`] (the server joins a
+    /// message's pieces), or only [`MAX_FRAME`]. Off again with every new
+    /// connection.
+    pub fn set_long_frames(&mut self, on: bool) {
+        self.long_frames = on;
+    }
+
+    pub fn long_frames(&self) -> bool {
+        self.long_frames
+    }
+
+    /// The longest frame this server takes whole.
+    pub fn max_frame(&self) -> usize {
+        if self.long_frames {
+            MAX_LONG_FRAME
+        } else {
+            MAX_FRAME
+        }
+    }
+
+    /// Asks whether the server joins a message's pieces before it reads
+    /// it: a request to [`BINARY_PROBE_SERVICE`] [`LONG_PROBE_LEN`] bytes
+    /// long, which a server that reads each piece as a frame gets cut
+    /// short; see [`probe_reply_supports_binary`]. Its reply is told from
+    /// the binary probe's by order, so it goes once that one is answered.
+    pub fn probe_long_frames(&mut self) -> Result<(), SendError> {
+        self.queue(
+            "req",
+            BINARY_PROBE_SERVICE,
+            "gz.msgs.Empty",
+            &long_probe(),
+            false,
+            LONG_PROBE_LEN,
         )
     }
 
@@ -441,10 +519,12 @@ impl Transport {
         payload: &[u8],
     ) -> Result<(), SendError> {
         let binary = (op == "req" && self.binary_requests) || (op == "pub_in" && self.publishing);
-        self.queue(op, topic, msg_type, payload, binary)
+        let max = self.max_frame();
+        self.queue(op, topic, msg_type, payload, binary, max)
     }
 
-    /// Queues a frame; `binary`: a `req` whose payload may hold any bytes.
+    /// Queues a frame; `binary`: a `req` whose payload may hold any bytes;
+    /// `max`: the longest the frame may be.
     fn queue(
         &mut self,
         op: &str,
@@ -452,6 +532,7 @@ impl Transport {
         msg_type: &str,
         payload: &[u8],
         binary: bool,
+        max: usize,
     ) -> Result<(), SendError> {
         let handshake = matches!(op, "auth" | "protos" | "topics-types" | "worlds");
         match self.status {
@@ -461,7 +542,7 @@ impl Transport {
             }
             _ => {}
         }
-        check_frame(op, topic, msg_type, payload, binary)?;
+        check_frame(op, topic, msg_type, payload, binary, max)?;
         self.outgoing
             .push_back(frame::build(op, topic, msg_type, payload));
         Ok(())
@@ -471,6 +552,7 @@ impl Transport {
         if !matches!(status, Status::Ready) {
             self.binary_requests = false;
             self.publishing = false;
+            self.long_frames = false;
         }
         if self.status != status {
             self.status = status.clone();
@@ -576,6 +658,10 @@ impl Transport {
 /// together, or over a slow link, can be cut too. See the module docs.
 pub const MAX_FRAME: usize = 4088;
 
+/// The longest frame a server that joins a message's pieces takes
+/// (whole-messages patch: a longer message closes the connection).
+pub const MAX_LONG_FRAME: usize = 16 << 20;
+
 /// How long a frame is: its op, topic, type and payload, and the commas
 /// between them.
 pub fn frame_len(op: &str, topic: &str, msg_type: &str, payload_len: usize) -> usize {
@@ -584,13 +670,14 @@ pub fn frame_len(op: &str, topic: &str, msg_type: &str, payload_len: usize) -> u
 
 /// Refuses frames the server would drop or crash on (see the module docs);
 /// `binary`: a `req` to a server that keeps its payload whole, any bytes
-/// and empty included.
+/// and empty included; `max`: the longest frame it takes.
 fn check_frame(
     op: &str,
     topic: &str,
     msg_type: &str,
     payload: &[u8],
     binary: bool,
+    max: usize,
 ) -> Result<(), SendError> {
     let bad = |b: &[u8]| b.iter().any(|&c| c == 0 || c == b',');
     if bad(topic.as_bytes()) || bad(msg_type.as_bytes()) || (!binary && bad(payload)) {
@@ -609,7 +696,7 @@ fn check_frame(
     if op == "pub_in" && msg_type.is_empty() {
         return Err(SendError::Unsendable("empty message type"));
     }
-    if frame_len(op, topic, msg_type, payload.len()) > MAX_FRAME {
+    if frame_len(op, topic, msg_type, payload.len()) > max {
         return Err(SendError::Unsendable(
             "longer than the server takes whole (MAX_FRAME)",
         ));
@@ -1185,5 +1272,49 @@ mod tests {
             Err(SendError::Unsendable(_))
         ));
         assert!(drain_out(&mut t).is_empty());
+    }
+
+    /// The long probe is a request [`LONG_PROBE_LEN`] long that any server
+    /// can be sent (no zero or comma) and that parses whole; a yes lets
+    /// frames go up to [`MAX_LONG_FRAME`], for this connection.
+    #[test]
+    fn long_frames_go_once_the_server_joins_pieces() {
+        let mut t = connected();
+        assert_eq!(t.max_frame(), MAX_FRAME);
+        t.probe_long_frames().unwrap();
+        let sent = t.poll_outgoing().unwrap();
+        assert_eq!(sent.len(), LONG_PROBE_LEN);
+        let frame = Frame::parse(&sent).unwrap();
+        assert_eq!(
+            (frame.op, frame.topic, frame.msg_type),
+            ("req", BINARY_PROBE_SERVICE, "gz.msgs.Empty")
+        );
+        assert!(!frame.payload.iter().any(|&c| c == 0 || c == b','));
+        assert!(msgs::Empty::decode(frame.payload).is_ok());
+        assert!(msgs::Empty::decode(&frame.payload[..MAX_FRAME - 40]).is_err());
+
+        let (service, ty) = ("/world/w/create", "gz.msgs.EntityFactory");
+        let long = vec![b'x'; 3 * MAX_FRAME];
+        t.set_binary_requests(true);
+        assert!(matches!(
+            t.request(service, ty, &long),
+            Err(SendError::Unsendable(_))
+        ));
+        t.set_long_frames(true);
+        assert!(t.long_frames());
+        assert_eq!(t.max_frame(), MAX_LONG_FRAME);
+        assert_eq!(t.request(service, ty, &long), Ok(()));
+        assert_eq!(
+            t.poll_outgoing().map(|f| f.len()),
+            Some(frame_len("req", service, ty, long.len()))
+        );
+        let room = MAX_LONG_FRAME - frame_len("req", service, ty, 0);
+        assert!(matches!(
+            t.request(service, ty, &vec![b'x'; room + 1]),
+            Err(SendError::Unsendable(_))
+        ));
+        // A new connection starts without.
+        t.on_open();
+        assert!(!t.long_frames());
     }
 }

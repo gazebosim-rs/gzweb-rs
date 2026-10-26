@@ -279,6 +279,9 @@ impl Plugin for ViewerControls {
             .init_resource::<super::editing::parts::EditParts>()
             .add_message::<super::editing::parts::PartCommand>()
             .add_message::<super::editing::parts::PartsDiscarded>()
+            .add_message::<super::editing::parts::WriteParts>()
+            .add_message::<super::editing::parts::EditNote>()
+            .init_resource::<crate::undo::Replacing>()
             .add_message::<crate::undo::UndoCommand>()
             .insert_resource(SelectInViews(self.mode == UiMode::Full))
             .init_resource::<InputMap>()
@@ -333,6 +336,8 @@ impl Plugin for ViewerControls {
                     super::editing::light_new_views,
                     super::editing::end_editing_when_gone,
                     super::editing::parts::run_parts,
+                    super::editing::parts::write::start_writes,
+                    super::editing::parts::write::finish_writes,
                     super::editing::parts::patch_extras,
                     super::editing::limit_selection,
                     super::editing::dim_others::<StandardMaterial>,

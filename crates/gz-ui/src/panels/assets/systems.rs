@@ -155,15 +155,18 @@ pub(super) fn arm(
         state.armed = None;
     }
     let parts = &state.parts;
-    if (parts.armed.is_some() || parts.parent.is_some()) && (esc || !inserting.editing()) {
+    let armed = parts.armed.is_some() || parts.parent.is_some() || parts.reparent.is_some();
+    if armed && (esc || !inserting.editing()) {
         state.parts.armed = None;
         state.parts.parent = None;
+        state.parts.reparent = None;
     }
     let part = state
         .parts
         .armed
         .is_some_and(super::model::PartTool::places);
-    placing.set_if_neq(Placing(state.armed.is_some() || part));
+    let reparent = state.parts.reparent.is_some();
+    placing.set_if_neq(Placing(state.armed.is_some() || part || reparent));
 }
 
 /// Each place sends a `create` for what is armed, at the point; Shift
@@ -652,6 +655,7 @@ fn toggle_armed(state: &mut AssetsState, what: Insertable) {
     };
     state.parts.armed = None;
     state.parts.parent = None;
+    state.parts.reparent = None;
 }
 
 /// A tile arms its shape or light.

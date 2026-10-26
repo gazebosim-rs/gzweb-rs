@@ -835,11 +835,21 @@ fn joints_collisions_sensors_and_plugins() {
     );
 }
 
-/// Undo takes the last part back, and the World menu names it; leaving
-/// says the parts weren't kept.
+/// Undo takes the last part back, and the World menu names it; the
+/// pill's Discard, shown while there are parts, leaves without them and
+/// says so.
 #[test]
-fn undo_takes_a_part_back_and_done_drops_them() {
+fn undo_takes_a_part_back_and_discard_drops_them() {
+    use crate::shell::viewport::editing::EditingDiscard;
+    let discard_shown = |app: &mut App| {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Node, With<EditingDiscard>>()
+            .iter(world)
+            .any(|n| n.display != Display::None)
+    };
     let (mut app, ..) = editing_parts();
+    assert!(!discard_shown(&mut app), "no parts yet");
     let t = part_tile(&mut app, PartTool::Link);
     activate(&mut app, t);
     place(&mut app, [1.0, 0.0, 0.0], None, true);
@@ -850,14 +860,18 @@ fn undo_takes_a_part_back_and_done_drops_them() {
     frames(&mut app, 3);
     assert!(at_path(&mut app, "edited/link_2").is_none());
     assert!(at_path(&mut app, "edited/link_1").is_some());
-    app.world_mut()
-        .write_message(gz_bevy::view::editing::EditCommand::Done);
+    assert!(discard_shown(&mut app));
+    let discard = find::<EditingDiscard>(&mut app);
+    activate(&mut app, discard);
     frames(&mut app, 3);
     assert!(at_path(&mut app, "edited/link_1").is_none());
     assert_eq!(
-        status_note(&app).as_deref(),
-        Some("1 part not kept: writing parts to the model comes later")
+        app.world()
+            .resource::<gz_bevy::view::editing::EditingModel>()
+            .model(),
+        None
     );
+    assert_eq!(status_note(&app).as_deref(), Some("1 change discarded"));
 }
 
 /// Esc, pressed and released.
@@ -1051,4 +1065,285 @@ fn the_preview_stands_in_the_models_frame() {
     // Gazebo's yaw is a turn about Bevy's Y: its X goes to Bevy's -Z.
     assert!((ghost * Vec3::X).distance(Vec3::NEG_Z) < 1e-5, "{ghost:?}");
     assert!((ghost * Vec3::Y).distance(Vec3::Y) < 1e-5, "{ghost:?}");
+}
+
+// The inspectors' quick actions (§6.6).
+
+/// The inspector's `action` button, and whether it is disabled.
+fn part_action(app: &mut App, action: super::parts::PartAction) -> (Entity, bool) {
+    let world = app.world_mut();
+    world
+        .query::<(Entity, &super::parts::PartAction, Has<InteractionDisabled>)>()
+        .iter(world)
+        .find(|(_, a, _)| **a == action)
+        .map(|(e, _, d)| (e, d))
+        .expect("the action's button")
+}
+
+/// Inspect `entity` (and `part` of it), as a click in the view or the tree
+/// would select it.
+fn inspect(app: &mut App, entity: Entity, part: Option<&str>) {
+    let mut selection = app.world_mut().resource_mut::<gz_bevy::view::Selection>();
+    *selection = match part {
+        None => gz_bevy::view::Selection {
+            entities: vec![entity],
+            parts: vec![],
+        },
+        Some(name) => gz_bevy::view::Selection {
+            entities: vec![],
+            parts: vec![gz_bevy::view::Part {
+                kind: gz_bevy::view::PartKind::Joint,
+                owner: entity,
+                name: name.into(),
+            }],
+        },
+    };
+    frames(app, 3);
+}
+
+/// While its model is edited, the Link inspector's Add visual, Add
+/// collision and Add sensor put the Parts tab's shape and sensor at the
+/// link's origin; after Done they say to edit the model first.
+#[test]
+fn the_link_inspector_adds_parts_while_editing() {
+    use super::parts::PartAction;
+    let (mut app, _, a, _) = editing_parts();
+    inspect(&mut app, a, None);
+    let (visual, off) = part_action(&mut app, PartAction::Visual);
+    assert!(!off, "live while editing");
+    activate(&mut app, visual);
+    let (v, parent) = at_path(&mut app, "edited/a/visual_1").expect("a visual");
+    assert_eq!(parent, a);
+    assert_eq!(
+        app.world().get::<Transform>(v).unwrap().translation,
+        Vec3::ZERO
+    );
+    // The link stays selected: the inspector stays with it.
+    assert_eq!(
+        app.world().resource::<gz_bevy::view::Selection>().entities,
+        [a]
+    );
+    app.world_mut().resource_mut::<AssetsState>().parts.sensor = gz_core::parts::SensorKind::Imu;
+    let (sensor, _) = part_action(&mut app, PartAction::Sensor);
+    activate(&mut app, sensor);
+    let sensors = app.world().get::<gz_bevy::spawn::GzSensors>(a).unwrap();
+    assert_eq!(sensors.0[0].name, "imu_1");
+    let (collision, _) = part_action(&mut app, PartAction::Collision);
+    activate(&mut app, collision);
+    let extras = app
+        .world()
+        .resource::<gz_bevy::overlays::extras::SdfExtras>()
+        .extras
+        .clone()
+        .unwrap();
+    assert_eq!(
+        extras.link("edited/a").unwrap().collisions[0].name,
+        "collision_1"
+    );
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Discard);
+    frames(&mut app, 3);
+    inspect(&mut app, a, None);
+    let (visual, off) = part_action(&mut app, PartAction::Visual);
+    assert!(off, "not outside editing");
+    let tooltip = app.world().get::<crate::widgets::Tooltip>(visual).unwrap();
+    assert_eq!(
+        tooltip.detail.as_deref(),
+        Some("Edit the model to add parts")
+    );
+}
+
+/// The Joint inspector's Reparent has the next click pick the joint's new
+/// parent: a link that isn't its parent already, isn't its child, and
+/// doesn't close a loop. Undo names it; Esc cancels.
+#[test]
+fn reparent_picks_a_joints_new_parent() {
+    use super::parts::PartAction;
+    let (mut app, model, a, b) = editing_parts();
+    let c = app
+        .world_mut()
+        .spawn((
+            gz_bevy::spawn::GzEntity {
+                name: "c".into(),
+                id: 0,
+                kind: gz_core::scene::NodeKind::Link,
+                path: "edited/c".into(),
+            },
+            Transform::from_xyz(4.0, 0.0, 0.0),
+            Visibility::default(),
+            ChildOf(model),
+        ))
+        .id();
+    server_sdf(
+        &mut app,
+        "<link name=\"a\"/><link name=\"b\"/><link name=\"c\"/>\
+         <joint name=\"j\" type=\"revolute\"><parent>a</parent><child>b</child></joint>\
+         <joint name=\"k\" type=\"fixed\"><parent>b</parent><child>c</child></joint>",
+    );
+    inspect(&mut app, model, Some("j"));
+    let (reparent, off) = part_action(&mut app, PartAction::Reparent);
+    assert!(!off);
+    activate(&mut app, reparent);
+    assert!(app.world().resource::<Placing>().0);
+    assert!(all_text(&mut app).contains(super::parts::REPARENT_HINT));
+    for (link, why) in [
+        (a, "a is j's parent already"),
+        (b, "A joint needs two links"),
+        (c, "b is above c already"),
+    ] {
+        place(&mut app, [0.0, 0.0, 0.0], Some(link), false);
+        assert_eq!(status_note(&app).as_deref(), Some(why));
+    }
+    press_esc(&mut app);
+    assert_eq!(parts_state(&app).reparent, None, "Esc");
+    // A new link to hang it from.
+    let link = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, link);
+    place(&mut app, [6.0, 0.0, 0.0], None, false);
+    let (l1, _) = at_path(&mut app, "edited/link_1").unwrap();
+    inspect(&mut app, model, Some("j"));
+    let (reparent, _) = part_action(&mut app, PartAction::Reparent);
+    activate(&mut app, reparent);
+    place(&mut app, [6.0, 0.0, 0.0], Some(l1), false);
+    let extras = app
+        .world()
+        .resource::<gz_bevy::overlays::extras::SdfExtras>()
+        .extras
+        .clone()
+        .unwrap();
+    assert_eq!(extras.link("edited/b").unwrap().joints[0].parent, "link_1");
+    assert_eq!(parts_state(&app).reparent, None);
+    assert!(all_text(&mut app).contains("Undo reparent j"));
+    app.world_mut()
+        .write_message(gz_bevy::undo::UndoCommand::Undo);
+    frames(&mut app, 3);
+    let extras = app
+        .world()
+        .resource::<gz_bevy::overlays::extras::SdfExtras>()
+        .extras
+        .clone()
+        .unwrap();
+    assert_eq!(
+        extras.link("edited/b").unwrap().joints[0].parent,
+        "a",
+        "undone"
+    );
+}
+
+/// Reparent on a nested model's joint keeps the new parent in that model;
+/// a draft joint reparents too, twice, with undo and redo; a Shapes tile or
+/// leaving cancels it; outside editing the button says to edit the model.
+#[test]
+fn reparent_works_on_nested_and_draft_joints() {
+    use super::parts::PartAction;
+    use gz_bevy::undo::UndoCommand;
+    let (mut app, model, a, b) = editing_parts();
+    let spawn = |app: &mut App, name: &str, path: &str, kind, parent| {
+        app.world_mut()
+            .spawn((
+                gz_bevy::spawn::GzEntity {
+                    name: name.into(),
+                    id: 0,
+                    kind,
+                    path: path.into(),
+                },
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(parent),
+            ))
+            .id()
+    };
+    use gz_core::scene::NodeKind;
+    let inner = spawn(&mut app, "inner", "edited/inner", NodeKind::Model, model);
+    let c = spawn(&mut app, "c", "edited/inner/c", NodeKind::Link, inner);
+    let _d = spawn(&mut app, "d", "edited/inner/d", NodeKind::Link, inner);
+    let e = spawn(&mut app, "e", "edited/inner/e", NodeKind::Link, inner);
+    server_sdf(
+        &mut app,
+        "<link name=\"a\"/><link name=\"b\"/><model name=\"inner\"><link name=\"c\"/>\
+         <link name=\"d\"/><link name=\"e\"/><joint name=\"w\" type=\"fixed\">\
+         <parent>c</parent><child>d</child></joint></model>",
+    );
+    let extras = |app: &App| {
+        app.world()
+            .resource::<gz_bevy::overlays::extras::SdfExtras>()
+            .extras
+            .clone()
+            .unwrap()
+    };
+    let arm = |app: &mut App, owner, joint: &str| {
+        inspect(app, owner, Some(joint));
+        let (r, off) = part_action(app, PartAction::Reparent);
+        assert!(!off, "{joint}");
+        activate(app, r);
+    };
+    // The nested model's joint: a top-level link is refused, e is taken.
+    arm(&mut app, inner, "w");
+    place(&mut app, [0.0; 3], Some(a), false);
+    assert_eq!(status_note(&app).as_deref(), Some("Click a link of inner"));
+    place(&mut app, [0.0; 3], Some(e), false);
+    let w = extras(&app).link("edited/inner/d").unwrap().joints[0].clone();
+    assert_eq!((w.parent.as_str(), w.model.as_str()), ("e", "edited/inner"));
+    // A Shapes tile cancels an armed reparent.
+    arm(&mut app, inner, "w");
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Shapes;
+    frames(&mut app, 2);
+    let sphere = tile(&mut app, &Insertable::Shape(Shape::Sphere));
+    activate(&mut app, sphere);
+    assert_eq!(parts_state(&app).reparent, None);
+    activate(&mut app, sphere);
+    // A draft joint a→b, reparented to a new link, then to inner's c.
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Parts;
+    frames(&mut app, 2);
+    let joint = part_tile(&mut app, PartTool::Joint);
+    activate(&mut app, joint);
+    place(&mut app, [0.0; 3], Some(a), false);
+    place(&mut app, [0.0; 3], Some(b), false);
+    let link = part_tile(&mut app, PartTool::Link);
+    activate(&mut app, link);
+    place(&mut app, [6.0, 0.0, 0.0], None, false);
+    let (l1, _) = at_path(&mut app, "edited/link_1").unwrap();
+    arm(&mut app, model, "joint_1");
+    place(&mut app, [0.0; 3], Some(l1), false);
+    let parent = |app: &App| {
+        extras(app).link("edited/b").unwrap().joints[0]
+            .parent
+            .clone()
+    };
+    assert_eq!(parent(&app), "link_1");
+    arm(&mut app, model, "joint_1");
+    place(&mut app, [0.0; 3], Some(c), false);
+    assert_eq!(parent(&app), "inner::c");
+    for (cmd, want) in [
+        (UndoCommand::Undo, "link_1"),
+        (UndoCommand::Undo, "a"),
+        (UndoCommand::Redo, "link_1"),
+    ] {
+        app.world_mut().write_message(cmd);
+        frames(&mut app, 3);
+        assert_eq!(parent(&app), want, "{cmd:?}");
+    }
+    // Leaving cancels an armed reparent, and it stays off in another model.
+    arm(&mut app, model, "joint_1");
+    let root = app.world().get::<ChildOf>(model).unwrap().parent();
+    let other = spawn(&mut app, "other", "other", NodeKind::Model, root);
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Discard);
+    frames(&mut app, 3);
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Enter(other));
+    frames(&mut app, 3);
+    assert_eq!(parts_state(&app).reparent, None);
+    // Outside editing.
+    app.world_mut()
+        .write_message(gz_bevy::view::editing::EditCommand::Discard);
+    frames(&mut app, 3);
+    inspect(&mut app, inner, Some("w"));
+    let (r, off) = part_action(&mut app, PartAction::Reparent);
+    assert!(off);
+    let tooltip = app.world().get::<crate::widgets::Tooltip>(r).unwrap();
+    assert_eq!(
+        tooltip.detail.as_deref(),
+        Some("Edit the model to reparent its joints")
+    );
 }

@@ -2020,6 +2020,69 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
   does, M9c's write-back is limited to models that fit.
 
+## 2026-10-25: M9c write-back (D-114)
+
+- **Server:** `docker/websocket-server/whole-messages.patch`, the third
+  local patch: the websocket server joins a message's pieces per
+  connection (`lws_is_final_fragment`, `lws_remaining_packet_payload`)
+  before it parses the frame, up to 16 MiB. Not upstream.
+- **Probe:** after the edit probe's yes, a 12,288-byte `/gazebo/worlds`
+  request; the world list back means the server joins pieces
+  (`GzStatus::long_frames`). The transport then takes frames up to
+  `MAX_LONG_FRAME`, and `edit::too_long` uses the server's limit (model
+  edits and the Console benefit).
+- **Write-back:** `gz_core::parts::write_parts` and `check_model`;
+  `view::editing::parts::write` (Done asks for the world's SDFormat,
+  writes and checks the model, removes it, records one "edit X");
+  `undo::Replacing` creates it once the old one has gone (Done, and undo
+  and redo of it). Done refuses on a server that cuts long messages.
+- **UI:** the pill's Discard while there are parts; writing's notes in the
+  status bar; "N parts discarded".
+- **Live check** (`gz-websocket-jetty-pub-frames` on :9031 and the stock
+  `gz-websocket-jetty-pub` on :9032, both `diff_drive`):
+  - a 9 KB `create` goes on :9031 and is lost on :9032;
+  - 40 1.5 KB requests in one write: 40 good replies on :9031, 26 on
+    :9032;
+  - `write_parts` on vehicle_blue's live SDFormat (a link, visual, IMU and
+    fixed joint, 6.8 KB), then remove and create on :9031: the model came
+    back with them, and the client's pill counted 5 links and 4 joints;
+  - the debug client's probe: "takes long frames whole" on :9031, "cuts
+    long frames" on :9032.
+  Not driven live: Done's clicks in the client (no capture flag adds
+  parts); the tests cover them.
+- **Tests:** workspace 966 → 974 passing.
+- **Merged M9d** (#61): `write_parts` writes a reparent as its joint's
+  `<parent>`; notes count changes.
+- **Review fixes** (PR #62):
+  - "Wrote X" waits until the model shows again;
+  - an ignored `remove` or a lost `create` says so and points to undo;
+  - a pending `create` waits for a world and goes on a Reset or new world;
+  - undo waits until the model shows;
+  - the long probe is 64 KiB;
+  - joint ends are escaped;
+  - D-114 says joints come back at rest.
+
+## 2026-10-25: M9d the inspectors' quick actions (D-115)
+
+- **Link inspector:** Add visual, Add collision and Add sensor, a second row
+  of quick actions, put the Parts tab's shape or sensor at the link's
+  origin while its model is edited.
+- **Joint inspector:** Reparent has the next click pick the joint's new
+  parent link, with a line from its child to the pointer, the status bar's
+  hint, and D-113's tree rules; `Part::Reparent` is a draft step that undo
+  takes back.
+- Outside editing both are disabled, saying why.
+- Built while M9c was paused on the server's frame limit; an agent is
+  finishing M9c separately. M9c's write-back needs to handle
+  `Part::Reparent` (it has no element: it changes its joint's `<parent>`).
+- **Review fixes** (PR #61):
+  - a Shapes tile (or another insert) cancels an armed Reparent;
+  - a draft joint's armed Reparent is checked after the draft is back in
+    the extras;
+  - the inspector's actions keep the link selected;
+  - a removed subject's buttons say so;
+  - the leaving note counts changes.
+
 ## 2026-10-25: M10a a static environment filtered once (D-116)
 
 - **Plan:** M10 is five PRs (UI_PLAN): M10a the environment map, M10b

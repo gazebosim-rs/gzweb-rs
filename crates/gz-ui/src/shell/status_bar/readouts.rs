@@ -52,6 +52,8 @@ pub(crate) struct StatusSources<'w, 's> {
     placing: Option<Res<'w, gz_bevy::view::place::Placing>>,
     /// So does editing a model (D-112).
     editing: Option<Res<'w, gz_bevy::view::editing::EditingModel>>,
+    /// And picking a joint's new parent (D-115).
+    assets: Option<Res<'w, crate::panels::AssetsState>>,
     cursor: Res<'w, CursorReadout>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     selection: Option<Res<'w, Selection>>,
@@ -68,6 +70,15 @@ impl StatusSources<'_, '_> {
             || self.cursor.is_changed()
             || self.status.as_ref().is_some_and(Res::is_changed)
             || self.selection.as_ref().is_some_and(Res::is_changed)
+            || self.assets.as_ref().is_some_and(Res::is_changed)
+    }
+
+    /// A joint's new parent is being picked (the Joint inspector's
+    /// Reparent).
+    fn reparenting(&self) -> bool {
+        self.assets
+            .as_ref()
+            .is_some_and(|a| a.parts.reparent.is_some())
     }
 
     /// "sel: amr_01", "3 selected" or "sel: —".
@@ -100,6 +111,7 @@ impl StatusSources<'_, '_> {
             StatusItem::Physics => format::physics(None, sim.map(|s| s.step_size)),
             StatusItem::Fps => format::fps(self.fps()),
             StatusItem::Iterations => format::iterations(sim.as_ref()),
+            StatusItem::Hint if self.reparenting() => crate::panels::REPARENT_HINT.into(),
             StatusItem::Hint if self.placing.as_ref().is_some_and(|p| p.0) => PLACE_HINT.into(),
             StatusItem::Hint if self.editing.as_ref().is_some_and(|e| e.model().is_some()) => {
                 if sim.is_some_and(|s| s.paused) {

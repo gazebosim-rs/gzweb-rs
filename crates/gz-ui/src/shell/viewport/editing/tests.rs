@@ -226,3 +226,38 @@ fn the_meta_counts() {
     assert_eq!(meta_text(1, 1, false), "· 1 link · 1 joint");
     assert_eq!(meta_text(3, 2, true), "· 3 links · 2 joints · sim paused");
 }
+
+/// Done with parts on a server that cuts long messages stays in editing
+/// and says why in the status bar; Discard is on the pill meanwhile.
+#[test]
+fn done_with_parts_says_why_in_the_status_bar() {
+    use gz_bevy::view::editing::parts::PartCommand;
+    use gz_core::parts::Part;
+    let (mut app, amr, ..) = live_world(true);
+    app.world_mut()
+        .resource_mut::<gz_bevy::connection::GzStatus>()
+        .edits = Some(true);
+    app.world_mut().write_message(EditCommand::Enter(amr));
+    frames(&mut app, 3);
+    app.world_mut()
+        .write_message(PartCommand::Add(Part::Plugin {
+            name: "gz::sim::systems::JointStatePublisher".into(),
+            filename: "gz-sim-joint-state-publisher-system".into(),
+        }));
+    frames(&mut app, 2);
+    let discard = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<&Node, With<super::EditingDiscard>>()
+            .iter(world)
+            .any(|n| n.display != Display::None)
+    };
+    assert!(discard);
+    let done = find::<EditingDone>(&mut app);
+    activate(&mut app, done);
+    assert_eq!(editing(&app), Some(amr));
+    assert!(
+        all_text(&mut app).contains("Can't write amr_01: this server cuts long messages"),
+        "the status bar's note"
+    );
+}
