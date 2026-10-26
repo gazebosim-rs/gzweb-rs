@@ -4,8 +4,10 @@
 
 use bevy::picking::backend::HitData;
 use bevy::picking::events::{
-    Pointer, PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut, PointerPress,
+    Pointer, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerMove, PointerOut,
+    PointerPress, PointerRelease,
 };
+use bevy::picking::hover::Hovered;
 use bevy::picking::pointer::{Location, PointerButton, PointerId};
 use gz_bevy::camera::MainCamera;
 use gz_bevy::view::{home_transform, SnapView, ViewCommand, ViewOp};
@@ -661,4 +663,165 @@ fn a_drag_released_off_the_cube_leaves_the_next_click_alone() {
     ops(&mut app);
     click_cube(&mut app, Vec2::new(0.0, 0.4));
     assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Top)]);
+}
+
+#[test]
+fn regions_are_named_by_the_views_they_look_from() {
+    for (r, name) in [
+        (IVec3::Z, "Top"),
+        (IVec3::NEG_Z, "Bottom"),
+        (IVec3::X, "Front"),
+        (IVec3::NEG_Y, "Left"),
+        (IVec3::new(-1, 0, 1), "Top back"),
+        (IVec3::new(1, 1, -1), "Bottom front right"),
+    ] {
+        assert_eq!(CubeRegion(r).name(), name, "{r}");
+    }
+    // A face's name is its axis view's, and its binding that view's.
+    for face in SnapView::ALL {
+        let name = CubeRegion::of_snap(face).name();
+        assert_eq!(format!("{face:?}"), name);
+        assert_eq!(snap_binding(face), format!("view.{}", name.to_lowercase()));
+    }
+}
+
+/// The view cube has a tooltip (§5.1, §13) and an accessible name (§10):
+/// the tooltip names the view a click gives, with its key on a face, and
+/// the cube off them; to AccessKit it is a named, described group with an
+/// action for each face's view, its images hidden. A press hides the
+/// tooltip, as a button's does.
+#[test]
+fn the_cube_has_a_tooltip_and_an_accessible_name() {
+    use super::systems::{CUBE_DESCRIPTION, CUBE_DETAIL, CUBE_NAME};
+    use crate::widgets::{Tooltip, TooltipSide};
+    use bevy::a11y::AccessibilityNode;
+    use bevy::ui::Pressed;
+
+    let mut app = cube_app(1.0);
+    let entity = find::<ViewCube>(&mut app);
+    let tip = |app: &App| app.world().get::<Tooltip>(entity).unwrap().clone();
+    assert_eq!(
+        tip(&app),
+        Tooltip::new(CUBE_NAME)
+            .detail(CUBE_DETAIL)
+            .side(TooltipSide::Left)
+    );
+    assert!(app.world().get::<Hovered>(entity).is_some());
+    let access = app.world().get::<AccessibilityNode>(entity).unwrap();
+    assert_eq!(access.role(), accesskit::Role::Group);
+    assert_eq!(access.label(), Some(CUBE_NAME));
+    assert_eq!(access.description(), Some(CUBE_DESCRIPTION));
+    assert!(access.supports_action(accesskit::Action::CustomAction));
+    let actions: Vec<(i32, &str)> = access
+        .custom_actions()
+        .iter()
+        .map(|a| (a.id, &*a.description))
+        .collect();
+    assert_eq!(
+        actions,
+        [
+            (0, "Top view"),
+            (1, "Bottom view"),
+            (2, "Front view"),
+            (3, "Back view"),
+            (4, "Right view"),
+            (5, "Left view"),
+        ]
+    );
+    for image in [find::<CubeImage>(&mut app), find::<CubeShadow>(&mut app)] {
+        let a = app.world().get::<AccessibilityNode>(image).unwrap();
+        assert!(a.is_hidden(), "the cube's images are hidden from AccessKit");
+    }
+    // Over the top face: "Top view" and its key; over an edge, its view.
+    let move_to = |app: &mut App, uv: Vec2| {
+        let p = at_uv(app, uv);
+        app.world_mut().trigger(PointerMove {
+            entity,
+            pointer: pointer_at(p),
+            hit: hit(),
+            delta: Vec2::ONE,
+        });
+        frames(app, 2);
+    };
+    move_to(&mut app, Vec2::new(0.0, 0.4));
+    assert_eq!(tip(&app).title, "Top view");
+    assert_eq!(tip(&app).shortcut.as_deref(), Some("7"));
+    assert_eq!(tip(&app).side, TooltipSide::Left);
+    move_to(&mut app, Vec2::ZERO);
+    assert_eq!(tip(&app).title, "Top back view");
+    assert_eq!(tip(&app).second_line(), None);
+    app.world_mut().trigger(PointerOut {
+        entity,
+        pointer: pointer_at(Vec2::ZERO),
+        hit: hit(),
+    });
+    frames(&mut app, 2);
+    assert_eq!(tip(&app).title, CUBE_NAME);
+    // Pressed until the release, or the end of a drag from it.
+    let p = at_uv(&mut app, Vec2::ZERO);
+    let press = |app: &mut App| {
+        app.world_mut().trigger(PointerPress {
+            entity,
+            pointer: pointer_at(p),
+            button: PointerButton::Primary,
+            hit: hit(),
+            count: 1,
+        });
+        frames(app, 1);
+        assert!(app.world().get::<Pressed>(entity).is_some());
+    };
+    press(&mut app);
+    app.world_mut().trigger(PointerRelease {
+        entity,
+        pointer: pointer_at(p),
+        button: PointerButton::Primary,
+        hit: hit(),
+    });
+    frames(&mut app, 1);
+    assert!(app.world().get::<Pressed>(entity).is_none());
+    press(&mut app);
+    app.world_mut().trigger(PointerDragEnd {
+        entity,
+        pointer: pointer_at(p),
+        button: PointerButton::Primary,
+        distance: Vec2::ZERO,
+    });
+    frames(&mut app, 1);
+    assert!(app.world().get::<Pressed>(entity).is_none());
+}
+
+/// A screen reader's action on the cube snaps its view to that face's
+/// view; another node's, another action or an unknown one does nothing.
+#[test]
+fn the_cubes_actions_snap_its_view() {
+    use accesskit::{Action, ActionData, NodeId, TreeId};
+    use bevy::a11y::ActionRequest;
+
+    let mut app = cube_app(1.0);
+    let cube = find::<ViewCube>(&mut app);
+    let image = find::<CubeImage>(&mut app);
+    let request = |target: Entity, action: Action, data: Option<ActionData>| {
+        ActionRequest(accesskit::ActionRequest {
+            action,
+            target_tree: TreeId::ROOT,
+            target_node: NodeId(target.to_bits()),
+            data,
+        })
+    };
+    let custom = |id| Some(ActionData::CustomAction(id));
+    for r in [
+        request(image, Action::CustomAction, custom(0)),
+        request(cube, Action::Click, None),
+        request(cube, Action::CustomAction, custom(6)),
+        request(cube, Action::CustomAction, custom(-1)),
+        request(cube, Action::CustomAction, None),
+    ] {
+        app.world_mut().write_message(r);
+    }
+    frames(&mut app, 2);
+    assert_eq!(ops(&mut app), []);
+    app.world_mut()
+        .write_message(request(cube, Action::CustomAction, custom(2)));
+    frames(&mut app, 2);
+    assert_eq!(ops(&mut app), [ViewOp::Snap(SnapView::Front)]);
 }

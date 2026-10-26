@@ -8,6 +8,7 @@
 use accesskit::Role;
 use bevy::a11y::AccessibilityNode;
 use bevy::picking::hover::Hovered;
+use bevy::picking::Pickable;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Button as Headless, RadioButton, RadioGroup, ScrollArea};
 use gz_core::fuel::{size_label, FuelModel, BROWSE_HOST};
@@ -20,10 +21,10 @@ use crate::assets::icons::{content_icon, IconId};
 use crate::theme::visuals::{Content, Visuals};
 use crate::theme::{border, radius, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::button::Checkedness;
-use crate::widgets::layout::{column, display, flex_spacer, row};
+use crate::widgets::layout::{column, display, row};
 use crate::widgets::{
-    a11y, button, clickable, filter_field, icon_button, rounded, text_field, ButtonVariant,
-    IconButtonSize, Tooltip,
+    a11y, button, clickable, filter_field, icon_button, rounded, text_button, text_field,
+    ButtonVariant, IconButtonSize, TextButtonProps, Tooltip,
 };
 
 /// A tile's height (§3.3: 64 px tiles).
@@ -55,9 +56,16 @@ pub(super) struct AssetsNote;
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(super) struct FuelQuery;
 
-/// The Fuel tab's 2 px bar: searching (§3.3.1).
+/// The spinner in the Fuel search field: searching (§3.3.1).
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub(super) struct FuelBar;
+pub(super) struct FuelSpinner;
+
+/// The spinner's side.
+pub(crate) const SPINNER: f32 = 14.0;
+
+/// What a Cancel says it does: it stops waiting, it can't take the
+/// `create` back (D-121).
+pub(crate) const CANCEL_DETAIL: &str = "Stop waiting for it: the server may still add it";
 
 /// The Fuel tab's message: "Search Fuel…", "No models match", "Fuel is
 /// unreachable".
@@ -87,6 +95,16 @@ pub(super) struct FuelInsert(pub(crate) FuelModel);
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub(super) struct RowBar(pub(crate) String);
 
+/// A result row's Cancel, in Insert's place while its model is on its
+/// way: the model it stops waiting for.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(super) struct FuelCancel(pub(crate) FuelModel);
+
+/// What shows or hides a result row's Insert (`false`) or Cancel
+/// (`true`): its model's URI.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(super) struct RowButton(pub(crate) String, pub(crate) bool);
+
 /// The Local tab's URI field and Insert.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(super) struct LocalUri;
@@ -101,6 +119,11 @@ pub(super) struct InsertRows;
 /// An insert row's dismiss button, by insert id.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Dismiss(pub(crate) u32);
+
+/// An insert row's Cancel, while it's under way: its insert's id and
+/// label.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub(super) struct CancelInsert(pub(crate) u32, pub(crate) String);
 
 /// A moving 2 px `accent` segment: work under way (§3.3.1).
 #[derive(Component, Clone, Copy, Debug, Default)]
@@ -305,18 +328,8 @@ fn spawn_fuel(c: &mut ChildSpawnerCommands, t: &Theme, state: &AssetsState) {
             f.spawn((
                 filter_field(t, "Search Fuel", "Search models", state.query.clone()),
                 FuelQuery,
-            ));
-            f.spawn((
-                FuelBar,
-                Node {
-                    height: px(2),
-                    margin: UiRect::top(px(SPACE[1])),
-                    overflow: Overflow::clip(),
-                    display: Display::None,
-                    ..default()
-                },
             ))
-            .with_child(indeterminate());
+            .with_child(spinner());
         });
         p.spawn(Node {
             padding: UiRect::all(px(SPACE[4])),
@@ -379,8 +392,59 @@ fn spawn_fuel(c: &mut ChildSpawnerCommands, t: &Theme, state: &AssetsState) {
     });
 }
 
+/// The search field's spinner (§3.3.1: "spinner in the input"): an
+/// `accent` arc turning over a `line_soft` ring, at the field's right end
+/// while a search is under way (`systems::fuel_states` shows it,
+/// `systems::spin` turns it). To AccessKit, "Searching Fuel" while it
+/// shows.
+fn spinner() -> impl Bundle {
+    let ring = |border: UiRect, role: ColorRole| {
+        (
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                width: percent(100),
+                height: percent(100),
+                border,
+                border_radius: rounded(SPINNER / 2.0),
+                ..default()
+            },
+            Stroke(role),
+            Pickable::IGNORE,
+        )
+    };
+    let arc = UiRect {
+        top: px(2),
+        right: px(2),
+        ..UiRect::ZERO
+    };
+    let mut access = a11y(Role::ProgressIndicator, "Searching Fuel");
+    access.set_hidden();
+    (
+        FuelSpinner,
+        access,
+        Node {
+            width: px(SPINNER),
+            height: px(SPINNER),
+            flex_shrink: 0.0,
+            margin: UiRect::left(px(SPACE[3])),
+            display: Display::None,
+            ..default()
+        },
+        UiTransform::default(),
+        Pickable::IGNORE,
+        children![
+            ring(UiRect::all(px(2)), ColorRole::LineSoft),
+            ring(arc, ColorRole::Accent),
+        ],
+    )
+}
+
 /// A Fuel result (§3.3): its thumbnail, name, owner and size, and
-/// Insert; a bar under it while its model is on its way.
+/// Insert; while its model is on its way, a bar under it and Cancel in
+/// Insert's place (§3.3.1). The server doesn't say how far a download
+/// has got, so the bar moves without measuring (D-121).
 pub(super) fn fuel_row(
     theme: &Theme,
     model: &FuelModel,
@@ -452,8 +516,27 @@ pub(super) fn fuel_row(
                         ],
                     ),
                     (
-                        button(theme, "Insert", ButtonVariant::Normal),
-                        FuelInsert(model.clone()),
+                        RowButton(model.uri(), false),
+                        Node {
+                            display: display(!loading),
+                            ..default()
+                        },
+                        children![(
+                            button(theme, "Insert", ButtonVariant::Normal),
+                            FuelInsert(model.clone()),
+                        )],
+                    ),
+                    (
+                        RowButton(model.uri(), true),
+                        Node {
+                            display: display(loading),
+                            ..default()
+                        },
+                        children![(
+                            button(theme, "Cancel", ButtonVariant::Normal),
+                            FuelCancel(model.clone()),
+                            Tooltip::new("Cancel").detail(CANCEL_DETAIL),
+                        )],
                     ),
                 ],
             ),
@@ -507,8 +590,9 @@ fn spawn_local(c: &mut ChildSpawnerCommands, t: &Theme, state: &AssetsState) {
     });
 }
 
-/// An insert's row: what, its status, a bar while under way, and a
-/// dismiss button once it failed (`danger_soft`, §3.3.1).
+/// An insert's row: what, its status under it, and while under way a bar
+/// and Cancel (D-121); once it failed, a dismiss button (`danger_soft`,
+/// §3.3.1).
 pub(super) fn insert_row(
     theme: &Theme,
     id: u32,
@@ -521,6 +605,13 @@ pub(super) fn insert_row(
     } else {
         (ColorRole::Clear, ColorRole::Text2)
     };
+    let cancel = (!failed).then(|| {
+        (
+            text_button(theme, TextButtonProps::new("Cancel")),
+            CancelInsert(id, label.clone()),
+            Tooltip::new("Cancel").detail(CANCEL_DETAIL),
+        )
+    });
     (
         Node {
             padding: UiRect::axes(px(SPACE[4]), px(SPACE[3])),
@@ -538,14 +629,35 @@ pub(super) fn insert_row(
                     ..row(SPACE[3])
                 },
                 children![
+                    // What and how it goes, over each other: beside each
+                    // other they'd push the button out of a narrow panel.
                     (
-                        text(TypeStyle::LABEL, ColorRole::Text, label),
-                        TextLayout::no_wrap()
+                        Node {
+                            flex_grow: 1.0,
+                            min_width: px(0),
+                            overflow: Overflow::clip(),
+                            ..column(SPACE[1])
+                        },
+                        children![
+                            (
+                                text(TypeStyle::LABEL, ColorRole::Text, label),
+                                TextLayout::no_wrap()
+                            ),
+                            text(TypeStyle::SMALL, ink, status),
+                        ],
                     ),
-                    flex_spacer(),
-                    (text(TypeStyle::SMALL, ink, status), TextLayout::no_wrap(),),
                     (
-                        Node::default(),
+                        Node {
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        Children::spawn(SpawnIter(cancel.into_iter()))
+                    ),
+                    (
+                        Node {
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
                         Children::spawn(SpawnIter(
                             failed
                                 .then(|| {

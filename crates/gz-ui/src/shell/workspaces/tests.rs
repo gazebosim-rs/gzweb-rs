@@ -350,6 +350,57 @@ fn a_file_it_cant_parse_is_kept_apart() {
     assert_eq!(stored(&app).unwrap().current, "debug");
 }
 
+/// A file it can't read is a warning the user sees (§3.3.1, D-110):
+/// through the log layer, as the app installs it, the message tray lists
+/// it and the status bar's chip shows it, saying what happened and where
+/// the file was kept; the Workspaces panel keeps why.
+#[test]
+fn a_file_it_cant_read_shows_in_the_message_tray() {
+    use bevy::ecs::schedule::SingleThreadedExecutor;
+    use bevy::log::tracing_subscriber::layer::SubscriberExt;
+
+    use crate::shell::status_bar::readouts::MessageChip;
+
+    let dir = std::env::temp_dir().join(format!("gz-ui-workspaces-tray-{}", std::process::id()));
+    let path = dir.join(WORKSPACE_FILE);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&path, "{oops").unwrap();
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::File(path),
+        theme: true,
+    })
+    .add_systems(Update, gz_bevy::messages::drain_log)
+    // The store is read in PreUpdate: on this thread, the subscriber's.
+    .edit_schedule(PreUpdate, |s| {
+        s.set_executor(SingleThreadedExecutor::new());
+    });
+    let layer = gz_bevy::messages::log_layer(&mut app).unwrap();
+    let subscriber = bevy::log::tracing_subscriber::registry().with(layer);
+    bevy::log::tracing::subscriber::with_default(subscriber, || app.update());
+    frames(&mut app, 2);
+    let bad = dir.join(format!("{WORKSPACE_FILE}.bad"));
+    let want = format!("{LOAD_FAILED}: it's kept as {}", bad.display());
+    let messages = app.world().resource::<gz_bevy::messages::SystemMessages>();
+    let problems: Vec<String> = messages.problems().map(|m| m.text.clone()).collect();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].starts_with(&want), "{}", problems[0]);
+    let chip = find::<MessageChip>(&mut app);
+    let chip = app.world().get::<MessageChip>(chip).unwrap();
+    assert!(chip.text.starts_with(&want), "{}", chip.text);
+    assert_eq!(chip.count, "1 warning");
+    let failed = app
+        .world()
+        .resource::<Persisted>()
+        .failed()
+        .map(str::to_string);
+    assert_eq!(failed.as_deref(), Some(problems[0].as_str()));
+    std::fs::remove_dir_all(&dir).unwrap();
+    // One it reads has nothing to say.
+    let app = start_with(Some(&file_text("run", FILE_VERSION, &[])), true, |_| {});
+    assert_eq!(app.world().resource::<Persisted>().failed(), None);
+}
+
 /// A newer gzweb's file is read as far as it can be and never written
 /// over; workspaces this build doesn't know are kept when it writes.
 #[test]

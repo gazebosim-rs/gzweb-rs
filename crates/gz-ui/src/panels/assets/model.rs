@@ -1,6 +1,7 @@
 //! The Assets panel's state and rules, as plain data and functions: the
 //! tab, what is armed to place, the Fuel search's query, and each insert
-//! on its way (DECISIONS.md D-102).
+//! on its way (DECISIONS.md D-102), which the user may stop waiting for
+//! (D-121).
 
 use bevy::prelude::*;
 use gz_core::insert::{Insertable, Shape};
@@ -194,6 +195,11 @@ pub(crate) struct Insert {
     /// The scene's names that were already its own when it was sent, so
     /// only a new one counts as it showing up.
     pub taken: Vec<String>,
+    /// The user stopped waiting for it (D-121). A `create` can't be
+    /// withdrawn, so it still takes its reply and the name it shows up
+    /// as (not a later insert's), unseen, and goes once it does, fails or
+    /// times out; a model that shows up stays in the world.
+    pub cancelled: bool,
 }
 
 impl Insert {
@@ -239,8 +245,46 @@ impl Inserts {
             stage: InsertStage::Sent,
             since: now,
             taken,
+            cancelled: false,
         });
         self.next
+    }
+
+    /// The inserts the panel shows: all but the cancelled.
+    pub(crate) fn shown(&self) -> impl Iterator<Item = &Insert> {
+        self.list.iter().filter(|i| !i.cancelled)
+    }
+
+    /// Stops waiting for insert `id`, still under way (D-121); `false`
+    /// if there is no such insert.
+    pub(crate) fn cancel(&mut self, id: u32) -> bool {
+        let Some(i) = self
+            .list
+            .iter_mut()
+            .find(|i| i.id == id && !i.failed() && !i.cancelled)
+        else {
+            return false;
+        };
+        i.cancelled = true;
+        true
+    }
+
+    /// Stops waiting for every insert of `uri`'s model under way (its Fuel
+    /// row's Cancel); their labels.
+    pub(crate) fn cancel_model(&mut self, uri: &str) -> Vec<String> {
+        let ids: Vec<u32> = self
+            .list
+            .iter()
+            .filter(|i| matches!(&i.what, Insertable::Model { uri: u, .. } if u == uri))
+            .map(|i| i.id)
+            .collect();
+        let mut labels = vec![];
+        for id in ids {
+            if self.cancel(id) {
+                labels.extend(self.list.iter().find(|i| i.id == id).map(Insert::label));
+            }
+        }
+        labels
     }
 
     /// The server answered the oldest `create` still waiting: `ok` or
@@ -258,6 +302,7 @@ impl Inserts {
             };
             i.since = now;
         }
+        self.list.retain(|i| !(i.cancelled && i.failed()));
     }
 
     /// Ends the accepted inserts that `names` (the scene's) now hold, the
@@ -302,6 +347,7 @@ impl Inserts {
                 i.since = now;
             }
         }
+        self.list.retain(|i| !(i.cancelled && i.failed()));
     }
 
     /// Dismisses insert `id`.
@@ -309,10 +355,10 @@ impl Inserts {
         self.list.retain(|i| i.id != id);
     }
 
-    /// Whether `uri`'s model is on its way (its Fuel row shows a bar).
+    /// Whether `uri`'s model is on its way and waited for (its Fuel row
+    /// shows a bar and Cancel).
     pub(crate) fn loading(&self, uri: &str) -> bool {
-        self.list
-            .iter()
+        self.shown()
             .any(|i| !i.failed() && matches!(&i.what, Insertable::Model { uri: u, .. } if u == uri))
     }
 }

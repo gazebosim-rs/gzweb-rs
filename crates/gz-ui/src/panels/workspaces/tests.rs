@@ -343,6 +343,42 @@ fn manage_and_the_palette_open_the_panel() {
     assert!(naming(&app));
 }
 
+/// A store it couldn't read at start is the panel's error state (§3.3.1):
+/// the footer says so, and where the file was kept, over the note.
+#[test]
+fn the_footer_says_the_store_couldnt_be_read() {
+    use super::view::LoadFailed;
+    use crate::shell::workspaces::LOAD_FAILED;
+
+    let mut app = panel_app();
+    let world = app.world_mut();
+    assert_eq!(world.query::<&LoadFailed>().iter(world).count(), 0);
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(Some("{oops".into())),
+        theme: true,
+    });
+    frames(&mut app, 2);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: WORKSPACES_PANEL,
+        slot: Slot::Primary,
+    });
+    frames(&mut app, 4);
+    let line = find::<LoadFailed>(&mut app);
+    let text = texts(&mut app, line);
+    assert!(
+        text.starts_with(&format!("{LOAD_FAILED}: it's kept as memory (")),
+        "{text}"
+    );
+    let access = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(line)
+        .unwrap();
+    assert_eq!(access.role(), accesskit::Role::Alert);
+    assert_eq!(access.label(), Some(text.as_str()));
+    assert!(all_text(&mut app).contains("Layouts are kept for this session only"));
+}
+
 /// The footer says where the layouts are kept; Import waits for a file
 /// picker.
 #[test]

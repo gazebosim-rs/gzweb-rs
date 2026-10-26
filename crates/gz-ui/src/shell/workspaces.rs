@@ -909,6 +909,9 @@ pub(crate) struct Persisted {
     theme: Option<String>,
     /// It isn't written: it couldn't be read, or a newer gzweb wrote it.
     read_only: bool,
+    /// Why it couldn't be read at start, and where it was kept (§3.3.1:
+    /// the Workspaces panel's error state).
+    failed: Option<String>,
 }
 
 impl Persisted {
@@ -916,7 +919,22 @@ impl Persisted {
     pub(crate) fn read_only(&self) -> bool {
         self.read_only
     }
+
+    /// Why the store couldn't be read at start, if it couldn't: the
+    /// warning the message tray lists, which the Workspaces panel shows.
+    pub(crate) fn failed(&self) -> Option<&str> {
+        self.failed.as_deref()
+    }
+
+    /// The store couldn't be read: warns, and keeps why.
+    fn fail(&mut self, why: String) {
+        warn!("{why}");
+        self.failed = Some(why);
+    }
 }
+
+/// What a store that couldn't be read says first (§3.3.1).
+pub(crate) const LOAD_FAILED: &str = "Couldn't read workspaces.json, using defaults";
 
 impl Persisted {
     /// What the file holds for `workspaces` and `theme`.
@@ -985,7 +1003,10 @@ pub(crate) fn exported(workspaces: &Workspaces) -> String {
 /// A file it can't parse is kept apart (`.bad`) and the defaults used; if
 /// it can't be kept apart, or can't be read at all, it's left as it is
 /// and not written this session. A newer version's is read as far as it
-/// can be and not written either.
+/// can be and not written either. A failure is a warning, which the log
+/// layer gives the message tray and the status bar's chip (D-110), and
+/// the Workspaces panel shows it too ([`Persisted::failed`]): what
+/// happened and where the file is.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn load_workspaces(
     store: Option<ResMut<WorkspaceStore>>,
@@ -1006,7 +1027,7 @@ pub(crate) fn load_workspaces(
     let text = match store.read() {
         Ok(text) => text,
         Err(e) => {
-            warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e}");
+            persisted.fail(format!("{LOAD_FAILED} and leaving it as it is: {e}"));
             persisted.read_only = true;
             return;
         }
@@ -1020,13 +1041,11 @@ pub(crate) fn load_workspaces(
         }
         Some(Err((text, e))) => {
             match store.set_aside(&text) {
-                Ok(at) => {
-                    warn!(
-                        "Couldn't read {WORKSPACE_FILE}, using defaults (it's kept as {at}): {e}"
-                    );
-                }
+                Ok(at) => persisted.fail(format!("{LOAD_FAILED}: it's kept as {at} ({e})")),
                 Err(why) => {
-                    warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e} (couldn't keep it apart: {why})");
+                    persisted.fail(format!(
+                        "{LOAD_FAILED} and leaving it as it is: {e} (couldn't keep it apart: {why})"
+                    ));
                     persisted.read_only = true;
                 }
             }

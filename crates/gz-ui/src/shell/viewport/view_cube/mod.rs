@@ -26,12 +26,17 @@
 //! an edge strip (the 45° view) or a corner square. Hovering lights up
 //! what a click would pick; a drag on the cube orbits the view; a click
 //! animates per the motion tokens (250 ms, cubic-out). It never opens a
-//! menu. The cube isn't a tab stop: keys 7, 1 and 3 do what it does.
+//! menu. Its tooltip names the view a click gives ("Top view · 7", "Top
+//! front right view"), and "View cube" off its faces. The cube isn't a
+//! tab stop: keys 7, 1 and 3 do what it does. To AccessKit it is a named
+//! group that says so, with an action for each face's view.
 
 pub(crate) mod pick;
 pub(crate) mod scene;
 pub(crate) mod systems;
 
+use bevy::a11y::ActionRequest;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use bevy::ui::UiSystems;
@@ -64,6 +69,9 @@ pub(crate) fn view_cube(theme: &Theme) -> impl Bundle {
         ViewCube,
         systems::CubeHover::default(),
         systems::CubePointerAt::default(),
+        Hovered::default(),
+        systems::cube_tooltip(None, None),
+        systems::cube_access(),
         Name::new("view cube"),
         Node {
             position_type: PositionType::Absolute,
@@ -81,10 +89,17 @@ pub(crate) fn view_cube(theme: &Theme) -> impl Bundle {
 pub(crate) const CUBE_RIGHT: f32 = 2.0;
 
 pub(crate) fn build(app: &mut App) {
+    // Winit sends AccessKit's requests; without it (headless) none come.
+    app.add_message::<ActionRequest>();
     app.init_resource::<systems::CubeDrag>()
         .add_systems(
             Update,
-            (systems::spawn_parts, scene::spawn_cube_scenes).in_set(GzUiSystems::Behaviour),
+            (
+                systems::spawn_parts,
+                scene::spawn_cube_scenes,
+                systems::cube_actions,
+            )
+                .in_set(GzUiSystems::Behaviour),
         )
         .add_observer(scene::on_cube_removed)
         // The cube turns, and its labels move, in the frame the view does:
@@ -98,6 +113,7 @@ pub(crate) fn build(app: &mut App) {
                     scene::size_cube_texture,
                     scene::show_cube_texture,
                     systems::follow_hover,
+                    systems::name_hover,
                     scene::paint_cube,
                 )
                     .chain()
@@ -107,6 +123,8 @@ pub(crate) fn build(app: &mut App) {
         .add_observer(systems::on_cube_move)
         .add_observer(systems::on_cube_out)
         .add_observer(systems::on_cube_press)
+        .add_observer(systems::on_cube_release)
+        .add_observer(systems::on_cube_drag_end)
         .add_observer(systems::on_cube_drag_start)
         .add_observer(systems::on_cube_drag)
         .add_observer(systems::on_cube_click);

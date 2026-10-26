@@ -118,6 +118,7 @@ impl Plugin for AssetsPanelPlugin {
                     systems::row_bars,
                     systems::sync_inserts,
                     systems::move_bars,
+                    systems::spin,
                     parts::tab_systems(),
                 )
                     .chain()
@@ -131,6 +132,9 @@ impl Plugin for AssetsPanelPlugin {
         .add_observer(systems::on_tile)
         .add_observer(systems::on_fuel_insert)
         .add_observer(systems::label_insert)
+        .add_observer(systems::label_cancel)
+        .add_observer(systems::label_insert_cancel)
+        .add_observer(systems::on_cancel)
         .add_observer(systems::on_fuel_button)
         .add_observer(systems::on_local_insert)
         .add_observer(systems::on_dismiss)

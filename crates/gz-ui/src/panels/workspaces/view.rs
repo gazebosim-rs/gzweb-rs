@@ -16,6 +16,7 @@ use gz_bevy::view::input::InputMap;
 
 use super::{WorkspacesBody, WorkspacesFooter};
 use crate::assets::fonts::text;
+use crate::assets::icons::icon;
 use crate::assets::IconId;
 use crate::panels::PanelRegistry;
 use crate::shell::viewport::views::LayoutPreset;
@@ -570,8 +571,42 @@ pub(crate) fn note_of(store: Option<&WorkspaceStore>, read_only: bool) -> String
     }
 }
 
-/// Builds the footer: the note over Import / export layouts… (a menu:
-/// Export layouts…, and Import, unavailable).
+/// The store couldn't be read at start (§3.3.1, the panel's error
+/// state): a warning icon and why, where it was kept too, in `warn_text`
+/// on `warn_soft` (the disconnected banner's pair), over the footer's
+/// note.
+pub(crate) fn load_failed(theme: &Theme, why: String) -> impl Bundle {
+    (
+        LoadFailed,
+        a11y(Role::Alert, why.clone()),
+        Node {
+            align_items: AlignItems::FlexStart,
+            padding: UiRect::axes(px(SPACE[4]), px(SPACE[3])),
+            border_radius: rounded(radius::SM),
+            ..row(SPACE[3])
+        },
+        Fill(ColorRole::WarnSoft),
+        children![
+            icon(IconId::Warning, theme.s.icon_sm, ColorRole::WarnText),
+            (
+                text(TypeStyle::SMALL, ColorRole::WarnText, why),
+                Node {
+                    flex_shrink: 1.0,
+                    min_width: px(0),
+                    ..default()
+                },
+            ),
+        ],
+    )
+}
+
+/// The footer's line saying the store couldn't be read.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct LoadFailed;
+
+/// Builds the footer: the store's failure if it couldn't be read, the
+/// note over Import / export layouts… (a menu: Export layouts…, and
+/// Import, unavailable).
 pub(super) fn build_footer(
     ev: On<Add<WorkspacesFooter>>,
     theme: Res<Theme>,
@@ -581,6 +616,7 @@ pub(super) fn build_footer(
 ) {
     let t = theme.clone();
     let note = note_of(store.as_deref(), persisted.read_only());
+    let failed = persisted.failed().map(str::to_string);
     commands.entity(ev.entity).with_children(|f| {
         f.spawn(Node {
             flex_grow: 1.0,
@@ -588,6 +624,9 @@ pub(super) fn build_footer(
             ..column(SPACE[4])
         })
         .with_children(|c| {
+            if let Some(why) = failed {
+                c.spawn(load_failed(&t, why));
+            }
             c.spawn(text(TypeStyle::SMALL, ColorRole::Text2, note));
             c.spawn((
                 Menu,

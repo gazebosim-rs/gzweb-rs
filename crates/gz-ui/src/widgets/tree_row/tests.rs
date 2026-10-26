@@ -211,3 +211,84 @@ fn a_spec_change_repaints_every_part() {
     assert!(!hidden(&app, caret) && !hidden(&app, eye));
     assert_eq!(label(&app, caret).as_deref(), Some("Expand front_camera"));
 }
+
+/// The caret and the eye are icon-only buttons with tooltips (§5.1, §13):
+/// each says what a click does, as its accessible name does, follows a
+/// reused row, and goes while the part does nothing. A hidden row's card
+/// isn't dimmed with the row.
+#[test]
+fn the_caret_and_the_eye_have_tooltips() {
+    use crate::widgets::tooltip::{TooltipCard, TooltipTimer};
+
+    let (mut app, row) = app_with_row();
+    let caret = part(&mut app, row, TreeRowPart::Caret);
+    let eye = part(&mut app, row, TreeRowPart::Eye);
+    let tip = |app: &App, e: Entity| app.world().get::<Tooltip>(e).map(|t| t.title.clone());
+    assert_eq!(tip(&app, caret).as_deref(), Some("Expand amr_01"));
+    assert_eq!(tip(&app, eye).as_deref(), Some("Hide amr_01"));
+    {
+        let mut s = app.world_mut().get_mut::<TreeRowSpec>(row).unwrap();
+        s.name = "cart".into();
+        s.expanded = Some(true);
+        s.hidden = true;
+    }
+    frames(&mut app, 2);
+    assert_eq!(tip(&app, caret).as_deref(), Some("Collapse cart"));
+    assert_eq!(tip(&app, eye).as_deref(), Some("Show cart"));
+    // Hovered past the delay: the card shows, at full opacity on a row
+    // at 50%.
+    app.world_mut().entity_mut(eye).insert(Hovered(true));
+    frames(&mut app, 1);
+    let mut timer = *app.world().resource::<TooltipTimer>();
+    timer.target = timer.target.map(|(e, _)| (e, -1.0));
+    app.insert_resource(timer);
+    frames(&mut app, 2);
+    let card = {
+        let w = app.world_mut();
+        w.query_filtered::<(Entity, &ChildOf), With<TooltipCard>>()
+            .iter(w)
+            .find(|(_, p)| p.parent() == eye)
+            .map(|(e, _)| e)
+            .expect("the eye's tooltip")
+    };
+    app.world_mut().get_mut::<TreeRowSpec>(row).unwrap().name = "cart_2".into();
+    frames(&mut app, 2);
+    let w = app.world();
+    let opacity = |e: Entity| w.get::<Opacity>(e).map_or(1.0, |o| o.0);
+    assert_eq!(opacity(part_of(w, row, TreeRowPart::Name)), 0.5);
+    assert_eq!(opacity(card), 1.0);
+    assert!(descendants(w, card).iter().all(|&e| opacity(e) == 1.0));
+    assert_eq!(tip(&app, eye).as_deref(), Some("Show cart_2"));
+    // A leaf's caret and an unhideable row's eye have none.
+    {
+        let mut s = app.world_mut().get_mut::<TreeRowSpec>(row).unwrap();
+        s.expanded = None;
+        s.hideable = false;
+    }
+    frames(&mut app, 2);
+    assert_eq!(tip(&app, caret), None);
+    assert_eq!(tip(&app, eye), None);
+    // A leaf row spawned so has none either.
+    let leaf = app
+        .world_mut()
+        .spawn(tree_row(
+            &Theme::default(),
+            TreeRowSpec {
+                expanded: None,
+                hideable: false,
+                ..spec()
+            },
+        ))
+        .id();
+    frames(&mut app, 1);
+    let caret = part(&mut app, leaf, TreeRowPart::Caret);
+    let eye = part(&mut app, leaf, TreeRowPart::Eye);
+    assert_eq!((tip(&app, caret), tip(&app, eye)), (None, None));
+}
+
+fn part_of(w: &World, row: Entity, which: TreeRowPart) -> Entity {
+    descendants(w, row)
+        .into_iter()
+        .find(|e| w.get::<TreeRowPart>(*e) == Some(&which))
+        .unwrap()
+}

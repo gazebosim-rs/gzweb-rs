@@ -92,6 +92,62 @@ fn a_late_reply_is_not_the_next_inserts() {
     assert_eq!(inserts.list[1].stage, InsertStage::Accepted);
 }
 
+/// A cancelled insert stops showing, but a `create` can't be withdrawn
+/// (D-121): it still takes its reply and the name it shows up as, so a
+/// later insert's isn't ended by it; refused, or out of time, it goes
+/// without a failed row.
+#[test]
+fn a_cancelled_insert_keeps_its_reply_and_its_name() {
+    let mut inserts = Inserts::default();
+    let boxed = Insertable::Shape(Shape::Box);
+    let a = inserts.sent(boxed.clone(), 0.0, vec![]);
+    assert!(inserts.cancel(a));
+    assert!(!inserts.cancel(a), "once");
+    assert_eq!(inserts.shown().count(), 0);
+    let b = inserts.sent(boxed.clone(), 1.0, vec![]);
+    inserts.answered(true, 2.0);
+    inserts.answered(true, 2.0);
+    assert!(inserts
+        .list
+        .iter()
+        .all(|i| i.stage == InsertStage::Accepted));
+    // The first new box is the cancelled one's: the second still waits.
+    inserts.settle(["box"].into_iter(), 3.0);
+    let ids: Vec<u32> = inserts.list.iter().map(|i| i.id).collect();
+    assert_eq!(ids, [b]);
+    inserts.settle(["box", "box_0"].into_iter(), 3.0);
+    assert!(inserts.list.is_empty());
+
+    // Refused, or out of time: gone, unseen; a failed one can't be
+    // cancelled.
+    let c = inserts.sent(boxed.clone(), 10.0, vec![]);
+    inserts.cancel(c);
+    inserts.answered(false, 11.0);
+    assert!(inserts.list.is_empty());
+    let model = Insertable::Model {
+        uri: "https://fuel/x".into(),
+        name: "x".into(),
+    };
+    inserts.sent(model.clone(), 20.0, vec![]);
+    inserts.sent(model, 20.0, vec![]);
+    inserts.answered(true, 21.0);
+    assert!(inserts.loading("https://fuel/x"));
+    assert_eq!(inserts.cancel_model("https://fuel/x"), ["x", "x"]);
+    assert!(!inserts.loading("https://fuel/x"));
+    assert!(inserts.cancel_model("https://fuel/x").is_empty());
+    inserts.settle([].into_iter(), 21.0 + REPLY_SECS + 1.0);
+    assert_eq!(inserts.list.len(), 1, "the accepted one waits on");
+    inserts.settle([].into_iter(), 21.0 + APPEAR_SECS + 1.0);
+    assert!(inserts.list.is_empty());
+    // The one that never answered owes its reply: the next isn't it.
+    let d = inserts.sent(boxed, 200.0, vec![]);
+    inserts.answered(true, 201.0);
+    assert_eq!(inserts.list[0].stage, InsertStage::Sent);
+    inserts.settle([].into_iter(), 300.0);
+    assert!(inserts.list[0].failed());
+    assert!(!inserts.cancel(d));
+}
+
 /// A local model is named after its URI's last part.
 #[test]
 fn a_local_model_is_named_after_its_uri() {
@@ -562,6 +618,191 @@ fn fuel_searches_and_inserts() {
             page: 2
         }]
     );
+}
+
+/// A search under way turns a spinner in the search field (§3.3.1), shown
+/// to AccessKit only then.
+#[test]
+fn a_search_spins_in_the_field() {
+    use super::view::FuelSpinner;
+    use bevy::a11y::AccessibilityNode;
+
+    let mut app = live_assets();
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Fuel;
+    frames(&mut app, 2);
+    let spinner = find::<FuelSpinner>(&mut app);
+    let state = |app: &App| {
+        let w = app.world();
+        (
+            w.get::<Node>(spinner).unwrap().display,
+            w.get::<AccessibilityNode>(spinner).unwrap().is_hidden(),
+            w.get::<UiTransform>(spinner).unwrap().rotation,
+        )
+    };
+    assert_eq!(state(&app).0, Display::None);
+    assert!(state(&app).1);
+    // In the search field.
+    let field = app.world().get::<ChildOf>(spinner).unwrap().parent();
+    let world = app.world_mut();
+    let fields: Vec<Entity> = world
+        .query_filtered::<Entity, With<super::view::FuelQuery>>()
+        .iter(world)
+        .collect();
+    assert_eq!(fields, [field]);
+    app.world_mut().resource_mut::<GzFuel>().state = FuelState::Searching;
+    frames(&mut app, 2);
+    let (display, hidden, turned) = state(&app);
+    assert_eq!((display, hidden), (Display::Flex, false));
+    frames(&mut app, 2);
+    assert_ne!(state(&app).2, turned, "it turns");
+    app.world_mut().resource_mut::<GzFuel>().state = FuelState::Idle;
+    frames(&mut app, 2);
+    assert_eq!(state(&app).0, Display::None);
+    assert!(state(&app).1);
+}
+
+/// A Fuel model on its way shows a moving bar under its row, and Cancel
+/// in Insert's place (the server doesn't report a download's progress);
+/// so does its insert row. Cancel stops waiting, says the server may
+/// still add it, and the model that shows up later stays (D-121).
+#[test]
+fn a_fuel_insert_can_be_cancelled() {
+    use super::systems::cancelled_note;
+    use super::view::{CancelInsert, FuelCancel, Indeterminate, RowButton};
+    use bevy::a11y::AccessibilityNode;
+
+    let mut app = live_assets();
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Fuel;
+    *app.world_mut().resource_mut::<GzFuel>() = GzFuel {
+        query: "pallet".into(),
+        page: 1,
+        models: models(2),
+        more: false,
+        state: FuelState::Idle,
+    };
+    frames(&mut app, 2);
+    let uri = "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Pallet%201";
+    let shown = |app: &mut App| {
+        let world = app.world_mut();
+        let bar = world
+            .query::<(&RowBar, &Node)>()
+            .iter(world)
+            .find(|(b, _)| b.0 == uri)
+            .map(|(_, n)| n.display != Display::None)
+            .unwrap();
+        let mut buttons: Vec<(bool, bool)> = world
+            .query::<(&RowButton, &Node)>()
+            .iter(world)
+            .filter(|(b, _)| b.0 == uri)
+            .map(|(b, n)| (b.1, n.display != Display::None))
+            .collect();
+        buttons.sort_unstable();
+        (bar, buttons)
+    };
+    assert_eq!(shown(&mut app), (false, vec![(false, true), (true, false)]));
+    let insert = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &FuelInsert)>()
+            .iter(world)
+            .find(|(_, f)| f.0.name == "Pallet 1")
+            .unwrap()
+            .0
+    };
+    activate(&mut app, insert);
+    app.world_mut().write_message(PlaceAt {
+        point: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
+        keep: false,
+        hit: None,
+    });
+    frames(&mut app, 2);
+    app.world_mut().write_message(GzServiceReply {
+        service: "/world/warehouse_demo/create".into(),
+        msg_type: "gz.msgs.Boolean".into(),
+        payload: msgs::Boolean {
+            data: true,
+            ..Default::default()
+        }
+        .encode_to_vec(),
+    });
+    frames(&mut app, 3);
+    assert!(all_text(&mut app).contains("Loading on the server…"));
+    assert_eq!(shown(&mut app), (true, vec![(false, false), (true, true)]));
+    // The bar moves: it doesn't measure.
+    let world = app.world_mut();
+    let moving = world
+        .query_filtered::<&ChildOf, With<Indeterminate>>()
+        .iter(world)
+        .filter(|p| world.get::<RowBar>(p.parent()).is_some())
+        .count();
+    assert_eq!(moving, 2, "one under each row");
+    let label = |app: &mut App, e: Entity| {
+        app.world()
+            .get::<AccessibilityNode>(e)
+            .unwrap()
+            .label()
+            .map(str::to_string)
+    };
+    let cancel = {
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &FuelCancel)>()
+            .iter(world)
+            .find(|(_, c)| c.0.name == "Pallet 1")
+            .unwrap()
+            .0
+    };
+    assert_eq!(
+        label(&mut app, cancel).as_deref(),
+        Some("Cancel inserting Pallet 1")
+    );
+    let row_cancel = find::<CancelInsert>(&mut app);
+    assert_eq!(
+        label(&mut app, row_cancel).as_deref(),
+        Some("Cancel inserting pallet_1")
+    );
+    activate(&mut app, cancel);
+    assert_eq!(shown(&mut app), (false, vec![(false, true), (true, false)]));
+    assert!(!all_text(&mut app).contains("Loading on the server…"));
+    assert_eq!(status_note(&app), Some(cancelled_note("pallet_1")));
+    assert!(app.world().resource::<Inserts>().shown().next().is_none());
+    // It shows up after all: it stays, and nothing waits for it.
+    app.world_mut()
+        .resource_mut::<GzIndex>()
+        .by_name
+        .insert("pallet_1".into(), vec![]);
+    frames(&mut app, 2);
+    assert!(app.world().resource::<Inserts>().list.is_empty());
+    assert!(app
+        .world()
+        .resource::<GzIndex>()
+        .by_name
+        .contains_key("pallet_1"));
+
+    // An insert row's Cancel, for a shape.
+    let cone = Insertable::Shape(Shape::Cone);
+    app.world_mut().resource_mut::<AssetsState>().tab = AssetTab::Shapes;
+    frames(&mut app, 2);
+    let t = tile(&mut app, &cone);
+    activate(&mut app, t);
+    app.world_mut().write_message(PlaceAt {
+        point: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
+        keep: false,
+        hit: None,
+    });
+    frames(&mut app, 3);
+    assert!(all_text(&mut app).contains("Inserting…"));
+    let row_cancel = find::<CancelInsert>(&mut app);
+    activate(&mut app, row_cancel);
+    assert!(!all_text(&mut app).contains("Inserting…"));
+    assert_eq!(status_note(&app), Some(cancelled_note("Cone")));
+    let rows = find::<InsertRows>(&mut app);
+    assert!(app
+        .world()
+        .get::<Children>(rows)
+        .is_none_or(|c| c.is_empty()));
 }
 
 /// The Local tab's Insert arms its URI's model.
