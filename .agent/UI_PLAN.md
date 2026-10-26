@@ -483,6 +483,21 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   filter entity per cubemap until the render world reports it filtered, its maps shared by
   every view that shows it (D-116). The atmosphere's environment is Bevy's real-time one.
   Quad at High 6.38 → 5.46 ms. Workspace 967 passing; coverage 97.4% lines. check.sh passes.
+- **M10d notes:** a letter binding is the key that types the letter (`view::layout::KeyLayout`,
+  learned from `KeyboardInput.logical_key`; a key that types no Latin letter falls back to its US
+  letter); digits, arrows and named keys stay physical. The fly keys and `teleop.drive` are
+  positional (`input::POSITIONAL`) and win a plain press of their keys; a gizmo drag holds the
+  fly keys. The browser swallows chords by the same rule, and the HUD's fly hint and the Teleop
+  pad show the layout's caps (Chromium's layout map at start). D-119. Workspace 1006 passing;
+  coverage 97.5% lines. check.sh passes.
+- **M10e notes:** performance and the §13 checklist (D-120). `scripts/stress-world.sh` (5,000
+  tree entities); `panels::scene::stress` (a test of the tree's work a frame, `TreeWork`, and an
+  ignored bench). Natively 2.6 to 4.0 ms a frame at 5,000; the quadratic work at a click (undo of
+  Hide others and Isolate, ending Isolate, the footer's selection walk) is linear. The wasm drops
+  its function names and Bevy's audio: 16.5 → 12.78 MB gzipped, budget 14 MB
+  (`scripts/wasm-budget.sh`). Checklist status in the WORKLOG; new tests for the resize and
+  splitter, Esc and the drag action, and §13's icon pairs. Left: a GPU-bound target, the gaps
+  the checklist lists. Workspace 988 passing; coverage 97.2% lines. check.sh passes.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global
@@ -496,7 +511,11 @@ GPU-bound target measured) and the §13 checklist as its acceptance list.
   `web_reserved`/`web_alt`, `preventDefault` only for the listed chords while the canvas has
   focus, cancelling Ctrl+wheel/pinch page zoom (pinch zooms the view), and `?hud=0` removing
   the page's status lines. Text-field focus inside the canvas was done in M1 (bevy_ui text
-  inputs keep the browser's chords). M10 still owns layout-aware letters.
+  inputs keep the browser's chords). Layout-aware letters are M10d's (D-119).
+- **M10c notes:** UI scale and reduce-motion (D-118): ⌘K's "UI scale: N%" and "Motion: …",
+  `gzweb --ui-scale`, `--motion`; `Theme::set_scale` (80 to 200%), `Theme::motion_dt`,
+  `gz_bevy::view::ReduceMotion`; the menu, marquee and outline divide by `UiScale`; persisted
+  in `workspaces.json`.
 - Performance: 5,000-entity tree at 60 fps, wasm payload budget.
 - The §13 checklist is the PR's acceptance list.
 

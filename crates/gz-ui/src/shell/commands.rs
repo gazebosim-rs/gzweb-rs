@@ -11,6 +11,7 @@ use gz_bevy::undo::UndoCommand;
 use gz_bevy::view::controls::{ActiveScopes, RunBinding, ViewRouting};
 use gz_bevy::view::editing::{EditCommand, EditingModel};
 use gz_bevy::view::input::InputMap;
+use gz_bevy::view::layout::{KeyLayout, Keys};
 use gz_bevy::view::model_edits::{EditModels, ModelEdit};
 use gz_bevy::view::Selection;
 
@@ -21,7 +22,7 @@ use super::top_bar::tools::Tool;
 use super::viewport::views::LayoutCommand;
 use super::{PanelStatus, ShownPanels};
 use crate::panels::{PanelActionActivated, PanelId, PanelRegistry};
-use crate::theme::{Theme, ThemeMode};
+use crate::theme::{MotionMode, Theme, ThemeMode};
 use crate::widgets::focus::MenuTakesEscape;
 
 /// What the shell's controls and keys ask for.
@@ -47,6 +48,11 @@ pub enum UiCommand {
     /// follow system" (D-107), and Settings.
     SetTheme(ThemeMode),
     ToggleTheme,
+    /// The palette's "UI scale: 125%" (kept to 80 to 200%; D-118), and
+    /// Settings › Appearance once it exists.
+    SetUiScale(f32),
+    /// The palette's "Motion: reduce / full / follow system" (D-118).
+    SetMotion(MotionMode),
     /// A splitter double-click.
     ResetWidth(Side),
     /// A collapsed panel's bar button: expand it at its previous width.
@@ -88,6 +94,8 @@ pub enum UiCommand {
 #[derive(SystemParam)]
 pub(crate) struct Shortcuts<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
+    /// What the keys type: letters follow the layout (D-119).
+    layout: Option<Res<'w, KeyLayout>>,
     map: Option<Res<'w, InputMap>>,
     scopes: Option<Res<'w, ActiveScopes>>,
     routing: Res<'w, ViewRouting>,
@@ -130,7 +138,7 @@ impl Shortcuts<'_, '_> {
             || self.gizmo.as_ref().is_some_and(|g| g.takes_escape())
             || self.placing.as_ref().is_some_and(|p| p.0)
             || self.assets.as_ref().is_some_and(|a| a.takes_escape());
-        map.just_pressed(&self.keys, &scopes)
+        map.just_pressed(Keys::new(&self.keys, self.layout.as_deref()), &scopes)
             .filter(|b| {
                 !(esc_taken
                     && b.chords(map.platform)
@@ -340,6 +348,8 @@ pub(crate) fn apply_ui_commands(
             }
             UiCommand::SetTheme(mode) => theme.set_mode(mode),
             UiCommand::ToggleTheme => theme.toggle(),
+            UiCommand::SetUiScale(scale) => theme.set_scale(scale),
+            UiCommand::SetMotion(motion) => theme.set_motion(motion),
             UiCommand::ResetWidth(side) => layout.reset_width(side),
             UiCommand::Show(side) => layout.show(side, true),
             UiCommand::PopOut(panel) => {

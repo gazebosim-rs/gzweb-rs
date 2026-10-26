@@ -16,6 +16,9 @@
 //! - `--capture-at-ms MS` takes the screenshot at that time even if the
 //!   scene hasn't settled (the connect card, the disconnected banner).
 //! - `--theme system|light|dark` picks the UI theme (default system).
+//! - `--ui-scale PERCENT` (80 to 200) and `--motion system|reduce|full`
+//!   pick the UI scale and whether the UI and camera animate (DECISIONS.md
+//!   D-118); like `--theme`, they win over the saved ones.
 //! - `--view top|bottom|front|back|right|left` starts in that axis view
 //!   (orthographic) once the world loads, and `--overlays grid,frames,…`
 //!   with those overlays on (`gz_bevy::overlays::Overlay` names), so a
@@ -58,13 +61,13 @@
 //! - `--no-vsync` presents frames as fast as they render, to measure.
 //!
 //! Browser: `index.html?url=ws://host:9002&key=KEY&quality=low` (or `?port=N`),
-//! plus `ui=full|minimal|gallery` (default minimal), `theme=`, `hud=0` and
-//! `layout=` (as `--layout`).
+//! plus `ui=full|minimal|gallery` (default minimal), `theme=`, `ui_scale=`,
+//! `motion=`, `hud=0` and `layout=` (as `--layout`).
 
 use bevy::prelude::*;
 use bevy::window::WindowResizeConstraints;
 use gz_bevy::{GzAssetSourcesPlugin, GzConfig, GzWebPlugin, UiMode, DEFAULT_PORT};
-use gz_ui::theme::ThemeMode;
+use gz_ui::theme::{MotionMode, ThemeMode};
 
 #[derive(Debug)]
 struct Args {
@@ -78,6 +81,10 @@ struct Args {
     theme: ThemeMode,
     /// `--theme` or `?theme=` was given (it wins over the saved theme).
     theme_set: bool,
+    /// `--ui-scale` or `?ui_scale=` (it wins over the saved scale).
+    scale: Option<f32>,
+    /// `--motion` or `?motion=` (it wins over the saved motion).
+    motion: Option<MotionMode>,
     /// `--window WxH`.
     window: Option<(u32, u32)>,
     /// `--view`, `--overlays`.
@@ -114,7 +121,8 @@ struct Args {
 
 const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
-                     [--ui full|minimal|gallery] [--theme system|light|dark] [--no-hud] \
+                     [--ui full|minimal|gallery] [--theme system|light|dark] [--ui-scale PERCENT] \
+                     [--motion system|reduce|full] [--no-hud] \
                      [--window WxH] [--snapshot OUT.json] [--screenshot OUT.png] [--settle-ms MS] \
                      [--timeout-ms MS] [--capture-at-ms MS] [--view top|front|right|…] \
                      [--overlays grid,collisions,inertia,center_of_mass,joints,frames,wireframe] \
@@ -181,6 +189,16 @@ fn parse_window(v: &str) -> Result<(u32, u32), String> {
     Ok((w, h))
 }
 
+/// `--ui-scale PERCENT`: 80 to 200, a trailing `%` allowed; the scale.
+fn parse_ui_scale(v: &str) -> Result<f32, String> {
+    let bad = || format!("'{v}' is not a percentage from 80 to 200");
+    let pct: f32 = v.trim().trim_end_matches('%').parse().map_err(|_| bad())?;
+    (80.0..=200.0)
+        .contains(&pct)
+        .then_some(pct / 100.0)
+        .ok_or_else(bad)
+}
+
 /// The full UI's window: 1440x900 (the boards' size), at least 1024x640
 /// (spec §2.1).
 const FULL_WINDOW: (u32, u32) = (1440, 900);
@@ -229,6 +247,8 @@ fn parse_args(
     let mut gallery = false;
     let mut theme = ThemeMode::System;
     let mut theme_set = false;
+    let mut scale = None;
+    let mut motion = None;
     let mut hud = true;
     let mut settle_ms = 1000.0;
     let mut start = gz_bevy::view::StartView::default();
@@ -278,6 +298,12 @@ fn parse_args(
             "--theme" => {
                 theme = value()?.parse().map_err(|e| format!("--theme: {e}"))?;
                 theme_set = true;
+            }
+            "--ui-scale" => {
+                scale = Some(parse_ui_scale(&value()?).map_err(|e| format!("--ui-scale: {e}"))?);
+            }
+            "--motion" => {
+                motion = Some(value()?.parse().map_err(|e| format!("--motion: {e}"))?);
             }
             "--no-hud" => hud = false,
             "--window" => window = Some(parse_window(&value()?)?),
@@ -434,6 +460,10 @@ fn parse_args(
     if layout.is_some() && (no_ui || gallery || ui != UiMode::Full) {
         return Err("--layout needs --ui full".into());
     }
+    // Minimal mode has no UI to scale (its motion setting is the views').
+    if scale.is_some() && !gallery && (no_ui || ui != UiMode::Full) {
+        return Err("--ui-scale needs --ui full".into());
+    }
     // Only the full UI shows (and selects) a selection.
     if start.as_ref().is_some_and(|s| !s.select.is_empty()) && ui != UiMode::Full {
         return Err("--select needs --ui full".into());
@@ -474,6 +504,8 @@ fn parse_args(
         gallery,
         theme,
         theme_set,
+        scale,
+        motion,
         window,
         start,
         scene,
@@ -527,6 +559,22 @@ fn command() -> Result<Command, String> {
     });
     let theme: Option<ThemeMode> =
         get("theme").and_then(|t| t.parse().map_err(|e| bevy::log::warn!("?theme: {e}")).ok());
+    let scale = get("ui_scale")
+        .and_then(|s| {
+            parse_ui_scale(&s)
+                .map_err(|e| bevy::log::warn!("?ui_scale: {e}"))
+                .ok()
+        })
+        .filter(|_| {
+            // Minimal mode has no UI to scale.
+            let full = ui == UiMode::Full || is_gallery(get("ui").as_deref());
+            if !full {
+                bevy::log::warn!("?ui_scale needs ui=full");
+            }
+            full
+        });
+    let motion: Option<MotionMode> =
+        get("motion").and_then(|m| m.parse().map_err(|e| bevy::log::warn!("?motion: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             url: web_url(
@@ -555,6 +603,8 @@ fn command() -> Result<Command, String> {
         gallery: is_gallery(get("ui").as_deref()),
         theme: theme.unwrap_or_default(),
         theme_set: theme.is_some(),
+        scale,
+        motion,
         window: None,
         start: None,
         scene: None,
@@ -700,13 +750,34 @@ fn gallery_plugins(mode: Mode) -> bevy::app::PluginGroupBuilder {
     })
 }
 
+/// Without the full UI no setting holds the motion: the views keep it,
+/// reduced if asked, or following the browser's preference.
+fn views_keep_motion(app: &mut App, motion: Option<MotionMode>) {
+    match motion.unwrap_or_default() {
+        MotionMode::Reduce => {
+            app.insert_resource(gz_bevy::view::ReduceMotion(true));
+        }
+        MotionMode::Full => {}
+        MotionMode::System => {
+            app.insert_resource(gz_bevy::view::FollowBrowserMotion);
+        }
+    }
+}
+
+/// The UI's plugin with the theme, UI scale and motion asked for.
+fn ui_plugin(args: &Args) -> gz_ui::GzUiPlugin {
+    gz_ui::GzUiPlugin {
+        theme: args.theme,
+        scale: args.scale.unwrap_or(1.0),
+        motion: args.motion.unwrap_or_default(),
+    }
+}
+
 /// `--ui gallery`: the widget gallery, with no world or connection.
 fn run_gallery(args: Args) -> AppExit {
     let mut app = App::new();
-    app.add_plugins(gallery_plugins(args.mode)).add_plugins((
-        gz_ui::GzUiPlugin { theme: args.theme },
-        gz_ui::gallery::GalleryPlugin,
-    ));
+    app.add_plugins(gallery_plugins(args.mode))
+        .add_plugins((ui_plugin(&args), gz_ui::gallery::GalleryPlugin));
     // The canvas key listener, as in the app: Tab stays in the gallery and
     // Space doesn't scroll the page.
     #[cfg(target_arch = "wasm32")]
@@ -743,6 +814,7 @@ fn main() -> AppExit {
     });
 
     let full = args.config.ui == UiMode::Full;
+    let ui = ui_plugin(&args);
     let size = args
         .window
         .or((full && args.mode == Mode::Capture).then_some(FULL_WINDOW));
@@ -766,11 +838,11 @@ fn main() -> AppExit {
     if let Some(start) = args.start {
         app.insert_resource(start);
     }
+    if !full {
+        views_keep_motion(&mut app, args.motion);
+    }
     if full {
-        app.add_plugins((
-            gz_ui::GzUiPlugin { theme: args.theme },
-            gz_ui::shell::ShellPlugins,
-        ));
+        app.add_plugins((ui, gz_ui::shell::ShellPlugins));
         if let Some(scene) = args.scene {
             app.insert_resource(scene);
         }
@@ -811,10 +883,13 @@ fn main() -> AppExit {
             app.insert_resource(gz_ui::shell::StartLayout(layout));
         }
         // The workspaces persist (spec §8), except for captures, which
-        // start as the app does; a theme asked for wins over the saved one.
+        // start as the app does; a theme, UI scale or motion asked for
+        // wins over the saved one.
         if args.snapshot.is_none() {
             if let Some(mut store) = gz_ui::shell::WorkspaceStore::platform() {
                 store.theme = !args.theme_set;
+                store.scale = args.scale.is_none();
+                store.motion = args.motion.is_none();
                 app.insert_resource(store);
             }
         }
@@ -1227,6 +1302,52 @@ mod tests {
             let plugins = gallery_plugins(mode);
             assert!(plugins.enabled::<WindowPlugin>());
         }
+    }
+
+    /// `--ui-scale` takes 80 to 200 percent; `--motion` a motion setting.
+    /// Either goes to the UI's plugin and wins over the saved one.
+    #[test]
+    fn ui_scale_and_motion_flags() {
+        let a = run_args(&["--ui-scale", "150", "--motion", "reduce"], None);
+        assert_eq!((a.scale, a.motion), (Some(1.5), Some(MotionMode::Reduce)));
+        let plugin = ui_plugin(&a);
+        assert_eq!((plugin.scale, plugin.motion), (1.5, MotionMode::Reduce));
+        assert_eq!(run_args(&["--ui-scale", "80%"], None).scale, Some(0.8));
+        let d = run_args(&[], None);
+        assert_eq!((d.scale, d.motion), (None, None));
+        let plugin = ui_plugin(&d);
+        assert_eq!((plugin.scale, plugin.motion), (1.0, MotionMode::System));
+        for bad in ["79", "201", "1.5", "big"] {
+            assert_eq!(
+                parse(&["--ui-scale", bad], None).unwrap_err(),
+                format!("--ui-scale: '{bad}' is not a percentage from 80 to 200")
+            );
+        }
+        assert_eq!(
+            parse(&["--motion", "slow"], None).unwrap_err(),
+            "--motion: unknown motion 'slow' (system, reduce or full)"
+        );
+        // Minimal mode has no UI to scale; its views keep the motion.
+        assert_eq!(
+            parse(&["--ui", "minimal", "--ui-scale", "150"], None).unwrap_err(),
+            "--ui-scale needs --ui full"
+        );
+        let mut app = App::new();
+        views_keep_motion(&mut app, Some(MotionMode::Reduce));
+        assert_eq!(
+            app.world().get_resource::<gz_bevy::view::ReduceMotion>(),
+            Some(&gz_bevy::view::ReduceMotion(true))
+        );
+        let mut app = App::new();
+        views_keep_motion(&mut app, None);
+        assert!(app
+            .world()
+            .contains_resource::<gz_bevy::view::FollowBrowserMotion>());
+        let mut app = App::new();
+        views_keep_motion(&mut app, Some(MotionMode::Full));
+        assert!(!app
+            .world()
+            .contains_resource::<gz_bevy::view::ReduceMotion>());
     }
 
     #[test]

@@ -439,6 +439,8 @@ The rail's Orbit/Pan/Zoom sets the view's plain left-drag action; it persists pe
 
 Key table (abbreviated; see the file for scope and web alternates): Esc Navigate · B box select · T translate · R rotate · X/Y/Z constrain · F focus · H home · 5 projection · 7/1/3 top/front/right (Shift+ for bottom/back/left) · Space tap play-pause · Space-hold pan · ⇧F follow · ⇧T track · ⇧Space maximize · ⌥⌘→/↓ split · ⌘W close view · G/C/I/J overlays · ⌘→ step · ⌘⇧R reset · X stop (teleop armed) · ⌘Z/⇧⌘Z undo/redo · ⌘C/V/D copy/paste/duplicate · Delete · F2 rename · ⌘N/O/S/⇧S/I file · ⌘K palette · ⌘B sidebar · ⌘⌥I inspector · Alt+1–4 workspaces · ⌘⇧E/A/T/P/C panels.
 
+As built (D-119, M10d): the file names keys by their US places, and a letter binding is the key that types the letter on the user's layout (G toggles the grid on the key printed G on AZERTY, QWERTZ and Dvorak; on a layout without Latin letters, the US place). Digits, arrows and named keys stay physical. The fly keys and Teleop's drive keys are positional: they keep W A S D Q E's places (Z Q S D A E on AZERTY), win a plain press of their keys, and their labels show the user's caps. In the browser the canvas swallows ⌘K on the key that types K.
+
 ### 6.6 Model editing (decision Q6: in place)
 
 Entering: Model inspector › Edit model, context menu › Edit model, or double-click a model with Translate/Rotate active. Nothing changes frame. What changes:
@@ -593,6 +595,8 @@ Check what the pinned Bevy version offers for text input, scrolling and focus (r
 - UI scale setting 80–200% (Settings › Appearance) multiplies `Theme.scale`.
 - Honor reduce-motion (all durations 0).
 
+As built (D-118): until Settings › Appearance exists, ⌘K's Settings group sets the UI scale (80, 90, 100, 110, 125, 150, 175, 200%) and the motion (reduce, full, follow system), and `gzweb --ui-scale PERCENT` and `--motion` pick them at start; both persist with the theme. Follow system reads the browser's `prefers-reduced-motion`; natively it means full motion. Reduced, the camera's snaps, focus and home, the connect card's fade and the views' reveal are instant and the Assets panel's progress bars hold still.
+
 ---
 
 ## 11. Gazebo parity map
@@ -648,6 +652,8 @@ Build in this order. Each milestone ends with screenshots compared against the n
 7. **Panels.** Assets, Topics, Plot, Sensors, Teleop, Console. Accept: matches `W2 — Activity panels`.
 8. **Menus, command palette, workspaces, persistence.**
 9. **Accessibility pass, web build hardening, performance** (tree virtualization with 5,000 entities at 60 fps).
+
+As built (D-120, M10e): `scripts/stress-world.sh` makes the 5,000-entity world; natively the full UI takes 2.6 to 4.0 ms a frame with it (idle, scrolling the expanded tree, a new selection every frame), and a test holds the tree to a screenful's work a frame. The web build's `gzweb_bg.wasm` has a budget of 14 MB gzipped (12.78 MB as built, without the function names), checked by `scripts/wasm-budget.sh` at the end of `build.sh`. A GPU-bound target (a laptop, the browser) is still to be measured. The §13 checklist's status is in `.agent/WORKLOG.md` (M10e).
 
 ---
 

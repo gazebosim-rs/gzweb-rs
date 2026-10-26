@@ -14,6 +14,10 @@ pub(crate) mod model;
 mod systems;
 mod view;
 
+// The spec checks read the icons commands get (§13).
+#[cfg(test)]
+pub(crate) use systems::command_icon;
+
 use bevy::prelude::*;
 
 use super::ShellSystems;

@@ -214,10 +214,24 @@ impl SceneSources<'_, '_> {
     }
 }
 
+/// How often the tree's linear work ran: the model built, the rows
+/// computed (each walks every entity). The tests hold them to what changed
+/// (UI_PLAN M10e).
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TreeWork {
+    pub(crate) models: u64,
+    pub(crate) rows: u64,
+}
+
 /// Rebuilds the tree's model when the scene's structure changes. It runs
 /// while the panel is closed too: the header's count comes from it.
-pub(super) fn rebuild_model(mut sources: SceneSources, mut model: ResMut<TreeModel>) {
+pub(super) fn rebuild_model(
+    mut sources: SceneSources,
+    mut model: ResMut<TreeModel>,
+    mut work: ResMut<TreeWork>,
+) {
     if sources.changed() {
+        work.models += 1;
         let built = sources.build();
         model.set_if_neq(built);
     }
@@ -323,8 +337,10 @@ pub(super) fn compute_rows(
     model: Res<TreeModel>,
     state: Res<TreeState>,
     mut rows: ResMut<TreeRows>,
+    mut work: ResMut<TreeWork>,
 ) {
     if model.is_changed() || state.is_changed() {
+        work.rows += 1;
         let next = TreeRows(model.rows(&state));
         rows.set_if_neq(next);
     }

@@ -161,4 +161,6 @@ pub(crate) fn build(app: &mut App) {
 }
 
 #[cfg(test)]
+mod checklist_tests;
+#[cfg(test)]
 mod tests;

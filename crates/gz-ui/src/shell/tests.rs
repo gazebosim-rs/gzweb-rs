@@ -468,6 +468,53 @@ fn ctrl_b_and_ctrl_alt_i_toggle_the_panels() {
     assert_eq!(l.primary, Some(CONSOLE));
 }
 
+/// D-119: a shortcut's letter is the key that types it: on Dvorak, B is
+/// `KeyN` and `KeyB` types X, with Ctrl or without.
+#[test]
+fn shortcut_letters_follow_the_keyboard_layout() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    tap_typed(&mut app, KeyCode::KeyB, "x");
+    assert_eq!(*app.world().resource::<Tool>(), Tool::Navigate);
+    tap_typed(&mut app, KeyCode::KeyN, "b");
+    assert_eq!(*app.world().resource::<Tool>(), Tool::BoxSelect);
+    key(&mut app, KeyCode::ControlLeft, ButtonState::Pressed);
+    tap_typed(&mut app, KeyCode::KeyB, "x");
+    assert!(layout(&app).sidebar_open);
+    tap_typed(&mut app, KeyCode::KeyN, "b");
+    assert!(!layout(&app).sidebar_open);
+}
+
+/// On Colemak F and R are fly keys' places: once the layout says so, the
+/// rail's Focus and the Rotate tool don't offer them (D-119).
+#[test]
+fn tooltips_leave_out_letters_the_fly_keys_take() {
+    let mut app = shell_app((1440, 900), 1.0);
+    frames(&mut app, 2);
+    let shortcut = |app: &mut App, id: &str| {
+        let world = app.world_mut();
+        world
+            .query::<&crate::widgets::Tooltip>()
+            .iter(world)
+            .find(|t| t.binding.as_deref() == Some(id))
+            .map(|t| t.shortcut.clone())
+    };
+    assert_eq!(shortcut(&mut app, "view.focus"), Some(Some("F".into())));
+    assert_eq!(shortcut(&mut app, "tool.rotate"), Some(Some("R".into())));
+    for (k, typed) in [
+        (KeyCode::KeyE, "f"),
+        (KeyCode::KeyF, "t"),
+        (KeyCode::KeyS, "r"),
+        (KeyCode::KeyR, "p"),
+    ] {
+        tap_typed(&mut app, k, typed);
+    }
+    frames(&mut app, 1);
+    assert_eq!(shortcut(&mut app, "view.focus"), Some(None));
+    assert_eq!(shortcut(&mut app, "tool.rotate"), Some(None));
+    assert_eq!(shortcut(&mut app, "tool.translate"), Some(Some("T".into())));
+}
+
 #[test]
 fn camera_input_goes_to_the_view_only_when_the_pointer_is_over_it() {
     let mut app = shell_app((1440, 900), 1.0);

@@ -224,6 +224,8 @@ fn save_as_new_names_a_workspace_of_the_users() {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(None),
         theme: true,
+        scale: true,
+        motion: true,
     });
     let (new, _) = button(&mut app, LayoutButton::SaveAsNew);
     activate(&mut app, new);
@@ -378,6 +380,8 @@ fn the_footer_says_the_store_couldnt_be_read() {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(Some("{oops".into())),
         theme: true,
+        scale: true,
+        motion: true,
     });
     frames(&mut app, 4);
     let why = shown(&mut app).expect("the failure shows");
@@ -403,6 +407,8 @@ fn the_footer_says_where_the_layouts_are_kept() {
     let file = WorkspaceStore {
         at: StoreAt::File("/home/me/.config/gz/ui/workspaces.json".into()),
         theme: true,
+        scale: true,
+        motion: true,
     };
     assert_eq!(
         note_of(Some(&file), false),
@@ -415,6 +421,8 @@ fn the_footer_says_where_the_layouts_are_kept() {
     let browser = WorkspaceStore {
         at: StoreAt::Browser,
         theme: true,
+        scale: true,
+        motion: true,
     };
     assert_eq!(
         note_of(Some(&browser), false),
@@ -636,6 +644,8 @@ fn a_reset_default_is_kept_and_names_are_unique() {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(None),
         theme: true,
+        scale: true,
+        motion: true,
     });
     app.world_mut().write_message(WorkspaceCommand::Reset);
     frames(&mut app, 3);
@@ -656,6 +666,8 @@ fn a_reset_default_is_kept_and_names_are_unique() {
         version: 1,
         current: "build".into(),
         theme: None,
+        ui_scale: None,
+        motion: None,
         workspaces: [("user_1".to_string(), WorkspaceLayout::default_for(1))]
             .into_iter()
             .collect(),
@@ -668,6 +680,8 @@ fn a_reset_default_is_kept_and_names_are_unique() {
     app.insert_resource(WorkspaceStore {
         at: StoreAt::Memory(Some(serde_json::to_string(&file).unwrap())),
         theme: true,
+        scale: true,
+        motion: true,
     });
     frames(&mut app, 3);
     assert_eq!(workspaces(&app).list()[4].name, "Build 2");

@@ -90,6 +90,10 @@ impl TooltipSide {
 pub struct Tooltip {
     pub title: String,
     pub shortcut: Option<String>,
+    /// The `shortcuts.json` binding the shortcut comes from, so it follows
+    /// the input map (`refresh_shortcuts`: what the keyboard layout
+    /// leaves a letter, D-119).
+    pub binding: Option<String>,
     pub detail: Option<String>,
     pub side: TooltipSide,
 }
@@ -116,7 +120,8 @@ impl Tooltip {
 
     /// The keys of the `shortcuts.json` binding `id` in `map`, if it has
     /// any ("Ctrl+B"; [`shortcut_label`]).
-    pub fn binding(self, map: &InputMap, id: &str) -> Self {
+    pub fn binding(mut self, map: &InputMap, id: &str) -> Self {
+        self.binding = Some(id.to_string());
         self.shortcut_opt(shortcut_label(map, id))
     }
 
@@ -589,11 +594,29 @@ pub(crate) fn tooltip_border_system(
     }
 }
 
+/// A binding's tooltip names its keys again when the input map changes
+/// (the layout takes a letter for a fly key, D-119).
+pub(crate) fn refresh_shortcuts(map: Option<Res<InputMap>>, mut tips: Query<&mut Tooltip>) {
+    let Some(map) = map.filter(|m| m.is_changed()) else {
+        return;
+    };
+    for mut tip in &mut tips {
+        let Some(id) = tip.binding.as_deref() else {
+            continue;
+        };
+        let keys = shortcut_label(&map, id);
+        if tip.shortcut != keys {
+            tip.shortcut = keys;
+        }
+    }
+}
+
 pub(crate) fn build(app: &mut App) {
     app.init_resource::<TooltipTimer>()
         .add_systems(
             Update,
             (
+                refresh_shortcuts.before(tooltip_system),
                 tooltip_system,
                 refresh_tooltips.after(tooltip_system),
                 tooltip_border_system,

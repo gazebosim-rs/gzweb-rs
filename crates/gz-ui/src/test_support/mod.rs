@@ -32,7 +32,7 @@ pub(crate) fn ui_app_at(theme: ThemeMode, scale: f32) -> App {
 /// The app with a window `size` logical pixels at `scale`.
 pub(crate) fn ui_app_sized(theme: ThemeMode, size: (u32, u32), scale: f32) -> App {
     ui_app_with(theme, size, scale, |app| {
-        app.add_plugins(GzUiPlugin { theme });
+        app.add_plugins(GzUiPlugin { theme, ..default() });
     })
 }
 

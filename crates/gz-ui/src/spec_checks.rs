@@ -1,7 +1,8 @@
 //! The spec's own checks, computed from its data files (DESIGN.md §4.4,
 //! §13): the generated tables match `tokens.json`, the §13 contrast pairs
-//! pass in both themes, no colour literals outside `theme/tokens.rs`, and the
-//! embedded fonts and icons are the ones the spec lists.
+//! pass in both themes, no colour literals outside `theme/tokens.rs`, the
+//! embedded fonts and icons are the ones the spec lists, and the icon pairs
+//! §13 names differ.
 
 use std::path::{Path, PathBuf};
 
@@ -419,6 +420,78 @@ fn icon_ids_follow_icons_json() {
         assert_eq!(id.name(), name);
         assert_eq!(id.index(), i);
     }
+}
+
+/// An icon's glyph in `icons.json`: its shapes (paths, rects, circles)
+/// and fill, without its note.
+fn glyph(icons: &Value, name: &str) -> String {
+    let mut shape = icons["icons"][name]
+        .as_object()
+        .unwrap_or_else(|| panic!("no icon {name}"))
+        .clone();
+    shape.remove("note");
+    assert!(
+        ["paths", "rects", "circles"]
+            .iter()
+            .any(|k| shape.contains_key(*k)),
+        "{name} has no shapes"
+    );
+    Value::Object(shape).to_string()
+}
+
+/// §13: no glyph does two different actions. The pairs the spec names
+/// have different shapes (Scene against the menu's "more", the nearest
+/// it has to a hamburger), and so do the icons the UI gives those actions:
+/// the palette's commands, the tool, the World menu's item and the panels.
+/// Two pairs in `icons.json` itself share a glyph, revert and undo, track
+/// and eye; they wait on the design (WORKLOG M10e).
+#[test]
+fn the_named_icon_pairs_differ() {
+    use crate::panels::{PanelRegistry, SCENE, TELEOP};
+    use crate::shell::palette::command_icon;
+    use crate::shell::top_bar::world_menu::WorldItem;
+    use crate::shell::{Tool, WORKSPACES_PANEL};
+    let icons = json("icons.json");
+    let differ = |group: &[&str]| {
+        for (i, a) in group.iter().enumerate() {
+            for b in &group[i + 1..] {
+                assert_ne!(
+                    glyph(&icons, a),
+                    glyph(&icons, b),
+                    "{a} and {b} share a glyph"
+                );
+            }
+        }
+    };
+    let groups: [&[&str]; 4] = [
+        &["reset", "rotate", "revert"],
+        &["activity_scene", "more"],
+        &["activity_workspaces", "layout_split"],
+        &["focus", "track", "activity_teleop"],
+    ];
+    for group in groups {
+        differ(group);
+    }
+    // The icons the actions show.
+    let app = crate::test_support::shell::shell_app((1440, 900), 1.0);
+    let panels = app.world().resource::<PanelRegistry>();
+    let panel = |id| panels.get(id).expect("registered").icon.name();
+    let revert = WorldItem::Revert.parts().1.expect("an icon").name();
+    differ(&[
+        command_icon("sim.reset").name(),
+        Tool::Rotate.icon().name(),
+        revert,
+    ]);
+    differ(&[panel(SCENE), "more"]);
+    differ(&[
+        panel(WORKSPACES_PANEL),
+        command_icon("view.split_right").name(),
+    ]);
+    differ(&[
+        command_icon("view.focus").name(),
+        command_icon("view.track").name(),
+        panel(TELEOP),
+    ]);
 }
 
 /// The string literals in `code`, in order (escapes left as written):

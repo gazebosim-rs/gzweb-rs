@@ -38,7 +38,7 @@ use crate::shell::top_bar::transport::Transport;
 use crate::shell::top_bar::world_menu::WorldCommand;
 use crate::shell::{CurrentPhase, PanelStatus, Phase, ShellLayout, ShownPanels, Slot, UiCommand};
 use crate::theme::visuals::Active;
-use crate::theme::Theme;
+use crate::theme::{MotionMode, Theme, UI_SCALES};
 use crate::widgets::shortcut::shortcut_label;
 use crate::widgets::text_field::{set_field_text, TextFieldInput};
 use crate::widgets::TextSubmit;
@@ -89,7 +89,7 @@ const COMMANDS: &[&str] = &[
 const SETTINGS: &[&str] = &["ui.theme_light", "ui.theme_dark", "ui.theme_system"];
 
 /// A command's icon.
-fn command_icon(id: &str) -> IconId {
+pub(crate) fn command_icon(id: &str) -> IconId {
     match id {
         "file.save" | "file.save_as" => IconId::Save,
         "sim.play_pause" => IconId::Play,
@@ -137,6 +137,7 @@ pub(crate) struct Sources<'w, 's> {
     workspaces: Option<Res<'w, crate::shell::Workspaces>>,
     current_layout: Option<Res<'w, crate::shell::CurrentLayout>>,
     topics: Option<Res<'w, GzTopics>>,
+    theme: Res<'w, Theme>,
     entities: Query<'w, 's, (Entity, &'static GzEntity)>,
     new_entities: Query<'w, 's, (), Added<GzEntity>>,
     gone: RemovedComponents<'w, 's, GzEntity>,
@@ -171,6 +172,7 @@ impl Sources<'_, '_> {
             || self.status.is_changed()
             || self.hosts.is_changed()
             || self.layout.is_changed()
+            || self.theme.is_changed()
             || !self.new_entities.is_empty()
     }
 
@@ -491,6 +493,37 @@ impl Sources<'_, '_> {
                 .iter()
                 .filter_map(|id| self.command(Group::Settings, id)),
         );
+        // The UI scales and the motion settings (spec §10, D-118), until
+        // Settings › Appearance has them.
+        let current = |yes: bool| if yes { "current".into() } else { String::new() };
+        for scale in UI_SCALES {
+            out.push(Item {
+                group: Group::Settings,
+                icon: IconId::Settings,
+                name: format!("UI scale: {}%", (scale * 100.0).round()),
+                hint: current((self.theme.scale - scale).abs() < 1e-3),
+                shortcut: None,
+                keywords: vec!["Zoom", "Size", "Appearance"],
+                run: Run::Ui(UiCommand::SetUiScale(scale)),
+                disabled: None,
+            });
+        }
+        for (motion, label) in [
+            (MotionMode::Reduce, "reduce"),
+            (MotionMode::Full, "full"),
+            (MotionMode::System, "follow system"),
+        ] {
+            out.push(Item {
+                group: Group::Settings,
+                icon: IconId::Settings,
+                name: format!("Motion: {label}"),
+                hint: current(self.theme.motion == motion),
+                shortcut: None,
+                keywords: vec!["Reduce motion", "Animations", "Appearance"],
+                run: Run::Ui(UiCommand::SetMotion(motion)),
+                disabled: None,
+            });
+        }
         out
     }
 }

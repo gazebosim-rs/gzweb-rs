@@ -10,7 +10,8 @@ use gz_bevy::view::input::{Chord, InputMap, Platform};
 /// (DECISIONS.md D-26).
 pub fn shortcut_label(map: &InputMap, id: &str) -> Option<String> {
     let binding = map.binding(id)?;
-    let chord = binding.chords(map.platform).first()?;
+    // Not a letter a fly key takes on the user's layout (D-119).
+    let chord = map.shown_chords(binding).next()?;
     Some(chord_label(chord, map.platform))
 }
 

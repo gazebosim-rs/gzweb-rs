@@ -22,7 +22,7 @@ use prost::Message as _;
 
 use super::model::*;
 use super::systems::{Targets, TeleopKeys, NO_PUBLISH, SELECT};
-use super::view::{GamepadStatus, LimitField, PadKey, TeleopSlider};
+use super::view::{GamepadStatus, LimitField, PadKey, PadNote, TeleopSlider};
 use super::{STOP, TELEOP};
 use crate::panels::{PanelActionActivated, PanelView};
 use crate::shell::routing::ViewFocus;
@@ -568,6 +568,76 @@ fn x_stops_from_anywhere() {
     assert_eq!(twists(&mut app).last().map(|s| s.1), Some(0.0));
     assert_eq!((state(&app).lin, state(&app).ang), (0.0, 0.0));
     assert_eq!(app.world().get::<SliderValue>(lin).unwrap().0, 0.0);
+}
+
+/// D-119: the stop is the key that types X (Dvorak's is `KeyB`; its
+/// `KeyX` types Q).
+#[test]
+fn x_stops_by_the_letter_the_layout_types() {
+    let (mut app, _) = live_teleop(Some(true));
+    app.world_mut().resource_mut::<TeleopState>().mode = DriveMode::Sliders;
+    frames(&mut app, 2);
+    let lin = slider(&mut app, &TeleopSlider::Linear);
+    app.world_mut().trigger(ValueChange {
+        source: lin,
+        value: 0.5f32,
+        is_final: true,
+    });
+    frames(&mut app, 2);
+    assert!(state(&app).armed);
+    tap_typed(&mut app, KeyCode::KeyX, "q");
+    assert!(state(&app).armed);
+    tap_typed(&mut app, KeyCode::KeyB, "x");
+    assert!(!state(&app).armed);
+}
+
+/// The pad's keys and its note name the drive keys as the layout prints
+/// them, once it is known (AZERTY: Z Q S D).
+#[test]
+fn the_pad_reads_the_drive_keys_by_the_layout() {
+    let (mut app, _) = live_teleop(Some(true));
+    let cap = |app: &mut App, k: PadKey| {
+        let e = pad(app, k);
+        let world = app.world_mut();
+        let children = world.get::<Children>(e).unwrap().to_vec();
+        let label = world
+            .get::<bevy::a11y::AccessibilityNode>(e)
+            .and_then(|a| a.label().map(str::to_string));
+        let text = children
+            .iter()
+            .find_map(|c| world.get::<Text>(*c))
+            .map(|t| t.0.clone());
+        (text, label)
+    };
+    assert_eq!(
+        cap(&mut app, PadKey::Forward),
+        (Some("W".into()), Some("Drive W".into()))
+    );
+    for (k, typed) in [
+        (KeyCode::KeyW, "z"),
+        (KeyCode::KeyA, "q"),
+        (KeyCode::KeyS, "s"),
+        (KeyCode::KeyD, "d"),
+    ] {
+        tap_typed(&mut app, k, typed);
+    }
+    frames(&mut app, 1);
+    assert_eq!(
+        cap(&mut app, PadKey::Forward),
+        (Some("Z".into()), Some("Drive Z".into()))
+    );
+    assert_eq!(cap(&mut app, PadKey::Left).0.as_deref(), Some("Q"));
+    let world = app.world_mut();
+    let note = world
+        .query_filtered::<&Text, With<PadNote>>()
+        .single(world)
+        .unwrap()
+        .0
+        .clone();
+    assert_eq!(
+        note,
+        "Press a key to drive; then Z Q S D drive from the view too · X stops"
+    );
 }
 
 /// In Keyboard mode a gamepad's stick resting past its dead zone doesn't

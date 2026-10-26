@@ -2161,6 +2161,221 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   - `--keys` sends logical keys and text, releases a chord on leaving
     Live, and holds `--screenshot` until done.
 
+## 2026-10-25: M10c UI scale and reduce-motion (D-118)
+
+- **UI scale:** ⌘K's Settings group lists "UI scale: 80%" to "200%" (the
+  one in effect says "current"); `gzweb --ui-scale PERCENT` (80 to 200)
+  and `?ui_scale=` pick it at start. `Theme::set_scale` keeps any value to
+  80 to 200%.
+- **Pixels:** the context menu, the selection marquee and the outline
+  overlay took window pixels as UI pixels, so above 100% they landed the
+  scale times too far; they divide by `UiScale` now. The Scene tree's
+  first row pool counts UI pixels. The views' placement already followed
+  its node; tests now hold it through scale changes.
+- **Reduce-motion:** "Motion: reduce / full / follow system", `--motion`
+  and `?motion=`. Follow system reads the browser's
+  `prefers-reduced-motion` (natively: full). Reduced, the camera's snaps,
+  focus, home, look-from and mode turns land at once
+  (`gz_bevy::view::ReduceMotion`), the card's fade and the views' reveal
+  are instant, and the Assets panel's bars hold still.
+- **Persistence:** `ui_scale` and `motion` in `workspaces.json`; one asked
+  for by a flag wins and isn't saved.
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive` on
+  :9051, `--screenshot`): 80%, 100% and 200% at 1440x900, text and icons
+  sharp; 200% at 2880x1800 with `--menu context --select vehicle_blue`
+  looks as 100% does at 1440x900, the outline on the model (before the fix
+  it was drawn a view away from it); 125% with `--palette "ui scale"`;
+  150% with `--motion reduce --view top --palette motion`.
+- **Left:** the full UI needs 1024x640 UI pixels, so above 100% a smaller
+  window (200% at 1440x900) clips the top bar's right end as a narrow
+  window does.
+- **Tests:** workspace 981 → 993 passing; coverage 97.5% lines. check.sh passes.
+- **Review fixes** (PR #65):
+  - the gizmo's snapping readout divides by the UI scale;
+  - minimal mode keeps the motion setting in its views (`--motion`, the
+    browser's preference) and refuses `--ui-scale`;
+  - the file's scale reads leniently (a hand-written percentage, or a bad
+    value dropped without losing the file).
+
+## 2026-10-25: M10d layout-aware letters (D-119)
+
+- **gz-bevy:** `view::layout::KeyLayout` learns what each key typed as it
+  went down (`KeyboardInput.logical_key`, PreUpdate after Bevy's input),
+  and `layout::Keys` reads `ButtonInput<KeyCode>` through it. The input
+  map matches a letter by the key that types it, and digits, arrows and
+  named keys by place. A Latin letter in either case is that letter, other
+  ASCII is no letter, and anything else (Cyrillic, a dead key) falls back
+  to the key's US letter; with Ctrl, Alt or ⌘ held a non-letter keeps what
+  the key typed before.
+- **Positional:** the fly keys and `teleop.drive` (`input::POSITIONAL`)
+  keep W A S D Q E's places and win a plain press of their keys (Colemak's
+  F flies up; ⇧ with it follows). A gizmo drag holds the fly keys, so
+  AZERTY's Z constrains without flying. The gizmo's X, Y and Z and
+  Teleop's stop X follow the layout.
+- **Browser:** the canvas listener swallows chords by the same rule
+  (`InputMap::web_key`, from `code` and `key`). Chromium's
+  `navigator.keyboard.getLayoutMap()` seeds the layout at start.
+- **Labels:** letters read as before. The HUD's fly hint
+  (`hud::update_hint`), the Teleop pad's keys, their accessible names and
+  the pad's note show the layout's caps once known (`teleop::pad_caps`).
+- **Live check:** Xvfb (`:97`, lavapipe) with a fresh Jetty
+  `diff_drive` on 127.0.0.1:9047: the full UI with `--teleop` renders and
+  drives as before (the pad reads W A S D on an unlearned layout). The
+  Xvfb server ignored keymap changes (`setxkbmap`, `xkbcomp` and
+  `xmodmap` left it US), so no real layout switch was tried. The layouts
+  are checked with synthetic `KeyboardInput` carrying another logical
+  key, through Bevy's input and the app's systems: Dvorak's `KeyU` typing
+  g toggles the grid and its `KeyG` typing i toggles inertia; AZERTY's
+  `KeyW` typing z flies forward and its `KeyZ` typing w doesn't; a drag
+  constrains to Z on AZERTY's `KeyW` with the camera still; Dvorak's
+  `KeyN` typing b picks Box select and with Ctrl toggles the sidebar,
+  `KeyB` typing x does neither; Teleop stops on `KeyB` typing x, not on
+  `KeyX` typing q; the pad and its note read Z Q S D after AZERTY's
+  presses. With the learning system removed, the app-level tests fail.
+  Not tried: a real browser (the wasm32 build passes clippy).
+- **Tests:** what a press types (a Latin letter in either case, other
+  ASCII, a fallback, a command chord), the layout learned from presses,
+  the browser's keydown, and every letter-row key on six layouts (US,
+  AZERTY, QWERTZ, Dvorak, Colemak, Russian) plain, with Shift and with
+  Ctrl: no press fires two bindings and the fly keys keep their places;
+  the app-level checks above; the hint's and the pad's caps. Workspace
+  999 passing; coverage 97.5% lines (`view/layout.rs` 100%). check.sh
+  passes.
+- **Review fixes:**
+  - a letter of another script typed without Alt, or a plain Latin
+    letter after one, is a layout switch that forgets what was learned
+    (Dvorak then Russian: Ctrl and `KeyS` is Save, not Open);
+  - the canvas listener keeps its own `KeyLayout`, fed the same
+    keydowns, so `web_key` and the app agree (a test runs both on one
+    stream: a switch, Option chords, non-Latin keys with Ctrl);
+  - caps are learned unshifted only; a key with no character keeps its
+    letter; the modifiers come from the frame's events in order;
+  - labels drop a plain letter only fly keys type (Colemak's F and R:
+    the HUD hint, the rail's and the tools' tooltips, which now follow
+    the map);
+  - a fly key held as a drag ends needs a fresh press;
+  - the layout sweep adds Alt and Ctrl+Alt (AltGr); D-119 records the
+    Option limit in Firefox and Safari.
+  Workspace 1006 passing; coverage 97.5% lines. check.sh passes.
+
+## 2026-10-25: M10e performance and the §13 checklist (D-120)
+
+- **Stress world:** `scripts/stress-world.sh [MODELS] [--dynamic]` writes a
+  world of 1,250 models (base and arm links, a box visual each, the hinge
+  between them): 5,000 tree entities, 5,003 with the sun and the ground.
+  `--dynamic` fixes each base to the world and starts each arm tilted 0.2
+  rad about its hinge (upright it is balanced and never moves), so the arms
+  swing and the server streams their poses; two snapshots of a 4-model copy
+  a few seconds apart found `unit_0/arm` at z 0.26 and then 0.73. Served by
+  a fresh Jetty
+  (`gz-websocket-jetty-pub`) on 127.0.0.1:9040, a 50-model copy on 9041.
+- **Live measurement** (`--release`, `--no-vsync`, 1440 × 900, Ryzen 9
+  9950X3D, RTX 5090; a temporary patch, kept in
+  `patch-work/m10e-measure-patch.diff`, printed the median frame time
+  every 2 s, scrolled every `ScrollPosition` or selected the next model
+  every N frames, and printed Bevy's render diagnostics). Medians of three
+  alternating runs, main against this branch, `--scene-expand`:
+
+  | 5,003 entities | main | M10e |
+  |---|---|---|
+  | idle (expanded; collapsed 2.6 too) | 2.56 | 2.57 |
+  | scroll 37 px a frame | 2.98 | 2.95 |
+  | a new selection every 10 frames | 3.01 | 3.03 |
+  | a new selection every frame | 4.05 | 4.02 |
+
+  The GPU's passes take 0.84 ms; the rest is CPU. Quad at Ultra is 5.1 ms.
+  Earlier runs read up to 1 ms more while other agents' builds shared the
+  CPU, so these were taken alternating. The branch's fixes are at clicks,
+  not in steady frames.
+- **Headless bench** (`panels::scene::stress::bench_a_5000_entity_tree`,
+  ignored; `cargo test -p gz-ui --lib bench_a_5000 -- --ignored
+  --nocapture`, `GZ_BENCH_MODELS=N` for another size). The full UI without
+  a renderer, unoptimized, so only the ratios mean anything. An idle frame
+  is 9.2 ms at 250 entities and 9.8 at 6,250: nothing per frame grows with
+  the world. Medians, main → M10e:
+
+  | | main | M10e |
+  |---|---|---|
+  | idle, expanded | 9.67 | 9.79 |
+  | scroll 37 px a frame | 15.07 | 14.76 |
+  | type a filter (one frame a letter) | 13.54 | 12.64 |
+  | select a model a frame | 22.73 | 22.08 |
+  | select all 1,250 models | 32.73 | 27.94 |
+  | Hide others · its undo | 20.2 · 65.8 | 18.8 · 18.0 |
+  | Isolate · end it | 19.0 · 19.3 | 19.6 · 22.1 |
+  | undo the end · undo the Isolate | 66.9 · 69.2 | 17.9 · 17.3 |
+
+- **Fixes:** `undo::undo_redo` collects the edit's paths in a set before
+  its one pass over the entities (it tested every step against every
+  entity: 1,250 steps × 6,250 entities for Hide others); the Scene footer's
+  `footer_states` walks each selected entity up to its model instead of
+  searching a list of every model, and checks whether Isolate's models
+  are gone only as entities go, the scene changes or Isolate starts (it
+  looked every frame); ending Isolate finds the saved paths in a map.
+- **Kept as it is:** a scroll rewrites every pooled row (a screenful; 0.4
+  ms natively), since rows that kept their slot would reach a screen
+  reader out of order; a filter is one linear pass a change; the
+  `Added<…>` and `Changed<…>` filters that systems test every frame are
+  Bevy's tick scans, microseconds at this size.
+- **Regression test:** `a_5000_entity_tree_bounds_its_work_per_frame`.
+  `TreeWork` counts the tree's linear passes (model builds, row passes);
+  idle frames, scrolls, selections (one, all, none), a hover, stats and a
+  pose for every link run none and write no pooled row; Expand all and a
+  filter run one row pass; a frame writes at most the pool; the pool stays
+  a screenful; Hide others, Isolate and their undo put all 1,250 models
+  back. A mutation (the model rebuilt every frame) fails it.
+- **Wasm payload** (release, wasm-bindgen 0.2.129, as `build.sh` builds
+  it; gzip -9):
+
+  | `gzweb_bg.wasm` | raw | gzipped |
+  |---|---|---|
+  | main | 88.57 MB | 16.50 MB |
+  | without the name section | 48.00 MB | 12.92 MB |
+  | and without Bevy's audio | 47.40 MB | 12.78 MB |
+  | `wasm-opt -Oz` (not used) | 39.56 MB | 12.85 MB (of 12.92) |
+
+  Only the audio went (bevy_audio, and with it lewton and ogg): `bevy_ui`
+  turns on `bevy_sprite` and `bevy_ui_render` turns on
+  `bevy_sprite_render`, so dropping the 2D profile removes no crate. zstd
+  -19 makes the shipped one 8.4 MB; `gzweb.js` is 176 KB. `build.sh`
+  removes the names (`KEEP_WASM_NAMES=1` keeps them) and runs
+  `scripts/wasm-budget.sh`: 14 MB gzipped. `wasm-opt` came from a Dart
+  SDK's binaryen 128 (`-O2` 45.29 MB, 13.00 gzipped); not installed here.
+- **A GPU-bound target, not measured:** the integrated Radeon
+  (`WGPU_ADAPTER_NAME=AMD`) can't present to the NVIDIA-driven desktop
+  (Wayland can't import its dmabufs; under X11 the surface is never
+  configured; Bevy has no GL backend natively). Chrome: the extension's tab
+  is throttled to 1 frame a second while its window is hidden, a Chrome of
+  our own under Wayland or X11 ran a frame a second too (the 50-model
+  world as well, so not the scene), and headless Chrome has no WebGPU
+  adapter (SwiftShader, then a lost device). `target/bench/fps.html` (in
+  `patch-work/m10e-fps.html`) logs the frame rate and can click Expand
+  all, wheel the tree and click rows, for a run on a desk.
+- **§13 checklist** against main (52f1124) and this branch:
+
+  | Item | Status | Evidence, or what is missing |
+  |---|---|---|
+  | No colour literals outside the theme | done | `spec_checks::no_colour_literals_outside_the_theme_tokens` |
+  | Icon-only buttons: tooltip and label | partly; #64 | the builders require a `Tooltip` and name the node from it; #64 walks every control's name. Missing: tooltips on the tree row's caret and eye (labels only), and a tooltip and name on the view cube |
+  | Contrast pairs, both themes | done | `contrast_pairs_pass_in_both_themes`, the §13 list exactly |
+  | Single letters do nothing in a text field | done | `text_fields_take_the_keys_from_the_viewer`, the palette's and address field's tests |
+  | `shortcuts.json` conflicts, `web_alt` | done | `shortcuts_have_no_conflicts_and_web_alternatives`, `the_conflict_check_catches_clashes` |
+  | Esc precedence | done (M10e) | `esc_closes_a_menu_before_it_changes_the_tool`, the marquee and gizmo tests, Esc never releasing a follow; new `esc_never_changes_the_drag_action` |
+  | Panel states, no-world card, banner | partly | Scene, Topics, Plot, Sensors, Console, Inspector, card and banner tested. Missing: Teleop's "Nobody is listening" banner (the server gives no subscriber counts, D-104), Workspaces' load-failure state (a `warn!` only), Fuel's spinner in the input and download progress with cancel |
+  | A focused live field freezes | done | `unedited_text_commits_nothing` (the NumberField) |
+  | Delete's Undo chip, ⌘Z | done | `a_delete_shows_an_undo_chip`, `a_delete_or_a_spawn_is_undone_through_the_server` |
+  | No glyph for two actions | partly | new `the_named_icon_pairs_differ`: §13's pairs have different shapes (paths, rects, circles; the notes aside), and so do the icons the UI gives those actions (palette commands, the Rotate tool, the World menu's Revert, the panels). Missing: `icons.json` itself gives revert and undo one glyph (both in the World menu) and track and eye one (Track beside Show in the context menu); Paste borrows Copy. They need glyphs from the design |
+  | Camera regions after resize, splitter, UI scale | done (M10e); UI scale #65 | new `the_camera_matches_its_node_after_a_resize_and_a_splitter_drag` (headless: the resize writes the window's size, sends `WindowResized` and sets the UI camera's target size by hand, as the renderer would; the drag is bevy_picking's drag events on the sidebar's splitter); scale at start in `the_3d_view_follows_the_view_node_at_any_scale`; a runtime scale change is #65's |
+  | Theme, workspace, layout persist | done | `switching_and_saving_persist`, `the_store_is_read_at_start` (native); the web's `localStorage` path has no browser test |
+  | Web: right-drag, browser alternates | done | `the_canvas_swallows_only_the_listed_chords`, `right_drag_pans_and_middle_drag_zooms`; no browser run |
+
+- **Tests:** workspace 988 passing (5 ignored); coverage 97.2% lines. check.sh passes.
+- **Review fixes:** `wasm-budget.sh` counts bytes with `wc -c` (BSD has no
+  `stat -c`); the payload notes say only Bevy's audio went (the 2D
+  profile's crates come with `bevy_ui`); `--dynamic` tilts the arms so they
+  swing; the icon test compares the shapes only (not the notes), and the icons the actions
+  use; the splitter step of the camera-region test is a pointer drag.
+
 ## 2026-10-26: the §13 checklist's gaps (D-121)
 
 - **Tooltips:** a Scene tree row's caret and eye have tooltips titled with

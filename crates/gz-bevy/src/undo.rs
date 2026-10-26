@@ -12,7 +12,7 @@
 //! removed and, once it has gone, created again from the other SDFormat
 //! ([`Replacing`]).
 
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::connection::{GzCommand, GzStatus};
@@ -581,11 +581,16 @@ fn undo_redo(
         }
         .expect("the top edit");
         edit.open = false;
-        let by_path: HashMap<&str, Entity> = entities
-            .iter()
-            .filter(|(_, g)| edit.steps.iter().any(|s| s.path() == Some(&g.path)))
-            .map(|(e, g)| (g.path.as_str(), e))
-            .collect();
+        // One pass over the entities (Hide others and Isolate have a
+        // step per model).
+        let by_path: HashMap<&str, Entity> = {
+            let paths: HashSet<&str> = edit.steps.iter().filter_map(Step::path).collect();
+            entities
+                .iter()
+                .filter(|(_, g)| paths.contains(g.path.as_str()))
+                .map(|(e, g)| (g.path.as_str(), e))
+                .collect()
+        };
         // Undone last to first.
         let order: Vec<&Step> = if undo {
             edit.steps.iter().rev().collect()
