@@ -16,8 +16,11 @@ use bevy::light::atmosphere::ScatteringMedium;
 use bevy::light::Atmosphere;
 use bevy::light::{
     AtmosphereEnvironmentMapLight, CascadeShadowConfig, CascadeShadowConfigBuilder,
-    DirectionalLightShadowMap, GeneratedEnvironmentMapLight, PointLightShadowMap,
-    ShadowFilteringMethod,
+    DirectionalLightShadowMap, EnvironmentMapLight, GeneratedEnvironmentMapLight,
+    PointLightShadowMap, ShadowFilteringMethod,
+};
+use bevy::pbr::generate::{
+    filtering_system, GeneratorBindGroups, GeneratorPipelines, RenderEnvironmentMap,
 };
 use bevy::pbr::{
     AtmosphereSettings, DistanceFog, FogFalloff, ScreenSpaceAmbientOcclusion,
@@ -27,10 +30,14 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::camera::{MipBias, TemporalJitter};
 use bevy::render::render_resource::{
-    Extent3d, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    Extent3d, PipelineCache, TextureDimension, TextureFormat, TextureViewDescriptor,
+    TextureViewDimension,
 };
+use bevy::render::sync_world::MainEntity;
 use bevy::render::view::Msaa;
+use bevy::render::{Render, RenderApp, RenderSystems};
 use gz_core::scene::{FogDesc, SceneDesc};
+use std::sync::{Arc, Mutex};
 
 use crate::assets;
 use crate::camera::{self, MainCamera, CLEAR_COLOR};
@@ -167,7 +174,21 @@ pub fn configure(app: &mut App, quality: Quality) {
         .init_resource::<GzGrid>()
         .init_resource::<PendingSky>()
         .init_resource::<StudioCubemap>()
+        .init_resource::<PrefilteredEnvironments>()
         .init_gizmo_group::<GridGizmos>();
+    let reports = app
+        .world()
+        .resource::<PrefilteredEnvironments>()
+        .reports
+        .clone();
+    if let Some(render) = app.get_sub_app_mut(RenderApp) {
+        render.insert_resource(reports).add_systems(
+            Render,
+            report_filtered
+                .after(filtering_system)
+                .before(RenderSystems::Render),
+        );
+    }
 }
 
 /// The world's environment settings, set by `spawn::apply_scene` from each
@@ -722,7 +743,7 @@ fn studio_light(
     images: &mut Assets<Image>,
     studio: &mut StudioCubemap,
     ambient: Vec3,
-) -> GeneratedEnvironmentMapLight {
+) -> StaticEnvironment {
     let map = match &studio.0 {
         Some((a, h)) if *a == ambient => h.clone(),
         _ => {
@@ -731,10 +752,173 @@ fn studio_light(
             h
         }
     };
-    GeneratedEnvironmentMapLight {
-        environment_map: map,
+    StaticEnvironment {
+        cubemap: map,
         intensity: units::UNIT_LUMINANCE * units::FILL,
-        ..default()
+    }
+}
+
+/// A view lit by an environment that doesn't change, the studio or a
+/// cubemap sky: [`prefilter_environments`] filters its cubemap once for
+/// every view that shows it and gives the view the light (D-116).
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct StaticEnvironment {
+    /// The cubemap the light is filtered from.
+    pub cubemap: Handle<Image>,
+    /// The light's `EnvironmentMapLight::intensity`.
+    pub intensity: f32,
+}
+
+/// Marks the entity a static environment's cubemap is filtered on.
+#[derive(Component, Debug)]
+pub struct EnvironmentFilter;
+
+/// The static environments' filtered lights, one per cubemap, shared by
+/// every view that shows it (D-116). Bevy's `GeneratedEnvironmentMapLight`
+/// filters its cubemap again every frame, on every camera that has it;
+/// here one [`EnvironmentFilter`] entity has it until the render world
+/// reports the cubemap filtered, and then goes, leaving the maps it made.
+#[derive(Resource, Default)]
+pub struct PrefilteredEnvironments {
+    maps: Vec<FilteredMap>,
+    /// What the render world reports (`report_filtered`).
+    pub reports: FilterReports,
+}
+
+impl PrefilteredEnvironments {
+    /// The cubemaps that have a light or are being filtered.
+    pub fn cubemaps(&self) -> impl Iterator<Item = &Handle<Image>> {
+        self.maps.iter().map(|m| &m.cubemap)
+    }
+}
+
+/// A cubemap's filtered light.
+struct FilteredMap {
+    cubemap: Handle<Image>,
+    /// The entity it is filtered on, until the render world has.
+    filter: Option<Entity>,
+    /// The light Bevy made for it: its maps hold the filtered cubemap once
+    /// the render world has filtered it.
+    light: Option<EnvironmentMapLight>,
+}
+
+/// The [`EnvironmentFilter`] entities whose cubemap the render world has
+/// filtered, shared by the main and render worlds.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct FilterReports(Arc<Mutex<Vec<Entity>>>);
+
+impl FilterReports {
+    /// Reports `filters` filtered.
+    pub fn push(&self, filters: impl IntoIterator<Item = Entity>) {
+        if let Ok(mut reports) = self.0.lock() {
+            reports.extend(filters);
+        }
+    }
+
+    /// The filters reported since the last call.
+    pub fn take(&self) -> Vec<Entity> {
+        self.0
+            .lock()
+            .map(|mut reports| std::mem::take(&mut *reports))
+            .unwrap_or_default()
+    }
+}
+
+/// Gives each view with a [`StaticEnvironment`] its light. A cubemap no
+/// view showed before gets an [`EnvironmentFilter`] entity, which goes once
+/// the render world has filtered it; one no view shows any more is
+/// forgotten.
+pub fn prefilter_environments(
+    mut prefiltered: ResMut<PrefilteredEnvironments>,
+    mut commands: Commands,
+    views: Query<(Entity, &StaticEnvironment, Has<EnvironmentMapLight>)>,
+    made: Query<&EnvironmentMapLight, With<EnvironmentFilter>>,
+) {
+    let filtered = prefiltered.reports.take();
+    let maps = &mut prefiltered.maps;
+    let despawn = |commands: &mut Commands, filter: Entity| {
+        if let Ok(mut filter) = commands.get_entity(filter) {
+            filter.despawn();
+        }
+    };
+    maps.retain(|map| {
+        let shown = views.iter().any(|(_, env, _)| env.cubemap == map.cubemap);
+        if !shown {
+            map.filter.inspect(|f| despawn(&mut commands, *f));
+        }
+        shown
+    });
+    for map in maps.iter_mut() {
+        let Some(filter) = map.filter else {
+            continue;
+        };
+        if map.light.is_none() {
+            map.light = made.get(filter).ok().cloned();
+        }
+        if map.light.is_some() && filtered.contains(&filter) {
+            despawn(&mut commands, filter);
+            map.filter = None;
+        }
+    }
+    for (view, env, lit) in &views {
+        if lit {
+            continue;
+        }
+        match maps.iter().find(|m| m.cubemap == env.cubemap) {
+            Some(FilteredMap {
+                light: Some(light), ..
+            }) => {
+                commands.entity(view).insert(EnvironmentMapLight {
+                    intensity: env.intensity,
+                    ..light.clone()
+                });
+            }
+            Some(_) => {}
+            None => {
+                let filter = commands
+                    .spawn((
+                        EnvironmentFilter,
+                        GeneratedEnvironmentMapLight {
+                            environment_map: env.cubemap.clone(),
+                            ..default()
+                        },
+                    ))
+                    .id();
+                maps.push(FilteredMap {
+                    cubemap: env.cubemap.clone(),
+                    filter: Some(filter),
+                    light: None,
+                });
+            }
+        }
+    }
+}
+
+/// Reports the [`EnvironmentFilter`]s the render world filtered this frame
+/// (it runs after Bevy's filter passes): those with bind groups, once the
+/// passes' pipelines are ready. The atmosphere's environment maps are
+/// reported too, and ignored.
+fn report_filtered(
+    pipelines: Option<Res<GeneratorPipelines>>,
+    cache: Res<PipelineCache>,
+    filters: Query<&MainEntity, (With<RenderEnvironmentMap>, With<GeneratorBindGroups>)>,
+    reports: Res<FilterReports>,
+) {
+    let Some(p) = pipelines else {
+        return;
+    };
+    let passes = [
+        p.copy,
+        p.downsample_first,
+        p.downsample_second,
+        p.radiance,
+        p.irradiance,
+    ];
+    if passes
+        .into_iter()
+        .all(|id| cache.get_compute_pipeline(id).is_some())
+    {
+        reports.push(filters.iter().map(MainEntity::id));
     }
 }
 
@@ -787,10 +971,9 @@ pub fn install_sky(
                 ..default()
             });
             if ibl {
-                cam.insert(GeneratedEnvironmentMapLight {
-                    environment_map: handle.clone(),
+                cam.insert(StaticEnvironment {
+                    cubemap: handle.clone(),
                     intensity: units::UNIT_LUMINANCE,
-                    ..default()
                 });
             }
         } else if ibl {
@@ -936,7 +1119,6 @@ mod tests {
     use crate::connection::GzInbox;
     use crate::test_util::scene_app;
     use bevy::ecs::system::RunSystemOnce;
-    use bevy::light::EnvironmentMapLight;
     use gz_core::msgs;
 
     #[test]
@@ -1367,6 +1549,17 @@ mod tests {
             == 1
     }
 
+    /// The [`EnvironmentFilter`] entities, after checking that each one
+    /// filters with Bevy's generator.
+    fn filters(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Has<GeneratedEnvironmentMapLight>, With<EnvironmentFilter>>()
+            .iter(world)
+            .inspect(|generates| assert!(generates))
+            .count()
+    }
+
     fn sun() -> msgs::Light {
         msgs::Light {
             name: "sun".into(),
@@ -1408,7 +1601,7 @@ mod tests {
         let mut app = scene_app(GzConfig::default());
         app.update();
         // Nothing is installed before the first scene.
-        assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
+        assert!(!has::<StaticEnvironment>(&mut app));
         let first = cameras(&mut app);
 
         // Studio, with fog and a grid; the ambient colour is the scene's.
@@ -1433,7 +1626,10 @@ mod tests {
         );
         assert_ne!(cameras(&mut app), first);
         assert_eq!(cameras(&mut app).len(), 1);
-        assert!(has::<GeneratedEnvironmentMapLight>(&mut app));
+        // Lit by the studio, filtered once (not on the camera every frame).
+        assert!(has::<StaticEnvironment>(&mut app));
+        assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
+        assert_eq!(filters(&mut app), 1);
         assert!(has::<DistanceFog>(&mut app));
         assert!(app.world().resource::<GzGrid>().visible);
         let ambient = app.world().resource::<GlobalAmbientLight>();
@@ -1462,8 +1658,18 @@ mod tests {
         assert!(has::<AtmosphereSettings>(&mut app));
         assert_eq!(planets(&mut app), 1);
         assert!(has::<AtmosphereEnvironmentMapLight>(&mut app));
+        assert!(!has::<StaticEnvironment>(&mut app));
         assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
         assert!(!has::<EnvironmentMapLight>(&mut app));
+        // No view shows the studio: its filter goes.
+        assert_eq!(filters(&mut app), 0);
+        assert_eq!(
+            app.world()
+                .resource::<PrefilteredEnvironments>()
+                .cubemaps()
+                .count(),
+            0
+        );
         assert!(!has::<DistanceFog>(&mut app));
         assert_eq!(
             app.world().resource::<GlobalAmbientLight>().color,
@@ -1505,7 +1711,7 @@ mod tests {
             app.update();
             app.world().resource::<PendingSky>().0.is_none()
         });
-        assert!(has::<GeneratedEnvironmentMapLight>(&mut app));
+        assert!(has::<StaticEnvironment>(&mut app));
         assert!(!has::<Skybox>(&mut app));
     }
 
@@ -1543,7 +1749,7 @@ mod tests {
                 &ViewId,
                 &Transform,
                 Option<&ViewPlacement>,
-                Has<GeneratedEnvironmentMapLight>,
+                Has<StaticEnvironment>,
                 &bevy::camera::visibility::RenderLayers,
             ), With<MainCamera>>()
             .iter(world)
@@ -1566,14 +1772,15 @@ mod tests {
             .filter(|(id, v)| id.0 > 0 && v.mode == crate::view::CameraMode::Free)
             .count();
         assert_eq!(free, 2);
-        // One studio cubemap for them all.
+        // One studio cubemap for them all, filtered once.
         let world = app.world_mut();
         let maps: Vec<_> = world
-            .query::<&GeneratedEnvironmentMapLight>()
+            .query::<&StaticEnvironment>()
             .iter(world)
-            .map(|l| l.environment_map.id())
+            .map(|l| l.cubemap.id())
             .collect();
         assert!(maps.len() == 3 && maps.iter().all(|m| *m == maps[0]));
+        assert_eq!(filters(&mut app), 1);
         for (i, (id, at, placed, lit, layers)) in views.iter().enumerate() {
             assert_eq!(*id, ViewId(i as u8));
             assert_eq!(*at, Vec3::new(1.0, 2.0, 3.0));
@@ -1650,11 +1857,8 @@ mod tests {
         assert!(app.world().resource::<PendingSky>().0.is_none());
         assert!(has::<Skybox>(&mut app));
         let world = app.world_mut();
-        let light = world
-            .query::<&GeneratedEnvironmentMapLight>()
-            .single(world)
-            .unwrap();
-        assert_eq!(light.environment_map, sky);
+        let light = world.query::<&StaticEnvironment>().single(world).unwrap();
+        assert_eq!(light.cubemap, sky);
         assert_eq!(light.intensity, units::UNIT_LUMINANCE);
         // A view added later gets it too, the cubemap as it was (made a
         // cube once, not changed again).
@@ -1665,6 +1869,115 @@ mod tests {
     }
 
     #[test]
+    fn a_static_environment_is_filtered_once_for_every_view() {
+        let mut app = scene_app(GzConfig::default());
+        app.update();
+        show(&mut app, msgs::Scene::default());
+        let first = cameras(&mut app)[0];
+        let studio = app.world().get::<StaticEnvironment>(first).unwrap().clone();
+        let world = app.world_mut();
+        let (filter, generated) = world
+            .query_filtered::<(Entity, &GeneratedEnvironmentMapLight), With<EnvironmentFilter>>()
+            .single(world)
+            .map(|(e, g)| (e, g.environment_map.clone()))
+            .unwrap();
+        assert_eq!(generated, studio.cubemap);
+        app.update();
+        assert!(!has::<EnvironmentMapLight>(&mut app));
+
+        // Bevy makes the filter's maps; the view gets them at its own
+        // intensity.
+        let (diffuse, specular) = {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            (images.add(Image::default()), images.add(Image::default()))
+        };
+        app.world_mut()
+            .entity_mut(filter)
+            .insert(EnvironmentMapLight {
+                diffuse_map: diffuse.clone(),
+                specular_map: specular.clone(),
+                intensity: 1.0,
+                ..default()
+            });
+        app.update();
+        let light = |app: &App, view: Entity| {
+            let l = app.world().get::<EnvironmentMapLight>(view).unwrap();
+            (l.diffuse_map.clone(), l.specular_map.clone(), l.intensity)
+        };
+        assert_eq!(
+            light(&app, first),
+            (diffuse.clone(), specular.clone(), studio.intensity)
+        );
+
+        // Another view shares them, still filtered once.
+        let second = app
+            .world_mut()
+            .spawn(StaticEnvironment {
+                intensity: 2.0,
+                ..studio.clone()
+            })
+            .id();
+        app.update();
+        assert_eq!(
+            light(&app, second),
+            (diffuse.clone(), specular.clone(), 2.0)
+        );
+        assert_eq!(filters(&mut app), 1);
+
+        // Once the render world reports the cubemap filtered, the filter
+        // goes and the views keep the maps; a view added later gets them
+        // without filtering again.
+        let reports = app
+            .world()
+            .resource::<PrefilteredEnvironments>()
+            .reports
+            .clone();
+        reports.push([filter]);
+        app.update();
+        assert!(app.world().get_entity(filter).is_err());
+        assert_eq!(filters(&mut app), 0);
+        let third = app.world_mut().spawn(studio.clone()).id();
+        app.update();
+        assert_eq!(light(&app, third), (diffuse, specular, studio.intensity));
+        assert_eq!(filters(&mut app), 0);
+        assert!(reports.take().is_empty());
+
+        // A new ambient colour: a new cubemap to filter, and the old one
+        // forgotten once no view shows it. A report before Bevy has made
+        // the maps keeps the filter.
+        app.world_mut().despawn(second);
+        app.world_mut().despawn(third);
+        show(
+            &mut app,
+            msgs::Scene {
+                ambient: Some(msgs::Color {
+                    g: 0.5,
+                    a: 1.0,
+                    ..default()
+                }),
+                ..default()
+            },
+        );
+        let cubemaps: Vec<_> = app
+            .world()
+            .resource::<PrefilteredEnvironments>()
+            .cubemaps()
+            .cloned()
+            .collect();
+        assert_eq!(cubemaps.len(), 1);
+        assert_ne!(cubemaps[0], studio.cubemap);
+        let world = app.world_mut();
+        let filter = world
+            .query_filtered::<Entity, With<EnvironmentFilter>>()
+            .single(world)
+            .unwrap();
+        reports.push([filter]);
+        app.update();
+        assert_eq!(filters(&mut app), 1);
+        assert!(!has::<EnvironmentMapLight>(&mut app));
+    }
+
+    #[test]
     fn low_quality_lights_with_a_flat_ambient() {
         let mut app = scene_app(GzConfig {
             quality: Quality::Low,
@@ -1672,7 +1985,7 @@ mod tests {
         });
         app.update();
         show(&mut app, msgs::Scene::default());
-        assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
+        assert!(!has::<StaticEnvironment>(&mut app));
         assert_eq!(
             app.world().resource::<GlobalAmbientLight>().brightness,
             units::ambient_brightness(units::FILL)
@@ -1685,7 +1998,7 @@ mod tests {
             .add(Image::default());
         app.world_mut().resource_mut::<PendingSky>().0 = Some((flat, vec![cam]));
         app.update();
-        assert!(!has::<GeneratedEnvironmentMapLight>(&mut app));
+        assert!(!has::<StaticEnvironment>(&mut app));
         assert!(!has::<Skybox>(&mut app));
     }
 

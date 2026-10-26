@@ -455,9 +455,22 @@ visual / collision / sensor, Reparent).
   redo take parts back. Left: M9c writes the draft back (Done drops it until then), M9d.
 
 ### M10 — Hardening
+In five PRs: **M10a** filtering a static environment map once, **M10b** keyboard and
+AccessKit (names, focus order, arrow keys within groups, the viewport's own tab stop),
+**M10c** UI scale 80–200% and reduce-motion, **M10d** layout-aware letters on the web,
+**M10e** performance (a 5,000-entity Scene tree at 60 fps, the wasm payload budget, a
+GPU-bound target measured) and the §13 checklist as its acceptance list.
+
+- M10c needs a home for the scale: Settings › Appearance (§10) waits on the Settings dialog
+  (§14 open question 3), so the scale lands in ⌘K and `gzweb --ui-scale` first, and §13's
+  "camera regions match their nodes after a UI scale change" is checked there.
 - Filter a static environment map once (DECISIONS.md D-95): Bevy's
   `GeneratedEnvironmentMapLight` refilters the studio or cubemap sky every frame for every view
   camera; prefilter it once into an `EnvironmentMapLight` (the atmosphere's stays real-time).
+- **M10a notes:** `render::StaticEnvironment` on a view, `render::prefilter_environments`: one
+  filter entity per cubemap until the render world reports it filtered, its maps shared by
+  every view that shows it (D-116). The atmosphere's environment is Bevy's real-time one.
+  Quad at High 6.38 → 5.46 ms. Workspace 967 passing; coverage 97.4% lines. check.sh passes.
 - AccessKit names and focus order (§10), UI scale 80–200%, reduce-motion. The regions are
   tab groups in §6.5's order already (D-58); M10 adds arrow keys within groups and the
   viewport's own tab stop (the D-52 open item, a Tab-focused button also taking the global

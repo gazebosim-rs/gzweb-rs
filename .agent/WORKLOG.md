@@ -2019,3 +2019,42 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
 - **Left:** the server should join a frame's pieces
   (`lws_is_final_fragment`, `lws_remaining_packet_payload`); until it
   does, M9c's write-back is limited to models that fit.
+
+## 2026-10-25: M10a a static environment filtered once (D-116)
+
+- **Plan:** M10 is five PRs (UI_PLAN): M10a the environment map, M10b
+  keyboard and AccessKit, M10c UI scale and reduce-motion, M10d
+  layout-aware letters on the web, M10e performance and the §13
+  checklist.
+- **gz-bevy:** a view lit by the studio or a cubemap sky gets a
+  `render::StaticEnvironment` instead of Bevy's
+  `GeneratedEnvironmentMapLight`. `render::prefilter_environments`
+  spawns one `EnvironmentFilter` entity per cubemap with Bevy's
+  generator, gives every view showing it the maps it makes, and drops
+  the entity once the render world reports the passes ran
+  (`report_filtered`, a render-world system after Bevy's
+  `filtering_system`). Views added later and respawned cameras reuse
+  the maps; a cubemap no view shows is forgotten. The atmosphere's
+  environment is unchanged (real-time).
+- **Live check** (`--release`, a fresh Jetty on 127.0.0.1:9031, a
+  temporary diagnostics patch printing Bevy's render diagnostics):
+  - The lightprobe passes ran once per cubemap and then not at all
+    (0 measurements a second, 120 before), through a world change from
+    `diff_drive` (studio) to `sky.sdf` (atmosphere: every frame, as
+    before) to a `diff_drive` with a generated 64 px DDS cubemap sky
+    to `diff_drive` again, in Quad. No warnings or validation errors.
+  - Captures before and after match: mean difference 0.03 (Single),
+    0.04 (Quad) and 0.07 (Quad, cubemap sky) of 255, the UI's clock
+    aside.
+  - Frame times (median of three alternating runs, `--no-vsync`):
+    Quad 6.38 → 5.46 ms, Single 3.13 → 3.04 ms. Before, the radiance
+    and irradiance passes took about 0.6 ms of GPU per camera per frame.
+  - Not tried by hand: adding or closing a view at runtime (the tests
+    cover it), the browser (wasm32 builds; Bevy's generator needs
+    compute, so WebGL2 has no environment light, as before).
+- **Tests:** a static environment filtered once for every view (the
+  filter's maps shared at each view's intensity, the filter dropped on
+  a report and kept on an early one, a later view lit without a new
+  filter, an old cubemap forgotten); the environment tests now check
+  that no view carries Bevy's generator. Workspace 967 passing; coverage
+  97.4% lines. check.sh passes.

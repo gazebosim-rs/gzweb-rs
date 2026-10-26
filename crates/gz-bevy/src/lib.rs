@@ -175,6 +175,7 @@ impl Plugin for GzWebPlugin {
                     render::apply_environment,
                     render::spawn_views,
                     render::install_sky,
+                    render::prefilter_environments,
                     spawn::apply_poses,
                 )
                     .chain(),
@@ -271,6 +272,7 @@ pub(crate) mod test_util {
         .init_resource::<render::GzGrid>()
         .init_resource::<render::PendingSky>()
         .init_resource::<render::StudioCubemap>()
+        .init_resource::<render::PrefilteredEnvironments>()
         .insert_resource(connection::GzStatus {
             status: gz_core::transport::Status::Ready,
             world: Some("w".into()),
@@ -286,6 +288,7 @@ pub(crate) mod test_util {
                 heightmap::build,
                 render::apply_environment,
                 render::install_sky,
+                render::prefilter_environments,
                 spawn::apply_poses,
                 material::combine_metal_rough,
             )
