@@ -433,8 +433,8 @@ impl Part {
                     "<joint name=\"{name}\" type=\"{}\"><parent>{}</parent><child>{}</child>\
                      {axis}</joint>",
                     kind.as_str(),
-                    sdf_link_name(model, parent),
-                    sdf_link_name(model, child)
+                    xml_escape(&sdf_link_name(model, parent)),
+                    xml_escape(&sdf_link_name(model, child))
                 )
             }
             Part::Plugin { name, filename } => {

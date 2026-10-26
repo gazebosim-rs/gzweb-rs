@@ -464,3 +464,42 @@ fn reparents_are_written_as_their_joints_parent() {
         Err("no joint gone in the model".into())
     );
 }
+
+/// A joint's ends, and a reparent's new parent, are escaped: a link the
+/// server named with `&` or `<` still makes SDFormat that reads back.
+#[test]
+fn joint_ends_are_escaped() {
+    let joint = Part::Joint {
+        name: "joint_1".into(),
+        kind: JointKind::Fixed,
+        parent: "m/a&b".into(),
+        child: "m/<c>".into(),
+    };
+    let sdf = joint.sdf("m");
+    let doc = roxmltree::Document::parse(&sdf).expect("well-formed");
+    let text = |tag: &str| {
+        doc.descendants()
+            .find(|n| n.has_tag_name(tag))
+            .and_then(|n| n.text())
+            .map(str::to_string)
+    };
+    assert_eq!(text("parent").as_deref(), Some("a&b"));
+    assert_eq!(text("child").as_deref(), Some("<c>"));
+    let model = "<?xml version=\"1.0\"?><sdf version=\"1.9\"><model name=\"m\">\
+                 <link name=\"x\"><inertial/></link><link name=\"y\"><inertial/></link>\
+                 <joint name=\"j\" type=\"fixed\"><parent>x</parent><child>y</child></joint>\
+                 </model></sdf>";
+    let out = write_parts(
+        model,
+        "m",
+        &[Part::Reparent {
+            joint: "j".into(),
+            model: "m".into(),
+            child: "m/y".into(),
+            parent: "m/a&b".into(),
+        }],
+    )
+    .unwrap();
+    assert!(out.contains("<parent>a&amp;b</parent>"), "{out}");
+    assert!(roxmltree::Document::parse(&out).is_ok());
+}

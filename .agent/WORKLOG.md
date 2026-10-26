@@ -2051,6 +2051,16 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   Not driven live: Done's clicks in the client (no capture flag adds
   parts); the tests cover them.
 - **Tests:** workspace 966 → 974 passing.
+- **Merged M9d** (#61): `write_parts` writes a reparent as its joint's
+  `<parent>`; notes count changes.
+- **Review fixes** (PR #62):
+  - "Wrote X" waits until the model shows again;
+  - an ignored `remove` or a lost `create` says so and points to undo;
+  - a pending `create` waits for a world and goes on a Reset or new world;
+  - undo waits until the model shows;
+  - the long probe is 64 KiB;
+  - joint ends are escaped;
+  - D-114 says joints come back at rest.
 
 ## 2026-10-25: M9d the inspectors' quick actions (D-115)
 

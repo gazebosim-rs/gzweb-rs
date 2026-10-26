@@ -208,18 +208,26 @@ pub fn probe_reply_supports_binary(msg_type: &str, payload: &[u8]) -> bool {
         && msgs::StringMsgV::decode(payload).is_ok_and(|v| !v.data.is_empty())
 }
 
-/// How long the frame of [`Transport::probe_long_frames`] is: three of the
-/// server's reads (see [`MAX_FRAME`]).
-pub const LONG_PROBE_LEN: usize = 3 * 4096;
+/// How long the frame of [`Transport::probe_long_frames`] is: sixteen of
+/// the stock server's reads (see [`MAX_FRAME`]), and longer than a model's
+/// SDFormat usually is, so a server built with a larger read buffer that
+/// still cuts long messages answers no too.
+pub const LONG_PROBE_LEN: usize = 16 * 4096;
 
 /// The long probe's payload: an Empty with an unknown field 15 that makes
 /// the frame [`LONG_PROBE_LEN`] long, all `x` (no zero or comma, so any
-/// server can be asked). Cut short, the field fails to parse.
+/// server can be asked; its length's bytes have none either). Cut short,
+/// the field fails to parse.
 fn long_probe() -> Vec<u8> {
     let room = LONG_PROBE_LEN - frame_len("req", BINARY_PROBE_SERVICE, "gz.msgs.Empty", 0);
-    // The tag and a two-byte length come first.
+    // The tag and the field's length (its varint's own bytes counted) come
+    // first.
+    let body = (1..=4)
+        .map(|n| room - 1 - n)
+        .find(|b| prost::encoding::encoded_len_varint(*b as u64) == room - 1 - b)
+        .expect("a length that fits");
     let mut payload = vec![0x7a];
-    prost::encoding::encode_varint((room - 3) as u64, &mut payload);
+    prost::encoding::encode_varint(body as u64, &mut payload);
     payload.resize(room, b'x');
     payload
 }

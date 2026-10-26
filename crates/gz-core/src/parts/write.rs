@@ -8,6 +8,7 @@ use std::ops::Range;
 use roxmltree::Node;
 
 use super::{sdf_link_name, Part};
+use crate::insert::xml_escape;
 
 /// `sdf` (a document holding model `model`, a scene path) with `parts`
 /// written into it, in order: a link, joint or plugin last in the model; a
@@ -93,7 +94,7 @@ pub fn write_parts(sdf: &str, model: &str, parts: &[Part]) -> Result<String, Str
             .ok_or_else(|| format!("{joint} has no parent link"))?;
         edits.push((
             parent.range(),
-            format!("<parent>{}</parent>", sdf_link_name(owner, to)),
+            format!("<parent>{}</parent>", xml_escape(&sdf_link_name(owner, to))),
         ));
     }
     for (path, text) in &on_links {

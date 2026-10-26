@@ -4508,8 +4508,8 @@ fn done_writes_the_parts_into_the_model_as_one_edit() {
     );
     let replacing = &r.app.world().resource::<Replacing>().0;
     assert_eq!(replacing.len(), 1);
-    assert_eq!(replacing[0].0.sdf, after.sdf);
-    assert_eq!(notes(&mut r), ["Wrote a: 1 change"]);
+    assert_eq!(replacing[0].model.sdf, after.sdf);
+    assert!(notes(&mut r).is_empty(), "written once it shows");
     let dropped = r
         .app
         .world_mut()
@@ -4518,11 +4518,27 @@ fn done_writes_the_parts_into_the_model_as_one_edit() {
         .count();
     assert_eq!(dropped, 0);
     assert!(!r.app.world().resource::<EditParts>().holds());
-    // The model gone, it's created from the SDFormat as written.
+    // The model gone, it's created from the SDFormat as written; once it
+    // shows, it's written.
     r.app.world_mut().entity_mut(a).despawn();
     r.frames(2);
     let sent = r.sent();
     assert_eq!(services(&sent), ["/world/w/create"]);
+    r.app.world_mut().spawn(crate::spawn::GzEntity {
+        name: "a".into(),
+        id: 9,
+        kind: gz_core::scene::NodeKind::Model,
+        path: "a".into(),
+    });
+    r.frames(2);
+    let said: Vec<String> = r
+        .app
+        .world_mut()
+        .resource_mut::<Messages<crate::undo::ReplaceNote>>()
+        .drain()
+        .map(|n| n.0)
+        .collect();
+    assert_eq!(said, ["Wrote a: 1 change"]);
 }
 
 /// Done can't write a model whose check fails, on a server that cuts long

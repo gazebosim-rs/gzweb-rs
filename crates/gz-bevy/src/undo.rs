@@ -69,12 +69,48 @@ const RECREATE_SECS: f64 = 5.0;
 pub struct Recreating(pub HashMap<String, f64>);
 
 /// The models removed to be created again from other SDFormat (a model
-/// written back, or such an edit undone), each with when: the server can't
-/// create one while its old self is there (one name), so each waits until
-/// that has gone. One whose old self is still there after
-/// `RECREATE_SECS` (5 s) isn't created (its `remove` went unheeded).
+/// written back, or such an edit undone): the server can't create one while
+/// its old self is there (one name), so each waits until that has gone,
+/// then until its new self shows. One whose old self is still there after
+/// `RECREATE_SECS` (5 s) isn't created (its `remove` went unheeded); one
+/// that doesn't show [`SHOW_SECS`] after its `create` was lost. Either says
+/// so ([`ReplaceNote`]).
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
-pub struct Replacing(pub Vec<(ModelCopy, f64)>);
+pub struct Replacing(pub Vec<Replacement>);
+
+/// A model [`Replacing`] removes and creates again.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Replacement {
+    /// Its new self.
+    pub model: ModelCopy,
+    /// When its `remove` went.
+    pub since: f64,
+    /// When its `create` went, once its old self had gone (it waits for a
+    /// world to send it to).
+    pub created: Option<f64>,
+    /// What to say once it shows ("Wrote amr: 3 changes").
+    pub done: Option<String>,
+}
+
+impl Replacement {
+    /// `model`, its `remove` sent at `since`.
+    pub fn new(model: ModelCopy, since: f64) -> Self {
+        Self {
+            model,
+            since,
+            created: None,
+            done: None,
+        }
+    }
+}
+
+/// How long a model created again may take to show before its `create`
+/// counts as lost.
+pub const SHOW_SECS: f64 = 15.0;
+
+/// What replacing a model says in the status bar: written, or why not.
+#[derive(Message, Clone, Debug, PartialEq, Eq)]
+pub struct ReplaceNote(pub String);
 
 /// Visibilities by scene path.
 pub type Saved = Vec<(String, Visibility)>;
@@ -368,6 +404,7 @@ impl Plugin for UndoPlugin {
             .init_resource::<Held>()
             .init_resource::<Recreating>()
             .init_resource::<Replacing>()
+            .add_message::<ReplaceNote>()
             .add_systems(
                 Update,
                 (forget_other_worlds, record, undo_redo, replace_when_gone)
@@ -512,7 +549,7 @@ fn undo_redo(
         let waiting = edit.steps.iter().find_map(|s| match s {
             Step::Exists { .. } => None,
             s => s.path().filter(|p| {
-                recreating.0.contains_key(*p) || replacing.0.iter().any(|(m, _)| m.name == *p)
+                recreating.0.contains_key(*p) || replacing.0.iter().any(|r| r.model.name == *p)
             }),
         });
         if let Some(path) = waiting {
@@ -566,7 +603,7 @@ fn undo_redo(
                     .map(|(_, g)| g.id);
                 server.write(remove_request(world, &after.name, id));
                 let to = if undo { before } else { after };
-                replacing.0.push((to.clone(), now));
+                replacing.0.push(Replacement::new(to.clone(), now));
                 continue;
             }
             if let Step::Exists { model, after } = step {
@@ -624,8 +661,12 @@ fn undo_redo(
 }
 
 /// Each model [`Replacing`] waits on is created once its old self has gone
-/// (its pose as loaded kept for Save); one still there after
-/// `RECREATE_SECS` (5 s) isn't.
+/// (and there is a world to send it to; its pose as loaded kept for Save),
+/// and is done once its new self shows. One still there after
+/// `RECREATE_SECS` (5 s) isn't created, and one that doesn't show in
+/// [`SHOW_SECS`] was lost; both say so. Until it is done, undo and redo of
+/// it wait.
+#[allow(clippy::too_many_arguments)]
 pub fn replace_when_gone(
     time: Res<Time<Real>>,
     status: Option<Res<GzStatus>>,
@@ -634,6 +675,7 @@ pub fn replace_when_gone(
     mut recreating: ResMut<Recreating>,
     mut loaded: Option<ResMut<crate::world_save::LoadedPoses>>,
     mut server: MessageWriter<GzCommand>,
+    mut notes: MessageWriter<ReplaceNote>,
 ) {
     if replacing.0.is_empty() {
         return;
@@ -641,27 +683,45 @@ pub fn replace_when_gone(
     let now = time.elapsed_secs_f64();
     let world = status.as_deref().and_then(|s| s.world.clone());
     let mut kept = Vec::new();
-    for (model, since) in std::mem::take(&mut replacing.0) {
-        if entities.iter().any(|g| g.path == model.name) {
-            if now - since < RECREATE_SECS {
-                kept.push((model, since));
-            } else {
-                warn!("{} wasn't removed: not created again", model.name);
+    for mut r in std::mem::take(&mut replacing.0) {
+        let name = r.model.name.clone();
+        let here = entities.iter().any(|g| g.path == name);
+        match r.created {
+            None if here => {
+                if now - r.since < RECREATE_SECS {
+                    kept.push(r);
+                } else {
+                    warn!("{name} wasn't removed: not created again");
+                    notes.write(ReplaceNote(format!(
+                        "{name} wasn't changed: the server didn't remove it"
+                    )));
+                }
             }
-            continue;
-        }
-        let Some(world) = world.as_deref() else {
-            continue;
-        };
-        server.write(create_copy_request(
-            world,
-            &model.sdf,
-            &model.name,
-            &model.pose,
-        ));
-        recreating.0.insert(model.name.clone(), now);
-        if let (Some(loaded), Some(at)) = (loaded.as_deref_mut(), model.loaded) {
-            loaded.0.insert(model.name.clone(), at);
+            None => {
+                // No world (a connection on its way): it waits for one.
+                if let Some(world) = world.as_deref() {
+                    let m = &r.model;
+                    server.write(create_copy_request(world, &m.sdf, &m.name, &m.pose));
+                    recreating.0.insert(name.clone(), now);
+                    if let (Some(loaded), Some(at)) = (loaded.as_deref_mut(), m.loaded) {
+                        loaded.0.insert(name, at);
+                    }
+                    r.created = Some(now);
+                }
+                kept.push(r);
+            }
+            Some(_) if here => {
+                if let Some(done) = r.done {
+                    notes.write(ReplaceNote(done));
+                }
+            }
+            Some(at) if now - at < SHOW_SECS => kept.push(r),
+            Some(_) => {
+                warn!("{name} didn't come back: its create was lost");
+                notes.write(ReplaceNote(format!(
+                    "{name} didn't come back: the server lost it · Undo puts it back as it was"
+                )));
+            }
         }
     }
     replacing.0 = kept;
@@ -687,10 +747,19 @@ fn forget_other_worlds(
     mut sim: MessageReader<GzCommand>,
     mut stack: ResMut<UndoStack>,
     mut isolated: ResMut<Isolated>,
+    mut replacing: ResMut<Replacing>,
     mut seen: Local<Seen>,
 ) {
-    if sim.read().any(|c| *c == GzCommand::Reset) {
+    // A Reset, or another world, puts back or takes away the models being
+    // replaced: none is created again.
+    let forget = |stack: &mut UndoStack, replacing: &mut Replacing| {
         stack.forget_poses();
+        if !replacing.0.is_empty() {
+            replacing.0.clear();
+        }
+    };
+    if sim.read().any(|c| *c == GzCommand::Reset) {
+        forget(&mut stack, &mut replacing);
     }
     if let Some(index) = index.filter(|i| i.is_changed()) {
         if index.scenes > seen.scenes.max(1) {
@@ -712,12 +781,15 @@ fn forget_other_worlds(
     if seen.world.as_ref().is_some_and(|w| *w != now) {
         stack.clear();
         isolated.0 = None;
+        if !replacing.0.is_empty() {
+            replacing.0.clear();
+        }
         seen.iterations = None;
     }
     seen.world = Some(now);
     if let Some(iterations) = status.sim.map(|s| s.iterations) {
         if seen.iterations.is_some_and(|i| iterations < i) {
-            stack.forget_poses();
+            forget(&mut stack, &mut replacing);
         }
         seen.iterations = Some(iterations);
     }

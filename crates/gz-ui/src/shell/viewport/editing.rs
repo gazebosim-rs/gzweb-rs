@@ -269,10 +269,12 @@ pub(crate) fn on_done(
 /// status bar for 3 s.
 pub(crate) fn edit_notes(
     mut notes: MessageReader<EditNote>,
+    mut replaced: MessageReader<gz_bevy::undo::ReplaceNote>,
     time: Res<Time<Real>>,
     mut note: ResMut<StatusNote>,
 ) {
-    for EditNote(text) in notes.read() {
+    let texts = notes.read().map(|n| &n.0);
+    for text in texts.chain(replaced.read().map(|n| &n.0)) {
         note.show(text.clone(), time.elapsed_secs_f64());
     }
 }
@@ -289,6 +291,7 @@ pub(crate) fn build(app: &mut App) {
         .add_message::<gz_bevy::view::editing::parts::WriteParts>()
         .add_message::<EditNote>()
         .init_resource::<gz_bevy::undo::Replacing>()
+        .add_message::<gz_bevy::undo::ReplaceNote>()
         .add_message::<gz_bevy::undo::UndoCommand>()
         .add_systems(
             Update,

@@ -21,7 +21,7 @@ use super::{EditNote, EditParts, WriteParts};
 use crate::connection::{GzCommand, GzServiceReply, GzStatus};
 use crate::edit::{create_copy_request, edits_allowed, remove_request, too_long};
 use crate::spawn::GzEntity;
-use crate::undo::{Change, ModelCopy, Record, Replacing};
+use crate::undo::{Change, ModelCopy, Record, Replacement, Replacing};
 use crate::view::editing::EditCommand;
 use crate::view::model_edits::EDIT_TIMEOUT_SECS;
 
@@ -166,9 +166,12 @@ pub fn finish_writes(
         }
     };
     out.write(remove_request(&world_name, &name, Some(g.id)));
-    replacing
-        .0
-        .push((copy(after.clone()), world.time.elapsed_secs_f64()));
+    let n = parts.draft.parts().len();
+    // Written once its new self shows ("Writing amr…" until then).
+    replacing.0.push(Replacement {
+        done: Some(format!("Wrote {name}: {}", changes_count(n))),
+        ..Replacement::new(copy(after.clone()), world.time.elapsed_secs_f64())
+    });
     records.write(Record {
         verb: "edit",
         named: true,
@@ -179,8 +182,6 @@ pub fn finish_writes(
         scrub: None,
         open: false,
     });
-    let n = parts.draft.parts().len();
     parts.written = true;
     edits.write(EditCommand::Done);
-    notes.write(EditNote(format!("Wrote {name}: {}", changes_count(n))));
 }
