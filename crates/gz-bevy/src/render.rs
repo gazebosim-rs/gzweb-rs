@@ -182,13 +182,19 @@ pub fn configure(app: &mut App, quality: Quality) {
         .reports
         .clone();
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
-        render.insert_resource(reports).add_systems(
-            Render,
-            report_filtered
-                .after(filtering_system)
-                .before(RenderSystems::Render),
-        );
+        add_report(render, reports);
     }
+}
+
+/// Has the render world report the [`EnvironmentFilter`]s it filtered,
+/// after Bevy's filter passes.
+fn add_report(render: &mut SubApp, reports: FilterReports) {
+    render.insert_resource(reports).add_systems(
+        Render,
+        report_filtered
+            .after(filtering_system)
+            .before(RenderSystems::Render),
+    );
 }
 
 /// The world's environment settings, set by `spawn::apply_scene` from each
@@ -773,6 +779,11 @@ pub struct StaticEnvironment {
 #[derive(Component, Debug)]
 pub struct EnvironmentFilter;
 
+/// Marks a view whose `EnvironmentMapLight` [`prefilter_environments`]
+/// gave it, so the light goes when its [`StaticEnvironment`] does.
+#[derive(Component, Debug)]
+pub struct SharedEnvironment;
+
 /// The static environments' filtered lights, one per cubemap, shared by
 /// every view that shows it (D-116). Bevy's `GeneratedEnvironmentMapLight`
 /// filters its cubemap again every frame, on every camera that has it;
@@ -824,16 +835,25 @@ impl FilterReports {
     }
 }
 
-/// Gives each view with a [`StaticEnvironment`] its light. A cubemap no
-/// view showed before gets an [`EnvironmentFilter`] entity, which goes once
-/// the render world has filtered it; one no view shows any more is
-/// forgotten.
+/// Gives each view with a [`StaticEnvironment`] its light, and keeps it
+/// as the environment's cubemap and intensity change; a view whose
+/// environment goes loses the light. A cubemap no view showed before gets
+/// an [`EnvironmentFilter`] entity, which goes once the render world has
+/// filtered it (one that goes before, despawned elsewhere, is made again);
+/// one no view shows any more is forgotten.
 pub fn prefilter_environments(
     mut prefiltered: ResMut<PrefilteredEnvironments>,
     mut commands: Commands,
-    views: Query<(Entity, &StaticEnvironment, Has<EnvironmentMapLight>)>,
+    views: Query<(Entity, &StaticEnvironment, Option<&EnvironmentMapLight>)>,
+    gone: Query<Entity, (With<SharedEnvironment>, Without<StaticEnvironment>)>,
     made: Query<&EnvironmentMapLight, With<EnvironmentFilter>>,
+    filters: Query<(), With<EnvironmentFilter>>,
 ) {
+    for view in &gone {
+        commands
+            .entity(view)
+            .remove::<(EnvironmentMapLight, SharedEnvironment)>();
+    }
     let filtered = prefiltered.reports.take();
     let maps = &mut prefiltered.maps;
     let despawn = |commands: &mut Commands, filter: Entity| {
@@ -848,6 +868,9 @@ pub fn prefilter_environments(
         }
         shown
     });
+    // A filter gone before it was reported (despawned elsewhere) left no
+    // filtered maps: its cubemap is filtered again.
+    maps.retain(|map| map.filter.is_none_or(|f| filters.contains(f)));
     for map in maps.iter_mut() {
         let Some(filter) = map.filter else {
             continue;
@@ -861,17 +884,24 @@ pub fn prefilter_environments(
         }
     }
     for (view, env, lit) in &views {
-        if lit {
-            continue;
-        }
         match maps.iter().find(|m| m.cubemap == env.cubemap) {
             Some(FilteredMap {
                 light: Some(light), ..
             }) => {
-                commands.entity(view).insert(EnvironmentMapLight {
-                    intensity: env.intensity,
-                    ..light.clone()
+                let same = lit.is_some_and(|l| {
+                    l.diffuse_map == light.diffuse_map
+                        && l.specular_map == light.specular_map
+                        && l.intensity == env.intensity
                 });
+                if !same {
+                    commands.entity(view).insert((
+                        EnvironmentMapLight {
+                            intensity: env.intensity,
+                            ..light.clone()
+                        },
+                        SharedEnvironment,
+                    ));
+                }
             }
             Some(_) => {}
             None => {
@@ -1866,6 +1896,87 @@ mod tests {
         app.world_mut().resource_mut::<PendingSky>().0 = Some((sky, vec![other]));
         app.update();
         assert!(app.world().get::<Skybox>(other).is_some());
+    }
+
+    /// A view's light follows its environment's intensity and cubemap,
+    /// and goes with it; a filter despawned before its report is made
+    /// again.
+    #[test]
+    fn a_views_light_follows_its_environment() {
+        let mut app = scene_app(GzConfig::default());
+        app.update();
+        show(&mut app, msgs::Scene::default());
+        let view = cameras(&mut app)[0];
+        let studio = app.world().get::<StaticEnvironment>(view).unwrap().clone();
+        let filter = |app: &mut App| {
+            let world = app.world_mut();
+            world
+                .query_filtered::<Entity, With<EnvironmentFilter>>()
+                .single(world)
+                .unwrap()
+        };
+        // Despawned elsewhere before the report: filtered again.
+        let first = filter(&mut app);
+        app.world_mut().despawn(first);
+        app.update();
+        app.update();
+        let again = filter(&mut app);
+        assert_ne!(again, first);
+        let (diffuse, specular) = {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            (images.add(Image::default()), images.add(Image::default()))
+        };
+        app.world_mut()
+            .entity_mut(again)
+            .insert(EnvironmentMapLight {
+                diffuse_map: diffuse,
+                specular_map: specular,
+                intensity: 1.0,
+                ..default()
+            });
+        app.update();
+        let intensity = |app: &App| {
+            app.world()
+                .get::<EnvironmentMapLight>(view)
+                .map(|l| l.intensity)
+        };
+        assert_eq!(intensity(&app), Some(studio.intensity));
+        // A brighter environment: the light follows.
+        app.world_mut()
+            .get_mut::<StaticEnvironment>(view)
+            .unwrap()
+            .intensity = 3.0;
+        app.update();
+        assert_eq!(intensity(&app), Some(3.0));
+        // Gone: so is the light.
+        app.world_mut()
+            .entity_mut(view)
+            .remove::<StaticEnvironment>();
+        app.update();
+        assert_eq!(intensity(&app), None);
+        assert!(app.world().get::<SharedEnvironment>(view).is_none());
+    }
+
+    /// The render world reports what it filtered: `report_filtered` is
+    /// in its Render schedule, with the reports the main world reads.
+    #[test]
+    fn the_render_world_reports_its_filters() {
+        let mut render = SubApp::new();
+        render.init_schedule(Render);
+        let reports = FilterReports::default();
+        add_report(&mut render, reports.clone());
+        // Its systems are counted once it is initialized (their names need
+        // Bevy's debug feature).
+        let mut schedules = render.world_mut().remove_resource::<Schedules>().unwrap();
+        let schedule = schedules.get_mut(Render).unwrap();
+        schedule.initialize(render.world_mut()).unwrap();
+        assert_eq!(schedule.systems_len(), 1, "report_filtered");
+        render.world_mut().insert_resource(schedules);
+        render
+            .world()
+            .resource::<FilterReports>()
+            .push([Entity::PLACEHOLDER]);
+        assert_eq!(reports.take(), [Entity::PLACEHOLDER], "the same reports");
     }
 
     #[test]

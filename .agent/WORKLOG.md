@@ -2121,3 +2121,9 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   filter, an old cubemap forgotten); the environment tests now check
   that no view carries Bevy's generator. Workspace 967 passing; coverage
   97.4% lines. check.sh passes.
+- **Review fixes** (PR #63):
+  - a view's light follows its environment's intensity and cubemap, and
+    goes with it;
+  - a filter despawned before its report is made again;
+  - a test checks `report_filtered` is in the render world's schedule;
+  - D-116 notes that a cubemap changed in place isn't refiltered.
