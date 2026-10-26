@@ -117,6 +117,9 @@ pub struct ViewRouting {
     /// The view that had the last press (spec §3.4 "Active view"): the
     /// tools and the gizmo apply to it.
     pub active: Option<ViewId>,
+    /// The view keyboard focus is in, by Tab (not a press): its own
+    /// single-key shortcuts are its, wherever the pointer is.
+    pub focused: Option<ViewId>,
 }
 
 impl Default for ViewRouting {
@@ -126,15 +129,17 @@ impl Default for ViewRouting {
             keys: true,
             hovered: None,
             active: None,
+            focused: None,
         }
     }
 }
 
 impl ViewRouting {
-    /// The view single-key shortcuts apply to: the hovered one, else the
-    /// active one (spec §3.4).
+    /// The view single-key shortcuts apply to: the one Tab put keyboard
+    /// focus in, else the hovered one, else the active one (spec §3.4,
+    /// §6.5).
     pub fn key_view(&self) -> Option<ViewId> {
-        self.hovered.or(self.active)
+        self.focused.or(self.hovered).or(self.active)
     }
 }
 

@@ -9,7 +9,6 @@ use std::str::FromStr;
 
 use accesskit::Role;
 use bevy::ecs::spawn::SpawnWith;
-use bevy::input_focus::tab_navigation::TabIndex;
 use bevy::prelude::*;
 use bevy::ui::InteractionDisabled;
 use bevy::ui_widgets::{observe, Button as Headless, ScrollArea};
@@ -133,9 +132,10 @@ pub(super) fn build_body(ev: On<Add<WorkspacesBody>>, theme: Res<Theme>, mut com
     let t = theme.clone();
     commands.entity(ev.entity).with_children(|b| {
         b.spawn((
+            // No tab stop: the cards' buttons are, and the area has no
+            // keys of its own.
             ScrollArea,
             ScrollPosition::default(),
-            TabIndex(0),
             Node {
                 flex_grow: 1.0,
                 flex_basis: px(0),

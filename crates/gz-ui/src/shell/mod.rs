@@ -32,6 +32,7 @@ pub(crate) mod regions;
 pub(crate) mod routing;
 pub(crate) mod sidebar;
 pub(crate) mod splitter;
+pub(crate) mod start_keys;
 pub(crate) mod status_bar;
 pub(crate) mod top_bar;
 pub(crate) mod viewport;
@@ -51,6 +52,7 @@ pub use layout::{
 pub use palette::StartPalette;
 pub use panel_status::{PanelState, PanelStatus, SetPanelStatus};
 pub use popout::StartPopOuts;
+pub use start_keys::StartKeys;
 pub use top_bar::tools::Tool;
 pub use top_bar::StartMenu;
 pub use viewport::views::{LayoutPreset, StartLayout};
@@ -165,6 +167,7 @@ impl Plugin for ShellPlugin {
                     .before(gz_bevy::undo::UndoSystems),
             );
         routing::build(app);
+        start_keys::build(app);
         splitter::build(app);
         collapsed_bar::build(app);
         activity_bar::build(app);

@@ -2127,3 +2127,36 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   - a filter despawned before its report is made again;
   - a test checks `report_filtered` is in the render world's schedule;
   - D-116 notes that a cubemap changed in place isn't refiltered.
+
+## 2026-10-25: M10b keyboard and AccessKit (D-117)
+
+- **Audit:** a test walks every tab stop and every node with a control's
+  role in each panel with content, each inspector and the palette. It
+  found a leaf's caret and an unhideable row's eye as nameless buttons,
+  the Workspaces panel's scroll area as a nameless tab stop with no keys,
+  and no focus ring on the Topics list, the Console log or a tree with no
+  cursor. All fixed; the test keeps them so.
+- **Arrows within groups:** `focus::arrow_keys`. The activity bar is an
+  `ArrowGroup` (↑ ↓, Home, End; moving opens nothing). Radio groups (the
+  tool group, the rail's drag group, the chips) move from the focused
+  button and check where they land; Bevy's own group checked from the
+  checked one and left focus behind. A modified arrow stays a shortcut:
+  ⌘→ on a focused tool used to be taken by Bevy's radio group.
+- **The views:** each view is a tab stop before its rail, an AccessKit
+  application ("View 1"); focus there gives the views the keys and makes
+  it active; its ring is `FocusFrame`, 4 px inside its edge. Bevy renames
+  a node whose image changes, so `keep_view_access` puts the view's back.
+- **Flag:** `gzweb --keys tab,shift+tab,down` presses chords once live.
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive`
+  on :9041, `--keys`): 32 Tabs land on the view with its ring (light);
+  then G turns the grid off (dark); 12 Tabs and ↓↓↓ move along the
+  activity bar with the Scene panel still open; Tab Tab → → focuses and
+  checks Translate.
+- **Tests:** workspace 981 → 990 passing.
+- **Review fixes** (PR #64):
+  - the view's AccessKit role and name are put back in place, keeping its
+    bounds;
+  - a view Tab focuses, or its rail, takes the single-key shortcuts from
+    the hovered one, and is active;
+  - `--keys` sends logical keys and text, releases a chord on leaving
+    Live, and holds `--screenshot` until done.

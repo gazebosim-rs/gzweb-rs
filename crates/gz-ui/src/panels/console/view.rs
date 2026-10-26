@@ -17,7 +17,7 @@ use crate::assets::fonts::text;
 use crate::theme::{border, ColorRole, Fill, Stroke, Theme, TypeStyle, SPACE};
 use crate::widgets::layout::{column, display, row};
 use crate::widgets::text_field::command_field;
-use crate::widgets::{a11y, choice_chip, filter_field, rounded};
+use crate::widgets::{a11y, choice_chip, filter_field, inset_focus_ring, rounded};
 
 /// The level dot's side (§3.3: 8px).
 pub(crate) const DOT: f32 = 8.0;
@@ -105,6 +105,7 @@ pub(super) fn build_console(
                 ScrollArea,
                 ScrollPosition::default(),
                 TabIndex(0),
+                inset_focus_ring(),
                 a11y(Role::Log, "Messages"),
                 Node {
                     flex_grow: 1.0,

@@ -835,3 +835,171 @@ fn back_to_one_view_unlinks_the_cameras() {
     command(&mut app, LayoutCommand::Preset(LayoutPreset::Single));
     assert!(!app.world().resource::<LinkedViews>().0);
 }
+
+// Each view is a tab stop (§6.5: the viewport receives keys; D-117).
+
+/// Whether `view`'s focus ring shows.
+fn ring_shows(app: &mut App, view: Entity) -> bool {
+    use crate::shell::viewport::view::FocusFrame;
+    let world = app.world_mut();
+    world
+        .query_filtered::<(&ChildOf, &Node), With<FocusFrame>>()
+        .iter(world)
+        .any(|(p, n)| p.parent() == view && n.display != Display::None)
+}
+
+/// Tab reaches the view after the sidebar and before its rail; there it
+/// takes the views' keys back from a widget that had them, and shows its
+/// ring inside its edge. To AccessKit it is a named application.
+#[test]
+fn tab_reaches_the_view_which_takes_the_keys_and_shows_its_ring() {
+    let mut app = live_view(900);
+    let view = nodes(&mut app)[0].1;
+    // A widget in the activity bar takes the keys.
+    let widget = {
+        let world = app.world_mut();
+        world
+            .query_filtered::<Entity, With<crate::shell::activity_bar::ActivityFor>>()
+            .iter(world)
+            .next()
+            .unwrap()
+    };
+    tab_to(&mut app, widget);
+    frames(&mut app, 2);
+    assert!(!app.world().resource::<ViewRouting>().keys);
+    assert!(!ring_shows(&mut app, view));
+    for _ in 0..200 {
+        if focused(&app) == Some(view) {
+            break;
+        }
+        chord(&mut app, &[KeyCode::Tab]);
+    }
+    assert_eq!(focused(&app), Some(view));
+    frames(&mut app, 1);
+    assert!(app.world().resource::<ViewRouting>().keys);
+    assert!(ring_shows(&mut app, view));
+    // The next stop is the rail's first.
+    chord(&mut app, &[KeyCode::Tab]);
+    let rail = app
+        .world()
+        .get::<ChildOf>(focused(&app).unwrap())
+        .map(ChildOf::parent);
+    assert!(rail.is_some_and(|r| app
+        .world()
+        .get::<crate::shell::viewport::rail::DragGroup>(r)
+        .is_some()));
+    assert!(!ring_shows(&mut app, view));
+    let access = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(view)
+        .unwrap();
+    assert_eq!(access.0.role(), accesskit::Role::Application);
+    assert_eq!(access.0.label(), Some("View 1"));
+}
+
+/// A press focuses the view without its ring (as a press does any
+/// control), and its keys stay.
+#[test]
+fn a_press_focuses_the_view_without_its_ring() {
+    let mut app = live_view(900);
+    let view = nodes(&mut app)[0].1;
+    click(&mut app, view);
+    frames(&mut app, 1);
+    assert_eq!(focused(&app), Some(view));
+    assert!(!ring_shows(&mut app, view));
+    assert!(app.world().resource::<ViewRouting>().keys);
+}
+
+/// With split views each is a stop, and the one Tab focuses is the
+/// active view: the keyboard's way to pick it.
+#[test]
+fn focusing_a_split_view_makes_it_active() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let views = nodes(&mut app);
+    assert_eq!(views.len(), 2);
+    assert_eq!(
+        app.world().resource::<ViewRouting>().active,
+        Some(ViewId(0))
+    );
+    tab_to(&mut app, views[1].1);
+    frames(&mut app, 2);
+    assert_eq!(
+        app.world().resource::<ViewRouting>().active,
+        Some(ViewId(1))
+    );
+    assert!(ring_shows(&mut app, views[1].1));
+    assert!(!ring_shows(&mut app, views[0].1));
+    let label = |app: &App, e: Entity| {
+        app.world()
+            .get::<bevy::a11y::AccessibilityNode>(e)
+            .and_then(|a| a.0.label().map(str::to_string))
+    };
+    assert_eq!(label(&app, views[1].1).as_deref(), Some("View 2"));
+}
+
+/// A view Tab put focus in takes the single-key shortcuts from the one
+/// under the pointer, until a press puts the pointer first again.
+#[test]
+fn a_tabbed_view_takes_the_shortcuts_from_the_hovered_one() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let left = n[0].2 .0 + n[0].2 .1 / 2.0;
+    cursor(&mut app, left);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(0)), "hovered");
+    tab_to(&mut app, n[1].1);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(1)), "tabbed");
+    mouse(&mut app, ButtonState::Pressed);
+    cursor(&mut app, left);
+    mouse(&mut app, ButtonState::Released);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).key_view(), Some(ViewId(0)), "pressed");
+}
+
+/// Putting a view's role and name back keeps the bounds Bevy synced: a
+/// screen reader places it, and what's in it, where it is.
+#[test]
+fn a_views_access_keeps_its_bounds() {
+    let mut app = split(900, LayoutPreset::Single);
+    let view = nodes(&mut app)[0].1;
+    let bounds = accesskit::Rect::new(10.0, 20.0, 300.0, 400.0);
+    {
+        let mut access = app
+            .world_mut()
+            .get_mut::<bevy::a11y::AccessibilityNode>(view)
+            .unwrap();
+        // As Bevy leaves it when the view's image changes.
+        access.0.set_role(accesskit::Role::Image);
+        access.0.set_bounds(bounds);
+    }
+    app.update();
+    let access = app
+        .world()
+        .get::<bevy::a11y::AccessibilityNode>(view)
+        .unwrap();
+    assert_eq!(access.0.role(), accesskit::Role::Application);
+    assert_eq!(access.0.label(), Some("View 1"));
+    assert_eq!(access.0.bounds(), Some(bounds));
+}
+
+/// Tab into a view's own rail makes that view the active one too.
+#[test]
+fn tabbing_into_a_views_rail_makes_it_active() {
+    let mut app = split(900, LayoutPreset::TwoColumns);
+    let n = nodes(&mut app);
+    let world = app.world_mut();
+    let stop = crate::test_support::descendants(world, n[1].1)
+        .into_iter()
+        .find(|e| {
+            *e != n[1].1
+                && world
+                    .get::<bevy::input_focus::tab_navigation::TabIndex>(*e)
+                    .is_some_and(|t| t.0 >= 0)
+        })
+        .expect("a stop in view 2's rail");
+    assert_eq!(routing(&app).active, Some(ViewId(0)));
+    tab_to(&mut app, stop);
+    frames(&mut app, 2);
+    assert_eq!(routing(&app).active, Some(ViewId(1)));
+    assert_eq!(routing(&app).key_view(), Some(ViewId(1)));
+}

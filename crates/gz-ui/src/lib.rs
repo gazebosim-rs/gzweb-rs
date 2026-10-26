@@ -126,6 +126,7 @@ impl Plugin for GzUiPlugin {
             .add_systems(Startup, focus::watch_windows)
             .add_observer(focus::skip_disabled)
             .add_observer(focus::restore_enabled)
+            .add_observer(focus::arrow_keys)
             .add_systems(
                 PreUpdate,
                 (
