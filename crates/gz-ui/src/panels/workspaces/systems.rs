@@ -13,13 +13,14 @@ use bevy::ui_widgets::Activate;
 use gz_bevy::view::input::InputMap;
 
 use super::view::{
-    card_look, spawn_card, Card, CardDelete, CardLook, Cards, CurrentHeader, IoItem, LayoutButton,
-    NameButton, NameField, NameRow, Spawned, SummaryValue,
+    card_look, note_of, spawn_card, Card, CardDelete, CardLook, Cards, CurrentHeader, IoItem,
+    LayoutButton, LoadFailed, LoadFailedText, NameButton, NameField, NameRow, Spawned, StoreNote,
+    SummaryValue,
 };
 use super::{PanelState, NEW};
 use crate::panels::{PanelActionActivated, PanelRegistry};
 use crate::shell::status_bar::readouts::StatusNote;
-use crate::shell::workspaces::{exported, NameWorkspace};
+use crate::shell::workspaces::{exported, NameWorkspace, Persisted, WorkspaceStore};
 use crate::shell::{
     CurrentLayout, Slot, UiCommand, WorkspaceCommand, Workspaces, WORKSPACES_PANEL,
 };
@@ -442,5 +443,47 @@ pub(super) fn on_io_item(
             time.elapsed_secs_f64(),
         ),
         Err(e) => warn!("Couldn't export the layouts: {e}"),
+    }
+}
+
+/// The footer's failure line and note follow the store: the failure shows
+/// from the read that found it until a good file is written over it, and
+/// a footer built before the store was read catches up.
+#[allow(clippy::type_complexity)]
+pub(super) fn sync_store(
+    persisted: Res<Persisted>,
+    store: Option<Res<WorkspaceStore>>,
+    added: Query<(), Or<(Added<LoadFailed>, Added<StoreNote>)>>,
+    mut lines: Query<(&mut Node, &mut bevy::a11y::AccessibilityNode), With<LoadFailed>>,
+    mut texts: Query<&mut Text, (With<LoadFailedText>, Without<StoreNote>)>,
+    mut notes: Query<&mut Text, (With<StoreNote>, Without<LoadFailedText>)>,
+) {
+    let store_changed = store.as_ref().is_some_and(Res::is_changed);
+    if !persisted.is_changed() && !store_changed && added.is_empty() {
+        return;
+    }
+    let why = persisted.failed();
+    for (mut node, mut access) in &mut lines {
+        set_shown(&mut node, why.is_some());
+        match why {
+            Some(why) => {
+                if access.is_hidden() || access.label() != Some(why) {
+                    access.clear_hidden();
+                    access.set_label(why);
+                }
+            }
+            None => {
+                if !access.is_hidden() {
+                    access.set_hidden();
+                }
+            }
+        }
+    }
+    for mut text in &mut texts {
+        set_text(&mut text, why.unwrap_or_default());
+    }
+    let note = note_of(store.as_deref(), persisted.read_only());
+    for mut text in &mut notes {
+        set_text(&mut text, &note);
     }
 }

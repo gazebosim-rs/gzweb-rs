@@ -81,6 +81,28 @@ impl CubeRegion {
         CubeRegion((-dir).round().as_ivec3())
     }
 
+    /// What it looks from, in the axis views' words: "Top" (a face), "Top
+    /// front" (an edge), "Top front right" (a corner).
+    pub(crate) fn name(self) -> String {
+        let [x, y, z] = self.0.to_array();
+        let words = [
+            (z, "top", "bottom"),
+            (x, "front", "back"),
+            (y, "right", "left"),
+        ];
+        let name = words
+            .iter()
+            .filter(|(s, ..)| *s != 0)
+            .map(|&(s, pos, neg)| if s > 0 { pos } else { neg })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut chars = name.chars();
+        chars
+            .next()
+            .map(|c| c.to_ascii_uppercase().to_string() + chars.as_str())
+            .unwrap_or_default()
+    }
+
     /// What a click on it does: a face snaps to its axis view (which turns
     /// orthographic, §3.4); an edge or a corner turns the view to look
     /// from it, keeping the projection.
@@ -89,6 +111,19 @@ impl CubeRegion {
             Some(face) => ViewOp::Snap(face),
             None => ViewOp::LookFrom(self.0.as_vec3()),
         }
+    }
+}
+
+/// The `shortcuts.json` binding that snaps to `view` (keys 7, 1 and 3,
+/// Shift for the opposite side).
+pub(crate) fn snap_binding(view: SnapView) -> &'static str {
+    match view {
+        SnapView::Top => "view.top",
+        SnapView::Bottom => "view.bottom",
+        SnapView::Front => "view.front",
+        SnapView::Back => "view.back",
+        SnapView::Right => "view.right",
+        SnapView::Left => "view.left",
     }
 }
 

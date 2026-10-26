@@ -14,6 +14,8 @@
 //! [`TreeRowExpand`] and [`TreeRowVisibility`] on the row, and whoever
 //! owns the tree's state answers by writing the spec. A row isn't a tab
 //! stop: the tree it sits in is one (§6.5's arrow keys move within it).
+//! The caret and the eye are icon-only buttons: each has a tooltip that
+//! says what a click does, which is also its accessible name (§5.1, §10).
 
 use accesskit::Role;
 use bevy::a11y::AccessibilityNode;
@@ -24,7 +26,8 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button as Headless};
 
 use super::layout::flex_spacer;
-use super::{a11y, focus, rounded};
+use super::tooltip::TooltipCard;
+use super::{a11y, focus, rounded, Tooltip};
 use crate::assets::fonts::{text, Type};
 use crate::assets::icons::{icon, Icon, IconId};
 use crate::theme::visuals::{Active, Visuals};
@@ -173,7 +176,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                     ..default()
                 },
             ));
-            p.spawn((
+            let mut caret = p.spawn((
                 TreeRowPart::Caret,
                 Node {
                     width: px(CARET_W),
@@ -184,6 +187,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                     ..default()
                 },
                 Headless,
+                Hovered::default(),
                 part_access(caret_label(&row)),
                 children![(
                     TreeRowPart::CaretGlyph,
@@ -194,6 +198,9 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                     )
                 )],
             ));
+            if let Some(label) = caret_label(&row) {
+                caret.insert(Tooltip::new(label));
+            }
             p.spawn((
                 TreeRowPart::Badge,
                 Node {
@@ -223,7 +230,7 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                 },
             ));
             p.spawn(flex_spacer());
-            p.spawn((
+            let mut eye = p.spawn((
                 TreeRowPart::Eye,
                 Node {
                     width: px(EYE_BOX),
@@ -243,6 +250,9 @@ pub fn tree_row(theme: &Theme, spec: TreeRowSpec) -> impl Bundle {
                     icon(IconId::Eye, EYE_ICON, ColorRole::Clear)
                 )],
             ));
+            if let Some(label) = eye_label(&row) {
+                eye.insert(Tooltip::new(label));
+            }
         })),
     )
 }
@@ -269,13 +279,14 @@ fn caret_ink(expanded: Option<bool>) -> ColorRole {
     }
 }
 
-/// The caret's accessible name: none on a leaf, whose caret does nothing.
+/// The caret's accessible name and tooltip: none on a leaf, whose caret
+/// does nothing.
 fn caret_label(spec: &TreeRowSpec) -> Option<String> {
     let verb = if spec.expanded? { "Collapse" } else { "Expand" };
     Some(format!("{verb} {}", spec.name))
 }
 
-/// The eye's accessible name: none on a row it can't hide.
+/// The eye's accessible name and tooltip: none on a row it can't hide.
 fn eye_label(spec: &TreeRowSpec) -> Option<String> {
     let verb = if spec.hidden { "Show" } else { "Hide" };
     spec.hideable.then(|| format!("{verb} {}", spec.name))
@@ -330,6 +341,8 @@ pub(crate) struct RowParts<'w, 's> {
     texts: Query<'w, 's, &'static mut Text>,
     nodes: Query<'w, 's, &'static mut Node>,
     access: Query<'w, 's, &'static mut AccessibilityNode>,
+    tips: Query<'w, 's, &'static mut Tooltip>,
+    cards: Query<'w, 's, (), With<TooltipCard>>,
     opacity: Query<'w, 's, &'static Opacity>,
     theme: Res<'w, Theme>,
     commands: Commands<'w, 's>,
@@ -358,8 +371,7 @@ impl RowParts<'_, '_> {
                 n.set_selected(selected);
             }
         }
-        let descendants: Vec<Entity> = self.children.iter_descendants(row).collect();
-        for part_entity in descendants {
+        for part_entity in self.descendants(row) {
             if self.opacity.get(part_entity).map_or(true, |o| o.0 != alpha) {
                 self.commands.entity(part_entity).insert(Opacity(alpha));
             }
@@ -436,13 +448,45 @@ impl RowParts<'_, '_> {
         }
     }
 
+    /// The row's descendants, but not a caret's or an eye's tooltip card:
+    /// a hidden row's card isn't dimmed with it.
+    fn descendants(&self, row: Entity) -> Vec<Entity> {
+        let mut out = Vec::new();
+        let mut stack = vec![row];
+        while let Some(e) = stack.pop() {
+            for &c in self.children.get(e).into_iter().flatten() {
+                if !self.cards.contains(c) {
+                    out.push(c);
+                    stack.push(c);
+                }
+            }
+        }
+        out
+    }
+
     fn text(&mut self, e: Entity, value: &str) {
         if let Ok(mut t) = self.texts.get_mut(e) {
             crate::widgets::text::set_text(&mut t, value);
         }
     }
 
+    /// Names a caret or an eye, to AccessKit and in its tooltip, or hides
+    /// it from AccessKit and drops the tooltip while it does nothing.
     fn label(&mut self, e: Entity, label: Option<String>) {
+        match (&label, self.tips.get_mut(e)) {
+            (Some(l), Ok(mut tip)) => {
+                if tip.title != *l {
+                    tip.title.clone_from(l);
+                }
+            }
+            (Some(l), Err(_)) => {
+                self.commands.entity(e).insert(Tooltip::new(l.clone()));
+            }
+            (None, Ok(_)) => {
+                self.commands.entity(e).remove::<Tooltip>();
+            }
+            (None, Err(_)) => {}
+        }
         if let Ok(mut a) = self.access.get_mut(e) {
             let hidden = label.is_none();
             if a.0.is_hidden() != hidden || (!hidden && a.0.label() != label.as_deref()) {

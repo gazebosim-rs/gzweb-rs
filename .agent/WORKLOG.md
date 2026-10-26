@@ -2375,3 +2375,75 @@ Branch `feature/phase-5-m2` (from `feature/phase-5-m1`, PR #28). Plan:
   profile's crates come with `bevy_ui`); `--dynamic` tilts the arms so they
   swing; the icon test compares the shapes only (not the notes), and the icons the actions
   use; the splitter step of the camera-region test is a pointer drag.
+
+## 2026-10-26: the §13 checklist's gaps (D-121)
+
+- **Tooltips:** a Scene tree row's caret and eye have tooltips titled with
+  their accessible names ("Collapse vehicle_blue", "Hide vehicle_green"),
+  which follow a reused row and go while the part does nothing; a hidden
+  row's card isn't dimmed with it. The naming audit
+  (`every_control_is_named_and_shows_focus`) now also asks every
+  icon-only button for a tooltip: without the change it fails on the
+  first caret.
+- **The view cube:** its tooltip (left of it) names the view a click
+  gives as the hover moves ("Top view · 7", "Top back view") and says
+  what the cube does off its faces; a press hides it. To AccessKit it is
+  a group named "View cube", described (what it does, keys 7, 1 and 3),
+  with a custom action per face's view that snaps its view; its images
+  are hidden.
+- **Fuel:** a search turns a spinner in the search field (the bar under
+  it goes). The server says nothing between its answer and the model:
+  `create` answered within 0.1 s, then its log said "Downloading model"
+  and the model appeared later (1.3 s for 1.2 MB). So the bars keep
+  moving without measuring, and a model on its way shows Cancel in its
+  row's Insert's place; every insert under way shows Cancel in its row.
+  Cancel stops waiting: the row goes, the status bar says the server may
+  still add it, and a model that shows up later stays (removing it would
+  guess by name).
+- **Workspaces:** an unreadable `workspaces.json` was already a warning in
+  the message tray and the status bar's chip (through the log layer); it
+  now says what happened first and where the file went ("Couldn't read
+  workspaces.json, using defaults: it's kept as …/workspaces.json.bad
+  (…)"), and the Workspaces panel's footer shows it (`warn_soft`, an
+  alert).
+- **Live check** (debug build, own `gz-websocket-jetty-pub` `diff_drive` on
+  127.0.0.1:9051, Fuel reachable from it; a temporary patch, kept in
+  `patch-work/checklist-gaps-live-check-temp.diff`, delayed a search,
+  forced a tooltip by title, and placed and cancelled a Fuel result):
+  - `--assets fuel:pallet` with the search held: the spinner turns in the
+    field;
+  - `--assets fuel:warehouse`, Depot (82 MB) inserted: Cancel and the bar
+    on its row, "depot · Loading on the server…" and Cancel in the insert
+    row; cancelled (dark theme): Insert back, the note in the status
+    bar; a snapshot from a new client later listed `depot` in the world;
+  - `--scene-expand`: the caret's and the eye's tooltips over their
+    neighbours, the cube's "View cube" card left of it;
+  - a bad `workspaces.json` under `XDG_CONFIG_HOME`: the warning with the
+    `.bad` path, and the file kept. Not captured (`--screenshot` doesn't
+    read the store); the tray path has a test through the log layer.
+- **§13 checklist**, the items this changes (the rest as in M10e):
+
+  | Item | Status | Evidence, or what is missing |
+  |---|---|---|
+  | Icon-only buttons: tooltip and label | done | `every_control_is_named_and_shows_focus` (tooltips too), `the_caret_and_the_eye_have_tooltips`, `the_cube_has_a_tooltip_and_an_accessible_name`, `the_cubes_actions_snap_its_view` |
+  | Panel states, no-world card, banner | partly | Fuel: `a_search_spins_in_the_field`, `a_fuel_insert_can_be_cancelled`, `a_cancelled_insert_keeps_its_reply_and_its_name`; Workspaces: `the_footer_says_the_store_couldnt_be_read`, `a_file_it_cant_read_shows_in_the_message_tray`. Left: Teleop's "Nobody is listening" banner (the websocket server gives no subscriber counts, D-104) |
+  | No glyph for two actions | partly | Left: `icons.json` gives Revert and Undo one glyph, Track and Eye one, and Paste borrows Copy's; they need artwork from the design |
+
+- **Tests:** workspace 1,007 passing (4 ignored).
+- **Review fixes:**
+  - a cancelled insert claims no name: a retry of the same model ends
+    when one shows up (one the server took goes at once; one it hasn't
+    answered waits, unseen, for its reply);
+  - a cancelled pointer ends the cube's press (its tooltip came back
+    only on a release or a drag's end); the test checks a press hides
+    the card;
+  - the cube leaves AccessKit's tree, actions and all, under the connect
+    card and in a split view that isn't showing its controls; a test
+    routes an action in two views;
+  - the Workspaces footer follows the store (a footer built before the
+    read catches up), and the failure goes once a good file is written;
+    the defaults aren't written at start over a file kept apart;
+  - the browser's message names its saved workspaces and where the bad
+    copy is kept; natively a browser store says there's none;
+  - the workspaces tests write under `target/test-dirs`, removed by a
+    guard, not the system's temp directory.

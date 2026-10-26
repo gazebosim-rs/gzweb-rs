@@ -24,11 +24,12 @@ use gz_core::insert::{model_name, Insertable, LightKind, Shape};
 
 use super::model::{AssetsState, Inserts, SEARCH_DELAY_SECS};
 use super::view::{
-    fuel_row, insert_row, AssetsNote, Dismiss, FuelBar, FuelButton, FuelButtonBox, FuelInsert,
-    FuelMessage, FuelQuery, FuelRows, Indeterminate, InsertRows, LocalInsert, LocalUri, RowBar,
-    TabChoice, TabPane, Tile,
+    fuel_row, insert_row, AssetsNote, CancelInsert, Dismiss, FuelButton, FuelButtonBox, FuelCancel,
+    FuelInsert, FuelMessage, FuelQuery, FuelRows, FuelSpinner, Indeterminate, InsertRows,
+    LocalInsert, LocalUri, RowBar, RowButton, TabChoice, TabPane, Tile,
 };
 use super::{AssetsStart, ASSETS};
+use crate::shell::status_bar::readouts::StatusNote;
 use crate::shell::{CurrentPhase, Phase, Slot, UiCommand};
 use crate::theme::visuals::Active;
 use crate::theme::{ColorRole, Theme};
@@ -52,6 +53,9 @@ pub(crate) const NO_MATCHES: &str = "No models match";
 
 /// How fast a bar's segment crosses, in widths a second.
 const BAR_SPEED: f32 = 0.9;
+
+/// How fast the search field's spinner turns, in turns a second.
+const SPIN_SPEED: f32 = 1.2;
 
 /// What the Fuel rows and the insert rows were built for.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -492,23 +496,37 @@ pub(super) fn note(
     }
 }
 
-/// The Fuel tab's bar while searching, its message (the prompt, "No
+/// The Fuel tab's spinner while searching, its message (the prompt, "No
 /// models match", "Fuel is unreachable" with Retry), and Load more while
 /// there may be more.
 #[allow(clippy::type_complexity)]
 pub(super) fn fuel_states(
     fuel: Res<GzFuel>,
-    mut bars: Query<&mut Node, (With<FuelBar>, Without<FuelMessage>, Without<FuelButtonBox>)>,
+    mut spinners: Query<
+        (&mut Node, &mut AccessibilityNode),
+        (
+            With<FuelSpinner>,
+            Without<FuelMessage>,
+            Without<FuelButtonBox>,
+        ),
+    >,
     mut messages: Query<(&mut Text, &mut Node), (With<FuelMessage>, Without<FuelButtonBox>)>,
     mut boxes: Query<(&FuelButtonBox, &mut Node), Without<FuelMessage>>,
-    added: Query<(), Added<FuelBar>>,
+    added: Query<(), Added<FuelSpinner>>,
 ) {
     if !fuel.is_changed() && added.is_empty() {
         return;
     }
     let searching = fuel.state == FuelState::Searching;
-    for mut node in &mut bars {
+    for (mut node, mut access) in &mut spinners {
         set_shown(&mut node, searching);
+        if access.is_hidden() == searching {
+            if searching {
+                access.clear_hidden();
+            } else {
+                access.set_hidden();
+            }
+        }
     }
     let message = match &fuel.state {
         FuelState::Failed {
@@ -573,13 +591,34 @@ pub(super) fn sync_fuel_rows(
     built.fuel = Some(key);
 }
 
-/// A result's bar shows while its model is on its way.
-pub(super) fn row_bars(inserts: Res<Inserts>, mut bars: Query<(&RowBar, &mut Node)>) {
+/// A result's bar, and Cancel in Insert's place, show while its model is
+/// on its way.
+pub(super) fn row_bars(
+    inserts: Res<Inserts>,
+    mut bars: Query<(&RowBar, &mut Node), Without<RowButton>>,
+    mut buttons: Query<(&RowButton, &mut Node), Without<RowBar>>,
+) {
     if !inserts.is_changed() {
         return;
     }
     for (bar, mut node) in &mut bars {
         set_shown(&mut node, inserts.loading(&bar.0));
+    }
+    for (b, mut node) in &mut buttons {
+        set_shown(&mut node, inserts.loading(&b.0) == b.1);
+    }
+}
+
+/// Turns the search field's spinner while it shows.
+pub(super) fn spin(
+    time: Res<Time<Real>>,
+    mut spinners: Query<(&Node, &mut UiTransform), With<FuelSpinner>>,
+) {
+    let turn = (time.elapsed_secs() * SPIN_SPEED).fract();
+    for (node, mut t) in &mut spinners {
+        if node.display != Display::None {
+            t.rotation = Rot2::turn_fraction(turn);
+        }
     }
 }
 
@@ -595,8 +634,7 @@ pub(super) fn sync_inserts(
         return;
     };
     let key: Vec<(u32, String, bool)> = inserts
-        .list
-        .iter()
+        .shown()
         .map(|i| (i.id, i.status(), i.failed()))
         .collect();
     if !added.is_added() && built.inserts.as_ref() == Some(&key) {
@@ -604,8 +642,7 @@ pub(super) fn sync_inserts(
     }
     commands.entity(list).despawn_children();
     let rows: Vec<_> = inserts
-        .list
-        .iter()
+        .shown()
         .map(|i| insert_row(&theme, i.id, i.label(), i.status(), i.failed()))
         .collect();
     commands.entity(list).with_children(|l| {
@@ -679,6 +716,58 @@ pub(super) fn label_insert(
     if let Ok((insert, mut access)) = buttons.get_mut(ev.entity) {
         access.set_label(format!("Insert {}", insert.0.name));
     }
+}
+
+/// A Cancel says which insert it stops waiting for, to AccessKit.
+pub(super) fn label_cancel(
+    ev: On<Add<FuelCancel>>,
+    mut buttons: Query<(&FuelCancel, &mut AccessibilityNode)>,
+) {
+    if let Ok((cancel, mut access)) = buttons.get_mut(ev.entity) {
+        access.set_label(format!("Cancel inserting {}", cancel.0.name));
+    }
+}
+
+/// See [`label_cancel`].
+pub(super) fn label_insert_cancel(
+    ev: On<Add<CancelInsert>>,
+    mut buttons: Query<(&CancelInsert, &mut AccessibilityNode)>,
+) {
+    if let Ok((cancel, mut access)) = buttons.get_mut(ev.entity) {
+        access.set_label(format!("Cancel inserting {}", cancel.1));
+    }
+}
+
+/// A Cancel stops waiting for its insert, or a result row's for its
+/// model's (D-121): its row goes, and the status bar says the server may
+/// still add it, which then stays in the world.
+pub(super) fn on_cancel(
+    ev: On<Activate>,
+    rows: Query<&CancelInsert>,
+    results: Query<&FuelCancel>,
+    time: Res<Time<Real>>,
+    mut inserts: ResMut<Inserts>,
+    mut note: ResMut<StatusNote>,
+) {
+    let labels = if let Ok(c) = rows.get(ev.entity) {
+        if inserts.cancel(c.0) {
+            vec![c.1.clone()]
+        } else {
+            vec![]
+        }
+    } else if let Ok(c) = results.get(ev.entity) {
+        inserts.cancel_model(&c.0.uri())
+    } else {
+        return;
+    };
+    if let Some(label) = labels.first() {
+        note.show(cancelled_note(label), time.elapsed_secs_f64());
+    }
+}
+
+/// The status bar's note for a cancelled insert.
+pub(crate) fn cancelled_note(label: &str) -> String {
+    format!("Stopped waiting for {label}: the server may still add it")
 }
 
 /// A result's Insert arms its model.

@@ -1,21 +1,27 @@
-//! The view cube's pointer handling (hover, click, drag) and its face
-//! labels.
+//! The view cube's pointer handling (hover, click, drag), its tooltip,
+//! its actions to AccessKit and its face labels.
 
+use accesskit::{Action, ActionData, CustomAction, NodeId, Role};
+use bevy::a11y::{AccessibilityNode, ActionRequest};
 use bevy::picking::events::{
-    PointerClick, PointerDrag, PointerDragStart, PointerMove, PointerOut, PointerPress,
+    PointerCancel, PointerClick, PointerDrag, PointerDragEnd, PointerDragStart, PointerMove,
+    PointerOut, PointerPress, PointerRelease,
 };
 use bevy::picking::Pickable;
 use bevy::prelude::*;
-use bevy::ui::{ComputedNode, UiGlobalTransform};
+use bevy::ui::{ComputedNode, Pressed, UiGlobalTransform};
 use bevy::window::PrimaryWindow;
-use gz_bevy::view::{ViewCommand, ViewOp};
+use gz_bevy::view::input::InputMap;
+use gz_bevy::view::{SnapView, ViewCommand, ViewOp};
 
 use super::pick::{self, CubeRegion};
 use super::{CubeImage, CubeLabel, CubeShadow, ViewCube};
 use crate::assets::fonts::text;
 use crate::shell::viewport::ViewCameras;
+use crate::shell::CurrentPhase;
 use crate::theme::{elevation, ColorRole, FontFamily, Theme, TypeStyle};
 use crate::widgets::layout::node_rect;
+use crate::widgets::{a11y, Tooltip, TooltipSide};
 
 /// The region under the pointer on a cube, lit up (on the cube's node).
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -76,6 +82,123 @@ impl CubePointer<'_, '_> {
     }
 }
 
+/// The cube's name, to AccessKit and in its tooltip off its faces.
+pub(crate) const CUBE_NAME: &str = "View cube";
+
+/// What the cube does: its tooltip's second line off its faces.
+pub(crate) const CUBE_DETAIL: &str = "Click a face, edge or corner to look from it · Drag to orbit";
+
+/// What the cube does, to AccessKit: it isn't a tab stop, so it says
+/// which keys do the same, and offers each face's view as an action.
+pub(crate) const CUBE_DESCRIPTION: &str =
+    "Turns with the view. Click a face, an edge or a corner to look from it, or drag to orbit. \
+     The view's keys do the same: 7, 1 and 3 look from the top, front and right, with Shift \
+     from the opposite side";
+
+/// The cube to AccessKit: a group named [`CUBE_NAME`], described, with a
+/// custom action for each face's view ("Top view", in
+/// [`SnapView::ALL`]'s order, which [`cube_actions`] runs). Its images
+/// are hidden ([`spawn_parts`]).
+pub(crate) fn cube_access() -> AccessibilityNode {
+    let mut access = a11y(Role::Group, CUBE_NAME);
+    access.set_description(CUBE_DESCRIPTION);
+    access.add_action(Action::CustomAction);
+    access.set_custom_actions(
+        SnapView::ALL
+            .iter()
+            .zip(0..)
+            .map(|(&v, id)| CustomAction {
+                id,
+                description: snap_title(v).into(),
+            })
+            .collect::<Vec<_>>(),
+    );
+    access
+}
+
+/// "Top view": what a face's region looks from.
+fn snap_title(view: SnapView) -> String {
+    format!("{} view", CubeRegion::of_snap(view).name())
+}
+
+/// The tooltip for what the pointer is over on a cube: the view a click
+/// gives ("Top view" with its key, "Top front right view"), else the
+/// cube's name and what it does. Left of the cube, as the rail's are.
+pub(crate) fn cube_tooltip(region: Option<CubeRegion>, map: Option<&InputMap>) -> Tooltip {
+    let tip = match region {
+        Some(r) => {
+            let tip = Tooltip::new(format!("{} view", r.name()));
+            match (r.snap(), map) {
+                (Some(face), Some(map)) => tip.binding(map, pick::snap_binding(face)),
+                _ => tip,
+            }
+        }
+        None => Tooltip::new(CUBE_NAME).detail(CUBE_DETAIL),
+    };
+    tip.side(TooltipSide::Left)
+}
+
+/// A cube's tooltip follows its hover: it names what a click there gives.
+pub(crate) fn name_hover(
+    map: Option<Res<InputMap>>,
+    mut cubes: Query<(&CubeHover, &mut Tooltip), Changed<CubeHover>>,
+) {
+    for (hover, mut tip) in &mut cubes {
+        tip.set_if_neq(cube_tooltip(hover.0, map.as_deref()));
+    }
+}
+
+/// A cube is in AccessKit's tree, its actions with it, only while it
+/// shows: a world is loaded (not under the connect card) and its view
+/// shows its controls (the active view's, in a split layout; D-95).
+pub(crate) fn cube_access_shown(
+    phase: Option<Res<CurrentPhase>>,
+    mut cubes: Query<(&InheritedVisibility, &mut AccessibilityNode), With<ViewCube>>,
+) {
+    let world = !phase.is_some_and(|p| p.0.no_world());
+    for (visibility, mut access) in &mut cubes {
+        let shown = world && visibility.get();
+        if access.is_hidden() == shown {
+            if shown {
+                access.clear_hidden();
+            } else {
+                access.set_hidden();
+            }
+        }
+    }
+}
+
+/// A screen reader's action on a cube (one of [`cube_access`]'s) snaps
+/// its view to that face's view, as a click on the face does; a hidden
+/// cube ([`cube_access_shown`]) takes none.
+pub(crate) fn cube_actions(
+    mut requests: MessageReader<ActionRequest>,
+    cubes: Query<(Entity, &AccessibilityNode), With<ViewCube>>,
+    views: ViewCameras,
+    mut out: MessageWriter<ViewCommand>,
+) {
+    for request in requests.read() {
+        let (Action::CustomAction, Some(ActionData::CustomAction(id))) =
+            (request.action, &request.data)
+        else {
+            continue;
+        };
+        let Some((cube, _)) = cubes
+            .iter()
+            .find(|(c, a)| NodeId(c.to_bits()) == request.target_node && !a.is_hidden())
+        else {
+            continue;
+        };
+        let face = usize::try_from(*id).ok().and_then(|i| SnapView::ALL.get(i));
+        if let (Some(&face), Some((view, ..))) = (face, views.of(cube)) {
+            out.write(ViewCommand {
+                view,
+                op: ViewOp::Snap(face),
+            });
+        }
+    }
+}
+
 /// Hovering lights up what a click would pick.
 pub(crate) fn on_cube_move(
     ev: On<PointerMove>,
@@ -117,14 +240,53 @@ pub(crate) fn follow_hover(
 }
 
 /// A press on the cube, and a drag from it, start from nothing (a drag
-/// released off the cube ends with no click to clear it).
+/// released off the cube ends with no click to clear it). Pressed, its
+/// tooltip hides until the pointer leaves, as a button's does.
 pub(crate) fn on_cube_press(
     ev: On<PointerPress>,
     cubes: Query<(), With<ViewCube>>,
     mut drag: ResMut<CubeDrag>,
+    mut commands: Commands,
 ) {
     if cubes.contains(ev.event_target()) {
         drag.0 = 0.0;
+        commands.entity(ev.event_target()).insert(Pressed);
+    }
+}
+
+/// A release on the cube, or the end of a drag from it, ends its press
+/// (a cancelled pointer, [`on_pointer_cancel`], too).
+pub(crate) fn on_cube_release(
+    ev: On<PointerRelease>,
+    cubes: Query<(), (With<ViewCube>, With<Pressed>)>,
+    mut commands: Commands,
+) {
+    if cubes.contains(ev.event_target()) {
+        commands.entity(ev.event_target()).remove::<Pressed>();
+    }
+}
+
+/// A cancelled pointer (a touch cancelled, capture lost) sends no release
+/// or drag end, and may be over anything by then: every cube's press
+/// ends, or its tooltip would stay hidden.
+pub(crate) fn on_pointer_cancel(
+    _: On<PointerCancel>,
+    cubes: Query<Entity, (With<ViewCube>, With<Pressed>)>,
+    mut commands: Commands,
+) {
+    for cube in &cubes {
+        commands.entity(cube).remove::<Pressed>();
+    }
+}
+
+/// See [`on_cube_release`].
+pub(crate) fn on_cube_drag_end(
+    ev: On<PointerDragEnd>,
+    cubes: Query<(), (With<ViewCube>, With<Pressed>)>,
+    mut commands: Commands,
+) {
+    if cubes.contains(ev.event_target()) {
+        commands.entity(ev.event_target()).remove::<Pressed>();
     }
 }
 
@@ -181,9 +343,13 @@ pub(crate) fn on_cube_click(
 }
 
 /// A child filling the cube node, `down` pixels lower, which the pointer
-/// passes through.
+/// passes through. Its image is hidden from AccessKit: the cube speaks
+/// for it ([`cube_access`]).
 fn layer(down: f32) -> impl Bundle {
+    let mut access = AccessibilityNode(accesskit::Node::new(Role::Image));
+    access.set_hidden();
     (
+        access,
         Node {
             position_type: PositionType::Absolute,
             top: px(down),

@@ -345,6 +345,59 @@ fn manage_and_the_palette_open_the_panel() {
     assert!(naming(&app));
 }
 
+/// A store it couldn't read at start is the panel's error state (§3.3.1):
+/// the footer says so, and where the file was kept, over the note, also
+/// when the panel was built before the store was read (open in the start
+/// layout), until a good file is written over it.
+#[test]
+fn the_footer_says_the_store_couldnt_be_read() {
+    use super::view::LoadFailed;
+
+    let shown = |app: &mut App| {
+        let line = find::<LoadFailed>(app);
+        let display = app.world().get::<Node>(line).unwrap().display;
+        let access = app
+            .world()
+            .get::<bevy::a11y::AccessibilityNode>(line)
+            .unwrap();
+        assert_eq!(access.role(), accesskit::Role::Alert);
+        let label = (!access.is_hidden()).then(|| access.label().unwrap_or("").to_string());
+        let text = texts(app, line);
+        assert_eq!(label.is_some(), display != Display::None);
+        if let Some(l) = &label {
+            assert_eq!(l, &text);
+        }
+        label
+    };
+    let mut app = panel_app();
+    assert_eq!(shown(&mut app), None);
+    // The panel opens with the app; the store is read under it.
+    let mut app = shell_app((1440, 900), 1.0);
+    app.world_mut().write_message(UiCommand::OpenPanel {
+        panel: WORKSPACES_PANEL,
+        slot: Slot::Primary,
+    });
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::Memory(Some("{oops".into())),
+        theme: true,
+        scale: true,
+        motion: true,
+    });
+    frames(&mut app, 4);
+    let why = shown(&mut app).expect("the failure shows");
+    assert!(
+        why.starts_with(
+            "Couldn't read the saved workspaces, using defaults: a copy is kept in memory ("
+        ),
+        "{why}"
+    );
+    assert!(all_text(&mut app).contains("Layouts are kept for this session only"));
+    // A good file written over it: nothing is wrong any more.
+    app.world_mut().write_message(WorkspaceCommand::Switch(1));
+    frames(&mut app, 3);
+    assert_eq!(shown(&mut app), None);
+}
+
 /// The footer says where the layouts are kept; Import waits for a file
 /// picker.
 #[test]

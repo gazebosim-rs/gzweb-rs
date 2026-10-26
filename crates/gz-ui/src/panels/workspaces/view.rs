@@ -16,6 +16,7 @@ use gz_bevy::view::input::InputMap;
 
 use super::{WorkspacesBody, WorkspacesFooter};
 use crate::assets::fonts::text;
+use crate::assets::icons::icon;
 use crate::assets::IconId;
 use crate::panels::PanelRegistry;
 use crate::shell::viewport::views::LayoutPreset;
@@ -570,8 +571,56 @@ pub(crate) fn note_of(store: Option<&WorkspaceStore>, read_only: bool) -> String
     }
 }
 
-/// Builds the footer: the note over Import / export layouts… (a menu:
-/// Export layouts…, and Import, unavailable).
+/// The line saying the store couldn't be read at start (§3.3.1, the
+/// panel's error state): a warning icon and why, where it was kept too,
+/// in `warn_text` on `warn_soft` (the disconnected banner's pair), over
+/// the footer's note; an alert to AccessKit. Hidden while nothing is
+/// wrong; `systems::sync_store` keeps it, and the note, with the store.
+pub(crate) fn failure_line(theme: &Theme) -> impl Bundle {
+    let mut access = a11y(Role::Alert, "");
+    access.set_hidden();
+    (
+        LoadFailed,
+        access,
+        Node {
+            align_items: AlignItems::FlexStart,
+            padding: UiRect::axes(px(SPACE[4]), px(SPACE[3])),
+            border_radius: rounded(radius::SM),
+            display: Display::None,
+            ..row(SPACE[3])
+        },
+        Fill(ColorRole::WarnSoft),
+        children![
+            icon(IconId::Warning, theme.s.icon_sm, ColorRole::WarnText),
+            (
+                LoadFailedText,
+                text(TypeStyle::SMALL, ColorRole::WarnText, ""),
+                Node {
+                    flex_shrink: 1.0,
+                    min_width: px(0),
+                    ..default()
+                },
+            ),
+        ],
+    )
+}
+
+/// The footer's line saying the store couldn't be read.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct LoadFailed;
+
+/// Its text.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct LoadFailedText;
+
+/// The footer's note: where the layouts are kept.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub(crate) struct StoreNote;
+
+/// Builds the footer: the store's failure if it couldn't be read, the
+/// note over Import / export layouts… (a menu: Export layouts…, and
+/// Import, unavailable). The failure and the note follow the store
+/// (`systems::sync_store`): the footer can be built before it is read.
 pub(super) fn build_footer(
     ev: On<Add<WorkspacesFooter>>,
     theme: Res<Theme>,
@@ -588,7 +637,8 @@ pub(super) fn build_footer(
             ..column(SPACE[4])
         })
         .with_children(|c| {
-            c.spawn(text(TypeStyle::SMALL, ColorRole::Text2, note));
+            c.spawn(failure_line(&t));
+            c.spawn((StoreNote, text(TypeStyle::SMALL, ColorRole::Text2, note)));
             c.spawn((
                 Menu,
                 Node {

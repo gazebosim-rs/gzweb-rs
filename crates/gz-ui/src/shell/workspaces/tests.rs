@@ -333,9 +333,9 @@ fn file_text(current: &str, version: u32, saved: &[(&str, WorkspaceLayout)]) -> 
 /// saved layouts aren't lost to a typo, nor the file to a crash.
 #[test]
 fn a_file_it_cant_parse_is_kept_apart() {
-    let dir = std::env::temp_dir().join(format!("gz-ui-workspaces-{}", std::process::id()));
+    let guard = crate::test_support::TestDir::new("gz-ui-workspaces");
+    let dir = &guard.0;
     let path = dir.join(WORKSPACE_FILE);
-    std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(&path, "{oops").unwrap();
     let mut app = shell_app((1440, 900), 1.0);
     app.insert_resource(WorkspaceStore {
@@ -353,11 +353,126 @@ fn a_file_it_cant_parse_is_kept_apart() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(file.current, "run");
     assert!(!dir.join(format!("{WORKSPACE_FILE}.part")).exists());
-    std::fs::remove_dir_all(&dir).unwrap();
     // In memory too: it's written again after a bad one.
     let mut app = start_with(Some("{not json"), true, |_| {});
     alt(&mut app, KeyCode::Digit3);
     assert_eq!(stored(&app).unwrap().current, "debug");
+}
+
+/// A file it can't read is a warning the user sees (§3.3.1, D-110):
+/// through the log layer, as the app installs it, the message tray lists
+/// it and the status bar's chip shows it, saying what happened and where
+/// the file was kept; the Workspaces panel keeps why.
+#[test]
+fn a_file_it_cant_read_shows_in_the_message_tray() {
+    use bevy::ecs::schedule::SingleThreadedExecutor;
+    use bevy::log::tracing_subscriber::layer::SubscriberExt;
+
+    use crate::shell::status_bar::readouts::MessageChip;
+
+    let guard = crate::test_support::TestDir::new("gz-ui-workspaces-tray");
+    let dir = &guard.0;
+    let path = dir.join(WORKSPACE_FILE);
+    std::fs::write(&path, "{oops").unwrap();
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(WorkspaceStore {
+        at: StoreAt::File(path.clone()),
+        theme: true,
+        scale: true,
+        motion: true,
+    })
+    .add_systems(Update, gz_bevy::messages::drain_log)
+    // The store is read in PreUpdate: on this thread, the subscriber's.
+    .edit_schedule(PreUpdate, |s| {
+        s.set_executor(SingleThreadedExecutor::new());
+    });
+    let layer = gz_bevy::messages::log_layer(&mut app).unwrap();
+    let subscriber = bevy::log::tracing_subscriber::registry().with(layer);
+    bevy::log::tracing::subscriber::with_default(subscriber, || {
+        // Other tests, on other threads, hit the same warning with no
+        // subscriber: tracing may have cached that nobody wants it. Asked
+        // again with this one in place, it reaches the layer.
+        bevy::log::tracing::callsite::rebuild_interest_cache();
+        app.update();
+    });
+    frames(&mut app, 2);
+    let bad = dir.join(format!("{WORKSPACE_FILE}.bad"));
+    let want = format!(
+        "Couldn't read workspaces.json, using defaults: it's kept as {}",
+        bad.display()
+    );
+    let messages = app.world().resource::<gz_bevy::messages::SystemMessages>();
+    let problems: Vec<String> = messages.problems().map(|m| m.text.clone()).collect();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].starts_with(&want), "{}", problems[0]);
+    let chip = find::<MessageChip>(&mut app);
+    let chip = app.world().get::<MessageChip>(chip).unwrap();
+    assert!(chip.text.starts_with(&want), "{}", chip.text);
+    assert_eq!(chip.count, "1 warning");
+    let failed = app
+        .world()
+        .resource::<Persisted>()
+        .failed()
+        .map(str::to_string);
+    assert_eq!(failed.as_deref(), Some(problems[0].as_str()));
+    // A good file written over the bad one ends it.
+    alt(&mut app, KeyCode::Digit2);
+    assert!(path.exists());
+    assert_eq!(app.world().resource::<Persisted>().failed(), None);
+    // One it reads has nothing to say.
+    let app = start_with(Some(&file_text("run", FILE_VERSION, &[])), true, |_| {});
+    assert_eq!(app.world().resource::<Persisted>().failed(), None);
+}
+
+/// Each store names itself and says where a bad copy went in its own
+/// words: the file and its `.bad` path, the browser's saved workspaces.
+#[test]
+fn a_failure_names_the_store_in_its_own_words() {
+    let file = WorkspaceStore {
+        at: StoreAt::File("/home/me/.config/gz/ui/workspaces.json".into()),
+        theme: true,
+        scale: true,
+        motion: true,
+    };
+    assert_eq!(
+        load_failed(&file),
+        "Couldn't read workspaces.json, using defaults"
+    );
+    let browser = WorkspaceStore {
+        at: StoreAt::Browser,
+        theme: true,
+        scale: true,
+        motion: true,
+    };
+    assert_eq!(
+        load_failed(&browser),
+        "Couldn't read the workspaces saved in this browser, using defaults"
+    );
+    // Natively there's no browser storage: nothing is said to be kept.
+    let mut app = start_with(None, true, |app| {
+        app.insert_resource(WorkspaceStore {
+            at: StoreAt::Browser,
+            theme: true,
+            scale: true,
+            motion: true,
+        });
+    });
+    assert_eq!(app.world().resource::<Persisted>().failed(), None);
+    let mut store = app.world_mut().resource_mut::<WorkspaceStore>();
+    assert_eq!(
+        store.set_aside("{oops"),
+        Err("there's no browser storage here".into())
+    );
+    let mut memory = WorkspaceStore {
+        at: StoreAt::Memory(None),
+        theme: true,
+        scale: true,
+        motion: true,
+    };
+    assert_eq!(
+        memory.set_aside("{oops"),
+        Ok("a copy is kept in memory".into())
+    );
 }
 
 /// A newer gzweb's file is read as far as it can be and never written

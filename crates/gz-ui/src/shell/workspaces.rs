@@ -481,26 +481,37 @@ impl WorkspaceStore {
         }
     }
 
+    /// What the user knows the store as, for a message: the file's name,
+    /// or the workspaces this browser saved.
+    pub(crate) fn subject(&self) -> &'static str {
+        match self.at {
+            StoreAt::File(_) => WORKSPACE_FILE,
+            StoreAt::Browser => "the workspaces saved in this browser",
+            StoreAt::Memory(_) => "the saved workspaces",
+        }
+    }
+
     /// Keeps `text`, which couldn't be read, apart (`workspaces.json.bad`,
-    /// `gzweb.workspaces.bad`), so writing doesn't lose it; where.
+    /// `gzweb.workspaces.bad`), so writing doesn't lose it; where, as a
+    /// message says it ("it's kept as …/workspaces.json.bad").
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
     fn set_aside(&mut self, text: &str) -> Result<String, String> {
         match &self.at {
             StoreAt::File(path) => {
                 let bad = path.with_file_name(format!("{WORKSPACE_FILE}.bad"));
                 std::fs::rename(path, &bad).map_err(|e| e.to_string())?;
-                Ok(bad.display().to_string())
+                Ok(format!("it's kept as {}", bad.display()))
             }
             #[cfg(target_arch = "wasm32")]
             StoreAt::Browser => {
                 let key = gz_bevy::view::web::WORKSPACES_BAD_KEY;
                 gz_bevy::view::web::store(key, text)
-                    .then(|| key.to_string())
+                    .then(|| format!("a copy is kept in this browser's storage, as {key}"))
                     .ok_or_else(|| "the browser didn't keep it".to_string())
             }
             #[cfg(not(target_arch = "wasm32"))]
-            StoreAt::Browser => Ok(String::new()),
-            StoreAt::Memory(_) => Ok("memory".into()),
+            StoreAt::Browser => Err("there's no browser storage here".into()),
+            StoreAt::Memory(_) => Ok("a copy is kept in memory".into()),
         }
     }
 }
@@ -954,6 +965,9 @@ pub(crate) struct Persisted {
     motion: Option<String>,
     /// It isn't written: it couldn't be read, or a newer gzweb wrote it.
     read_only: bool,
+    /// Why it couldn't be read at start, and where it was kept (§3.3.1:
+    /// the Workspaces panel's error state), until a good one is written.
+    failed: Option<String>,
 }
 
 impl Persisted {
@@ -961,6 +975,24 @@ impl Persisted {
     pub(crate) fn read_only(&self) -> bool {
         self.read_only
     }
+
+    /// Why the store couldn't be read at start, if it couldn't: the
+    /// warning the message tray lists, which the Workspaces panel shows.
+    pub(crate) fn failed(&self) -> Option<&str> {
+        self.failed.as_deref()
+    }
+
+    /// The store couldn't be read: warns, and keeps why.
+    fn fail(&mut self, why: String) {
+        warn!("{why}");
+        self.failed = Some(why);
+    }
+}
+
+/// What a store that couldn't be read says first (§3.3.1: "Couldn't
+/// read workspaces.json, using defaults").
+pub(crate) fn load_failed(store: &WorkspaceStore) -> String {
+    format!("Couldn't read {}, using defaults", store.subject())
 }
 
 impl Persisted {
@@ -1043,7 +1075,10 @@ pub(crate) fn exported(workspaces: &Workspaces) -> String {
 /// A file it can't parse is kept apart (`.bad`) and the defaults used; if
 /// it can't be kept apart, or can't be read at all, it's left as it is
 /// and not written this session. A newer version's is read as far as it
-/// can be and not written either.
+/// can be and not written either. A failure is a warning, which the log
+/// layer gives the message tray and the status bar's chip (D-110), and
+/// the Workspaces panel shows it too ([`Persisted::failed`]): what
+/// happened and where the file is.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn load_workspaces(
     store: Option<ResMut<WorkspaceStore>>,
@@ -1064,7 +1099,10 @@ pub(crate) fn load_workspaces(
     let text = match store.read() {
         Ok(text) => text,
         Err(e) => {
-            warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e}");
+            persisted.fail(format!(
+                "{} and leaving it as it is: {e}",
+                load_failed(&store)
+            ));
             persisted.read_only = true;
             return;
         }
@@ -1078,13 +1116,17 @@ pub(crate) fn load_workspaces(
         }
         Some(Err((text, e))) => {
             match store.set_aside(&text) {
-                Ok(at) => {
-                    warn!(
-                        "Couldn't read {WORKSPACE_FILE}, using defaults (it's kept as {at}): {e}"
-                    );
+                Ok(kept) => {
+                    persisted.fail(format!("{}: {kept} ({e})", load_failed(&store)));
+                    // The defaults are what it holds now: written once
+                    // something changes, which ends the failure.
+                    persisted.written = Some(persisted.file_of(&workspaces, &theme, &store));
                 }
                 Err(why) => {
-                    warn!("Couldn't read {WORKSPACE_FILE}, using defaults and leaving it as it is: {e} (couldn't keep it apart: {why})");
+                    persisted.fail(format!(
+                        "{} and leaving it as it is: {e} (couldn't keep it apart: {why})",
+                        load_failed(&store)
+                    ));
                     persisted.read_only = true;
                 }
             }
@@ -1318,7 +1360,12 @@ pub(crate) fn persist_workspaces(
     }
     let text = serde_json::to_string_pretty(&file).unwrap_or_default();
     match store.write(&text) {
-        Ok(()) => persisted.written = Some(file),
+        Ok(()) => {
+            persisted.written = Some(file);
+            // The bad one was kept apart and a good one written over it:
+            // nothing is wrong any more.
+            persisted.failed = None;
+        }
         Err(e) => warn!("Couldn't write {WORKSPACE_FILE}: {e}"),
     }
 }

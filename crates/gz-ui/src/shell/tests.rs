@@ -1468,9 +1468,10 @@ fn the_shell_never_grows_past_a_short_window() {
 /// §10, §6.5, §13: "every icon-only button has a tooltip and accessible
 /// label"): every tab stop, and every node with a control's role, in each
 /// panel with content, each inspector and the command palette, is named
-/// (or, doing nothing, hidden from AccessKit: a leaf's caret), and every
-/// tab stop draws a focus ring (its own, its row's, a field's or a menu
-/// item's look, or a view's frame).
+/// (or, doing nothing, hidden from AccessKit: a leaf's caret), every
+/// icon-only button has a tooltip, and every tab stop draws a focus ring
+/// (its own, its row's, a field's or a menu item's look, or a view's
+/// frame).
 #[test]
 fn every_control_is_named_and_shows_focus() {
     use accesskit::Role;
@@ -1481,6 +1482,7 @@ fn every_control_is_named_and_shows_focus() {
     use super::viewport::view::FocusFrame;
     use crate::theme::visuals::HoverOnFocus;
     use crate::theme::{FocusRing, Ring};
+    use crate::widgets::Tooltip;
 
     let mut app = live_view(900);
     // Content for the lists.
@@ -1544,7 +1546,29 @@ fn every_control_is_named_and_shows_focus() {
     steps.push(Box::new(|app: &mut App| {
         app.world_mut().write_message(UiCommand::OpenPalette);
     }));
+    // Drawn with icons and no text (a tooltip card, which only shows on
+    // hover, aside).
+    let icon_only = |world: &World, e: Entity| {
+        let mut icons = false;
+        let mut stack = vec![e];
+        while let Some(n) = stack.pop() {
+            if n != e
+                && world
+                    .get::<crate::widgets::tooltip::TooltipCard>(n)
+                    .is_some()
+            {
+                continue;
+            }
+            if world.get::<Text>(n).is_some() || world.get::<TextSpan>(n).is_some() {
+                return false;
+            }
+            icons |= world.get::<crate::assets::icons::Icon>(n).is_some();
+            stack.extend(world.get::<Children>(n).into_iter().flatten());
+        }
+        icons
+    };
     let mut checked = 0;
+    let mut icons = 0;
     for step in steps {
         step(&mut app);
         frames(&mut app, 3);
@@ -1575,6 +1599,16 @@ fn every_control_is_named_and_shows_focus() {
                 a.0.is_hidden() || a.0.label().is_some_and(|l| !l.trim().is_empty())
             });
             assert!(named, "{e} ({role:?}) has no accessible name");
+            // An icon-only button has a tooltip too (§5.1, §13).
+            let shown = access.is_some_and(|a| !a.0.is_hidden());
+            if shown && role == Some(Role::Button) && icon_only(world, e) {
+                assert!(
+                    world.get::<Tooltip>(e).is_some(),
+                    "{e} ({:?}) is an icon-only button with no tooltip",
+                    access.and_then(|a| a.0.label())
+                );
+                icons += 1;
+            }
             if stop {
                 let shows = ring || own || field || hover || frames_of.contains(&e);
                 assert!(shows, "{e} ({role:?}) is a tab stop with no focus ring");
@@ -1582,4 +1616,5 @@ fn every_control_is_named_and_shows_focus() {
         }
     }
     assert!(checked > 500, "{checked} checked");
+    assert!(icons > 100, "{icons} icon-only buttons checked");
 }
