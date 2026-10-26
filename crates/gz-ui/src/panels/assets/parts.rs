@@ -815,8 +815,8 @@ fn add_plugin(mut state: ResMut<AssetsState>, mut out: MessageWriter<PartCommand
     state.parts.armed = None;
 }
 
-/// Leaving with parts added says they weren't kept (writing them back
-/// comes later).
+/// Leaving without writing the parts added (Discard, or the model went)
+/// says they went.
 pub(super) fn parts_discarded(
     time: Res<Time<Real>>,
     mut dropped: MessageReader<PartsDiscarded>,
@@ -825,10 +825,7 @@ pub(super) fn parts_discarded(
     for PartsDiscarded(n) in dropped.read() {
         // A reparent is a change, not a part.
         let changes = if *n == 1 { "change" } else { "changes" };
-        note.show(
-            format!("{n} {changes} not kept: writing parts to the model comes later"),
-            time.elapsed_secs_f64(),
-        );
+        note.show(format!("{n} {changes} discarded"), time.elapsed_secs_f64());
     }
 }
 

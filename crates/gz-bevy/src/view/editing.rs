@@ -4,9 +4,10 @@
 //! turns every view's joints and frames on, and keeps the model as
 //! [`EditingModel`]: its links are what views pick and what the
 //! selection holds, and every other entity renders at
-//! [`DIMMED_OPACITY`]. Done turns off the overlays entering turned on
-//! and resumes the sim if entering paused it. The UI draws the EDITING pill and limits the Scene
-//! tree; adding parts and writing the model back come later.
+//! [`DIMMED_OPACITY`]. Done writes the parts added ([`parts`], D-113,
+//! D-114) into the model first, then turns off the overlays entering
+//! turned on and resumes the sim if entering paused it; Discard drops the
+//! parts. The UI draws the EDITING pill and limits the Scene tree.
 
 pub mod parts;
 
@@ -84,8 +85,11 @@ const EDIT_OVERLAYS: [Overlay; 2] = [Overlay::Joints, Overlay::Frames];
 #[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditCommand {
     Enter(Entity),
-    /// Leave editing (Done, or Esc with nothing selected in the model).
+    /// Leave editing (Done, or Esc with nothing selected in the model),
+    /// writing the parts added first.
     Done,
+    /// Leave editing, dropping the parts added.
+    Discard,
 }
 
 /// `e` is `model` or below it.
@@ -109,10 +113,27 @@ pub fn part_of(parents: &Query<&ChildOf>, e: Entity, model: Entity) -> Option<En
 /// A view camera's overlays.
 type ViewSets<'w, 's> = Query<'w, 's, (Entity, &'static mut OverlaySet)>;
 
+/// What leaving reads of the parts added, and says.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Leaving<'w> {
+    parts: Option<Res<'w, parts::EditParts>>,
+    writes: MessageWriter<'w, parts::WriteParts>,
+    notes: MessageWriter<'w, parts::EditNote>,
+}
+
+impl Leaving<'_> {
+    /// The parts added aren't written yet.
+    fn holds(&self) -> bool {
+        self.parts.as_deref().is_some_and(parts::EditParts::holds)
+    }
+}
+
 /// Runs the [`EditCommand`]s. Entering needs a top-level model; it pauses
 /// a running sim, turns the views' joints and frames on and clears the
 /// selection. Entering another while one is edited moves to it, the sim
-/// as it is. Done undoes them.
+/// as it is (not while it has parts to write or discard). Done writes the
+/// parts added first ([`parts::WriteParts`]: it ends editing once they
+/// are written), then undoes what entering did; Discard just undoes it.
 #[allow(clippy::too_many_arguments)]
 pub fn run_edit_commands(
     mut commands: MessageReader<EditCommand>,
@@ -122,6 +143,7 @@ pub fn run_edit_commands(
     roots: Query<(), With<GzWorldRoot>>,
     mut sets: ViewSets,
     mut selection: ResMut<Selection>,
+    mut leaving: Leaving,
     mut gz: MessageWriter<GzCommand>,
 ) {
     for cmd in commands.read() {
@@ -131,6 +153,12 @@ pub fn run_edit_commands(
                     g.kind == gz_core::scene::NodeKind::Model && roots.contains(p.parent())
                 });
                 if !top || editing.model() == Some(model) {
+                    continue;
+                }
+                if editing.0.is_some() && leaving.holds() {
+                    leaving.notes.write(parts::EditNote(
+                        "Done or Discard this model's parts first".into(),
+                    ));
                     continue;
                 }
                 *selection = Selection::default();
@@ -154,7 +182,10 @@ pub fn run_edit_commands(
                 });
                 light_views(&mut editing, &mut sets);
             }
-            EditCommand::Done => {
+            EditCommand::Done if leaving.holds() => {
+                leaving.writes.write(parts::WriteParts);
+            }
+            EditCommand::Done | EditCommand::Discard => {
                 if let Some(was) = editing.0.take() {
                     leave(was, &mut sets, &mut gz);
                 }

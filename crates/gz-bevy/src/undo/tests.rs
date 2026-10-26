@@ -580,3 +580,203 @@ fn a_move_waits_for_its_model_to_come_back() {
     app.update();
     assert_eq!(stack(&app).undo_label(), None);
 }
+
+/// A model written back (D-114) is one edit: undo removes it and, once it
+/// has gone, creates it from its SDFormat as it was; redo does the same
+/// with the SDFormat as written. Neither goes while one is on its way, and
+/// a model whose remove went unheeded isn't created.
+#[test]
+fn a_model_written_back_is_replaced_through_the_server() {
+    let mut app = app(Some(true));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs(1),
+    ));
+    let copy = |sdf: &str| ModelCopy {
+        name: "cart".into(),
+        sdf: sdf.into(),
+        pose: Transform::from_xyz(1.0, 2.0, 0.0),
+        loaded: None,
+    };
+    let (before, after) = (copy("<before/>"), copy("<after/>"));
+    let requests = |app: &mut App| -> Vec<(String, Vec<u8>)> {
+        app.world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .filter_map(|c| match c {
+                GzCommand::Request {
+                    service, payload, ..
+                } => Some((service, payload)),
+                _ => None,
+            })
+            .collect()
+    };
+    let created = |sent: &[(String, Vec<u8>)]| -> Vec<msgs::EntityFactory> {
+        sent.iter()
+            .filter(|(s, _)| s == "/world/w/create")
+            .map(|(_, p)| msgs::EntityFactory::decode(p.as_slice()).unwrap())
+            .collect()
+    };
+    let cart = spawn(&mut app, "cart");
+    run(
+        &mut app,
+        Record {
+            verb: "edit",
+            named: true,
+            changes: vec![Change::Replaced { before, after }],
+            scrub: None,
+            open: false,
+        },
+    );
+    assert_eq!(stack(&app).undo_label(), Some("edit cart"));
+    requests(&mut app);
+    run(&mut app, UndoCommand::Undo);
+    let sent = requests(&mut app);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "/world/w/remove");
+    assert_eq!(msgs::Entity::decode(sent[0].1.as_slice()).unwrap().id, 7);
+    // Still there: nothing is created, and redo waits.
+    app.update();
+    run(&mut app, UndoCommand::Redo);
+    assert!(requests(&mut app).is_empty());
+    assert_eq!(stack(&app).redo_label(), Some("edit cart"));
+    // Gone: created as it was, at its pose, once.
+    app.world_mut().entity_mut(cart).despawn();
+    app.update();
+    let sent = requests(&mut app);
+    let made = created(&sent);
+    assert_eq!(made.len(), 1, "{sent:?}");
+    assert_eq!(
+        made[0].from,
+        Some(msgs::entity_factory::From::Sdf("<before/>".into()))
+    );
+    assert_eq!(made[0].pose.clone().unwrap().position.unwrap().y, 2.0);
+    assert_eq!(
+        app.world().resource::<Replacing>().0.len(),
+        1,
+        "until it shows"
+    );
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    // Back: redo writes it again.
+    let cart = spawn(&mut app, "cart");
+    app.update();
+    assert!(app.world().resource::<Replacing>().0.is_empty());
+    run(&mut app, UndoCommand::Redo);
+    assert_eq!(requests(&mut app)[0].0, "/world/w/remove");
+    app.world_mut().entity_mut(cart).despawn();
+    app.update();
+    assert_eq!(
+        created(&requests(&mut app))[0].from,
+        Some(msgs::entity_factory::From::Sdf("<after/>".into()))
+    );
+    // A remove the server didn't heed: the model isn't created again.
+    spawn(&mut app, "cart");
+    app.update();
+    run(&mut app, UndoCommand::Undo);
+    requests(&mut app);
+    let mut said = Vec::new();
+    for _ in 0..(RECREATE_SECS as usize + 2) {
+        app.update();
+        said.extend(replace_notes(&mut app));
+    }
+    assert!(created(&requests(&mut app)).is_empty());
+    assert!(app.world().resource::<Replacing>().0.is_empty());
+    assert_eq!(said, ["cart wasn't changed: the server didn't remove it"]);
+    // A Reset forgets it.
+    run(&mut app, GzCommand::Reset);
+    assert_eq!(stack(&app).undo_label(), None);
+    assert_eq!(stack(&app).redo_label(), None);
+}
+
+/// What replacing said.
+fn replace_notes(app: &mut App) -> Vec<String> {
+    app.world_mut()
+        .resource_mut::<Messages<ReplaceNote>>()
+        .drain()
+        .map(|n| n.0)
+        .collect()
+}
+
+/// A model being replaced: its create waits for a world, says what it did
+/// once its new self shows, and says it was lost when it doesn't; undo
+/// waits for it all along (past `RECREATE_SECS`); a Reset forgets it.
+#[test]
+fn a_replacement_waits_for_its_world_and_says_how_it_went() {
+    let mut app = app(Some(true));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs(1),
+    ));
+    let copy = |sdf: &str| ModelCopy {
+        name: "cart".into(),
+        sdf: sdf.into(),
+        pose: Transform::IDENTITY,
+        loaded: None,
+    };
+    run(
+        &mut app,
+        Record {
+            verb: "edit",
+            named: true,
+            changes: vec![Change::Replaced {
+                before: copy("<before/>"),
+                after: copy("<after/>"),
+            }],
+            scrub: None,
+            open: false,
+        },
+    );
+    let creates = |app: &mut App| {
+        app.world_mut()
+            .resource_mut::<Messages<GzCommand>>()
+            .drain()
+            .filter(
+                |c| matches!(c, GzCommand::Request { service, .. } if service.ends_with("/create")),
+            )
+            .count()
+    };
+    // Gone already, but no world yet: it waits, then goes.
+    app.world_mut().resource_mut::<GzStatus>().world = None;
+    app.world_mut()
+        .resource_mut::<Replacing>()
+        .0
+        .push(Replacement {
+            done: Some("Wrote cart: 1 change".into()),
+            ..Replacement::new(copy("<after/>"), 0.0)
+        });
+    app.update();
+    assert_eq!(creates(&mut app), 0);
+    assert_eq!(app.world().resource::<Replacing>().0.len(), 1, "kept");
+    app.world_mut().resource_mut::<GzStatus>().world = Some("w".into());
+    app.update();
+    assert_eq!(creates(&mut app), 1);
+    // Past RECREATE_SECS and not shown: undo still waits.
+    for _ in 0..(RECREATE_SECS as usize + 2) {
+        app.update();
+    }
+    run(&mut app, UndoCommand::Undo);
+    assert_eq!(stack(&app).undo_label(), Some("edit cart"), "waits");
+    // It shows: written.
+    let cart = spawn(&mut app, "cart");
+    app.update();
+    assert_eq!(replace_notes(&mut app), ["Wrote cart: 1 change"]);
+    assert!(app.world().resource::<Replacing>().0.is_empty());
+    // Undone, its create lost: it says so after SHOW_SECS.
+    run(&mut app, UndoCommand::Undo);
+    app.world_mut().entity_mut(cart).despawn();
+    let mut said = Vec::new();
+    for _ in 0..(SHOW_SECS as usize + 2) {
+        app.update();
+        said.extend(replace_notes(&mut app));
+    }
+    assert_eq!(
+        said,
+        ["cart didn't come back: the server lost it · Undo puts it back as it was"]
+    );
+    // A Reset forgets one under way.
+    app.world_mut()
+        .resource_mut::<Replacing>()
+        .0
+        .push(Replacement::new(copy("<after/>"), 100.0));
+    run(&mut app, GzCommand::Reset);
+    assert!(app.world().resource::<Replacing>().0.is_empty());
+}

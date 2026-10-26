@@ -368,7 +368,7 @@ impl Run<'_> {
                     msg_type,
                     payload,
                 };
-                if let Some(why) = too_long(&publish) {
+                if let Some(why) = too_long(&publish, self.status.as_deref()) {
                     return self.fail(format!("Too long to send: {why}"));
                 }
                 self.out.write(publish);
@@ -400,7 +400,7 @@ impl Run<'_> {
             msg_type: req_type,
             payload,
         };
-        if let Some(why) = too_long(&request) {
+        if let Some(why) = too_long(&request, self.status.as_deref()) {
             return self.fail(format!("Too long to send: {why}"));
         }
         self.say(MessageLevel::Info, format!("Calling {service}…"));

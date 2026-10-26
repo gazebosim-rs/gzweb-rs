@@ -97,6 +97,11 @@ pub struct GzStatus {
     /// Whether the server takes edits (keeps binary requests whole,
     /// DECISIONS.md D-76): `None` until its probe is answered.
     pub edits: Option<bool>,
+    /// Whether the server takes frames longer than
+    /// [`MAX_FRAME`](gz_core::transport::MAX_FRAME) whole (it joins a
+    /// message's pieces, DECISIONS.md D-114): `None` until its probe,
+    /// which follows the edit probe's yes, is answered.
+    pub long_frames: Option<bool>,
 }
 
 impl GzStatus {
@@ -112,6 +117,7 @@ impl GzStatus {
             attempting: false,
             edits: None,
             publishes: None,
+            long_frames: None,
         }
     }
 }
@@ -393,6 +399,9 @@ impl WebsocketBackend {
                     if io.status.publishes.is_some() {
                         io.status.publishes = None;
                     }
+                    if io.status.long_frames.is_some() {
+                        io.status.long_frames = None;
+                    }
                     self.publish_probes = 0;
                 }
                 io.status.status = s;
@@ -458,6 +467,27 @@ impl WebsocketBackend {
                         info!("the server takes edits (binary requests)");
                     } else {
                         info!("the server mangles binary requests: editing is off");
+                    }
+                    // Then the long probe, whose reply comes next: one that
+                    // takes no edits is sent nothing long.
+                    let probed = edits && {
+                        let sent = self.transport.probe_long_frames();
+                        if let Err(e) = &sent {
+                            warn!("long frame probe: {e}");
+                        }
+                        sent.is_ok()
+                    };
+                    if !probed {
+                        io.status.long_frames = Some(false);
+                    }
+                } else if service == BINARY_PROBE_SERVICE && io.status.long_frames.is_none() {
+                    let long = probe_reply_supports_binary(&msg_type, &payload);
+                    self.transport.set_long_frames(long);
+                    io.status.long_frames = Some(long);
+                    if long {
+                        info!("the server takes long frames whole");
+                    } else {
+                        info!("the server cuts long frames: models aren't written back");
                     }
                 }
                 log_reply(&service, &msg_type, &payload);
@@ -1098,6 +1128,63 @@ mod tests {
                 payload: vec![0x08, 0x00, b','],
             });
             assert_eq!(sent.len(), usize::from(edits), "{msg_type}: {sent:?}");
+        }
+    }
+
+    /// The long probe goes once the edit probe says yes (never before,
+    /// and not at all on a no), and its reply, the next to the same
+    /// service, says whether a long request goes out.
+    #[test]
+    fn the_long_probe_follows_the_edit_probes_yes() {
+        let config = || GzConfig {
+            ui: crate::UiMode::Minimal,
+            reconnect: false,
+            ..Default::default()
+        };
+        let worlds = msgs::StringMsgV {
+            data: vec!["w".into()],
+            ..Default::default()
+        }
+        .encode_to_vec();
+        let reply =
+            |payload: &[u8]| build("req", BINARY_PROBE_SERVICE, "gz.msgs.StringMsg_V", payload);
+        let long = || GzCommand::Request {
+            service: "/world/w/create".into(),
+            msg_type: "gz.msgs.EntityFactory".into(),
+            payload: vec![b'x'; 2 * gz_core::transport::MAX_FRAME],
+        };
+        // A no to edits: no long probe, and no long frames.
+        let mut h = Harness::with(config());
+        let sent = h.ready();
+        assert!(sent
+            .iter()
+            .all(|f| f.len() <= gz_core::transport::MAX_FRAME));
+        assert!(h.msg(reply(b"")).is_empty());
+        assert_eq!(h.world.resource::<GzStatus>().long_frames, Some(false));
+
+        for (answer, long_frames) in [(worlds.as_slice(), true), (&[][..], false)] {
+            let mut h = Harness::with(config());
+            h.ready();
+            assert!(h.command(long()).is_empty());
+            let sent = h.msg(reply(&worlds));
+            assert_eq!(sent.len(), 1, "{sent:?}");
+            // (Its length's bytes aren't UTF-8: the text is a little longer.)
+            assert!(sent[0].starts_with("req,/gazebo/worlds,gz.msgs.Empty,"));
+            assert!(sent[0].len() >= gz_core::transport::LONG_PROBE_LEN);
+            assert_eq!(h.world.resource::<GzStatus>().long_frames, None);
+            h.msg(reply(answer));
+            let status = h.world.resource::<GzStatus>();
+            assert_eq!(status.long_frames, Some(long_frames));
+            assert_eq!(status.edits, Some(true));
+            assert_eq!(h.command(long()).len(), usize::from(long_frames));
+            // Only the first answer counts, and a new connection asks again.
+            h.msg(reply(&worlds));
+            assert_eq!(
+                h.world.resource::<GzStatus>().long_frames,
+                Some(long_frames)
+            );
+            h.feed(DriverEvent::Closed(None));
+            assert_eq!(h.world.resource::<GzStatus>().long_frames, None);
         }
     }
 

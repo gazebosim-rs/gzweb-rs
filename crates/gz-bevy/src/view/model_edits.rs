@@ -171,6 +171,7 @@ fn spawn_copies(
     steps: u32,
     index: Option<&GzIndex>,
     now: f64,
+    status: Option<&GzStatus>,
     out: &mut MessageWriter<GzCommand>,
     records: &mut MessageWriter<Record>,
     pending: &mut SelectWhenSpawned,
@@ -190,7 +191,7 @@ fn spawn_copies(
         let mut pose = model.pose;
         pose.translation.y += steps as f32 * (size.y + GAP);
         let create = create_copy_request(world, &model.sdf, &name, &pose);
-        if let Some(why) = too_long(&create) {
+        if let Some(why) = too_long(&create, status) {
             return Err(format!(
                 "{} is too large to create on this server: {why}",
                 model.name
@@ -292,6 +293,7 @@ pub(crate) fn request_model_edits(
                 clipboard.pastes + 1,
                 index.as_deref(),
                 now,
+                status.as_deref(),
                 &mut out,
                 &mut records,
                 &mut pending,
@@ -414,6 +416,7 @@ pub(crate) fn finish_model_edits(
                 1,
                 index.as_deref(),
                 now,
+                status.as_deref(),
                 &mut out,
                 &mut records,
                 &mut pending,
@@ -423,7 +426,7 @@ pub(crate) fn finish_model_edits(
                 // deleted (it would be gone for good).
                 for (m, _) in &copies {
                     let create = create_copy_request(world, &m.sdf, &m.name, &m.pose);
-                    if let Some(why) = too_long(&create) {
+                    if let Some(why) = too_long(&create, status.as_deref()) {
                         return Err(format!(
                             "Not deleted: undo couldn't bring {} back ({why})",
                             m.name
