@@ -306,3 +306,102 @@ fn normal_async_connect_is_not_terminal_but_real_send_failure_and_timeout_are() 
             .contains("timed out"));
     });
 }
+
+#[test]
+fn mesh_complete_frames_keep_corrected_pose_lane_and_rebuild_on_asset_change() {
+    let config = GzConfig {
+        backend: crate::BackendKind::Primitive,
+        ..Default::default()
+    };
+    let (driver, tx, _out) = driver::fake();
+    let slot = Rc::new(RefCell::new(Some(driver)));
+    let mut backend = PrimitiveBackend::new(&config).unwrap();
+    backend.connector = Box::new(move |_| slot.borrow_mut().take().unwrap());
+    let mut world = World::new();
+    world.insert_resource(GzStatus::new("ws://test"));
+    world.init_resource::<GzInbox>();
+    let mut message = serde_json::json!({"version":2,"kind":"scene","world":"default","world_id":1,"epoch":0,"seconds":0,"nanoseconds":1,"sequence":1,"paused":true,
+    "visuals":[{"id":2,"name":"visual","translation":[1,2,3],"rotation":[0,0,0,1],"shape":{"kind":"mesh","uri":"http://127.0.0.1:9002/assets/0/arrow.gltf","scale":[2,3,5]},"color":[1,0,0,1]}]});
+    world.resource_scope(|world, mut status: Mut<GzStatus>| {
+        let inbox = world.resource_mut::<GzInbox>();
+        let mut io = BackendIo {
+            now: 0.,
+            config: &config,
+            status: status.reborrow(),
+            inbox,
+            publishes: Vec::new(),
+            replies: Vec::new(),
+            topics: None,
+            arrivals: Vec::new(),
+        };
+        backend.poll(&mut io);
+        tx.send(DriverEvent::Open).unwrap();
+        tx.send(DriverEvent::Message(message.to_string().into_bytes()))
+            .unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        let desc = io.inbox.prepared_scene.take().unwrap();
+        assert_eq!(desc.roots[0].scale, [2., 5., 3.]);
+        assert_eq!(
+            desc.roots[0].pose.quat,
+            [
+                std::f64::consts::FRAC_1_SQRT_2,
+                0.,
+                0.,
+                std::f64::consts::FRAC_1_SQRT_2
+            ]
+        );
+        message["sequence"] = serde_json::json!(2);
+        message["nanoseconds"] = serde_json::json!(2);
+        message["visuals"][0]["translation"] = serde_json::json!([4, 5, 6]);
+        tx.send(DriverEvent::Message(message.to_string().into_bytes()))
+            .unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        assert!(io.inbox.prepared_scene.is_none());
+        assert_eq!(io.inbox.poses.len(), 1);
+        let pose = &io.inbox.poses[0];
+        assert_eq!(pose.id, 2);
+        assert_eq!(pose.position.as_ref().unwrap().x, 4.);
+        let q = pose.orientation.as_ref().unwrap();
+        assert_eq!(
+            [q.x, q.y, q.z, q.w],
+            [
+                std::f64::consts::FRAC_1_SQRT_2,
+                0.,
+                0.,
+                std::f64::consts::FRAC_1_SQRT_2
+            ]
+        );
+        message["sequence"] = serde_json::json!(3);
+        message["nanoseconds"] = serde_json::json!(3);
+        message["visuals"][0]["shape"]["scale"] = serde_json::json!([3, 4, 5]);
+        tx.send(DriverEvent::Message(message.to_string().into_bytes()))
+            .unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        assert_eq!(
+            io.inbox.prepared_scene.take().unwrap().roots[0].scale,
+            [3., 5., 4.]
+        );
+        assert!(io.inbox.poses.is_empty());
+        message["sequence"] = serde_json::json!(4);
+        message["nanoseconds"] = serde_json::json!(4);
+        message["visuals"][0]["shape"]["uri"] =
+            serde_json::json!("http://127.0.0.1:9002/assets/0/arrow.glb");
+        tx.send(DriverEvent::Message(message.to_string().into_bytes()))
+            .unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        assert!(
+            io.inbox.prepared_scene.take().unwrap().roots[0]
+                .visual
+                .as_ref()
+                .unwrap()
+                .geometry
+                .kind_name()
+                == "mesh"
+        );
+        assert!(io.inbox.poses.is_empty());
+    });
+}

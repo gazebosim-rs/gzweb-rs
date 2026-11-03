@@ -40,7 +40,9 @@ pub const HTTP_SOURCE: &str = "gzhttps";
 
 /// Bevy asset path for a resolved load URI (see module docs).
 pub fn asset_path(load_uri: &str) -> String {
-    if let Some(rest) = load_uri.strip_prefix("https://") {
+    if load_uri.starts_with(gz_core::primitive::LOCAL_MESH_PREFIX) {
+        load_uri.to_string()
+    } else if let Some(rest) = load_uri.strip_prefix("https://") {
         format!("{HTTP_SOURCE}://{rest}")
     } else if let Some(rest) = load_uri.strip_prefix("http://") {
         // Plain HTTP is only expected for local servers; keep the scheme visible.
@@ -286,6 +288,109 @@ struct HttpAssetReader {
     down: DownHosts,
 }
 
+/// M2 only: fetch declared local resources directly, with no websocket retry.
+/// No file, mesh handle or HTTP request is allocated until a mesh is admitted.
+struct LocalMeshReader;
+const LOCAL_MESH_MAX_BYTES: usize = 16 * 1024 * 1024;
+
+fn local_mesh_error(message: String) -> AssetReaderError {
+    AssetReaderError::Io(std::io::Error::other(message).into())
+}
+
+fn validate_local_gltf(url: &str, bytes: &[u8]) -> Result<(), String> {
+    use bevy::gltf::gltf::{buffer, image};
+    if !(url.ends_with(".gltf") || url.ends_with(".glb")) {
+        return Ok(());
+    }
+    let gltf = bevy::gltf::gltf::Gltf::from_slice(bytes)
+        .map_err(|e| format!("Invalid glTF '{url}': {e}"))?;
+    let asset = &gltf.document.as_json().asset;
+    if asset.version != "2.0" || asset.min_version.as_deref().is_some_and(|v| v != "2.0") {
+        return Err(format!(
+            "Local glTF '{url}' requires unsupported asset.version/minVersion"
+        ));
+    }
+    for buffer in gltf.document.buffers() {
+        if let buffer::Source::Uri(uri) = buffer.source() {
+            if !gz_core::primitive::local_mesh_dependency_allowed(url, uri) {
+                return Err(format!(
+                    "glTF '{url}' has an external or escaping buffer URI '{uri}'"
+                ));
+            }
+        }
+    }
+    for image in gltf.document.images() {
+        if let image::Source::Uri { uri, .. } = image.source() {
+            if !gz_core::primitive::local_mesh_dependency_allowed(url, uri) {
+                return Err(format!(
+                    "glTF '{url}' has an external or escaping image URI '{uri}'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+impl AssetReader for LocalMeshReader {
+    async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        let url = gz_core::primitive::local_mesh_http_url(&path.to_string_lossy())
+            .map_err(local_mesh_error)?;
+        let bytes = fetch_local_mesh_bytes(&url)
+            .await
+            .map_err(|e| local_mesh_error(format!("Local mesh resource '{url}': {}", e.message)))?;
+        validate_local_gltf(&url, &bytes).map_err(local_mesh_error)?;
+        Ok(VecReader::new(bytes))
+    }
+    async fn read_meta<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
+    }
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
+        Err(AssetReaderError::NotFound(path.to_path_buf()))
+    }
+    async fn is_directory<'a>(&'a self, _path: &'a Path) -> Result<bool, AssetReaderError> {
+        Ok(false)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn fetch_local_mesh_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+    let response = ureq::get(url)
+        .config()
+        .max_redirects(0)
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_global(Some(FETCH_TIMEOUT))
+        .build()
+        .call()?;
+    if response.status().as_u16() != 200 {
+        return Err(FetchError {
+            message: format!(
+                "HTTP {}: redirects and non-success responses are refused",
+                response.status()
+            ),
+            unreachable: false,
+        });
+    }
+    Ok(response
+        .into_body()
+        .with_config()
+        .limit(LOCAL_MESH_MAX_BYTES as u64)
+        .read_to_vec()?)
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_local_mesh_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
+    fetch_js_options(url, true)
+        .await
+        .map_err(|(message, unreachable)| FetchError {
+            message,
+            unreachable,
+        })
+}
+
 impl AssetReader for HttpAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         let url = http_url(path, self.mirror.as_deref());
@@ -410,6 +515,11 @@ pub(crate) async fn fetch_bytes(url: &str) -> Result<Vec<u8>, FetchError> {
 /// [`fetch_bytes`]'s errors with whether the host was unreachable.
 #[cfg(target_arch = "wasm32")]
 async fn fetch_js(url: &str) -> Result<Vec<u8>, (String, bool)> {
+    fetch_js_options(url, false).await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_js_options(url: &str, local_mesh: bool) -> Result<Vec<u8>, (String, bool)> {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
@@ -419,6 +529,9 @@ async fn fetch_js(url: &str) -> Result<Vec<u8>, (String, bool)> {
     let abort = web_sys::AbortController::new().map_err(js(false))?;
     let init = web_sys::RequestInit::new();
     init.set_signal(Some(&abort.signal()));
+    if local_mesh {
+        init.set_redirect(web_sys::RequestRedirect::Error);
+    }
     let on_timeout = {
         let abort = abort.clone();
         Closure::once_into_js(move || abort.abort())
@@ -442,7 +555,11 @@ async fn fetch_js(url: &str) -> Result<Vec<u8>, (String, bool)> {
         let buf = JsFuture::from(resp.array_buffer().map_err(js(false))?)
             .await
             .map_err(js(true))?;
-        Ok(js_sys::Uint8Array::new(&buf).to_vec())
+        let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+        if local_mesh && bytes.len() > LOCAL_MESH_MAX_BYTES {
+            return Err(("Local mesh resource exceeds 16 MiB".into(), false));
+        }
+        Ok(bytes)
     }
     .await;
     window.clear_timeout_with_handle(timer);
@@ -484,6 +601,10 @@ impl Plugin for GzAssetSourcesPlugin {
                     })
                 }
             }),
+        )
+        .register_asset_source(
+            gz_core::primitive::LOCAL_MESH_SOURCE,
+            AssetSourceBuilder::new(|| Box::new(LocalMeshReader)),
         )
         .insert_resource(store);
     }
@@ -820,3 +941,7 @@ mod tests {
         assert!(server.get_source(HTTP_SOURCE).is_ok());
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "assets/local_mesh_tests.rs"]
+mod local_mesh_tests;

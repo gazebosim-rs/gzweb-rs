@@ -219,10 +219,10 @@ impl SimBackend for PrimitiveBackend {
                             ..Default::default()
                         }),
                         orientation: Some(gz_core::msgs::Quaternion {
-                            x: v.rotation[0],
-                            y: v.rotation[1],
-                            z: v.rotation[2],
-                            w: v.rotation[3],
+                            x: v.render_rotation()[0],
+                            y: v.render_rotation()[1],
+                            z: v.render_rotation()[2],
+                            w: v.render_rotation()[3],
                             ..Default::default()
                         }),
                         ..Default::default()

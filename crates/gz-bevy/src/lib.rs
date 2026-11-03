@@ -191,6 +191,7 @@ impl Plugin for GzWebPlugin {
                     connection::pump,
                     spawn::apply_deletions,
                     spawn::apply_scene,
+                    spawn::report_local_mesh_errors,
                     spawn::instance_gltf,
                     heightmap::build,
                     render::apply_environment,
@@ -306,6 +307,7 @@ pub(crate) mod test_util {
             (
                 spawn::apply_deletions,
                 spawn::apply_scene,
+                spawn::report_local_mesh_errors,
                 spawn::instance_gltf,
                 heightmap::build,
                 render::apply_environment,

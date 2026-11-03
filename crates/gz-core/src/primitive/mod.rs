@@ -1,6 +1,6 @@
 // Copyright (C) 2026 Open Source Robotics Foundation
 // SPDX-License-Identifier: Apache-2.0
-//! The bounded local M1 viewer contract; no simulator or transport runtime.
+//! Bounded local primitive / glTF viewer contracts; no transport runtime.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -23,6 +23,136 @@ pub struct Visual {
 pub enum Shape {
     Box { size: [f64; 3] },
     Sphere { radius: f64 },
+    Mesh { uri: String, scale: [f64; 3] },
+}
+
+/// Separate HTTP-only source: legacy Gazebo asset fallback is never involved.
+pub const LOCAL_MESH_SOURCE: &str = "m2mesh";
+pub const LOCAL_MESH_PREFIX: &str = "m2mesh://";
+
+fn asset_segments(path: &str) -> bool {
+    !path.is_empty()
+        && path.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        })
+}
+
+fn asset_authority(authority: &str) -> bool {
+    authority.strip_prefix("127.0.0.1:").is_some_and(|port| {
+        !port.is_empty()
+            && port.bytes().all(|b| b.is_ascii_digit())
+            && port.parse::<u16>().is_ok_and(|value| value > 0)
+    })
+}
+
+/// Retain a scope guard *outside* the directory resolved by the glTF loader.
+/// Document validation rejects walks above the original scope; the repeated
+/// scope check additionally detects changed path components after resolution.
+pub fn local_mesh_asset_uri(uri: &str) -> Result<String, String> {
+    let invalid = || "Mesh URI must be a canonical loopback HTTP glTF asset URL".to_string();
+    if uri.len() > 2048 {
+        return Err(invalid());
+    }
+    let (authority, path) = uri
+        .strip_prefix("http://")
+        .and_then(|s| s.split_once('/'))
+        .ok_or_else(invalid)?;
+    let (scope, relative) = path
+        .strip_prefix("assets/")
+        .and_then(|s| s.split_once('/'))
+        .ok_or_else(invalid)?;
+    if !asset_authority(authority)
+        || scope.is_empty()
+        || !scope.bytes().all(|b| b.is_ascii_digit())
+        || !asset_segments(relative)
+        || !(relative.ends_with(".gltf") || relative.ends_with(".glb"))
+    {
+        return Err(invalid());
+    }
+    Ok(format!(
+        "{LOCAL_MESH_SOURCE}://{authority}/{scope}/assets/{scope}/{relative}"
+    ))
+}
+
+/// Decode only paths belonging to the M2 source, including relative dependencies.
+pub fn local_mesh_http_url(path: &str) -> Result<String, String> {
+    let invalid = || "Local mesh dependency escaped its declared asset scope".to_string();
+    let (authority, rest) = path.split_once('/').ok_or_else(invalid)?;
+    let (guard, rest) = rest.split_once('/').ok_or_else(invalid)?;
+    let (scope, relative) = rest
+        .strip_prefix("assets/")
+        .and_then(|s| s.split_once('/'))
+        .ok_or_else(invalid)?;
+    if !asset_authority(authority)
+        || guard != scope
+        || scope.is_empty()
+        || !scope.bytes().all(|b| b.is_ascii_digit())
+        || !asset_segments(relative)
+    {
+        return Err(invalid());
+    }
+    Ok(format!("http://{authority}/assets/{scope}/{relative}"))
+}
+
+/// glTF dependencies may walk up within this asset scope, never above it.
+/// Inline data is decoded by the maintained glTF loader, not fetched.
+pub fn local_mesh_dependency_allowed(base: &str, dependency: &str) -> bool {
+    if local_mesh_asset_uri(base).is_err() {
+        return false;
+    }
+    if dependency.starts_with("data:") {
+        return true;
+    }
+    let relative = base
+        .split_once("/assets/")
+        .and_then(|(_, p)| p.split_once('/'))
+        .map(|(_, p)| p);
+    let Some(relative) = relative else {
+        return false;
+    };
+    let mut depth = relative.split('/').count() - 1;
+    for part in dependency.split('/') {
+        match part {
+            "." => {}
+            ".." => {
+                let Some(parent) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = parent;
+            }
+            part if asset_segments(part) => depth += 1,
+            _ => return false,
+        }
+    }
+    !dependency.is_empty() && !matches!(dependency.rsplit('/').next(), Some("." | ".."))
+}
+
+impl Visual {
+    /// glTF Y-up -> Gazebo Z-up once, before the unchanged world-root basis.
+    /// Bevy applies R*S: (worldQ*Rx90)*Scale(sx,sz,sy) equals
+    /// worldQ*Scale(sx,sy,sz)*Rx90. Pose updates must use this same rotation.
+    pub fn render_rotation(&self) -> [f64; 4] {
+        if !matches!(self.shape, Shape::Mesh { .. }) {
+            return self.rotation;
+        }
+        let [x, y, z, w] = self.rotation;
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        [s * (w + x), s * (y + z), s * (z - y), s * (w - x)]
+    }
+
+    fn render_scale(&self) -> [f64; 3] {
+        match self.shape {
+            Shape::Mesh {
+                scale: [x, y, z], ..
+            } => [x, z, y],
+            _ => [1.; 3],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -99,7 +229,16 @@ impl Scene {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if self.version != 1
+        let version = if self
+            .visuals
+            .iter()
+            .any(|v| matches!(v.shape, Shape::Mesh { .. }))
+        {
+            2
+        } else {
+            1
+        };
+        if self.version != version
             || self.world != "default"
             || self.world_id == 0
             || self.world_id > u32::MAX as u64
@@ -136,6 +275,10 @@ impl Scene {
             let dimensions: &[f64] = match &visual.shape {
                 Shape::Box { size } => size,
                 Shape::Sphere { radius } => std::slice::from_ref(radius),
+                Shape::Mesh { uri, scale } => {
+                    local_mesh_asset_uri(uri)?;
+                    scale
+                }
             };
             if dimensions.iter().any(|v| {
                 !v.is_finite() || *v <= 0.0 || !(*v as f32).is_finite() || *v as f32 <= 0.0
@@ -405,34 +548,42 @@ impl Scene {
                 .map(|v| {
                     let mut material = MaterialDesc::absent();
                     material.diffuse = Some(v.color.map(|x| x as f32));
-                    material.present = true;
-                    Node {
+                    material.present = !matches!(v.shape, Shape::Mesh { .. });
+                    Ok(Node {
                         name: v.name.clone(),
                         id: v.id as u32,
                         kind: NodeKind::Visual,
                         path: format!("primitive/{}", v.id),
                         pose: Pose {
                             pos: v.translation,
-                            quat: v.rotation,
+                            quat: v.render_rotation(),
                         },
-                        scale: [1.0; 3],
+                        scale: v.render_scale(),
                         visible: true,
                         light: None,
                         sensors: Vec::new(),
                         children: Vec::new(),
                         visual: Some(VisualDesc {
                             proto_type: "primitive".into(),
-                            geometry: match v.shape {
-                                Shape::Box { size } => GeometryDesc::Box { size },
-                                Shape::Sphere { radius } => GeometryDesc::Sphere { radius },
+                            geometry: match &v.shape {
+                                Shape::Box { size } => GeometryDesc::Box { size: *size },
+                                Shape::Sphere { radius } => {
+                                    GeometryDesc::Sphere { radius: *radius }
+                                }
+                                Shape::Mesh { uri, .. } => GeometryDesc::Mesh {
+                                    uri: uri.clone(),
+                                    load_uri: local_mesh_asset_uri(uri)?,
+                                    submesh: None,
+                                    center_submesh: false,
+                                },
                             },
                             material,
                             cast_shadows: false,
                             transparency: 0.0,
                         }),
-                    }
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, String>>()?,
         })
     }
     pub fn same_layout(&self, other: &Self) -> bool {

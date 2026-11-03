@@ -53,6 +53,7 @@ features = [
     "Node",
     "Request",
     "RequestInit",
+    "RequestRedirect",
     "Response",
     "AbortController",
     "AbortSignal",

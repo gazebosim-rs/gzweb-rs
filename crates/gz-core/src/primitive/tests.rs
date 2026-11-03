@@ -264,3 +264,141 @@ fn acknowledgement_fence_prevents_an_older_running_scene_overwriting_pause() {
     assert_eq!(state.latest.as_ref().unwrap().sequence, 10);
     assert_eq!(state.paused(), Some(true));
 }
+
+fn mesh_scene() -> Scene {
+    let mut value = scene_value(1);
+    value["version"] = json!(2);
+    value["visuals"][0]["shape"] = json!({"kind":"mesh","uri":"http://127.0.0.1:9002/assets/7/models/arrow.gltf","scale":[2,3,5]});
+    value["visuals"][0]["rotation"] = json!([
+        0.,
+        0.,
+        std::f64::consts::FRAC_1_SQRT_2,
+        std::f64::consts::FRAC_1_SQRT_2
+    ]);
+    match parse(&value.to_string()).unwrap() {
+        ServerMessage::Scene(s) => s,
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn mesh_v2_preserves_materials_and_applies_y_up_rotation_and_scale_once() {
+    let s = mesh_scene();
+    let desc = s.description().unwrap();
+    let node = &desc.roots[0];
+    assert_eq!(node.pose.pos, [1., 2., 3.]);
+    for value in node.pose.quat {
+        assert!((value - 0.5).abs() < 1e-15);
+    }
+    assert_eq!(node.scale, [2., 5., 3.]);
+    let visual = node.visual.as_ref().unwrap();
+    assert!(
+        !visual.material.present,
+        "wire palette must not replace embedded glTF materials"
+    );
+    assert_eq!(
+        visual.geometry,
+        crate::scene::GeometryDesc::Mesh {
+            uri: "http://127.0.0.1:9002/assets/7/models/arrow.gltf".into(),
+            load_uri: "m2mesh://127.0.0.1:9002/7/assets/7/models/arrow.gltf".into(),
+            submesh: None,
+            center_submesh: false,
+        }
+    );
+    let mut pose_only = s.clone();
+    pose_only.sequence += 1;
+    pose_only.visuals[0].translation = [8., 9., 10.];
+    pose_only.visuals[0].rotation = [0., 0., 0., 1.];
+    assert!(s.same_layout(&pose_only));
+    let rotation = pose_only.visuals[0].render_rotation();
+    assert_eq!(
+        rotation,
+        [
+            std::f64::consts::FRAC_1_SQRT_2,
+            0.,
+            0.,
+            std::f64::consts::FRAC_1_SQRT_2
+        ]
+    );
+    if let Shape::Mesh { scale, .. } = &mut pose_only.visuals[0].shape {
+        scale[1] = 4.;
+    }
+    assert!(!s.same_layout(&pose_only));
+    let mut changed_uri = s.clone();
+    if let Shape::Mesh { uri, .. } = &mut changed_uri.visuals[0].shape {
+        *uri = "http://127.0.0.1:9002/assets/7/models/arrow.glb".into();
+    }
+    assert!(!s.same_layout(&changed_uri));
+    let mut wrong_version = s;
+    wrong_version.version = 1;
+    assert!(wrong_version.validate().is_err());
+}
+
+#[test]
+fn mesh_uris_scales_and_dependency_scopes_are_bounded() {
+    for uri in [
+        "https://127.0.0.1:9002/assets/7/a.gltf",
+        "http://localhost:9002/assets/7/a.gltf",
+        "http://127.0.0.2:9002/assets/7/a.gltf",
+        "http://127.0.0.1:0/assets/7/a.gltf",
+        "http://127.0.0.1:65536/assets/7/a.gltf",
+        "http://127.0.0.1:9002/assets/scope/a.gltf",
+        "file:///tmp/a.gltf",
+        "model://a/a.gltf",
+        "http://remote/assets/7/a.gltf",
+        "http://127.0.0.1:9002/assets/7/../a.gltf",
+        "http://127.0.0.1:9002/assets/7/a//b.gltf",
+        "http://127.0.0.1:9002/assets/7/a%2fb.gltf",
+        "http://127.0.0.1:9002/assets/7/a.gltf?q=1",
+        "http://127.0.0.1:9002/assets/7/a.gltf#Scene0",
+        "http://127.0.0.1:9002/assets/7/a\\b.gltf",
+        "http://127.0.0.1:9002/assets/7/a.obj",
+    ] {
+        assert!(local_mesh_asset_uri(uri).is_err(), "{uri}");
+    }
+    for value in [
+        0.,
+        -1.,
+        f64::INFINITY,
+        f64::NAN,
+        f64::MAX,
+        f64::MIN_POSITIVE,
+    ] {
+        let mut s = mesh_scene();
+        if let Shape::Mesh { scale, .. } = &mut s.visuals[0].shape {
+            scale[0] = value;
+        }
+        assert!(s.validate().is_err(), "{value}");
+    }
+    let base = "http://127.0.0.1:9002/assets/7/models/arrow.gltf";
+    for relative in [
+        "part.bin",
+        "../shared.bin",
+        "textures/albedo.png",
+        "./part.bin",
+        "data:application/octet-stream;base64,AAAA",
+    ] {
+        assert!(local_mesh_dependency_allowed(base, relative), "{relative}");
+    }
+    for relative in [
+        "../../outside.bin",
+        "../../../8/assets/8/a.bin",
+        "/assets/8/a.bin",
+        "https://remote/a.bin",
+        "gzhttps://remote/a.bin",
+        "%2e%2e/a.bin",
+        "",
+        "../..",
+        "x\\a.bin",
+    ] {
+        assert!(!local_mesh_dependency_allowed(base, relative), "{relative}");
+    }
+    assert_eq!(
+        local_mesh_http_url("127.0.0.1:9002/7/assets/7/shared.bin").unwrap(),
+        "http://127.0.0.1:9002/assets/7/shared.bin"
+    );
+    assert!(local_mesh_http_url("127.0.0.1:9002/7/assets/8/a.bin").is_err());
+    assert!(local_mesh_http_url("127.0.0.1:9002/7/assets/7/../a.bin").is_err());
+    assert!(local_mesh_http_url("remote:9002/7/assets/7/a.bin").is_err());
+    assert!(!local_mesh_dependency_allowed("not a base", "part.bin"));
+}

@@ -83,15 +83,38 @@ pub struct GzLoads(pub Vec<UntypedHandle>);
 #[derive(Component, Debug, Clone)]
 pub struct GzGltf(pub Handle<Gltf>);
 
+/// Only the explicitly admitted M2 route surfaces failures in our message UI.
+#[derive(Component)]
+#[doc(hidden)]
+pub struct LocalMesh {
+    pub(crate) uri: String,
+}
+
+pub fn report_local_mesh_errors(
+    mut commands: Commands,
+    server: Option<Res<AssetServer>>,
+    pending: Query<(Entity, &GzGltf, &LocalMesh)>,
+) {
+    let Some(server) = server else { return };
+    for (entity, handle, mesh) in &pending {
+        if let Some(bevy::asset::RecursiveDependencyLoadState::Failed(error)) =
+            server.get_recursive_dependency_load_state(handle.0.id())
+        {
+            error!("Local glTF '{}' failed to load: {error}", mesh.uri);
+            commands.entity(entity).remove::<LocalMesh>();
+        }
+    }
+}
+
 /// Instances each loaded glTF's default scene (else its first), as three.js's
 /// `GLTFLoader` does.
 pub fn instance_gltf(
     mut commands: Commands,
-    pending: Query<(Entity, &GzGltf), Without<WorldAssetRoot>>,
+    pending: Query<(Entity, &GzGltf, Option<&LocalMesh>), Without<WorldAssetRoot>>,
     gltfs: Option<Res<Assets<Gltf>>>,
 ) {
     let Some(gltfs) = gltfs else { return };
-    for (entity, gltf) in &pending {
+    for (entity, gltf, local_mesh) in &pending {
         let Some(gltf) = gltfs.get(&gltf.0) else {
             continue;
         };
@@ -104,8 +127,13 @@ pub fn instance_gltf(
                 commands.entity(entity).insert(WorldAssetRoot(scene));
             }
             None => {
-                warn!("glTF has no scene");
+                if let Some(mesh) = local_mesh {
+                    error!("Local glTF '{}' has no scene", mesh.uri);
+                } else {
+                    warn!("glTF has no scene");
+                }
                 commands.entity(entity).remove::<GzGltf>();
+                commands.entity(entity).remove::<LocalMesh>();
             }
         }
     }
@@ -495,12 +523,32 @@ fn spawn_mesh_file(
     let path = assets::asset_path(load_uri);
     match uri::extension(load_uri).as_str() {
         "glb" | "gltf" => {
-            let gltf: Handle<Gltf> = ctx.asset_server.load(path);
+            let local = load_uri.starts_with(gz_core::primitive::LOCAL_MESH_PREFIX);
+            let gltf: Handle<Gltf> = if local {
+                ctx.asset_server
+                    .load_builder()
+                    .with_settings(|settings: &mut bevy::gltf::GltfLoaderSettings| {
+                        settings.load_cameras = false;
+                        settings.load_lights = false;
+                        settings.load_animations = false;
+                        settings.convert_coordinates = Some(Default::default());
+                    })
+                    .load(path)
+            } else {
+                ctx.asset_server.load(path)
+            };
             ctx.loads.0.push(gltf.clone().untyped());
             let entity = ctx
                 .commands
                 .spawn((GzGltf(gltf), Transform::IDENTITY, ChildOf(parent)))
                 .id();
+            if local {
+                if let GeometryDesc::Mesh { uri, .. } = &visual.geometry {
+                    ctx.commands
+                        .entity(entity)
+                        .insert(LocalMesh { uri: uri.clone() });
+                }
+            }
             add_submesh(ctx, visual, entity);
             add_mesh_material(ctx, visual, entity);
         }
