@@ -154,3 +154,23 @@ wait remain unchanged. The correction requires independent source review and
 affected normal hooks. Actual browser verification must additionally display a
 corrupt-image/asset failure using production global logging; source logs or
 this headless test alone do not satisfy that acceptance condition.
+
+The affected normal pre-push run stopped after 139.04 s without a capacity stop
+or publication. All 389 gz-bevy tests, including the corrected three-error UI
+control, passed. The later gz-ui target had 458 passing tests and one failure in
+its existing unreadable-workspace-file warning/tray control (zero captured
+warnings versus one). Its existing PreUpdate executor and actual file operation
+were already correct; no final coverage verdict was produced.
+
+Pinned tracing-core's one-live-dispatch interest-cache fast path consults the
+registering thread's default subscriber. Other parallel UI tests can register
+that warning while using a NOP subscriber, racing the control's existing cache
+rebuild. The failed interleaving was not instrumented, so this source-supported
+mechanism is not claimed as an experimentally established cause. The narrow
+test-only correction retains a second scoped public tracing
+Dispatch while the actual file read runs, selecting the maintained multi-dispatch
+registry path. No global subscriber or logging framework is installed. The
+existing file read, subscriber/channel, UI/persistence assertions, scheduler and
+frame count remain unchanged. This is the sole existing UI test observer adjustment;
+no legacy predicate is relaxed. The correction requires independent source review
+and the affected normal hooks before any qualification claim.

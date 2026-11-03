@@ -388,6 +388,11 @@ fn a_file_it_cant_read_shows_in_the_message_tray() {
     });
     let layer = gz_bevy::messages::log_layer(&mut app).unwrap();
     let subscriber = bevy::log::tracing_subscriber::registry().with(layer);
+    // Keep two scoped dispatches live: tracing's one-dispatch cache fast path
+    // uses the calling thread's default, so another test's NOP registration
+    // can otherwise overwrite this warning's interest. No global logger changes.
+    let _interest_guard =
+        bevy::log::tracing::Dispatch::new(bevy::log::tracing_subscriber::registry());
     bevy::log::tracing::subscriber::with_default(subscriber, || {
         // Other tests, on other threads, hit the same warning with no
         // subscriber: tracing may have cached that nobody wants it. Asked
