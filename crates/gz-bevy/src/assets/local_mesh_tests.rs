@@ -368,6 +368,11 @@ fn missing_invalid_and_no_scene_meshes_surface_once_in_the_existing_message_ui()
     app.add_plugins(bevy::gltf::GltfPlugin::default())
         .init_resource::<SystemMessages>()
         .add_systems(Update, messages::drain_log);
+    // with_default is thread-local. Keep only this test's Update/reporting
+    // systems in its dispatcher scope; production uses Bevy's global logger.
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_executor(bevy::ecs::schedule::SingleThreadedExecutor::new());
+    });
     let layer = messages::log_layer(&mut app).unwrap();
     let subscriber = bevy::log::tracing_subscriber::registry().with(layer);
     app.finish();

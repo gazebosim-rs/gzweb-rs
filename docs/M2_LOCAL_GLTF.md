@@ -3,9 +3,9 @@
 # Local glTF visuals on moving primitive bodies
 
 This candidate extends the accepted M1 viewer at `0db1f4e` in an isolated
-worktree. M2 is not yet qualified: its runtime tests, coverage, WASM bundles and actual
-browser behavior are unrun; the first normal hook failed compilation as recorded
-below. The original M1 worktree, binaries,
+worktree. M2 is not yet qualified: final runtime/coverage, WASM bundles and actual browser
+qualification remain pending. Partial normal-hook and runtime precursors are
+recorded below. The original M1 worktree, binaries,
 controls, protocol, default Gazebo backend and evidence remain intact.
 
 Use the existing explicit primitive backend, for example
@@ -131,3 +131,26 @@ patterns with identical failure messages and assertions. Production code remains
 unchanged; generic checks, rustfmt, rustdoc and dependency audit passed. WASM
 Clippy and runtime/coverage verification still have not run. This correction is
 subject to independent source review before the next affected normal hook.
+
+The next normal commit hook passed in 85.02 s, including native/WASM Clippy,
+rustfmt, rustdoc and the dependency audit, creating `03cfd37e`. That result did
+not provide runtime, coverage, bundle or browser acceptance.
+
+The first normal pre-push run failed after 146.03 s without a capacity stop or
+publication. The gz-bevy target reported 388 passing tests and one failure: the
+new three-error UI control captured zero messages after its unchanged 30 s wait.
+The other local glTF HTTP, version/redirect and instantiated-mesh controls passed;
+Cargo stopped before the remaining workspace targets or final coverage export,
+so this attempt provides no 95% coverage verdict.
+
+That test installs a thread-local tracing subscriber, which maintained tracing
+does not propagate to Bevy's worker threads. The application instead installs
+Bevy's global subscriber. The correction configures only this test's Update
+schedule with the maintained `SingleThreadedExecutor::new()`, keeping its actual
+reporting systems in the local subscriber scope and retaining deferred command
+application. Production scheduling/logging is unchanged. All three actual
+missing/invalid/no-scene error assertions, exactly-once checks and the 30 s
+wait remain unchanged. The correction requires independent source review and
+affected normal hooks. Actual browser verification must additionally display a
+corrupt-image/asset failure using production global logging; source logs or
+this headless test alone do not satisfy that acceptance condition.
