@@ -210,6 +210,14 @@ impl Plugin for GzWebPlugin {
                     heightmap::drop_failed_textures,
                 ),
             );
+        if self.config.backend == BackendKind::Primitive {
+            app.init_gizmo_group::<primitive::scan_view::ScanGizmos>()
+                .add_systems(Update, primitive::scan_view::apply.after(connection::pump))
+                .add_systems(
+                    PostUpdate,
+                    primitive::scan_view::draw.after(TransformSystems::Propagate),
+                );
+        }
         render::configure(app, self.config.quality);
         app.add_systems(Startup, render::setup_gizmos).add_systems(
             Update,

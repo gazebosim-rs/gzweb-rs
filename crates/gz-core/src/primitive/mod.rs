@@ -4,6 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod scan;
+pub use scan::{Scan, ScanFrame, MAX_SCAN_BEAMS};
+
 pub const MAX_SCENE_BYTES: usize = 64 * 1024;
 pub const MAX_VISUALS: usize = 128;
 
@@ -194,6 +197,7 @@ pub struct Ack {
 pub enum ServerMessage {
     Scene(Scene),
     Ack(Ack),
+    Scan(ScanFrame),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -314,6 +318,7 @@ pub fn parse(text: &str) -> Result<ServerMessage, String> {
     match &message {
         ServerMessage::Scene(scene) => scene.validate()?,
         ServerMessage::Ack(ack) => ack.validate()?,
+        ServerMessage::Scan(scan) => scan.validate()?,
     }
     Ok(message)
 }
@@ -341,6 +346,11 @@ pub struct Session {
     pub notice: Option<String>,
     pub clear_scene: bool,
     pub latest: Option<Scene>,
+    /// Coalesced scan change; Some(None) explicitly retires the preview.
+    pub latest_scan: Option<Option<ScanFrame>>,
+    scan_time: Option<u64>,
+    acquired_time: Option<u64>,
+    cleared_acquired_time: Option<u64>,
     current: Option<Current>,
     fence: Option<(Stamp, bool)>,
     pending: Option<Pending>,
@@ -355,6 +365,10 @@ impl Default for Session {
             notice: None,
             clear_scene: true,
             latest: None,
+            latest_scan: None,
+            scan_time: None,
+            acquired_time: None,
+            cleared_acquired_time: None,
             current: None,
             fence: None,
             pending: None,
@@ -373,9 +387,17 @@ impl Session {
         self.notice = None;
         self.clear_scene = true;
         self.latest = None;
+        self.clear_scan();
         self.current = None;
         self.fence = None;
         self.pending = None;
+    }
+
+    fn clear_scan(&mut self) {
+        self.latest_scan = Some(None);
+        self.scan_time = None;
+        self.acquired_time = None;
+        self.cleared_acquired_time = None;
     }
 
     pub fn opened(&mut self) {
@@ -462,6 +484,11 @@ impl Session {
                     }
                     self.fence = None;
                 }
+                if self.current.is_some_and(|current| {
+                    current.world_id != scene.world_id || current.stamp.epoch != scene.epoch
+                }) {
+                    self.clear_scan();
+                }
                 self.current = Some(Current {
                     world_id: scene.world_id,
                     stamp: scene.stamp(),
@@ -477,6 +504,39 @@ impl Session {
                     .into();
                 }
                 self.latest = Some(scene);
+            }
+            ServerMessage::Scan(frame) => {
+                frame.validate()?;
+                let Some(current) = self.current else {
+                    return Ok(());
+                };
+                if u64::from(frame.world_id) != current.world_id
+                    || frame.epoch != self.clock().expect("admitted scene has a clock").0.epoch
+                    || self.scan_time.is_some_and(|time| {
+                        frame.sim_time_ns < time
+                            || (frame.sim_time_ns == time && frame.scan.is_some())
+                    })
+                    || frame.scan.as_ref().is_some_and(|scan| {
+                        self.acquired_time
+                            .is_some_and(|time| scan.acquired_ns < time)
+                            || self
+                                .cleared_acquired_time
+                                .is_some_and(|time| scan.acquired_ns <= time)
+                    })
+                {
+                    return Ok(());
+                }
+                self.scan_time = Some(frame.sim_time_ns);
+                if let Some(scan) = &frame.scan {
+                    self.acquired_time = Some(scan.acquired_ns);
+                } else {
+                    self.cleared_acquired_time = Some(frame.sim_time_ns);
+                }
+                self.latest_scan = Some(if frame.scan.is_some() {
+                    Some(frame)
+                } else {
+                    None
+                });
             }
             ServerMessage::Ack(ack) => {
                 ack.validate()?;
@@ -510,6 +570,7 @@ impl Session {
                 }
                 if self.current.is_some_and(|c| stamp.epoch > c.stamp.epoch) {
                     self.clear_scene = true;
+                    self.clear_scan();
                     self.latest = None;
                     self.current = None;
                 }

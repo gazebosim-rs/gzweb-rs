@@ -227,6 +227,8 @@ pub struct GzInbox {
     pub scene: Option<Box<msgs::Scene>>,
     /// Complete prepared scene from an explicit alternative backend.
     pub prepared_scene: Option<gz_core::scene::SceneDesc>,
+    /// Latest explicit scan change; Some(None) clears the measured overlay.
+    pub primitive_scan: Option<Option<gz_core::primitive::ScanFrame>>,
     /// `scene/info` updates, in arrival order.
     pub scene_updates: Vec<msgs::Scene>,
     /// Entity ids from `scene/deletion`, in arrival order.

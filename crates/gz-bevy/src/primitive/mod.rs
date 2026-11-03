@@ -5,6 +5,8 @@ use crate::backend::{BackendIo, SimBackend, WorldControl};
 use crate::connection::{backoff, Connector};
 use crate::driver::{self, Driver, DriverEvent};
 use crate::GzConfig;
+
+pub(crate) mod scan_view;
 use gz_core::primitive::{self, Action, Scene, Session};
 use gz_core::transport::{SendError, Status};
 
@@ -62,6 +64,7 @@ impl PrimitiveBackend {
         io.status.attempts = io.status.attempts.saturating_add(1);
         io.inbox.prepared_scene = Some(empty_scene());
         io.inbox.poses.clear();
+        io.inbox.primitive_scan = Some(None);
     }
     fn unsupported() -> Result<(), SendError> {
         Err(SendError::Unsendable(
@@ -69,6 +72,59 @@ impl PrimitiveBackend {
         ))
     }
 }
+// Only the primitive backend opts in; default Gazebo URLs are untouched.
+fn scan_query(query: &str) -> Result<String, String> {
+    let mut flags = query
+        .split('&')
+        .filter(|part| part.split('=').next() == Some("scan"));
+    if let Some(first) = flags.next() {
+        return if first == "scan=1" && flags.next().is_none() {
+            Ok(query.to_string())
+        } else {
+            Err("Primitive scan query must contain exactly one scan=1".into())
+        };
+    }
+    Ok(if query.is_empty() {
+        "scan=1".into()
+    } else {
+        format!("{query}&scan=1")
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn scan_url(url: &str) -> Result<String, String> {
+    use tungstenite::http::{uri::PathAndQuery, Uri};
+    let uri: Uri = url
+        .parse()
+        .map_err(|e| format!("Invalid primitive URL: {e}"))?;
+    let query = scan_query(uri.query().unwrap_or(""))?;
+    let path = if uri.path().is_empty() {
+        "/"
+    } else {
+        uri.path()
+    };
+    let value: PathAndQuery = format!("{path}?{query}")
+        .parse()
+        .map_err(|e| format!("Invalid primitive query: {e}"))?;
+    let mut parts = uri.into_parts();
+    parts.path_and_query = Some(value);
+    Uri::from_parts(parts)
+        .map(|uri| uri.to_string())
+        .map_err(|e| format!("Invalid primitive URL: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn scan_url(url: &str) -> Result<String, String> {
+    let parsed = web_sys::Url::new(url).map_err(|_| "Invalid primitive URL".to_string())?;
+    if !parsed.hash().is_empty() {
+        return Err("Primitive URL must not have a fragment".into());
+    }
+    let search = parsed.search();
+    let query = scan_query(search.strip_prefix('?').unwrap_or(&search))?;
+    parsed.set_search(&query);
+    Ok(parsed.href())
+}
+
 fn empty_scene() -> gz_core::scene::SceneDesc {
     gz_core::scene::SceneDesc {
         name: "default".into(),
@@ -88,7 +144,16 @@ impl SimBackend for PrimitiveBackend {
         }
         self.closed("Connecting".into(), io);
         self.pending_send_failure = None;
-        self.driver = Some((self.connector)(&self.url));
+        let scan_url = match scan_url(&self.url) {
+            Ok(url) => url,
+            Err(error) => {
+                self.closed(error, io);
+                io.status.reconnect_at = None;
+                self.start = false;
+                return;
+            }
+        };
+        self.driver = Some((self.connector)(&scan_url));
         self.last_message = io.now;
         self.start = false;
         io.status.url = self.url.clone();
@@ -244,6 +309,9 @@ impl SimBackend for PrimitiveBackend {
             io.status.attempts = 0;
             self.previous = Some(scene);
         }
+        if let Some(scan) = self.session.latest_scan.take() {
+            io.inbox.primitive_scan = Some(scan);
+        }
         io.status.partial_clock = self.session.clock();
         let pending =
             self.session.connected && !self.session.can_control() && self.session.clock().is_some();
@@ -262,3 +330,6 @@ impl SimBackend for PrimitiveBackend {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod scan_backend_tests;
