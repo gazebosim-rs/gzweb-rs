@@ -69,12 +69,13 @@ renderer performance must be observed, not inferred from compilation.
 ## Verification status
 
 The final independently Source-reviewed two-flavor build completed successfully
-in 1069.11 s with no disk-guard stop. Current WebGPU gzip size is 12,873,810 bytes
+in 1069.11 s with no disk-guard stop. The pre-patch WebGPU gzip size was 12,873,810 bytes
 (WASM SHA-256 `852ce51c41b547437ae49ecdf8f3f44112980e53d2974bd36db19b63ba5ab23f`);
-current WebGL2 is 12,842,420 bytes
+pre-patch WebGL2 was 12,842,420 bytes
 (`cfd8ac9c8f6e5107d95de8509d3ff4d76d941fdb2d2fbd04553766304fa2f5fe`).
-Both satisfy the unchanged 14,000,000-byte per-bundle budget. Neither bundle is
-being relabeled from an older source revision.
+Both satisfied the unchanged 14,000,000-byte per-bundle budget. These bundles
+remain historical after the executor patch below; neither is relabeled as a
+patched-graph build.
 
 Root's actual final full-UI browser probe displayed twenty colored dynamic
 boxes/spheres and the ground, with 21 real V rows and scoped names. Play advanced
@@ -116,12 +117,11 @@ Earlier attempts remain separate:
 The unrelated preserved Bevy 0.18 prototype and its initial failed WebGPU browser
 probe remain historical evidence, not this maintained frontend's acceptance.
 
-Consolidated required Rust checks, at least 95% line coverage and exact hosted CI
-are still pending; the builds and browser observations do not replace them.
-`node --test tests/startup.mjs` is wired into the existing Node 24 parity job and
-must run once in final consolidated verification. Those pure startup-selection
-controls are not a live renderer substitute. Existing parity, coverage, dependency
-and payload gates are unchanged.
+The corrected normal commit hook and pre-push coverage passed for the pre-patch
+graph. Local coverage measured 54,246 / 55,767 lines (97.27%). The standalone
+`node --test tests/startup.mjs` controls passed once and also passed in the
+existing Node 24 hosted parity job; they are not a live renderer substitute.
+Existing parity, coverage, dependency and payload gates are unchanged.
 
 The first normal commit hook completed its text/metadata checks, rustfmt and
 rustdoc, then failed after 168.04 s without a capacity stop. Native all-target
@@ -131,5 +131,54 @@ reached. Cargo-deny also needed locked foreign-target crate sources absent from
 the selectively populated Linux/WASM cache. Completing that cache does not
 change Cargo.lock, dependency policy or offline verification. No commit,
 coverage, review push or hosted qualification resulted from this attempt. The
-completed correction remains subject to independent source review and the
-normal affected gate.
+completed correction was independently source-reviewed before the affected
+normal hook passed; it did not alter runtime source or assertions.
+
+Exact hosted run `41579757614` on candidate `a3e0b0a2` completed with five jobs
+passing: native/WASM lint and docs, coverage, Chromium parity, cached Fuel worlds
+and the WASM build. Its dependency audit failed solely because locked
+`async-executor` 1.14.0 had been yanked. The upstream 1.14.1 release fixes a
+use-after-free when a Waker fires during Executor::drop (a 1.14.0 regression).
+The correction changes only that package's locked version and checksum; Bevy
+0.20, dependency edges, license policy and all application source remain intact.
+Bevy tasks' `^1.11` requirement permits the patch, which is selected in the actual
+WASM graph. No yanked allowance, advisory ignore or verification threshold
+changes are used. Earlier builds, probes and passing checks above retain their
+original graph scope.
+
+The source-reviewed patched-graph two-flavor build passed in 1665.18 s without a
+capacity stop. WebGPU WASM SHA-256 is
+`f039b896ef5346b1248c2ed8563f1f1cf1c57493a24c577463132d5103c581ea`
+(12,878,881 bytes gzipped); WebGL2 is
+`7fb903d8cd0a2c221e728d9cca30864ab275927eb3961c9b1232eb1a35711f20`
+(12,840,675 bytes gzipped). Both pass the unchanged 14 MB budget. The build's
+minimum observed free space was 6,563,545,088 bytes.
+
+Root's fresh patched-graph WebGL2 probe on ANGLE/NVIDIA RTX 2070 displayed 21
+actual visual rows: twenty dynamic boxes/spheres and the ground. A saved running
+frame showed 21.690 s. Committed Pause acknowledged epoch 0 at 25.675 s; Reset
+acknowledged epoch 1, exactly zero time and paused=true, restoring initial poses.
+Resume showed actual motion at 3.930 s on epoch 1. Reload initially displayed a
+closed socket, then recovered automatically without a manual retry; the saved
+fresh frame advanced to 171.955 s, followed by committed Pause at epoch 1,
+175.950 s. The transient closed image remains evidence of recovery in progress,
+not a passing scene.
+
+Controlled simulator shutdown exited zero at 175,950,000,000 ns. The viewer
+cleared geometry and clock and disabled controls. Restarting the same patched
+simulator binary automatically restored 21 initial visuals and a zero paused
+clock. No automatic `generate_world_sdf` console entries were observed. This is
+bounded live behavior, not WebGPU runtime, numeric full-pose parity or performance
+qualification; background-tab 1 FPS is not a benchmark, and spheres may roll off
+the finite ground during long running.
+
+The ten byte-preserved JPEGs and manifest are in the simulator's
+`docs/evidence/m1-browser` packet. Its tracked `observations.json` SHA-256 is
+`4173e3567f9112ee883a29a2e1dc2cd243b8601cdfac40dea5dcf2e5afce1935`.
+The original artifact manifest SHA-256 is
+`7d5a515fd822167bb4485442aad091ad02b9e1033935c3e72b5e822920591b5e`;
+the tracked copy adds only the prior observation commit. The controlled-shutdown
+record SHA-256 is
+`c41112bb96ca9d77ddd15889d6ea2bd891bee5ca020dffa517949360631be3b7`.
+Corrected normal commit/pre-push verification and exact hosted CI remain pending;
+these builds and observations do not grant M1 acceptance.
