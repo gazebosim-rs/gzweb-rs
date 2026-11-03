@@ -38,4 +38,16 @@ else
     scripts/wasm-budget.sh
 fi
 
-echo "Build complete."
+# A separate maintained GL shader configuration; never mix PBR WebGPU/GL layouts.
+mkdir -p ./target/wasm32-unknown-unknown/release/webgpu
+cp ./target/wasm32-unknown-unknown/release/gzweb{.js,_bg.wasm} ./target/wasm32-unknown-unknown/release/webgpu/
+echo "Building maintained WebGL2 fallback..."
+cargo build -p gzweb --target wasm32-unknown-unknown --release --no-default-features
+mkdir -p ./target/wasm32-unknown-unknown/release/webgl2
+wasm-bindgen --out-dir ./target/wasm32-unknown-unknown/release/webgl2 --target web "${NAMES[@]}" ./target/wasm32-unknown-unknown/release/gzweb.wasm
+if [ "${KEEP_WASM_NAMES:-0}" = 1 ]; then
+    scripts/wasm-budget.sh ./target/wasm32-unknown-unknown/release/webgl2/gzweb_bg.wasm || true
+else
+    scripts/wasm-budget.sh ./target/wasm32-unknown-unknown/release/webgl2/gzweb_bg.wasm
+fi
+echo "Both renderer bundles complete."

@@ -88,6 +88,11 @@ pub fn request_extras(
         }
         return;
     }
+    // An explicit capability refusal is not a failed service probe. Leave
+    // unknown Gazebo servers on their existing request/reply path.
+    if status.world_sdf == Some(false) {
+        return;
+    }
     let needed = overlays.need_sdf() || wanted.is_some_and(|w| w.any());
     if !needed || state.pending.is_some() {
         return;

@@ -116,6 +116,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Browser startup selection controls
+        working-directory: gzweb-rs
+        run: node --test tests/startup.mjs
       - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@v2
         with:

@@ -21,6 +21,7 @@ pub mod mesh_file;
 pub mod messages;
 pub mod obj;
 pub mod overlays;
+mod primitive;
 pub mod render;
 pub mod save;
 pub mod snapshot;
@@ -81,8 +82,27 @@ pub const DEFAULT_PORT: &str = match option_env!("GZ_WEBSOCKET_PORT") {
 };
 
 /// Connection and behaviour options.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BackendKind {
+    #[default]
+    Gazebo,
+    Primitive,
+}
+impl std::str::FromStr for BackendKind {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, String> {
+        match value {
+            "gazebo" => Ok(Self::Gazebo),
+            "primitive" => Ok(Self::Primitive),
+            _ => Err("backend must be gazebo or primitive".into()),
+        }
+    }
+}
+
 #[derive(Resource, Clone, Debug)]
 pub struct GzConfig {
+    /// Explicit consumer protocol; Gazebo remains the default.
+    pub backend: BackendKind,
     /// Websocket URL, e.g. `ws://localhost:9002`.
     pub url: String,
     /// Optional auth key for the websocket server.
@@ -110,6 +130,7 @@ pub struct GzConfig {
 impl Default for GzConfig {
     fn default() -> Self {
         Self {
+            backend: BackendKind::Gazebo,
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,

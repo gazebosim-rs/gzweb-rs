@@ -25,7 +25,7 @@ use crate::topics::{GzTopics, GzTraffic};
 use crate::GzConfig;
 
 /// Opens a new driver to a server URL.
-type Connector = Box<dyn Fn(&str) -> Driver>;
+pub(crate) type Connector = Box<dyn Fn(&str) -> Driver>;
 
 /// The Gazebo websocket server as the app's [`SimBackend`]: the socket
 /// ([`Driver`]), the protocol ([`Transport`]), reconnecting, and the
@@ -91,6 +91,14 @@ pub struct GzStatus {
     /// Reconnect attempts since the last time the scene was ready.
     pub attempts: u32,
     pub sim: Option<SimStats>,
+    /// Primitive transport reports only committed clock/pause, never invented RTF/iterations.
+    pub partial_clock: Option<(gz_core::primitive::Stamp, bool)>,
+    /// This backend has clock-only telemetry, including while disconnected.
+    pub partial_metrics: bool,
+    /// World-SDF generation capability: None preserves the legacy service probe.
+    pub world_sdf: Option<bool>,
+    pub control_pending: bool,
+    pub control_error: Option<String>,
     /// A socket is open or opening (false once it closes, until the next
     /// attempt).
     pub attempting: bool,
@@ -105,6 +113,17 @@ pub struct GzStatus {
 }
 
 impl GzStatus {
+    pub fn paused(&self) -> Option<bool> {
+        self.partial_clock
+            .map(|(_, p)| p)
+            .or_else(|| self.sim.map(|s| s.paused))
+    }
+    pub fn sim_time(&self) -> Option<f64> {
+        self.partial_clock
+            .map(|(t, _)| t.seconds as f64 + f64::from(t.nanoseconds) * 1e-9)
+            .or_else(|| self.sim.map(|s| s.sim_time))
+    }
+
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             status: Status::Disconnected,
@@ -114,6 +133,11 @@ impl GzStatus {
             reconnect_at: None,
             attempts: 0,
             sim: None,
+            partial_clock: None,
+            partial_metrics: false,
+            world_sdf: None,
+            control_pending: false,
+            control_error: None,
             attempting: false,
             edits: None,
             publishes: None,
@@ -201,6 +225,8 @@ pub struct GzInbox {
     /// The initial scene (reply to `scene,<world>`). A second one, after a
     /// reconnect, replaces everything.
     pub scene: Option<Box<msgs::Scene>>,
+    /// Complete prepared scene from an explicit alternative backend.
+    pub prepared_scene: Option<gz_core::scene::SceneDesc>,
     /// `scene/info` updates, in arrival order.
     pub scene_updates: Vec<msgs::Scene>,
     /// Entity ids from `scene/deletion`, in arrival order.
@@ -237,8 +263,18 @@ pub fn connect(world: &mut World) {
                 .get_resource::<WsAssetStore>()
                 .cloned()
                 .unwrap_or_default();
-            let backend = WebsocketBackend::new(&config, connector, store);
-            world.insert_non_send(Backend(Box::new(backend)));
+            if config.backend == crate::BackendKind::Primitive {
+                match crate::primitive::PrimitiveBackend::new(&config) {
+                    Ok(backend) => world.insert_non_send(Backend(Box::new(backend))),
+                    Err(error) => {
+                        status.status = Status::Error(error);
+                        status.attempting = false;
+                    }
+                }
+            } else {
+                let backend = WebsocketBackend::new(&config, connector, store);
+                world.insert_non_send(Backend(Box::new(backend)));
+            }
         }
         Err(e) => {
             error!("{e}");
@@ -249,14 +285,14 @@ pub fn connect(world: &mut World) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn connector(config: &GzConfig) -> Result<Connector, String> {
+pub(crate) fn connector(config: &GzConfig) -> Result<Connector, String> {
     // Built once, not on every reconnect.
     let tls = gz_core::net::tls_config(config.ca_cert.as_deref())?;
     Ok(Box::new(move |url| driver::connect(url, Some(tls.clone()))))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn connector(_config: &GzConfig) -> Result<Connector, String> {
+pub(crate) fn connector(_config: &GzConfig) -> Result<Connector, String> {
     Ok(Box::new(driver::connect))
 }
 

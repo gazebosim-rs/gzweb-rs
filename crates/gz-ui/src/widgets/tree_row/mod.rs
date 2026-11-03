@@ -52,6 +52,8 @@ pub enum EntityKind {
     Link,
     Joint,
     Sensor,
+    /// An admitted primitive backend visual root, not a synthetic model/link.
+    Visual,
 }
 
 impl EntityKind {
@@ -63,6 +65,7 @@ impl EntityKind {
             EntityKind::Link => "K",
             EntityKind::Joint => "J",
             EntityKind::Sensor => "S",
+            EntityKind::Visual => "V",
         }
     }
 
@@ -71,7 +74,7 @@ impl EntityKind {
             EntityKind::World => ColorRole::EntityWorld,
             EntityKind::Model => ColorRole::EntityModel,
             EntityKind::Light => ColorRole::EntityLight,
-            EntityKind::Link => ColorRole::EntityLink,
+            EntityKind::Link | EntityKind::Visual => ColorRole::EntityLink,
             EntityKind::Joint => ColorRole::EntityJoint,
             EntityKind::Sensor => ColorRole::EntitySensor,
         }

@@ -148,7 +148,7 @@ pub(crate) struct Sources<'w, 's> {
 /// What the items read of [`GzStatus`]: whether the sim is there and
 /// paused, and what the server takes. (The stats change every message;
 /// these rarely.)
-type GzKey = (Option<bool>, Option<bool>, Option<bool>);
+type GzKey = (Option<bool>, Option<bool>, Option<bool>, bool);
 
 impl Sources<'_, '_> {
     /// What the items come from changed since the last look: the
@@ -159,7 +159,7 @@ impl Sources<'_, '_> {
         let gz = self
             .gz
             .as_deref()
-            .map(|s| (s.sim.as_ref().map(|x| x.paused), s.edits, s.publishes));
+            .map(|s| (s.paused(), s.edits, s.publishes, s.control_pending));
         let gz_changed = std::mem::replace(&mut *self.seen_gz, gz) != gz;
         gone || gz_changed
             || self.phase.is_changed()
@@ -192,7 +192,7 @@ impl Sources<'_, '_> {
                 (true, None) => "Waiting for the world's clock",
                 (true, Some(_)) => "Not while running",
             };
-            return (!t.enabled(self.phase.0, sim)).then_some(why);
+            return (!t.available(self.phase.0, self.gz.as_deref())).then_some(why);
         }
         let undo = self.undo.as_deref();
         match id {

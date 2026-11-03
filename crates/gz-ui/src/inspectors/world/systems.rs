@@ -56,14 +56,15 @@ pub(super) fn world_fields(
 /// when the World inspector is built again.
 pub(super) fn reset_availability(
     phase: Res<CurrentPhase>,
+    status: Option<Res<GzStatus>>,
     buttons: Query<(Entity, &WorldAction, Has<InteractionDisabled>)>,
     added: Query<(), Added<WorldAction>>,
     mut commands: Commands,
 ) {
-    if !phase.is_changed() && added.is_empty() {
+    if !phase.is_changed() && !status.as_ref().is_some_and(Res::is_changed) && added.is_empty() {
         return;
     }
-    let live = phase.0 == Phase::Live;
+    let live = phase.0 == Phase::Live && !status.is_some_and(|s| s.control_pending);
     for (e, which, disabled) in &buttons {
         if *which == WorldAction::Reset && live == disabled {
             if live {

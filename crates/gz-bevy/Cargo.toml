@@ -14,7 +14,7 @@ serde_json.workspace = true
 # Bevy's 3D and UI profiles, without its audio (D-120). The 2D profile adds
 # nothing to these: bevy_ui and bevy_ui_render bring the sprite crates.
 bevy = { version = "0.20", default-features = false, features = [
-    "3d", "ui", "webgpu", "webgl2", "dds", "jpeg", "tga",
+    "3d", "ui", "webgl2", "dds", "jpeg", "tga",
 ] }
 async-channel = "2"
 crossbeam-channel = "0.5"
@@ -68,3 +68,7 @@ features = [
 
 [lints]
 workspace = true
+
+[features]
+default = ["webgpu"]
+webgpu = ["bevy/webgpu"]

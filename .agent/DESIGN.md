@@ -1124,11 +1124,10 @@ scene, such as the connect card or the disconnected banner).
   flags. Platform-specific dependencies go under `[target.'cfg(...)'.dependencies]`.
 - `Backend` (the `WebsocketBackend`) is a **non-send** resource: the wasm
   socket is a JS object.
-- Keep the Bevy `webgpu` feature; WebGPU is a hard requirement. On wasm,
-  Bevy's `webgpu` feature *overrides* `webgl2`, so the current browser build is
-  WebGPU-only and panics with "Unable to find a GPU" where WebGPU is missing.
-  A WebGL2 fallback needs a second wasm build that the page picks when
-  `navigator.gpu` is absent (PORT_PLAN.md Phase 7).
+- WebGPU remains preferred and the default feature. The explicit M1 preview also
+  builds a separate maintained WebGL2 flavor, selected only after actual adapter
+  discovery fails (see docs/M1_PRIMITIVE_BACKEND.md). Never mix the two PBR shader
+  layouts or change the WASM payload budget.
 - Use bevy_ui for all UI. The host page only carries the canvas and a status
   line.
 - When gzweb-rs deliberately differs from gzweb, list it in PORT_PLAN.md §2.5

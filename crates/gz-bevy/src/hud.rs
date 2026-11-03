@@ -254,7 +254,15 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
             s.real_time_factor,
             s.iterations
         ),
-        None => "Sim: -".into(),
+        None => match status.partial_clock {
+            Some((stamp, paused)) => format!(
+                "Sim: {} | t = {}.{:09} s | RTF — | iterations —",
+                if paused { "paused" } else { "running" },
+                stamp.seconds,
+                stamp.nanoseconds
+            ),
+            None => "Sim: -".into(),
+        },
     };
     for mut text in &mut query {
         text.0.clone_from(&label);
@@ -286,7 +294,15 @@ pub fn set_dom_status(msg: &str) {
         .and_then(|w| w.document())
         .and_then(|d| d.get_element_by_id("bevy-status"))
     {
-        el.set_inner_html(msg);
+        if el
+            .owner_document()
+            .and_then(|d| d.document_element())
+            .and_then(|e| e.get_attribute("data-viewer-state"))
+            .as_deref()
+            != Some("failed")
+        {
+            el.set_text_content(Some(msg));
+        }
     }
 }
 

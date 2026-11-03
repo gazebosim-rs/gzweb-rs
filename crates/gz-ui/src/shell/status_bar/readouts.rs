@@ -120,7 +120,15 @@ impl StatusSources<'_, '_> {
                     EDIT_RUNNING_HINT.into()
                 }
             }
-            StatusItem::Hint => self.tool.hint().into(),
+            StatusItem::Hint => status
+                .and_then(|s| s.control_error.clone())
+                .unwrap_or_else(|| {
+                    if status.is_some_and(|s| s.control_pending) {
+                        "Waiting for committed control or fresh scene".into()
+                    } else {
+                        self.tool.hint().into()
+                    }
+                }),
             StatusItem::Selection => self.selection(),
             StatusItem::Cursor => format::cursor(self.cursor.0),
             StatusItem::Message | StatusItem::Workspace => return None,

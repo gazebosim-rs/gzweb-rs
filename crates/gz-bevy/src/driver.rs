@@ -26,6 +26,44 @@ pub struct Driver {
 }
 
 impl Driver {
+    pub(crate) fn bounded_events(&self) -> Vec<DriverEvent> {
+        let mut events = Vec::new();
+        for _ in 0..64 {
+            match self.events.try_recv() {
+                Ok(event) => events.push(event),
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    events.push(DriverEvent::Closed(Some("bounded transport ended".into())));
+                    break;
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if events.len() < 64
+            && self.socket.as_ref().is_some_and(web::Socket::closed)
+            && !events
+                .iter()
+                .any(|e| matches!(e, DriverEvent::Closed(_) | DriverEvent::Rejected(_)))
+        {
+            events.push(DriverEvent::Closed(Some(
+                "bounded browser socket closed".into(),
+            )));
+        }
+        events
+    }
+
+    /// Nonblocking bounded-backend send; failures are never accepted as controls.
+    pub(crate) fn try_send(&self, frame: Vec<u8>) -> Result<(), ()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.outgoing.try_send(frame).map_err(|_| ())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.socket.as_ref().ok_or(())?.try_send(&frame)
+        }
+    }
+
     /// Sends a frame: as text when it is UTF-8 (like gzweb), else binary.
     pub fn send(&self, frame: Vec<u8>) {
         #[cfg(not(target_arch = "wasm32"))]
@@ -66,11 +104,33 @@ pub(crate) fn fake() -> (Driver, Sender<DriverEvent>, Receiver<Vec<u8>>) {
 /// Connects on a background thread. `tls` is used for `wss://` URLs.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
+    connect_with_limit(url, tls, None)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn connect_bounded(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
+    connect_with_limit(url, tls, Some(64 * 1024))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn connect_with_limit(
+    url: &str,
+    tls: Option<gz_core::net::TlsConfig>,
+    limit: Option<usize>,
+) -> Driver {
     use std::time::Duration;
     use tungstenite::Message;
 
-    let (event_tx, event_rx) = crossbeam_channel::unbounded();
-    let (out_tx, out_rx) = crossbeam_channel::unbounded::<Vec<u8>>();
+    let (event_tx, event_rx) = if limit.is_some() {
+        crossbeam_channel::bounded(64)
+    } else {
+        crossbeam_channel::unbounded()
+    };
+    let (out_tx, out_rx) = if limit.is_some() {
+        crossbeam_channel::bounded::<Vec<u8>>(8)
+    } else {
+        crossbeam_channel::unbounded::<Vec<u8>>()
+    };
     let url = url.to_string();
 
     std::thread::Builder::new()
@@ -84,22 +144,28 @@ pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
             let mut socket = match gz_core::net::connect(&url, tls, timeout) {
                 Ok(socket) => socket,
                 Err(ConnectError::InvalidUrl(e)) => {
-                    let _ = event_tx.send(DriverEvent::Rejected(format!("invalid URL: {e}")));
+                    let _ = event_tx.try_send(DriverEvent::Rejected(format!("invalid URL: {e}")));
                     return;
                 }
                 Err(ConnectError::Failed(e)) => {
-                    let _ = event_tx.send(DriverEvent::Closed(Some(e)));
+                    let _ = event_tx.try_send(DriverEvent::Closed(Some(e)));
                     return;
                 }
             };
-            let _ = event_tx.send(DriverEvent::Open);
+            if let Some(limit) = limit {
+                socket.set_config(|config| {
+                    config.max_message_size = Some(limit);
+                    config.max_frame_size = Some(limit);
+                });
+            }
+            let _ = event_tx.try_send(DriverEvent::Open);
 
             loop {
                 loop {
                     match out_rx.try_recv() {
                         Ok(frame) => {
                             if let Err(e) = socket.send(message(frame)) {
-                                let _ = event_tx.send(DriverEvent::Closed(Some(e.to_string())));
+                                let _ = event_tx.try_send(DriverEvent::Closed(Some(e.to_string())));
                                 return;
                             }
                         }
@@ -114,13 +180,23 @@ pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
                 }
                 match socket.read() {
                     Ok(Message::Text(t)) => {
-                        let _ = event_tx.send(DriverEvent::Message(t.as_bytes().to_vec()));
+                        if limit.is_some_and(|n| t.len() > n)
+                            || event_tx
+                                .try_send(DriverEvent::Message(t.as_bytes().to_vec()))
+                                .is_err()
+                        {
+                            return;
+                        }
                     }
                     Ok(Message::Binary(b)) => {
-                        let _ = event_tx.send(DriverEvent::Message(b.to_vec()));
+                        if limit.is_some_and(|n| b.len() > n)
+                            || event_tx.try_send(DriverEvent::Message(b.to_vec())).is_err()
+                        {
+                            return;
+                        }
                     }
                     Ok(Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
-                        let _ = event_tx.send(DriverEvent::Closed(None));
+                        let _ = event_tx.try_send(DriverEvent::Closed(None));
                         return;
                     }
                     Ok(_) => {}
@@ -130,7 +206,7 @@ pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
                             std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                         ) => {}
                     Err(e) => {
-                        let _ = event_tx.send(DriverEvent::Closed(Some(e.to_string())));
+                        let _ = event_tx.try_send(DriverEvent::Closed(Some(e.to_string())));
                         return;
                     }
                 }
@@ -146,11 +222,25 @@ pub fn connect(url: &str, tls: Option<gz_core::net::TlsConfig>) -> Driver {
 
 #[cfg(target_arch = "wasm32")]
 pub fn connect(url: &str) -> Driver {
-    let (event_tx, event_rx) = crossbeam_channel::unbounded();
-    let socket = match web::Socket::open(url, event_tx.clone()) {
+    connect_web(url, false)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn connect_bounded(url: &str) -> Driver {
+    connect_web(url, true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn connect_web(url: &str, bounded: bool) -> Driver {
+    let (event_tx, event_rx) = if bounded {
+        crossbeam_channel::bounded(64)
+    } else {
+        crossbeam_channel::unbounded()
+    };
+    let socket = match web::Socket::open(url, event_tx.clone(), bounded) {
         Ok(socket) => Some(socket),
         Err(e) => {
-            let _ = event_tx.send(DriverEvent::Rejected(e));
+            let _ = event_tx.try_send(DriverEvent::Rejected(e));
             None
         }
     };
@@ -182,22 +272,47 @@ mod web {
     }
 
     impl Socket {
-        pub fn open(url: &str, tx: Sender<DriverEvent>) -> Result<Self, String> {
+        pub fn open(url: &str, tx: Sender<DriverEvent>, bounded: bool) -> Result<Self, String> {
             let ws = WebSocket::new(url).map_err(|e| format!("invalid URL: {e:?}"))?;
             ws.set_binary_type(BinaryType::Arraybuffer);
 
             let open_tx = tx.clone();
             let on_open = Closure::<dyn FnMut()>::new(move || {
-                let _ = open_tx.send(DriverEvent::Open);
+                let _ = open_tx.try_send(DriverEvent::Open);
             });
             let message_tx = tx.clone();
+            let message_ws = ws.clone();
             let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
+                if bounded
+                    && web_sys::window()
+                        .and_then(|w| w.document())
+                        .and_then(|d| d.document_element())
+                        .and_then(|e| e.get_attribute("data-viewer-state"))
+                        .as_deref()
+                        == Some("failed")
+                {
+                    let _ = message_ws.close();
+                    return;
+                }
                 let data = e.data();
-                if let Some(text) = data.as_string() {
-                    let _ = message_tx.send(DriverEvent::Message(text.into_bytes()));
+                let bytes = if let Some(text) = data.as_string() {
+                    text.into_bytes()
                 } else if let Ok(buf) = data.dyn_into::<js_sys::ArrayBuffer>() {
-                    let _ = message_tx
-                        .send(DriverEvent::Message(js_sys::Uint8Array::new(&buf).to_vec()));
+                    if bounded && buf.byte_length() > 64 * 1024 {
+                        let _ = message_ws.close_with_code(4002);
+                        return;
+                    }
+                    js_sys::Uint8Array::new(&buf).to_vec()
+                } else {
+                    if bounded {
+                        let _ = message_ws.close_with_code(4002);
+                    }
+                    return;
+                };
+                if (bounded && bytes.len() > 64 * 1024)
+                    || message_tx.try_send(DriverEvent::Message(bytes)).is_err()
+                {
+                    let _ = message_ws.close_with_code(4002);
                 }
             });
             // An error is always followed by a close: report both as one.
@@ -207,7 +322,7 @@ mod web {
                 *error_flag.borrow_mut() = Some("websocket error".into());
             });
             let on_close = Closure::<dyn FnMut(CloseEvent)>::new(move |_e: CloseEvent| {
-                let _ = tx.send(DriverEvent::Closed(failed.borrow_mut().take()));
+                let _ = tx.try_send(DriverEvent::Closed(failed.borrow_mut().take()));
             });
             ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
             ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
@@ -220,6 +335,17 @@ mod web {
                 _on_error: on_error,
                 _on_close: on_close,
             })
+        }
+
+        pub fn closed(&self) -> bool {
+            self.ws.ready_state() >= WebSocket::CLOSING
+        }
+        pub fn try_send(&self, frame: &[u8]) -> Result<(), ()> {
+            if self.ws.ready_state() != WebSocket::OPEN || self.ws.buffered_amount() > 4096 {
+                return Err(());
+            }
+            let text = std::str::from_utf8(frame).map_err(|_| ())?;
+            self.ws.send_with_str(text).map_err(|_| ())
         }
 
         pub fn send(&self, frame: &[u8]) {
@@ -353,5 +479,20 @@ mod tests {
             d.send(vec![b'x'; 1 << 16]);
         }
         assert!(matches!(next(&d), DriverEvent::Closed(Some(_))));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod bounded_poll_tests {
+    use super::*;
+    #[test]
+    fn event_budget_is_per_poll_even_if_the_producer_continues() {
+        let (driver, tx, _out) = fake();
+        for _ in 0..130 {
+            assert!(tx.send(DriverEvent::Message(vec![1])).is_ok());
+        }
+        assert_eq!(driver.bounded_events().len(), 64);
+        assert_eq!(driver.bounded_events().len(), 64);
+        assert_eq!(driver.bounded_events().len(), 2);
     }
 }

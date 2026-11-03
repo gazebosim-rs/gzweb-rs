@@ -320,9 +320,17 @@ impl Default for FogAdjust {
 
 /// The sun's shadow cascades for a perspective view: sharp near the
 /// camera, out to a typical Gazebo world's size.
+fn browser_cascades() -> usize {
+    if cfg!(all(target_arch = "wasm32", not(feature = "webgpu"))) {
+        1
+    } else {
+        4
+    }
+}
+
 pub fn sun_cascades() -> CascadeShadowConfig {
     CascadeShadowConfigBuilder {
-        num_cascades: 4,
+        num_cascades: browser_cascades(),
         minimum_distance: 0.1,
         first_cascade_far_bound: 5.0,
         maximum_distance: 150.0,
@@ -338,7 +346,7 @@ pub fn ortho_cascades(near: f32, far: f32) -> CascadeShadowConfig {
     let near = near.max(0.1);
     let far = far.max(near * 1.01);
     CascadeShadowConfigBuilder {
-        num_cascades: 4,
+        num_cascades: browser_cascades(),
         minimum_distance: near,
         first_cascade_far_bound: near + (far - near) / 4.0,
         maximum_distance: far,
@@ -462,7 +470,7 @@ pub fn projection_effects(
         return;
     };
     let want = CascadeShadowConfigBuilder {
-        num_cascades: 4,
+        num_cascades: browser_cascades(),
         minimum_distance: near,
         first_cascade_far_bound: first,
         maximum_distance: far,

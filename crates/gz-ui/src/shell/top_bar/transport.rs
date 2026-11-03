@@ -40,6 +40,18 @@ pub(crate) enum Transport {
 }
 
 impl Transport {
+    pub(crate) fn available(self, phase: Phase, status: Option<&GzStatus>) -> bool {
+        match status {
+            Some(s) if s.partial_metrics => {
+                phase == Phase::Live
+                    && s.partial_clock.is_some()
+                    && !s.control_pending
+                    && self != Self::Step
+            }
+            Some(s) => self.enabled(phase, s.sim.as_ref()),
+            None => self.enabled(phase, None),
+        }
+    }
     /// Whether the control works now (DECISIONS.md D-34, D-56): Reset needs
     /// a live world (as the World inspector's Reset); Play/Pause also the
     /// sim's stats (they say which way to toggle); Step a paused sim.
@@ -217,14 +229,15 @@ pub(crate) fn on_transport(
     if disabled {
         return;
     }
+    let paused = status.as_ref().and_then(|s| s.paused());
     let sim = status.and_then(|s| s.sim);
     match button {
         Transport::Reset => {
             out.write(GzCommand::Reset);
         }
         Transport::PlayPause => {
-            if let Some(sim) = sim {
-                out.write(if sim.paused {
+            if let Some(paused) = paused {
+                out.write(if paused {
                     GzCommand::Play
                 } else {
                     GzCommand::Pause
@@ -291,9 +304,8 @@ pub(crate) fn transport_enabled(
     if !phase.is_changed() && !status.as_ref().is_some_and(Res::is_changed) {
         return;
     }
-    let sim = status.and_then(|s| s.sim);
     for (e, which, disabled) in &buttons {
-        let enabled = which.enabled(phase.0, sim.as_ref());
+        let enabled = which.available(phase.0, status.as_deref());
         if enabled == disabled {
             if enabled {
                 commands.entity(e).remove::<InteractionDisabled>();
@@ -314,7 +326,7 @@ pub(crate) fn play_pause_look(
     if !status.as_ref().is_some_and(Res::is_changed) {
         return;
     }
-    let running = status.and_then(|s| s.sim).is_some_and(|s| !s.paused);
+    let running = status.and_then(|s| s.paused()).is_some_and(|p| !p);
     let (id, title) = if running {
         (IconId::Pause, "Pause")
     } else {
@@ -348,8 +360,14 @@ pub(crate) fn clock_text(
     if !status.as_ref().is_some_and(Res::is_changed) {
         return;
     }
-    let sim = status.and_then(|s| s.sim);
-    let want = format::clock(sim.map_or(0.0, |s| s.sim_time));
+    let want = match status {
+        Some(s) => match s.sim_time() {
+            Some(time) => format::clock(time),
+            None if s.partial_metrics => "—".into(),
+            None => format::clock(0.0), // Preserve legacy Gazebo's no-stats clock.
+        },
+        None => format::clock(0.0),
+    };
     for mut t in &mut clocks {
         set_text(&mut t, &want);
     }
@@ -420,5 +438,31 @@ pub(crate) fn steps_label_text(
         if field.value != v {
             field.value = v;
         }
+    }
+}
+
+#[cfg(test)]
+mod primitive_controls_tests {
+    use super::*;
+    #[test]
+    fn partial_clock_enables_only_committed_controls_without_inventing_stats() {
+        let mut status = GzStatus::new("ws://test");
+        status.partial_metrics = true;
+        status.partial_clock = Some((
+            gz_core::primitive::Stamp {
+                epoch: 0,
+                seconds: 1,
+                nanoseconds: 2,
+            },
+            true,
+        ));
+        assert!(status.sim.is_none());
+        assert!(Transport::PlayPause.available(Phase::Live, Some(&status)));
+        assert!(Transport::Reset.available(Phase::Live, Some(&status)));
+        assert!(!Transport::Step.available(Phase::Live, Some(&status)));
+        status.control_pending = true;
+        assert!(!Transport::PlayPause.available(Phase::Live, Some(&status)));
+        assert!(!Transport::Reset.available(Phase::Live, Some(&status)));
+        assert!(!Transport::Reset.available(Phase::Idle, Some(&status)));
     }
 }

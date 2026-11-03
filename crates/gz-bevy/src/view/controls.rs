@@ -827,6 +827,9 @@ pub fn key_input(
     }
 
     let target = target(&windows, &views, routing.key_view());
+    let paused = status
+        .as_ref()
+        .and_then(|s| (!s.control_pending).then(|| s.paused()).flatten());
     let sim = status.and_then(|s| s.sim);
     for action in fired {
         let op = match action {
@@ -852,8 +855,8 @@ pub fn key_input(
             }
             // The stats say which way to toggle; without them, nothing.
             Action::PlayPause => {
-                if let Some(sim) = sim {
-                    sim_out.write(if sim.paused {
+                if let Some(paused) = paused {
+                    sim_out.write(if paused {
                         GzCommand::Play
                     } else {
                         GzCommand::Pause

@@ -719,3 +719,25 @@ fn collision_meshes_and_overlay_gizmos_draw_on_their_layers() {
         Some(&RenderLayers::layer(Overlay::Collisions.layer()))
     );
 }
+
+#[test]
+fn explicit_world_sdf_refusal_skips_automatic_requests_without_claiming_extras() {
+    let mut app = app();
+    app.world_mut().resource_mut::<GzStatus>().world_sdf = Some(false);
+    app.world_mut()
+        .resource_mut::<extras::SdfWanted>()
+        .0
+        .insert("scene");
+    set(&mut app, Overlay::Inertia, true);
+    assert!(requests(&mut app).is_empty());
+    app.update();
+    assert!(requests(&mut app).is_empty());
+    let extras = app.world().resource::<SdfExtras>();
+    assert!(extras.extras.is_none());
+    assert_eq!(extras.generation, 0);
+    // Unknown capability keeps the original Gazebo probe contract; refusal
+    // did not mark a fictitious request as already answered.
+    app.world_mut().resource_mut::<GzStatus>().world_sdf = None;
+    app.update();
+    assert_eq!(requests(&mut app), ["/world/w/generate_world_sdf"]);
+}

@@ -141,7 +141,7 @@ pub fn apply_scene(
     mut grid: ResMut<GzGrid>,
 ) {
     let Some(root) = index.root else { return };
-    if inbox.scene.is_none() && inbox.scene_updates.is_empty() {
+    if inbox.scene.is_none() && inbox.prepared_scene.is_none() && inbox.scene_updates.is_empty() {
         return;
     }
 
@@ -149,7 +149,9 @@ pub fn apply_scene(
         enable_lights: config.enable_lights,
     };
     let mut new_nodes = Vec::new();
-    if let Some(msg) = inbox.scene.take() {
+    let prepared = inbox.prepared_scene.take();
+    let message = inbox.scene.take();
+    if prepared.is_some() || message.is_some() {
         // A new scene after a reconnect replaces everything.
         if index.scene.is_some() {
             commands.entity(root).despawn_related::<Children>();
@@ -160,7 +162,13 @@ pub fn apply_scene(
             };
             loads.0.clear();
         }
-        let desc = SceneDesc::from_msg_with(&msg, opts, &mut index.paths);
+        let desc = match prepared {
+            Some(desc) => desc,
+            None => match message {
+                Some(msg) => SceneDesc::from_msg_with(&msg, opts, &mut index.paths),
+                None => return,
+            },
+        };
         // An identical scene (a reconnect) leaves the environment, camera and
         // the user's grid toggle alone.
         if environment.set_if_neq(GzEnvironment::from_scene(&desc)) {

@@ -119,7 +119,7 @@ struct Args {
     no_vsync: bool,
 }
 
-const USAGE: &str = "usage: gzweb [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
+const USAGE: &str = "usage: gzweb [--backend gazebo|primitive] [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
                      [--ui full|minimal|gallery] [--theme system|light|dark] [--ui-scale PERCENT] \
                      [--motion system|reduce|full] [--no-hud] \
@@ -237,6 +237,7 @@ fn parse_args(
     let mut snapshot = None;
     let mut screenshot = None;
     let mut http_mirror = None;
+    let mut backend = gz_bevy::BackendKind::default();
     let mut ca_cert = None;
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
@@ -277,6 +278,7 @@ fn parse_args(
                 .map_err(|_| format!("{arg}: '{v}' is not a number"))
         };
         match arg.as_str() {
+            "--backend" => backend = value()?.parse()?,
             "--url" => url = Some(value()?),
             "--port" => port = value()?,
             "--key" => key = Some(value()?),
@@ -476,6 +478,7 @@ fn parse_args(
     }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
+            backend,
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
             ui: if no_ui { UiMode::None } else { ui },
@@ -534,6 +537,21 @@ fn command() -> Result<Command, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn browser_quality(value: Option<String>) -> gz_bevy::render::Quality {
+    // The maintained WebGL2 path has no compute TAA/SSAO/environment filtering.
+    if !cfg!(feature = "webgpu") {
+        return gz_bevy::render::Quality::Low;
+    }
+    value
+        .and_then(|q| {
+            q.parse()
+                .map_err(|e| bevy::log::warn!("?quality={q}: {e}"))
+                .ok()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
 fn command() -> Result<Command, String> {
     let params = web_sys::window()
         .and_then(|w| w.location().search().ok())
@@ -577,6 +595,10 @@ fn command() -> Result<Command, String> {
         get("motion").and_then(|m| m.parse().map_err(|e| bevy::log::warn!("?motion: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
+            backend: get("backend")
+                .map(|s| s.parse())
+                .transpose()?
+                .unwrap_or_default(),
             url: web_url(
                 get("url"),
                 get("port"),
@@ -586,13 +608,7 @@ fn command() -> Result<Command, String> {
                 ui,
             ),
             key: get("key"),
-            quality: get("quality")
-                .and_then(|q| {
-                    q.parse()
-                        .map_err(|e| bevy::log::warn!("?quality={q}: {e}"))
-                        .ok()
-                })
-                .unwrap_or_default(),
+            quality: browser_quality(get("quality")),
             ui,
             hud: web_hud(get("hud").as_deref()),
             ..Default::default()
@@ -788,9 +804,27 @@ fn run_gallery(args: Args) -> AppExit {
     app.run()
 }
 
+#[cfg(target_arch = "wasm32")]
+fn startup_error(message: &str) {
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(root) = document.document_element() {
+            let _ = root.set_attribute("data-viewer-state", "failed");
+        }
+        if let Some(status) = document.get_element_by_id("bevy-status") {
+            status.set_text_content(Some(&format!("Viewer stopped: {message}")));
+        }
+        if let Some(canvas) = document.get_element_by_id("bevy-canvas") {
+            let _ = canvas.set_attribute("hidden", "");
+        }
+    }
+}
+
 fn main() -> AppExit {
     #[cfg(target_arch = "wasm32")]
-    console_error_panic_hook::set_once();
+    std::panic::set_hook(Box::new(|info| {
+        console_error_panic_hook::hook(info);
+        startup_error(&info.to_string());
+    }));
 
     let args = match command() {
         Ok(Command::Run(a)) => *a,
@@ -799,6 +833,8 @@ fn main() -> AppExit {
             return AppExit::Success;
         }
         Err(e) => {
+            #[cfg(target_arch = "wasm32")]
+            startup_error(&e);
             eprintln!("gzweb: {e}\n{USAGE}");
             return AppExit::from_code(2);
         }
@@ -1443,5 +1479,30 @@ mod tests {
             assert!(windowed.enabled::<bevy::winit::WinitPlugin>());
             assert!(windowed.enabled::<WindowPlugin>());
         }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod primitive_selection_tests {
+    use super::*;
+    fn selected(args: &[&str]) -> Result<gz_bevy::BackendKind, String> {
+        match parse_args(args.iter().map(|s| (*s).to_owned()), None)? {
+            Command::Run(args) => Ok(args.config.backend),
+            _ => Err("expected run".into()),
+        }
+    }
+    #[test]
+    fn backend_is_explicit_and_unknown_protocols_fail_closed() {
+        assert_eq!(selected(&[]), Ok(gz_bevy::BackendKind::Gazebo));
+        assert_eq!(
+            selected(&["--backend", "primitive"]),
+            Ok(gz_bevy::BackendKind::Primitive)
+        );
+        assert_eq!(
+            selected(&["--backend", "gazebo"]),
+            Ok(gz_bevy::BackendKind::Gazebo)
+        );
+        assert!(selected(&["--backend", "unknown"]).is_err());
+        assert!(selected(&["--backend"]).is_err());
     }
 }

@@ -1215,3 +1215,140 @@ fn editing_a_model_dims_the_other_rows() {
     frames(&mut app, 3);
     assert!(!spec(&mut app, "crate_01").dimmed);
 }
+
+#[test]
+fn primitive_flat_visual_roots_are_real_v_rows_and_legacy_visual_hiding_stays() {
+    use super::model::TreeModel;
+    use crate::widgets::EntityKind;
+    use gz_bevy::spawn::GzWorldRoot;
+    use gz_bevy::{BackendKind, GzConfig};
+    for backend in [BackendKind::Primitive, BackendKind::Gazebo] {
+        let mut app = shell_app((1440, 900), 1.0);
+        app.insert_resource(GzConfig {
+            backend,
+            ..Default::default()
+        });
+        frames(&mut app, 2);
+        let root = app
+            .world_mut()
+            .spawn((GzWorldRoot, Transform::default(), Visibility::default()))
+            .id();
+        {
+            let mut index = app.world_mut().resource_mut::<GzIndex>();
+            index.root = Some(root);
+            index.scene = Some(gz_core::scene::SceneDesc::from_msg(
+                &Default::default(),
+                Default::default(),
+            ));
+        }
+        let fixture = World3 { root };
+        let mut actual = Vec::new();
+        for id in 2..=22_u32 {
+            let e = fixture.add(
+                &mut app,
+                root,
+                "visual",
+                &format!("primitive/{id}"),
+                NodeKind::Visual,
+            );
+            app.world_mut().get_mut::<GzEntity>(e).unwrap().id = id;
+            app.world_mut()
+                .resource_mut::<GzIndex>()
+                .by_id
+                .insert(id, e);
+            actual.push(e);
+        }
+        // A nested visual remains outside this explicitly flat-root UI scope.
+        fixture.add(
+            &mut app,
+            actual[0],
+            "nested",
+            "primitive/2/nested",
+            NodeKind::Visual,
+        );
+        {
+            let mut status = app.world_mut().resource_mut::<GzStatus>();
+            status.status = Status::Ready;
+            status.world = Some("default".into());
+            if backend == BackendKind::Primitive {
+                status.partial_metrics = true;
+                status.world_sdf = Some(false);
+                status.partial_clock = Some((
+                    gz_core::primitive::Stamp {
+                        epoch: 0,
+                        seconds: 0,
+                        nanoseconds: 0,
+                    },
+                    true,
+                ));
+            }
+        }
+        frames(&mut app, 2);
+        let expected = if backend == BackendKind::Primitive {
+            21
+        } else {
+            0
+        };
+        assert!(all_text(&mut app).contains(&format!("{expected} entities")));
+        let model = app.world().resource::<TreeModel>();
+        assert_eq!(model.entities(), expected);
+        let visuals: Vec<_> = model
+            .nodes
+            .iter()
+            .filter(|n| n.kind == EntityKind::Visual)
+            .collect();
+        assert_eq!(visuals.len(), expected);
+        if backend == BackendKind::Primitive {
+            for (i, node) in visuals.iter().enumerate() {
+                assert_eq!(node.entity, Some(actual[i]));
+                assert_eq!(node.key, NodeKey::Entity(format!("primitive/{}", i + 2)));
+                assert_eq!(node.name, "visual");
+            }
+            // The normal tree path targets the actual visual entity, not a
+            // fabricated model or a name-based match among duplicate leaves.
+            {
+                let mut state = app.world_mut().resource_mut::<TreeState>();
+                state.expanded.insert(NodeKey::World);
+            }
+            frames(&mut app, 2);
+            let visual_row = {
+                let world = app.world_mut();
+                let mut query = world.query::<(Entity, &TreeSlot, &TreeRowSpec, &Node)>();
+                let visible: Vec<_> = query
+                    .iter(world)
+                    .filter(|(_, _, s, n)| {
+                        s.kind == EntityKind::Visual && n.display != Display::None
+                    })
+                    .collect();
+                assert!(!visible.is_empty());
+                assert!(visible
+                    .iter()
+                    .all(|(_, _, s, _)| s.hideable && s.kind.letter() == "V"));
+                let model = world.resource::<TreeModel>();
+                let rows = world.resource::<super::systems::TreeRows>();
+                visible
+                    .iter()
+                    .find(|(_, slot, _, _)| {
+                        slot.0
+                            .is_some_and(|i| model.node(rows.0[i]).entity == Some(actual[0]))
+                    })
+                    .unwrap()
+                    .0
+            };
+            app.world_mut().trigger(crate::widgets::TreeRowVisibility {
+                entity: visual_row,
+                hidden: true,
+            });
+            frames(&mut app, 2);
+            assert_eq!(
+                app.world().get::<Visibility>(actual[0]),
+                Some(&Visibility::Hidden)
+            );
+            assert_eq!(
+                app.world().get::<Visibility>(actual[1]),
+                Some(&Visibility::Inherited)
+            );
+            assert!(app.world().resource::<GzStatus>().sim.is_none());
+        }
+    }
+}

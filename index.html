@@ -15,6 +15,8 @@
             background-color: black;
         }
 
+        canvas[hidden] { display: none; }
+
         canvas {
             display: block;
             width: 100%;
@@ -33,41 +35,19 @@
         Bevy Status: Waiting...
     </div>
     <canvas id="bevy-canvas"></canvas>
-    <script>
-        // Check for WebGPU support in the browser
-        const statusDiv = document.getElementById('webgpu-status');
-        if ('gpu' in navigator) {
-            statusDiv.textContent = "Browser WebGPU Support: YES (Checking Adapter...)";
-            statusDiv.style.color = "#FFFF00";
-
-            navigator.gpu.requestAdapter().then(adapter => {
-                if (adapter) {
-                    console.log("JS Diagnostic: WebGPU Adapter Found:", adapter.info);
-                    statusDiv.textContent = "Browser WebGPU Support: YES (Adapter Found)";
-                    statusDiv.style.color = "#00FF00";
-                } else {
-                    console.error("JS Diagnostic: WebGPU Adapter Request returned null.");
-                    statusDiv.textContent = "Browser WebGPU Support: YES (Adapter Request Failed)";
-                    statusDiv.style.color = "#FF0000";
-                }
-            }).catch(e => {
-                console.error("JS Diagnostic: WebGPU Adapter Error:", e);
-                statusDiv.textContent = "Browser WebGPU Support: YES (Adapter Error)";
-                statusDiv.style.color = "#FF0000";
-            });
-        } else {
-            console.error("JS Diagnostic: navigator.gpu undefined");
-            statusDiv.textContent = "Browser WebGPU Support: NO (Using Fallback)";
-            statusDiv.style.color = "#FF0000";
-        }
-    </script>
     <script type="module">
-        import init from './target/wasm32-unknown-unknown/release/gzweb.js';
-        init().catch((error) => {
-            if (!error.message.startsWith("Using exceptions for control flow,")) {
-                throw error;
-            }
-        });
+        import {selectBackend, failStartup} from './startup.mjs';
+        const fail = error => failStartup(document, error?.message ?? String(error));
+        window.addEventListener('error', event => fail(event.error ?? event.message));
+        window.addEventListener('unhandledrejection', event => fail(event.reason));
+        try {
+            const backend = await selectBackend(navigator, () => document.createElement('canvas'));
+            document.getElementById('webgpu-status').textContent = `Renderer: ${backend}`;
+            const {default: init} = await import(`./target/wasm32-unknown-unknown/release/${backend}/gzweb.js`);
+            await init();
+        } catch (error) {
+            if (!String(error?.message).startsWith('Using exceptions for control flow,')) fail(error);
+        }
     </script>
 </body>
 

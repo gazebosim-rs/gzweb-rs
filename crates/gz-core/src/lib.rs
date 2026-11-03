@@ -32,6 +32,7 @@ pub mod insert;
 #[cfg(feature = "native")]
 pub mod net;
 pub mod parts;
+pub mod primitive;
 pub mod scene;
 pub mod sdf;
 pub mod sensor;

@@ -10,7 +10,8 @@
 //! links'), the links' sensors (S, from the scene message) and the models'
 //! joints (J, from the world's SDFormat once it is known; under the model,
 //! after its links, as Gazebo's entity tree has them). Visuals aren't
-//! listed (§5.7 has no letter for them).
+//! listed for Gazebo (§5.7 has no letter for them). Explicit primitive mode
+//! additionally lists its actual flat visual roots as V, with no invented models.
 
 use std::collections::HashSet;
 

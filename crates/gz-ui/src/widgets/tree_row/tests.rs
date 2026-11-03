@@ -292,3 +292,10 @@ fn part_of(w: &World, row: Entity, which: TreeRowPart) -> Entity {
         .find(|e| w.get::<TreeRowPart>(*e) == Some(&which))
         .unwrap()
 }
+
+#[test]
+fn actual_primitive_visual_has_its_own_truthful_badge() {
+    assert_eq!(EntityKind::Visual.letter(), "V");
+    assert_eq!(EntityKind::Visual.role(), ColorRole::EntityLink);
+    assert_ne!(EntityKind::Visual, EntityKind::Model);
+}

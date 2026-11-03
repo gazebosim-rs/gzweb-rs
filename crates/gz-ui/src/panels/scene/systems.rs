@@ -122,6 +122,7 @@ pub(super) fn header_actions(
 #[derive(SystemParam)]
 pub(super) struct SceneSources<'w, 's> {
     status: Option<Res<'w, GzStatus>>,
+    config: Option<Res<'w, gz_bevy::GzConfig>>,
     index: Option<Res<'w, GzIndex>>,
     extras: Option<Res<'w, SdfExtras>>,
     entities: Query<'w, 's, (&'static GzEntity, Option<&'static GzSensors>)>,
@@ -145,6 +146,7 @@ impl SceneSources<'_, '_> {
         removed
             || new_world
             || !self.added.is_empty()
+            || self.config.as_ref().is_some_and(Res::is_changed)
             || self.extras.as_ref().is_some_and(Res::is_changed)
             || self.index.as_ref().is_some_and(Res::is_changed)
     }
@@ -162,7 +164,7 @@ impl SceneSources<'_, '_> {
         let mut b = ModelBuilder::default();
         b.open(NodeKey::World, &name, EntityKind::World, None);
         for &e in self.children.get(root).into_iter().flatten() {
-            self.add(&mut b, e, &joints);
+            self.add(&mut b, e, &joints, true);
         }
         b.finish()
     }
@@ -186,7 +188,13 @@ impl SceneSources<'_, '_> {
         out
     }
 
-    fn add(&self, b: &mut ModelBuilder, e: Entity, joints: &HashMap<&str, Vec<&str>>) {
+    fn add(
+        &self,
+        b: &mut ModelBuilder,
+        e: Entity,
+        joints: &HashMap<&str, Vec<&str>>,
+        direct_root: bool,
+    ) {
         let Ok((gz, sensors)) = self.entities.get(e) else {
             return;
         };
@@ -194,11 +202,20 @@ impl SceneSources<'_, '_> {
             NodeKind::Model => EntityKind::Model,
             NodeKind::Link => EntityKind::Link,
             NodeKind::Light => EntityKind::Light,
+            NodeKind::Visual
+                if direct_root
+                    && self
+                        .config
+                        .as_ref()
+                        .is_some_and(|c| c.backend == gz_bevy::BackendKind::Primitive) =>
+            {
+                EntityKind::Visual
+            }
             NodeKind::Visual => return,
         };
         b.open(NodeKey::Entity(gz.path.clone()), &gz.name, kind, Some(e));
         for &c in self.children.get(e).into_iter().flatten() {
-            self.add(b, c, joints);
+            self.add(b, c, joints, false);
         }
         for s in sensors.into_iter().flat_map(|s| &s.0) {
             let key = NodeKey::Sensor(gz.path.clone(), s.name.clone());
