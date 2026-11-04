@@ -49,6 +49,10 @@ impl PrimitiveBackend {
         })
     }
     fn closed(&mut self, reason: String, io: &mut BackendIo) {
+        // Retiring the driver makes this once per close, never once per frame.
+        if self.driver.is_some() && reason != "Connecting" {
+            bevy::log::warn!("Primitive connection closed: {reason}");
+        }
         self.driver = None;
         self.session.disconnect(reason);
         let reason = self.session.status.clone();

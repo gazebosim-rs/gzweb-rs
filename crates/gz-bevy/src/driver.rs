@@ -16,6 +16,38 @@ pub enum DriverEvent {
     Rejected(String),
 }
 
+/// One bounded diagnostic slot, independent of the possibly full event queue.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Default)]
+struct BrowserCloseCause {
+    local: Option<&'static str>,
+    close: Option<(u16, String)>,
+}
+#[cfg(any(target_arch = "wasm32", test))]
+impl BrowserCloseCause {
+    fn record(&mut self, cause: &'static str) {
+        self.local.get_or_insert(cause);
+    }
+    fn closed(&mut self, code: u16, reason: &str) {
+        // A single slot: neither repeated callbacks nor a hostile peer grow it.
+        let mut bounded = String::new();
+        for ch in reason.chars() {
+            if bounded.len() + ch.len_utf8() > 256 {
+                break;
+            }
+            bounded.push(ch);
+        }
+        self.close = Some((code, bounded));
+    }
+    fn message(&self) -> String {
+        let local = self.local.unwrap_or("bounded browser socket closed");
+        match &self.close {
+            Some((code, reason)) => format!("{local}; WebSocket close code {code}: {reason}"),
+            None => local.into(),
+        }
+    }
+}
+
 /// Handle to a running websocket connection. Dropping it closes the socket.
 pub struct Driver {
     pub events: Receiver<DriverEvent>,
@@ -46,7 +78,7 @@ impl Driver {
                 .any(|e| matches!(e, DriverEvent::Closed(_) | DriverEvent::Rejected(_)))
         {
             events.push(DriverEvent::Closed(Some(
-                "bounded browser socket closed".into(),
+                self.socket.as_ref().expect("closed socket").close_message(),
             )));
         }
         events
@@ -261,10 +293,11 @@ mod web {
     use wasm_bindgen::{closure::Closure, JsCast};
     use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
-    use super::DriverEvent;
+    use super::{BrowserCloseCause, DriverEvent};
 
     pub struct Socket {
         ws: WebSocket,
+        close_cause: Rc<RefCell<BrowserCloseCause>>,
         _on_open: Closure<dyn FnMut()>,
         _on_message: Closure<dyn FnMut(MessageEvent)>,
         _on_error: Closure<dyn FnMut(Event)>,
@@ -275,6 +308,7 @@ mod web {
         pub fn open(url: &str, tx: Sender<DriverEvent>, bounded: bool) -> Result<Self, String> {
             let ws = WebSocket::new(url).map_err(|e| format!("invalid URL: {e:?}"))?;
             ws.set_binary_type(BinaryType::Arraybuffer);
+            let close_cause = Rc::new(RefCell::new(BrowserCloseCause::default()));
 
             let open_tx = tx.clone();
             let on_open = Closure::<dyn FnMut()>::new(move || {
@@ -282,6 +316,7 @@ mod web {
             });
             let message_tx = tx.clone();
             let message_ws = ws.clone();
+            let message_cause = close_cause.clone();
             let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
                 if bounded
                     && web_sys::window()
@@ -291,6 +326,7 @@ mod web {
                         .as_deref()
                         == Some("failed")
                 {
+                    message_cause.borrow_mut().record("viewer startup failed");
                     let _ = message_ws.close();
                     return;
                 }
@@ -299,30 +335,56 @@ mod web {
                     text.into_bytes()
                 } else if let Ok(buf) = data.dyn_into::<js_sys::ArrayBuffer>() {
                     if bounded && buf.byte_length() > 64 * 1024 {
+                        message_cause
+                            .borrow_mut()
+                            .record("binary frame exceeds 64 KiB; requested close 4002");
                         let _ = message_ws.close_with_code(4002);
                         return;
                     }
                     js_sys::Uint8Array::new(&buf).to_vec()
                 } else {
                     if bounded {
+                        message_cause
+                            .borrow_mut()
+                            .record("unsupported browser frame type; requested close 4002");
                         let _ = message_ws.close_with_code(4002);
                     }
                     return;
                 };
-                if (bounded && bytes.len() > 64 * 1024)
-                    || message_tx.try_send(DriverEvent::Message(bytes)).is_err()
-                {
+                if bounded && bytes.len() > 64 * 1024 {
+                    message_cause
+                        .borrow_mut()
+                        .record("text frame exceeds 64 KiB; requested close 4002");
+                    let _ = message_ws.close_with_code(4002);
+                } else if let Err(error) = message_tx.try_send(DriverEvent::Message(bytes)) {
+                    let cause = if matches!(error, crossbeam_channel::TrySendError::Full(_)) {
+                        "event queue full; requested close 4002"
+                    } else {
+                        "event receiver disconnected; requested close 4002"
+                    };
+                    message_cause.borrow_mut().record(cause);
                     let _ = message_ws.close_with_code(4002);
                 }
             });
             // An error is always followed by a close: report both as one.
             let failed = Rc::new(RefCell::new(None::<String>));
             let error_flag = failed.clone();
+            let error_cause = close_cause.clone();
             let on_error = Closure::<dyn FnMut(Event)>::new(move |_e: Event| {
                 *error_flag.borrow_mut() = Some("websocket error".into());
+                if bounded {
+                    error_cause.borrow_mut().record("websocket error");
+                }
             });
-            let on_close = Closure::<dyn FnMut(CloseEvent)>::new(move |_e: CloseEvent| {
-                let _ = tx.try_send(DriverEvent::Closed(failed.borrow_mut().take()));
+            let closed_cause = close_cause.clone();
+            let on_close = Closure::<dyn FnMut(CloseEvent)>::new(move |e: CloseEvent| {
+                let reason = if bounded {
+                    closed_cause.borrow_mut().closed(e.code(), &e.reason());
+                    Some(closed_cause.borrow().message())
+                } else {
+                    failed.borrow_mut().take()
+                };
+                let _ = tx.try_send(DriverEvent::Closed(reason));
             });
             ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
             ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
@@ -330,6 +392,7 @@ mod web {
             ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
             Ok(Self {
                 ws,
+                close_cause,
                 _on_open: on_open,
                 _on_message: on_message,
                 _on_error: on_error,
@@ -337,6 +400,9 @@ mod web {
             })
         }
 
+        pub fn close_message(&self) -> String {
+            self.close_cause.borrow().message()
+        }
         pub fn closed(&self) -> bool {
             self.ws.ready_state() >= WebSocket::CLOSING
         }
@@ -494,5 +560,58 @@ mod bounded_poll_tests {
         assert_eq!(driver.bounded_events().len(), 64);
         assert_eq!(driver.bounded_events().len(), 64);
         assert_eq!(driver.bounded_events().len(), 2);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod browser_close_tests {
+    use super::*;
+
+    #[test]
+    fn full_queue_cannot_erase_local_cause_or_close_event() {
+        let (tx, rx) = crossbeam_channel::bounded(64);
+        for _ in 0..64 {
+            tx.try_send(DriverEvent::Message(vec![1])).unwrap();
+        }
+        assert!(tx.try_send(DriverEvent::Message(vec![2])).is_err());
+        let mut cause = BrowserCloseCause::default();
+        cause.record("event queue full or receiver disconnected; requested close 4002");
+        cause.closed(4002, "bounded queue");
+        assert!(tx
+            .try_send(DriverEvent::Closed(Some(cause.message())))
+            .is_err());
+        assert_eq!(rx.len(), 64);
+        // The out-of-queue slot retains the failure even when terminal delivery fails.
+        assert!(cause.message().contains("event queue full"));
+        assert!(cause.message().contains("close code 4002: bounded queue"));
+        drop(rx);
+        assert!(tx.try_send(DriverEvent::Message(vec![])).is_err());
+        assert!(cause.message().contains("event queue full"));
+    }
+
+    #[test]
+    fn diagnostic_slot_is_bounded_and_keeps_the_first_local_failure() {
+        for local in [
+            "binary frame exceeds 64 KiB",
+            "text frame exceeds 64 KiB",
+            "unsupported browser frame type",
+        ] {
+            let mut cause = BrowserCloseCause::default();
+            cause.record(local);
+            cause.record("websocket error");
+            for _ in 0..100 {
+                cause.closed(4002, &"é".repeat(1000));
+            }
+            let message = cause.message();
+            assert!(message.starts_with(local));
+            assert!(message.contains("close code 4002"));
+            assert!(message.len() < 512);
+            assert_eq!(cause.close.as_ref().unwrap().1.len(), 256);
+        }
+        let mut remote = BrowserCloseCause::default();
+        remote.closed(1001, "server shutdown");
+        assert!(remote
+            .message()
+            .contains("close code 1001: server shutdown"));
     }
 }

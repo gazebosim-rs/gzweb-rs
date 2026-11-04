@@ -99,3 +99,31 @@ retired-ID absence/current-ID presence checks. No production scheduling or asset
 policy changes. This source-supported ordering correction remains unrun pending
 independent review and affected normal hooks; later workspace tests and final
 coverage export were not reached. No review publication or hosted run occurred.
+
+
+## First actual browser boundary and diagnostic correction
+
+The qualified e276f55 candidate passed its normal local hooks, independent local
+and official CI audits, and both unchanged release budgets. The first actual M10
+WebGL2 browser attempt briefly displayed real geometry, then disconnected and
+retried. The previous bare `Connecting to ...` log precedes backend selection and
+query augmentation; it does not identify a Gazebo-backend selection failure.
+
+Source inspection identifies a possible overload: each opted-in snapshot sends
+Scene, catalog and scan messages, while the bounded browser queue retains 64
+events and the ECS drains at most 64 per frame. A low frame rate can therefore
+fill that queue. The observed close cause was not retained, so this mechanism is
+not claimed as the experimentally established cause of the browser failure.
+
+This isolated correction retains one bounded diagnostic slot outside that queue:
+the first local oversize/type/queue failure and the latest close code plus at most
+256 UTF-8 bytes of close reason. Failure still closes the socket with the same
+bounds; no pacing, coalescing, queue capacity, wire or retry policy changes.
+Primitive retirement logs the cause once for that driver, and the lifecycle panel
+shows the existing connection error even when its catalog has been retired.
+New source regressions cover full-queue terminal-delivery failure, disconnected
+receiver retention, bounded multibyte reason storage, backend retirement and the
+actual panel text. These corrections are unrun pending independent source review
+and the affected mandatory verification; no new bundle or browser result is
+claimed. Original qualified source, bundles, failure observations and audits
+remain preserved.

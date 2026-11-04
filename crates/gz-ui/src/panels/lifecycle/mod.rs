@@ -202,7 +202,10 @@ fn view(
         let message = if status.control_pending {
             "Waiting for committed reply…"
         } else if status.lifecycle.is_none() {
-            "Lifecycle unavailable; configure server and opt in"
+            status
+                .control_error
+                .as_deref()
+                .unwrap_or("Lifecycle unavailable; configure server and opt in")
         } else {
             status
                 .control_error

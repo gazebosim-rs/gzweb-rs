@@ -178,3 +178,31 @@ fn only_explicit_successful_selected_state_reply_updates_editor_and_disconnect_c
     app.world_mut().run_system_once(sync).unwrap();
     assert_eq!(app.world().resource::<Editor>().state, State::default());
 }
+
+#[test]
+fn missing_catalog_displays_the_actual_connection_failure() {
+    let mut app = App::new();
+    let mut status = GzStatus::new("ws://test");
+    status.control_error = Some("event queue full; WebSocket close code 4002".into());
+    app.insert_resource(status)
+        .init_resource::<Theme>()
+        .init_resource::<Editor>();
+    let note = app.world_mut().spawn((Note, Text::new("old"))).id();
+    app.world_mut().run_system_once(view).unwrap();
+    assert_eq!(
+        app.world().get::<Text>(note).unwrap().0,
+        "event queue full; WebSocket close code 4002"
+    );
+    app.world_mut().resource_mut::<GzStatus>().control_error = None;
+    app.world_mut().run_system_once(view).unwrap();
+    assert_eq!(
+        app.world().get::<Text>(note).unwrap().0,
+        "Lifecycle unavailable; configure server and opt in"
+    );
+    app.world_mut().resource_mut::<GzStatus>().control_pending = true;
+    app.world_mut().run_system_once(view).unwrap();
+    assert_eq!(
+        app.world().get::<Text>(note).unwrap().0,
+        "Waiting for committed reply…"
+    );
+}

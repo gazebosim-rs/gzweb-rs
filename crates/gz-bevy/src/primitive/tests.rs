@@ -405,3 +405,51 @@ fn mesh_complete_frames_keep_corrected_pose_lane_and_rebuild_on_asset_change() {
         assert!(io.inbox.poses.is_empty());
     });
 }
+
+#[test]
+fn closed_cause_survives_retirement_without_repeated_connection_work() {
+    let config = GzConfig {
+        backend: crate::BackendKind::Primitive,
+        reconnect: false,
+        ..Default::default()
+    };
+    let (driver, tx, _out) = driver::fake();
+    let slot = Rc::new(RefCell::new(Some(driver)));
+    let mut backend = PrimitiveBackend::new(&config).unwrap();
+    backend.connector = Box::new(move |_| slot.borrow_mut().take().unwrap());
+    let mut world = World::new();
+    world.insert_resource(GzStatus::new("ws://test"));
+    world.init_resource::<GzInbox>();
+    world.resource_scope(|world, mut status: Mut<GzStatus>| {
+        let mut io = BackendIo {
+            now: 0.,
+            config: &config,
+            status: status.reborrow(),
+            inbox: world.resource_mut::<GzInbox>(),
+            publishes: Vec::new(),
+            replies: Vec::new(),
+            topics: None,
+            arrivals: Vec::new(),
+        };
+        backend.poll(&mut io);
+        tx.send(DriverEvent::Open).unwrap();
+        tx.send(scene(1, 0)).unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        assert_eq!(io.status.status, Status::Ready);
+        let cause = "event queue full; WebSocket close code 4002: bounded queue";
+        tx.send(DriverEvent::Closed(Some(cause.into()))).unwrap();
+        backend.poll(&mut io);
+        backend.flush(&mut io);
+        assert!(backend.driver.is_none());
+        assert_eq!(io.status.control_error.as_deref(), Some(cause));
+        assert!(io.status.lifecycle.is_none());
+        assert!(io.inbox.prepared_scene.take().unwrap().roots.is_empty());
+        for _ in 0..10 {
+            backend.poll(&mut io);
+            backend.flush(&mut io);
+            assert_eq!(io.status.control_error.as_deref(), Some(cause));
+            assert!(backend.driver.is_none());
+        }
+    });
+}
