@@ -97,6 +97,8 @@ pub struct GzStatus {
     pub partial_metrics: bool,
     /// World-SDF generation capability: None preserves the legacy service probe.
     pub world_sdf: Option<bool>,
+    pub lifecycle: Option<gz_core::primitive::lifecycle::Catalog>,
+    pub lifecycle_reply: Option<gz_core::primitive::lifecycle::Reply>,
     pub control_pending: bool,
     pub control_error: Option<String>,
     /// A socket is open or opening (false once it closes, until the next
@@ -136,6 +138,8 @@ impl GzStatus {
             partial_clock: None,
             partial_metrics: false,
             world_sdf: None,
+            lifecycle: None,
+            lifecycle_reply: None,
             control_pending: false,
             control_error: None,
             attempting: false,
@@ -152,6 +156,8 @@ impl GzStatus {
 /// logged, not queued.
 #[derive(Message, Debug, Clone, PartialEq)]
 pub enum GzCommand {
+    /// Opt-in primitive edits; never routed through Gazebo services.
+    Lifecycle(gz_core::primitive::lifecycle::Command),
     Play,
     Pause,
     /// Step a paused simulation by this many iterations.
@@ -351,6 +357,7 @@ pub fn pump(
 /// Sends `cmd` through `backend`.
 fn send_command(backend: &mut dyn SimBackend, cmd: &GzCommand) -> Result<(), SendError> {
     match cmd {
+        GzCommand::Lifecycle(command) => backend.lifecycle(command.clone()),
         GzCommand::Play => backend.world_control(WorldControl::Play),
         GzCommand::Pause => backend.world_control(WorldControl::Pause),
         GzCommand::Step(n) => backend.world_control(WorldControl::Step(*n)),

@@ -119,7 +119,7 @@ struct Args {
     no_vsync: bool,
 }
 
-const USAGE: &str = "usage: gzweb [--backend gazebo|primitive] [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
+const USAGE: &str = "usage: gzweb [--backend gazebo|primitive] [--lifecycle] [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
                      [--ui full|minimal|gallery] [--theme system|light|dark] [--ui-scale PERCENT] \
                      [--motion system|reduce|full] [--no-hud] \
@@ -238,6 +238,7 @@ fn parse_args(
     let mut screenshot = None;
     let mut http_mirror = None;
     let mut backend = gz_bevy::BackendKind::default();
+    let mut lifecycle = false;
     let mut ca_cert = None;
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
@@ -279,6 +280,7 @@ fn parse_args(
         };
         match arg.as_str() {
             "--backend" => backend = value()?.parse()?,
+            "--lifecycle" => lifecycle = true,
             "--url" => url = Some(value()?),
             "--port" => port = value()?,
             "--key" => key = Some(value()?),
@@ -476,9 +478,13 @@ fn parse_args(
     {
         return Err("--edit needs --select MODEL".into());
     }
+    if lifecycle && backend != gz_bevy::BackendKind::Primitive {
+        return Err("--lifecycle requires --backend primitive".into());
+    }
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
             backend,
+            lifecycle,
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
             ui: if no_ui { UiMode::None } else { ui },
@@ -595,6 +601,11 @@ fn command() -> Result<Command, String> {
         get("motion").and_then(|m| m.parse().map_err(|e| bevy::log::warn!("?motion: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
+            lifecycle: match get("lifecycle").as_deref() {
+                None => false,
+                Some("1") if get("backend").as_deref() == Some("primitive") => true,
+                _ => return Err("lifecycle=1 requires backend=primitive".into()),
+            },
             backend: get("backend")
                 .map(|s| s.parse())
                 .transpose()?
@@ -1504,5 +1515,19 @@ mod primitive_selection_tests {
         );
         assert!(selected(&["--backend", "unknown"]).is_err());
         assert!(selected(&["--backend"]).is_err());
+    }
+    #[test]
+    fn lifecycle_requires_explicit_primitive_backend_and_preserves_default_selection() {
+        let parse = |args: &[&str]| parse_args(args.iter().map(|s| (*s).to_string()), None);
+        assert!(parse(&["--lifecycle"]).is_err());
+        assert!(parse(&["--backend", "gazebo", "--lifecycle"]).is_err());
+        let Command::Run(args) = parse(&["--backend", "primitive", "--lifecycle"]).unwrap() else {
+            panic!("expected runnable viewer")
+        };
+        assert!(args.config.lifecycle);
+        let Command::Run(args) = parse(&["--backend", "primitive"]).unwrap() else {
+            panic!("expected runnable viewer")
+        };
+        assert!(!args.config.lifecycle);
     }
 }

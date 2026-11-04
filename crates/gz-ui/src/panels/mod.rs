@@ -51,6 +51,7 @@
 
 mod assets;
 mod console;
+mod lifecycle;
 mod plot;
 mod scene;
 pub(crate) mod sensors;
@@ -509,6 +510,7 @@ impl PluginGroup for PanelPlugins {
             .add(PlotPanelPlugin)
             .add(SensorsPanelPlugin)
             .add(TeleopPanelPlugin)
+            .add(lifecycle::LifecyclePanelPlugin)
             .add(ConsolePanelPlugin)
             .add(WorkspacesPanelPlugin)
     }

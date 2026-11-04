@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub mod lifecycle;
 mod scan;
 pub use scan::{Scan, ScanFrame, MAX_SCAN_BEAMS};
 
@@ -198,6 +199,8 @@ pub enum ServerMessage {
     Scene(Scene),
     Ack(Ack),
     Scan(ScanFrame),
+    LifecycleCatalog(lifecycle::Catalog),
+    LifecycleAck(lifecycle::Reply),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -319,6 +322,8 @@ pub fn parse(text: &str) -> Result<ServerMessage, String> {
         ServerMessage::Scene(scene) => scene.validate()?,
         ServerMessage::Ack(ack) => ack.validate()?,
         ServerMessage::Scan(scan) => scan.validate()?,
+        ServerMessage::LifecycleCatalog(catalog) => catalog.validate()?,
+        ServerMessage::LifecycleAck(reply) => reply.validate()?,
     }
     Ok(message)
 }
@@ -354,6 +359,11 @@ pub struct Session {
     current: Option<Current>,
     fence: Option<(Stamp, bool)>,
     pending: Option<Pending>,
+    lifecycle_enabled: bool,
+    pub catalog: Option<lifecycle::Catalog>,
+    pub lifecycle_reply: Option<lifecycle::Reply>,
+    pending_edit: Option<(u64, lifecycle::Command)>,
+    lifecycle_scene: Option<Scene>,
     next_request: Option<u64>,
 }
 
@@ -372,6 +382,11 @@ impl Default for Session {
             current: None,
             fence: None,
             pending: None,
+            lifecycle_enabled: false,
+            catalog: None,
+            lifecycle_reply: None,
+            pending_edit: None,
+            lifecycle_scene: None,
             next_request: Some(1),
         }
     }
@@ -381,7 +396,7 @@ impl Session {
     pub fn disconnect(&mut self, reason: impl Into<String>) {
         self.connected = false;
         self.status = reason.into();
-        if self.pending.is_some() {
+        if self.pending_control() {
             self.status.push_str("; pending control outcome unknown");
         }
         self.notice = None;
@@ -391,6 +406,7 @@ impl Session {
         self.current = None;
         self.fence = None;
         self.pending = None;
+        self.clear_lifecycle();
     }
 
     fn clear_scan(&mut self) {
@@ -400,19 +416,76 @@ impl Session {
         self.cleared_acquired_time = None;
     }
 
+    pub fn enable_lifecycle(&mut self, enabled: bool) {
+        self.lifecycle_enabled = enabled;
+        self.clear_lifecycle();
+    }
+    fn clear_lifecycle(&mut self) {
+        self.catalog = None;
+        self.lifecycle_reply = None;
+        self.pending_edit = None;
+        self.lifecycle_scene = None;
+    }
+    pub fn lifecycle(&mut self, command: lifecycle::Command) -> Result<String, String> {
+        if !self.lifecycle_enabled || !self.can_control() {
+            return Err("Lifecycle requires an admitted scene and no pending command".into());
+        }
+        let catalog = self
+            .catalog
+            .as_ref()
+            .ok_or("No lifecycle capability/catalog")?;
+        let scene = self
+            .lifecycle_scene
+            .as_ref()
+            .ok_or("No committed lifecycle scene")?;
+        if !catalog.matches_scene(scene) {
+            return Err("Waiting for current lifecycle catalog".into());
+        }
+        command.validate(catalog)?;
+        #[derive(Serialize)]
+        struct Request<'a> {
+            version: u32,
+            kind: &'static str,
+            request_id: u64,
+            world_id: u64,
+            epoch: u64,
+            #[serde(flatten)]
+            command: &'a lifecycle::Command,
+        }
+        let id = self.next_request.ok_or("Request IDs exhausted")?;
+        let text = serde_json::to_string(&Request {
+            version: 1,
+            kind: "lifecycle",
+            request_id: id,
+            world_id: catalog.world_id,
+            epoch: catalog.epoch,
+            command: &command,
+        })
+        .map_err(|e| e.to_string())?;
+        if text.len() > 4096 {
+            return Err("Lifecycle request exceeds 4 KiB".into());
+        }
+        self.next_request = id.checked_add(1);
+        self.pending_edit = Some((id, command));
+        self.lifecycle_reply = None;
+        self.notice = None;
+        self.status = format!("Waiting for lifecycle acknowledgement #{id}");
+        Ok(text)
+    }
+
     pub fn opened(&mut self) {
         self.connected = true;
         self.status = "Connected; waiting for a complete scene".into();
     }
 
     pub fn pending_control(&self) -> bool {
-        self.pending.is_some()
+        self.pending.is_some() || self.pending_edit.is_some()
     }
 
     pub fn can_control(&self) -> bool {
         self.connected
             && self.current.is_some()
-            && self.pending.is_none()
+            && !self.pending_control()
             && self.next_request.is_some()
     }
 
@@ -471,7 +544,7 @@ impl Session {
                             return Err("Scene clock moved backwards within its epoch".into());
                         }
                     } else {
-                        if self.pending.is_some() {
+                        if self.pending_control() {
                             return Err("World changed while a control was pending".into());
                         }
                         self.clear_scene = true;
@@ -503,7 +576,98 @@ impl Session {
                     }
                     .into();
                 }
+                if self.current.is_some_and(|c| {
+                    self.catalog
+                        .as_ref()
+                        .is_some_and(|v| v.world_id != c.world_id || v.epoch != c.stamp.epoch)
+                }) {
+                    self.clear_lifecycle();
+                }
+                if self.lifecycle_enabled {
+                    self.lifecycle_scene = Some(scene.clone());
+                }
                 self.latest = Some(scene);
+            }
+            ServerMessage::LifecycleCatalog(catalog) => {
+                if !self.lifecycle_enabled {
+                    return Err("Lifecycle payload without opt-in".into());
+                }
+                catalog.validate()?;
+                let scene = self
+                    .lifecycle_scene
+                    .as_ref()
+                    .ok_or("Catalog before committed scene")?;
+                if catalog.world_id != scene.world_id
+                    || catalog.epoch < scene.epoch
+                    || catalog.scene_sequence < scene.sequence
+                {
+                    return Ok(());
+                }
+                if !catalog.matches_scene(scene) {
+                    return Err("Catalog does not match committed Scene".into());
+                }
+                self.catalog = Some(catalog);
+            }
+            ServerMessage::LifecycleAck(reply) => {
+                if !self.lifecycle_enabled {
+                    return Err("Lifecycle reply without opt-in".into());
+                }
+                reply.validate()?;
+                let (id, command) = self
+                    .pending_edit
+                    .as_ref()
+                    .ok_or("Unsolicited lifecycle reply")?;
+                let scene = self
+                    .lifecycle_scene
+                    .as_ref()
+                    .ok_or("Lifecycle reply before Scene")?;
+                if reply.request_id != *id
+                    || reply.action != command.action()
+                    || reply.world_id != scene.world_id
+                    || reply.epoch != scene.epoch
+                    || reply.scene_sequence != scene.sequence
+                    || reply.seconds != scene.seconds
+                    || reply.nanoseconds != scene.nanoseconds
+                    || reply.paused != scene.paused
+                {
+                    return Err("Lifecycle reply does not match request and committed Scene".into());
+                }
+                if reply.ok {
+                    if reply.model_id.is_none()
+                        || reply
+                            .model_id
+                            .is_some_and(|id| scene.visuals.iter().any(|visual| visual.id == id))
+                        || command
+                            .model()
+                            .is_some_and(|model| Some(model) != reply.model_id)
+                        || matches!(
+                            reply.action,
+                            lifecycle::Action::GetState | lifecycle::Action::SetState
+                        ) != reply.state.is_some()
+                    {
+                        return Err("Lifecycle result has contradictory identity/state".into());
+                    }
+                } else if reply.model_id.is_some() || reply.state.is_some() {
+                    return Err("Rejected lifecycle result contains state".into());
+                }
+                self.pending_edit = None;
+                self.notice = Some(if reply.ok {
+                    format!(
+                        "Server acknowledged {:?} #{}: epoch {}, {}.{:09}s; sequence {}",
+                        reply.action,
+                        reply.request_id,
+                        reply.epoch,
+                        reply.seconds,
+                        reply.nanoseconds,
+                        reply.scene_sequence
+                    )
+                } else {
+                    format!(
+                        "Server refused lifecycle: {}",
+                        reply.error.as_deref().unwrap_or("refused")
+                    )
+                });
+                self.lifecycle_reply = Some(reply);
             }
             ServerMessage::Scan(frame) => {
                 frame.validate()?;
@@ -571,6 +735,7 @@ impl Session {
                 if self.current.is_some_and(|c| stamp.epoch > c.stamp.epoch) {
                     self.clear_scene = true;
                     self.clear_scan();
+                    self.clear_lifecycle();
                     self.latest = None;
                     self.current = None;
                 }
@@ -656,3 +821,6 @@ impl Scene {
             })
     }
 }
+
+#[cfg(test)]
+mod lifecycle_tests;

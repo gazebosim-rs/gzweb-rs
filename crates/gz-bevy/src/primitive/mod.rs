@@ -21,6 +21,7 @@ pub(crate) struct PrimitiveBackend {
     /// Only an actual driver send error, never informational connection text.
     pending_send_failure: Option<String>,
     start: bool,
+    lifecycle: bool,
 }
 impl PrimitiveBackend {
     pub fn new(config: &GzConfig) -> Result<Self, String> {
@@ -44,6 +45,7 @@ impl PrimitiveBackend {
             pending_since: None,
             pending_send_failure: None,
             start: true,
+            lifecycle: config.lifecycle,
         })
     }
     fn closed(&mut self, reason: String, io: &mut BackendIo) {
@@ -51,6 +53,8 @@ impl PrimitiveBackend {
         self.session.disconnect(reason);
         let reason = self.session.status.clone();
         self.previous = None;
+        io.status.lifecycle = None;
+        io.status.lifecycle_reply = None;
         self.pending_since = None;
         io.status.control_error = Some(reason.clone());
         io.status.status = Status::Error(reason);
@@ -144,7 +148,8 @@ impl SimBackend for PrimitiveBackend {
         }
         self.closed("Connecting".into(), io);
         self.pending_send_failure = None;
-        let scan_url = match scan_url(&self.url) {
+        self.session.enable_lifecycle(self.lifecycle);
+        let mut scan_url = match scan_url(&self.url) {
             Ok(url) => url,
             Err(error) => {
                 self.closed(error, io);
@@ -153,6 +158,34 @@ impl SimBackend for PrimitiveBackend {
                 return;
             }
         };
+        if self.lifecycle {
+            if scan_url.split_once('?').is_some_and(|(_, q)| {
+                q.split('&')
+                    .any(|p| p.split('=').next() == Some("lifecycle"))
+            }) {
+                if scan_url.split_once('?').is_none_or(|(_, q)| {
+                    q.split('&')
+                        .filter(|p| p.split('=').next() == Some("lifecycle"))
+                        .collect::<Vec<_>>()
+                        != ["lifecycle=1"]
+                }) {
+                    self.closed("Invalid lifecycle query".into(), io);
+                    io.status.reconnect_at = None;
+                    self.start = false;
+                    return;
+                }
+            } else {
+                scan_url.push_str("&lifecycle=1");
+            }
+        } else if scan_url.split_once('?').is_some_and(|(_, q)| {
+            q.split('&')
+                .any(|p| p.split('=').next() == Some("lifecycle"))
+        }) {
+            self.closed("Lifecycle query requires explicit viewer opt-in".into(), io);
+            io.status.reconnect_at = None;
+            self.start = false;
+            return;
+        }
         self.driver = Some((self.connector)(&scan_url));
         self.last_message = io.now;
         self.start = false;
@@ -233,6 +266,24 @@ impl SimBackend for PrimitiveBackend {
     fn request(&mut self, _: &str, _: &str, _: &[u8]) -> Result<(), SendError> {
         Self::unsupported()
     }
+    fn lifecycle(&mut self, command: primitive::lifecycle::Command) -> Result<(), SendError> {
+        let text = self.session.lifecycle(command).map_err(|error| {
+            self.session.notice = Some(error);
+            SendError::Unsendable("lifecycle request refused")
+        })?;
+        if self
+            .driver
+            .as_ref()
+            .ok_or(SendError::NotConnected)?
+            .try_send(text.into_bytes())
+            .is_err()
+        {
+            self.pending_send_failure = Some("Lifecycle send failed; outcome unknown".into());
+            return Err(SendError::Failed);
+        }
+        self.pending_since = None;
+        Ok(())
+    }
     fn world_control(&mut self, cmd: WorldControl) -> Result<(), SendError> {
         let action = match cmd {
             WorldControl::Play => Action::Resume,
@@ -309,6 +360,12 @@ impl SimBackend for PrimitiveBackend {
             io.status.attempts = 0;
             self.previous = Some(scene);
         }
+        if io.status.lifecycle != self.session.catalog {
+            io.status.lifecycle = self.session.catalog.clone();
+        }
+        if io.status.lifecycle_reply != self.session.lifecycle_reply {
+            io.status.lifecycle_reply = self.session.lifecycle_reply.clone();
+        }
         if let Some(scan) = self.session.latest_scan.take() {
             io.inbox.primitive_scan = Some(scan);
         }
@@ -333,3 +390,6 @@ mod tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod scan_backend_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lifecycle_tests;

@@ -85,6 +85,12 @@ pub trait SimBackend {
     /// comes back as a [`GzServiceReply`].
     fn request(&mut self, service: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError>;
     fn world_control(&mut self, cmd: WorldControl) -> Result<(), SendError>;
+    /// Alternative backend capability; legacy Gazebo remains unsupported.
+    fn lifecycle(&mut self, _: gz_core::primitive::lifecycle::Command) -> Result<(), SendError> {
+        Err(SendError::Unsendable(
+            "lifecycle capability is not available",
+        ))
+    }
     /// Delivers what was received into `io` and sends what was queued.
     fn flush(&mut self, io: &mut BackendIo);
 }

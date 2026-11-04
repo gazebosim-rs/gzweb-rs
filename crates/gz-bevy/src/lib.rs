@@ -103,6 +103,8 @@ impl std::str::FromStr for BackendKind {
 pub struct GzConfig {
     /// Explicit consumer protocol; Gazebo remains the default.
     pub backend: BackendKind,
+    /// Explicit primitive lifecycle capability request; disabled by default.
+    pub lifecycle: bool,
     /// Websocket URL, e.g. `ws://localhost:9002`.
     pub url: String,
     /// Optional auth key for the websocket server.
@@ -131,6 +133,7 @@ impl Default for GzConfig {
     fn default() -> Self {
         Self {
             backend: BackendKind::Gazebo,
+            lifecycle: false,
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,
