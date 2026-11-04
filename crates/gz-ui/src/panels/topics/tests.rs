@@ -207,7 +207,15 @@ fn the_topics_panel_follows_the_connection() {
 /// shows while they hide every topic.
 #[test]
 fn the_list_filters_by_name_and_kind() {
-    let mut app = live_topics();
+    // Keep this test's synthetic traffic windows (0..3 s) independent of host
+    // elapsed time. Install the established manual strategy BEFORE any frames;
+    // otherwise measure_rates can replace the seeded rate during chip updates.
+    let mut app = shell_app((1440, 900), 1.0);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    frames(&mut app, 2);
+    open(&mut app);
+    go_live(&mut app, false);
+    set_topics(&mut app, &LIST);
     assert_eq!(
         rows(&mut app),
         [

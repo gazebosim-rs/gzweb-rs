@@ -13,7 +13,8 @@ before Main promotion. See the simulator's
 [canonical M7 acceptance record](https://github.com/gazebosim-rs/gz-sim-rs/blob/main/docs/M7_ACCEPTANCE.md)
 for the lidar model, sensor/transport tests and complete delivery limits.
 This documentation closeout receives its own normal hooks and exact CI; it
-changes no runtime, tests, dependencies or accepted bundle bytes. M8 is the next
+changes no runtime, dependencies or accepted bundle bytes. A later test-only
+clock correction preserves all assertions, as recorded below. M8 is the next
 bounded simulator delivery.
 
 The primitive backend opts into `scan=1` on its existing WebSocket URL, preserving
@@ -101,6 +102,26 @@ The exact WASM SHA-256 values are
 independently reviewed. Hosted Wasm checks debug compilation; the release-bundle
 budgets and copies are separate local evidence. Accepted M1/M2 served files and
 historical build evidence were preserved.
+
+## Documentation-closeout verification history
+
+The first exact closeout CI `41757072753`, commit `7f2f6b9`, failed its coverage
+job on the existing Topics-panel `the_list_filters_by_name_and_kind` test:
+`/clock` unexpectedly remained listed under Quiet. The emitted UI summary was
+458 passed, one failed and one ignored. Five other jobs passed, including Fuel
+and parity; Cargo stopped before final coverage export, so no passing coverage
+result or LCOV artifact is claimed for that attempt. The accepted feature's
+runtime, test and gate bytes were unchanged in that documentation-only commit.
+
+Source review found a test timing dependency: traffic is manually measured at
+0–3 seconds, then real-clock UI frames can let the normal rate system overwrite
+that synthetic window. The actual failing clock value was not logged; this is a
+source-supported mechanism, not a measured interleaving diagnosis. The bounded
+correction uses the same shell/live/topic setup with Bevy's established manual
+zero-duration strategy installed before its first frame. Every traffic event,
+filter/chip action and Quiet assertion is retained. Production timing/filtering
+and shared test helpers are unchanged. The corrected closeout requires source
+review and its affected normal hooks/CI; none is claimed to have passed yet.
 
 ## Actual scan inspection and limits
 
