@@ -250,14 +250,46 @@ impl SimBackend for PrimitiveBackend {
                 }
             }
         }
-        if self.driver.is_some()
-            && (io.now - self.last_message > 10.0
-                || self.pending_since.is_some_and(|at| io.now - at > 7.0))
-        {
-            self.closed(
-                "Connection or committed acknowledgement timed out; control outcome unknown".into(),
-                io,
-            );
+        // An ACK/reply in this poll may have completed the command even after
+        // a slow frame. Clear its old deadline before testing it, and before
+        // the pump can queue a new command ahead of this frame's flush.
+        if !self.session.pending_control() {
+            self.pending_since = None;
+        }
+        if self.driver.is_some() {
+            let silence = io.now - self.last_message;
+            let (last_credit, pending_ready) = self.session.publication_tokens();
+            let reason = if let Some(elapsed) = self
+                .pending_since
+                .filter(|_| self.session.pending_control())
+                .map(|at| io.now - at)
+                .filter(|elapsed| *elapsed > 7.0)
+            {
+                Some(format!(
+                    "Committed acknowledgement timed out after {elapsed:.3}s (limit 7s); control outcome unknown; last_credit={last_credit:?}, pending_ready={pending_ready:?}"
+                ))
+            } else if silence > 10.0 {
+                let phase = if !self.session.connected {
+                    "Connection opening"
+                } else if self.session.clock().is_none() {
+                    "Initial scene"
+                } else {
+                    "Connection idle"
+                };
+                let command = if self.session.pending_control() {
+                    "pending control outcome unknown"
+                } else {
+                    "no control request pending"
+                };
+                Some(format!(
+                    "{phase} timed out after {silence:.3}s without a server message (limit 10s); {command}; last_credit={last_credit:?}, pending_ready={pending_ready:?}"
+                ))
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                self.closed(reason, io);
+            }
         }
     }
     fn subscribe(&mut self, _: &str) -> Result<(), SendError> {
@@ -424,3 +456,6 @@ mod lifecycle_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod publication_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod timeout_tests;

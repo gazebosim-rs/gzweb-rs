@@ -459,6 +459,12 @@ impl Session {
             .map(|token| format!(r#"{{"version":1,"kind":"publication_ready","token":{token}}}"#))
     }
 
+    /// Fixed-size diagnostic state: last accepted credit and Ready awaiting
+    /// local driver submission. It does not establish remote Ready receipt.
+    pub fn publication_tokens(&self) -> (Option<u64>, Option<u64>) {
+        (self.publication_last, self.publication_pending)
+    }
+
     /// Call only after the bounded driver accepted that one Ready; failed sends
     /// instead disconnect, with no transport or mutation retry.
     pub fn publication_ready_sent(&mut self) {

@@ -187,3 +187,42 @@ distinction and the next Ready's exact-once delivery. No production, timing boun
 assertion threshold, scheduling, protocol or gate changes. This completed source
 correction remains unrun pending independent review and affected normal hooks;
 there is no new build, hosted or browser success claim.
+
+## Qualified credit browser timeout and bounded diagnostics (source candidate)
+
+The matching qualified 138 viewer/d396 native browser rendered the four original
+models, then twice reported the combined connection/acknowledgement timeout with
+no user control or lifecycle request issued. The retained DOM observation was
+`document.hidden=false`, `visibilityState=visible`, canvas 1280×720. A displayed
+1 fps does not identify the interval between polls or establish a background-tab,
+GPU, marker-loss or Ready-loss cause.
+
+Source inspection found one real late-response defect: poll accepted an ACK or
+lifecycle reply, but checked the previous command timer before flush cleared it.
+An accepted response after a slow frame could therefore be falsely timed out.
+The correction clears that completed-command timer after processing events and
+before testing deadlines or admitting the next command. Actual unanswered
+commands still fail strictly after 7 seconds. Startup and message silence still
+fail strictly after 10 seconds; fail-closed behavior and all credit/driver bounds
+are unchanged. With no command pending, diagnostics no longer claim an unknown
+control outcome: they distinguish connection opening, initial Scene and idle
+publication silence. A fixed-size getter reports the last accepted credit token
+and Ready awaiting local submission. A cleared Ready slot establishes only local
+bounded-driver submission, not native receipt.
+
+Both deadlines and received-message timestamps use the same `Time<Real>` clock;
+there is no Virtual/Real clock conversion in the backend pump. Each Update calls
+poll, queued commands, then flush without a connection-status run condition.
+The paused native loop continues the 34 ms wall-clock publication gate. These
+source facts do not prove where the observed silence arose. No wire, pacing,
+queue capacity, token admission, timeout threshold or retry policy changed.
+
+New regression source supplies actual queued successful/refused control ACKs and
+a committed lifecycle reply after the old deadline, verifies that a new unanswered
+request gets its own unchanged seven-second deadline, and distinguishes unopened,
+initial-scene and idle ten-second failures including credit state. All existing
+regressions/assertions remain unchanged. This isolated RAM-child source is
+UNRUN/unqualified at source-review completion; no tests, lint, builds or new browser
+replays accompanied initial source preparation. The completed batch is formatted
+before required verification. The qualified parents and failure evidence stay
+unchanged; execution requires source review and the retained storage floors.
