@@ -80,7 +80,25 @@ fn reset_command_precedes_old_ready_and_flush_sends_that_ready_exactly_once() {
         assert_eq!(ready, json!({"version":1,"kind":"publication_ready","token":1}));
         backend.flush(&mut io);
         assert!(out.try_recv().is_err());
+        // The command is acknowledged, but the existing UI fence deliberately
+        // stays locked until a fresh committed reset-epoch Scene arrives.
+        assert!(!backend.session.pending_control());
+        assert!(io.status.control_pending);
+        let mut fresh_scene = scene(1);
+        fresh_scene["epoch"] = json!(1);
+        let mut fresh_catalog = catalog(1);
+        fresh_catalog["epoch"] = json!(1);
+        for value in [fresh_scene, fresh_catalog, marker(2)] {
+            tx.send(event(value)).unwrap();
+        }
+        backend.poll(&mut io);
+        backend.flush(&mut io);
         assert!(!io.status.control_pending);
+        assert_eq!(io.inbox.prepared_scene.take().unwrap().roots[0].id, 3);
+        let next_ready: Value = serde_json::from_slice(&out.try_recv().unwrap()).unwrap();
+        assert_eq!(next_ready, json!({"version":1,"kind":"publication_ready","token":2}));
+        backend.flush(&mut io);
+        assert!(out.try_recv().is_err());
         assert!(backend.driver.is_some());
     });
 }

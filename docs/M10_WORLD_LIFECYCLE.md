@@ -165,3 +165,25 @@ snapshots. That controlled socket fixture proves viewer transport behavior, not
 the production simulator or a browser rate. The complete cross-repository source
 batch and independent review must precede required verification. No credit
 candidate checks, bundles, runtime/browser success or M10 acceptance are claimed.
+
+
+### First publication-credit verification boundary
+
+The complete credit candidate's normal commit hook passed in 79.016 seconds.
+Its first normal pre-push coverage hook then stopped after 95.023 seconds without
+a capacity stop or publication. The first target reported 400 passing tests and
+one failure: the new reset/old-Ready control expected the UI pending flag to clear
+immediately after reset ACK, before providing the fresh reset-epoch Scene.
+The old Ready and empty-scene retirement assertions had already passed. The
+existing backend intentionally holds that UI fence until a current scene arrives;
+the command itself is already acknowledged. The other three new backend credit
+controls, including the real bounded socket, passed. Later workspace targets and
+final coverage export were not reached.
+
+The test-only correction keeps every previous assertion and supplies the missing
+fresh epoch-one Scene/catalog and next credit before checking that UI controls
+unlock. It additionally checks the acknowledged-command versus waiting-for-scene
+distinction and the next Ready's exact-once delivery. No production, timing bound,
+assertion threshold, scheduling, protocol or gate changes. This completed source
+correction remains unrun pending independent review and affected normal hooks;
+there is no new build, hosted or browser success claim.
