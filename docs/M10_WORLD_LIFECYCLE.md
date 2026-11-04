@@ -87,3 +87,15 @@ now have parent-module visibility, retaining the existing PanelPlugins use
 without adding a public API. No behavior, assertion or gate changes accompany
 this correction; it remains unrun pending independent source review. All three
 failed attempts stay preserved with their actual outcomes.
+
+The first normal pre-push coverage hook then stopped after 96.023 seconds without
+publishing the review branch. The new ECS replacement control was the sole
+emitted failure (393 other gz-bevy tests passed): it observed three mesh assets
+where its immediate count expected one. Pinned Bevy collects dropped handles in
+PreUpdate, while scene replacement drops the old Mesh3d components in Update.
+The test now advances one ordinary application frame for that maintained
+collection pass, retaining the exact original asset count and adding explicit
+retired-ID absence/current-ID presence checks. No production scheduling or asset
+policy changes. This source-supported ordering correction remains unrun pending
+independent review and affected normal hooks; later workspace tests and final
+coverage export were not reached. No review publication or hosted run occurred.

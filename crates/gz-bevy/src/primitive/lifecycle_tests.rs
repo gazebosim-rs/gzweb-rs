@@ -82,6 +82,8 @@ fn committed_replacements_spawn_and_remove_actual_ecs_assets_with_one_world_basi
         .length()
             < 1e-5
     );
+    let mut meshes = app.world_mut().query::<&Mesh3d>();
+    let retired_meshes: Vec<_> = meshes.iter(app.world()).map(|mesh| mesh.0.id()).collect();
     inserted.sequence = 3;
     inserted.visuals.retain(|v| v.id == 4);
     app.world_mut().resource_mut::<GzInbox>().prepared_scene =
@@ -89,7 +91,16 @@ fn committed_replacements_spawn_and_remove_actual_ecs_assets_with_one_world_basi
     app.update();
     assert!(!app.world().resource::<GzIndex>().by_id.contains_key(&3));
     assert!(app.world().get_entity(inserted_entity).is_err());
-    assert_eq!(app.world().resource::<Assets<Mesh>>().len(), count);
+    // apply_scene drops the old Mesh3d handles in Update. The maintained
+    // Assets<Mesh>::track_assets runs in PreUpdate, so its drop-event collection
+    // belongs to the next normal frame, not the replacement frame itself.
+    app.update();
+    let assets = app.world().resource::<Assets<Mesh>>();
+    assert!(retired_meshes.iter().all(|id| !assets.contains(*id)));
+    let current_meshes: Vec<_> = meshes.iter(app.world()).map(|mesh| mesh.0.id()).collect();
+    assert_eq!(current_meshes.len(), 1);
+    assert!(assets.contains(current_meshes[0]));
+    assert_eq!(assets.len(), count);
     let mut roots = app
         .world_mut()
         .query_filtered::<Entity, With<GzWorldRoot>>();
