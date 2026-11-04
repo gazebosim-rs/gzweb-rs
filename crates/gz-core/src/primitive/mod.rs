@@ -201,6 +201,23 @@ pub enum ServerMessage {
     Scan(ScanFrame),
     LifecycleCatalog(lifecycle::Catalog),
     LifecycleAck(lifecycle::Reply),
+    PublicationCredit(PublicationCredit),
+}
+
+/// Opt-in, connection-scoped transport credit; not a simulation request ID.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicationCredit {
+    version: u32,
+    token: u64,
+}
+impl PublicationCredit {
+    fn validate(&self) -> Result<(), String> {
+        if self.version != 1 || self.token == 0 {
+            return Err("Invalid publication credit".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -324,6 +341,7 @@ pub fn parse(text: &str) -> Result<ServerMessage, String> {
         ServerMessage::Scan(scan) => scan.validate()?,
         ServerMessage::LifecycleCatalog(catalog) => catalog.validate()?,
         ServerMessage::LifecycleAck(reply) => reply.validate()?,
+        ServerMessage::PublicationCredit(credit) => credit.validate()?,
     }
     Ok(message)
 }
@@ -365,6 +383,11 @@ pub struct Session {
     pending_edit: Option<(u64, lifecycle::Command)>,
     lifecycle_scene: Option<Scene>,
     next_request: Option<u64>,
+    publication_enabled: bool,
+    publication_last: Option<u64>,
+    publication_pending: Option<u64>,
+    publication_scene: Option<(u64, u64, u64)>,
+    publication_catalog: bool,
 }
 
 impl Default for Session {
@@ -388,6 +411,11 @@ impl Default for Session {
             pending_edit: None,
             lifecycle_scene: None,
             next_request: Some(1),
+            publication_enabled: false,
+            publication_last: None,
+            publication_pending: None,
+            publication_scene: None,
+            publication_catalog: false,
         }
     }
 }
@@ -407,6 +435,34 @@ impl Session {
         self.fence = None;
         self.pending = None;
         self.clear_lifecycle();
+        self.publication_last = None;
+        self.publication_pending = None;
+    }
+
+    /// Configure only at the connection boundary, after lifecycle opt-in.
+    pub fn enable_publication_credit(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.lifecycle_enabled {
+            return Err("Publication credit requires lifecycle opt-in".into());
+        }
+        self.publication_enabled = enabled;
+        self.publication_last = None;
+        self.publication_pending = None;
+        self.publication_scene = None;
+        self.publication_catalog = false;
+        Ok(())
+    }
+
+    /// Echo only after validated inbox flush. This does not consume a command ID.
+    pub fn publication_ready(&self) -> Option<String> {
+        self.publication_pending
+            .filter(|_| self.connected)
+            .map(|token| format!(r#"{{"version":1,"kind":"publication_ready","token":{token}}}"#))
+    }
+
+    /// Call only after the bounded driver accepted that one Ready; failed sends
+    /// instead disconnect, with no transport or mutation retry.
+    pub fn publication_ready_sent(&mut self) {
+        self.publication_pending = None;
     }
 
     fn clear_scan(&mut self) {
@@ -425,6 +481,11 @@ impl Session {
         self.lifecycle_reply = None;
         self.pending_edit = None;
         self.lifecycle_scene = None;
+        // A reset may retire world/catalog state while an older transport
+        // credit is already validated. Preserve pending/last until Ready or
+        // actual disconnect, independently of epoch and command request IDs.
+        self.publication_scene = None;
+        self.publication_catalog = false;
     }
     pub fn lifecycle(&mut self, command: lifecycle::Command) -> Result<String, String> {
         if !self.lifecycle_enabled || !self.can_control() {
@@ -586,7 +647,29 @@ impl Session {
                 if self.lifecycle_enabled {
                     self.lifecycle_scene = Some(scene.clone());
                 }
+                if self.publication_enabled {
+                    self.publication_scene = Some((scene.world_id, scene.epoch, scene.sequence));
+                    self.publication_catalog = false;
+                }
                 self.latest = Some(scene);
+            }
+            ServerMessage::PublicationCredit(credit) => {
+                credit.validate()?;
+                if !self.publication_enabled
+                    || !self.lifecycle_enabled
+                    || self.publication_pending.is_some()
+                    || self
+                        .publication_last
+                        .is_some_and(|last| credit.token <= last)
+                    || self.publication_scene.is_none()
+                    || !self.publication_catalog
+                {
+                    return Err("Unexpected, stale or incomplete publication credit".into());
+                }
+                self.publication_pending = Some(credit.token);
+                self.publication_last = Some(credit.token);
+                self.publication_scene = None;
+                self.publication_catalog = false;
             }
             ServerMessage::LifecycleCatalog(catalog) => {
                 if !self.lifecycle_enabled {
@@ -605,6 +688,12 @@ impl Session {
                 }
                 if !catalog.matches_scene(scene) {
                     return Err("Catalog does not match committed Scene".into());
+                }
+                if self.publication_enabled
+                    && self.publication_scene
+                        == Some((catalog.world_id, catalog.epoch, catalog.scene_sequence))
+                {
+                    self.publication_catalog = true;
                 }
                 self.catalog = Some(catalog);
             }
@@ -824,3 +913,6 @@ impl Scene {
 
 #[cfg(test)]
 mod lifecycle_tests;
+
+#[cfg(test)]
+mod publication_tests;

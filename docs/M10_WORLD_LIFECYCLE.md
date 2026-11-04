@@ -127,3 +127,41 @@ actual panel text. These corrections are unrun pending independent source review
 and the affected mandatory verification; no new bundle or browser result is
 claimed. Original qualified source, bundles, failure observations and audits
 remain preserved.
+
+## Opt-in publication credit (source candidate)
+
+The qualified 74496593 diagnostic browser recorded the actual failure:
+`event queue full; requested close 4002; WebSocket close code 1006`.
+This confirms the local event-queue overflow; it does not establish a particular
+GPU performance rate or a general rendering limit. Qualified e276/744 sources,
+bundles and observations remain unchanged.
+
+Lifecycle clients now explicitly negotiate `lifecycle=1&lifecycle_credit=1`.
+The server sends one coherent normal Scene/catalog/optional scan followed by
+`{"version":1,"kind":"publication_credit","token":N}`. The viewer validates
+that fresh matching Scene/catalog and the strictly increasing nonzero u64 token,
+then, only after validated inbox flush, sends exactly one
+`{"version":1,"kind":"publication_ready","token":N}` using the existing
+bounded driver. Unknown, missing, duplicate, null, fractional and stale fields or
+tokens fail closed. Failed flush or disconnect suppresses Ready; a failed send
+closes without retry. Queue capacity 64, per-frame drain 64, frame bytes 64 KiB,
+command IDs, eight request slots and both 14 MB release budgets are unchanged.
+
+Credit is transport state, separate from world/epoch/control state. A successful
+same-socket reset or higher-priority committed lifecycle reply can supersede the
+scene while the older validated Ready is waiting for flush: that old Ready must
+still be sent, once. It does not retry or acknowledge a mutation. Ordinary control
+and exact committed lifecycle reply packets bypass the producer credit gate;
+Ready must also be accepted while such a command is pending. A disconnect/new
+socket resets credit tracking independently. No physics, simulation or GPU step
+waits for Ready. Default Gazebo and non-lifecycle primitive clients do not
+negotiate credit and keep their existing protocols.
+
+New regression source covers strict query/metadata negatives, fresh-tuple and
+single-flight admission, command-ID independence, old credit across reset and
+priority commits, malformed-tuple suppression, failed bounded send, and a real
+bounded native WebSocket with delayed event consumption across paused/advancing
+snapshots. That controlled socket fixture proves viewer transport behavior, not
+the production simulator or a browser rate. The complete cross-repository source
+batch and independent review must precede required verification. No credit
+candidate checks, bundles, runtime/browser success or M10 acceptance are claimed.

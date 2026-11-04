@@ -133,6 +133,29 @@ fn scan_url(url: &str) -> Result<String, String> {
     Ok(parsed.href())
 }
 
+// Only explicit lifecycle clients negotiate transport credit. Default primitive
+// and Gazebo sockets keep their existing publication protocol.
+fn lifecycle_url(mut url: String, enabled: bool) -> Result<String, String> {
+    for key in ["lifecycle", "lifecycle_credit"] {
+        let fields: Vec<_> = url
+            .split_once('?')
+            .map_or("", |(_, q)| q)
+            .split('&')
+            .filter(|part| part.split('=').next() == Some(key))
+            .collect();
+        if enabled {
+            if fields.is_empty() {
+                url.push_str(&format!("&{key}=1"));
+            } else if fields != [format!("{key}=1")] {
+                return Err(format!("Invalid {key} query"));
+            }
+        } else if !fields.is_empty() {
+            return Err("Lifecycle query requires explicit viewer opt-in".into());
+        }
+    }
+    Ok(url)
+}
+
 fn empty_scene() -> gz_core::scene::SceneDesc {
     gz_core::scene::SceneDesc {
         name: "default".into(),
@@ -153,7 +176,11 @@ impl SimBackend for PrimitiveBackend {
         self.closed("Connecting".into(), io);
         self.pending_send_failure = None;
         self.session.enable_lifecycle(self.lifecycle);
-        let mut scan_url = match scan_url(&self.url) {
+        if let Err(error) = self.session.enable_publication_credit(self.lifecycle) {
+            self.closed(error, io);
+            return;
+        }
+        let scan_url = match scan_url(&self.url) {
             Ok(url) => url,
             Err(error) => {
                 self.closed(error, io);
@@ -162,34 +189,15 @@ impl SimBackend for PrimitiveBackend {
                 return;
             }
         };
-        if self.lifecycle {
-            if scan_url.split_once('?').is_some_and(|(_, q)| {
-                q.split('&')
-                    .any(|p| p.split('=').next() == Some("lifecycle"))
-            }) {
-                if scan_url.split_once('?').is_none_or(|(_, q)| {
-                    q.split('&')
-                        .filter(|p| p.split('=').next() == Some("lifecycle"))
-                        .collect::<Vec<_>>()
-                        != ["lifecycle=1"]
-                }) {
-                    self.closed("Invalid lifecycle query".into(), io);
-                    io.status.reconnect_at = None;
-                    self.start = false;
-                    return;
-                }
-            } else {
-                scan_url.push_str("&lifecycle=1");
+        let scan_url = match lifecycle_url(scan_url, self.lifecycle) {
+            Ok(url) => url,
+            Err(error) => {
+                self.closed(error, io);
+                io.status.reconnect_at = None;
+                self.start = false;
+                return;
             }
-        } else if scan_url.split_once('?').is_some_and(|(_, q)| {
-            q.split('&')
-                .any(|p| p.split('=').next() == Some("lifecycle"))
-        }) {
-            self.closed("Lifecycle query requires explicit viewer opt-in".into(), io);
-            io.status.reconnect_at = None;
-            self.start = false;
-            return;
-        }
+        };
         self.driver = Some((self.connector)(&scan_url));
         self.last_message = io.now;
         self.start = false;
@@ -386,6 +394,22 @@ impl SimBackend for PrimitiveBackend {
         if let Some(notice) = self.session.notice.take() {
             io.status.control_error = Some(notice);
         }
+        // Credit is released only after all validated scene/catalog/scan data
+        // reached the coalesced inbox, including any priority reset/commit above.
+        if let Some(ready) = self.session.publication_ready() {
+            if self
+                .driver
+                .as_ref()
+                .is_none_or(|driver| driver.try_send(ready.into_bytes()).is_err())
+            {
+                self.closed(
+                    "Publication Ready send failed; connection closed without retry".into(),
+                    io,
+                );
+            } else {
+                self.session.publication_ready_sent();
+            }
+        }
     }
 }
 
@@ -397,3 +421,6 @@ mod scan_backend_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod lifecycle_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod publication_tests;
