@@ -206,3 +206,72 @@ fn missing_catalog_displays_the_actual_connection_failure() {
         "Waiting for committed reply…"
     );
 }
+
+#[test]
+fn replay_status_is_visible_and_all_lifecycle_actions_are_disabled_even_before_metadata() {
+    let mut app = App::new();
+    let mut status = GzStatus::new("ws://replay");
+    status.lifecycle = Some(catalog()); // Even a stale writable catalog cannot enable replay editing.
+    app.insert_resource(status)
+        .insert_resource(GzConfig {
+            replay: true,
+            lifecycle: true,
+            backend: BackendKind::Primitive,
+            ..default()
+        })
+        .init_resource::<Theme>()
+        .init_resource::<Editor>();
+    let note = app.world_mut().spawn((Note, Text::new("old"))).id();
+    let operations: Vec<_> = [
+        Operation::Spawn,
+        Operation::Read,
+        Operation::Apply,
+        Operation::Remove,
+    ]
+    .into_iter()
+    .map(|op| app.world_mut().spawn(op).id())
+    .collect();
+    app.world_mut().run_system_once(enable_buttons).unwrap();
+    assert!(operations.iter().all(|entity| app
+        .world()
+        .get::<bevy::ui::InteractionDisabled>(*entity)
+        .is_some()));
+    app.world_mut().run_system_once(view).unwrap();
+    assert!(app
+        .world()
+        .get::<Text>(note)
+        .unwrap()
+        .0
+        .contains("Read-only recording playback"));
+    assert!(app
+        .world()
+        .get::<Text>(note)
+        .unwrap()
+        .0
+        .contains("Waiting for validated playback status"));
+    app.world_mut().resource_mut::<GzStatus>().replay = Some(serde_json::from_value(serde_json::json!({"version":1,"world_id":1,"epoch":9,"scene_sequence":7,"frame":2,"frames":3,"recorded_epoch":4,"recorded_sequence":18,"recorded_seconds":7,"recorded_nanoseconds":9,"recorded_paused":true,"playing":true,"finished":false,"outcomes":[{"action":"remove","model_id":20,"ok":true}]})).unwrap());
+    app.world_mut().resource_mut::<GzStatus>().control_error =
+        Some("Prior reconnect warning".into());
+    app.world_mut().run_system_once(view).unwrap();
+    let text = &app.world().get::<Text>(note).unwrap().0;
+    for expected in [
+        "Frame 2/3",
+        "recorded epoch 4, 7.000000009s",
+        "recorded paused",
+        "Cursor playing",
+        "remove #20: accepted",
+        "Prior reconnect warning",
+    ] {
+        assert!(text.contains(expected), "{expected}: {text}");
+    }
+    // Re-entering ordinary live mode restores the existing capability controls.
+    app.world_mut().resource_mut::<GzConfig>().replay = false;
+    app.world_mut().resource_mut::<GzStatus>().replay = None;
+    app.world_mut().resource_mut::<Editor>().catalog = Some(catalog());
+    app.world_mut().resource_mut::<Editor>().selected = Some(20);
+    app.world_mut().run_system_once(enable_buttons).unwrap();
+    assert!(app
+        .world()
+        .get::<bevy::ui::InteractionDisabled>(operations[1])
+        .is_none());
+}

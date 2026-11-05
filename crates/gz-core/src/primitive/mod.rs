@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub mod lifecycle;
+pub mod replay;
 mod scan;
 pub use scan::{Scan, ScanFrame, MAX_SCAN_BEAMS};
 
@@ -202,6 +203,7 @@ pub enum ServerMessage {
     LifecycleCatalog(lifecycle::Catalog),
     LifecycleAck(lifecycle::Reply),
     PublicationCredit(PublicationCredit),
+    ReplayStatus(replay::ReplayStatus),
 }
 
 /// Opt-in, connection-scoped transport credit; not a simulation request ID.
@@ -342,6 +344,7 @@ pub fn parse(text: &str) -> Result<ServerMessage, String> {
         ServerMessage::LifecycleCatalog(catalog) => catalog.validate()?,
         ServerMessage::LifecycleAck(reply) => reply.validate()?,
         ServerMessage::PublicationCredit(credit) => credit.validate()?,
+        ServerMessage::ReplayStatus(status) => status.validate()?,
     }
     Ok(message)
 }
@@ -378,6 +381,9 @@ pub struct Session {
     fence: Option<(Stamp, bool)>,
     pending: Option<Pending>,
     lifecycle_enabled: bool,
+    replay_enabled: bool,
+    pub replay: Option<replay::ReplayStatus>,
+    replay_frames: Option<u32>,
     pub catalog: Option<lifecycle::Catalog>,
     pub lifecycle_reply: Option<lifecycle::Reply>,
     pending_edit: Option<(u64, lifecycle::Command)>,
@@ -406,6 +412,9 @@ impl Default for Session {
             fence: None,
             pending: None,
             lifecycle_enabled: false,
+            replay_enabled: false,
+            replay: None,
+            replay_frames: None,
             catalog: None,
             lifecycle_reply: None,
             pending_edit: None,
@@ -432,6 +441,7 @@ impl Session {
         self.latest = None;
         self.clear_scan();
         self.current = None;
+        self.replay_frames = None;
         self.fence = None;
         self.pending = None;
         self.clear_lifecycle();
@@ -449,6 +459,20 @@ impl Session {
         self.publication_pending = None;
         self.publication_scene = None;
         self.publication_catalog = false;
+        Ok(())
+    }
+
+    /// Configure at a disconnected boundary after lifecycle and credit opt-in.
+    pub fn enable_replay(&mut self, enabled: bool) -> Result<(), String> {
+        if self.connected || (enabled && (!self.lifecycle_enabled || !self.publication_enabled)) {
+            return Err(
+                "Replay requires lifecycle and publication credit at the connection boundary"
+                    .into(),
+            );
+        }
+        self.replay_enabled = enabled;
+        self.replay = None;
+        self.replay_frames = None;
         Ok(())
     }
 
@@ -484,6 +508,7 @@ impl Session {
     }
     fn clear_lifecycle(&mut self) {
         self.catalog = None;
+        self.replay = None;
         self.lifecycle_reply = None;
         self.pending_edit = None;
         self.lifecycle_scene = None;
@@ -494,6 +519,9 @@ impl Session {
         self.publication_catalog = false;
     }
     pub fn lifecycle(&mut self, command: lifecycle::Command) -> Result<String, String> {
+        if self.replay_enabled {
+            return Err("Replay is read-only; lifecycle commands are unavailable".into());
+        }
         if !self.lifecycle_enabled || !self.can_control() {
             return Err("Lifecycle requires an admitted scene and no pending command".into());
         }
@@ -554,6 +582,7 @@ impl Session {
             && self.current.is_some()
             && !self.pending_control()
             && self.next_request.is_some()
+            && (!self.replay_enabled || self.replay.is_some())
     }
 
     pub fn clock(&self) -> Option<(Stamp, bool)> {
@@ -570,6 +599,12 @@ impl Session {
     pub fn control(&mut self, action: Action) -> Result<String, String> {
         if !self.can_control() {
             return Err("A connected scene and no pending control are required".into());
+        }
+        if self.replay_enabled
+            && action == Action::Resume
+            && self.replay.as_ref().is_some_and(|r| r.finished)
+        {
+            return Err("Playback finished; Reset before Play".into());
         }
         let id = self
             .next_request
@@ -629,6 +664,7 @@ impl Session {
                 }) {
                     self.clear_scan();
                 }
+                self.replay = None;
                 self.current = Some(Current {
                     world_id: scene.world_id,
                     stamp: scene.stamp(),
@@ -669,6 +705,7 @@ impl Session {
                         .is_some_and(|last| credit.token <= last)
                     || self.publication_scene.is_none()
                     || !self.publication_catalog
+                    || (self.replay_enabled && self.replay.is_none())
                 {
                     return Err("Unexpected, stale or incomplete publication credit".into());
                 }
@@ -682,6 +719,15 @@ impl Session {
                     return Err("Lifecycle payload without opt-in".into());
                 }
                 catalog.validate()?;
+                if self.replay_enabled
+                    && (!catalog.templates.is_empty()
+                        || catalog
+                            .models
+                            .iter()
+                            .any(|m| m.can_remove || m.can_set_state))
+                {
+                    return Err("Replay catalog must be read-only".into());
+                }
                 let scene = self
                     .lifecycle_scene
                     .as_ref()
@@ -702,6 +748,30 @@ impl Session {
                     self.publication_catalog = true;
                 }
                 self.catalog = Some(catalog);
+            }
+            ServerMessage::ReplayStatus(status) => {
+                status.validate()?;
+                if !self.replay_enabled {
+                    return Err("Replay status without explicit opt-in".into());
+                }
+                let scene = self
+                    .lifecycle_scene
+                    .as_ref()
+                    .ok_or("Replay status before Scene")?;
+                if !status.matches_scene(scene)
+                    || self
+                        .catalog
+                        .as_ref()
+                        .is_none_or(|catalog| !catalog.matches_scene(scene))
+                    || self.replay.is_some()
+                    || self
+                        .replay_frames
+                        .is_some_and(|frames| frames != status.frames)
+                {
+                    return Err("Replay status does not match the committed Scene/catalog".into());
+                }
+                self.replay_frames = Some(status.frames);
+                self.replay = Some(status);
             }
             ServerMessage::LifecycleAck(reply) => {
                 if !self.lifecycle_enabled {
@@ -765,6 +835,9 @@ impl Session {
                 self.lifecycle_reply = Some(reply);
             }
             ServerMessage::Scan(frame) => {
+                if self.replay_enabled {
+                    return Err("Sensor scans are outside replay admission".into());
+                }
                 frame.validate()?;
                 let Some(current) = self.current else {
                     return Ok(());
@@ -799,6 +872,9 @@ impl Session {
             }
             ServerMessage::Ack(ack) => {
                 ack.validate()?;
+                if self.replay_enabled && self.replay.is_none() {
+                    return Err("Replay acknowledgement before committed replay status".into());
+                }
                 let pending = self.pending.ok_or("Unsolicited acknowledgement")?;
                 if ack.request_id != pending.id {
                     return Err("Acknowledgement request ID does not match".into());
@@ -922,3 +998,6 @@ mod lifecycle_tests;
 
 #[cfg(test)]
 mod publication_tests;
+
+#[cfg(test)]
+mod replay_tests;

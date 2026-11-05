@@ -99,6 +99,7 @@ pub struct GzStatus {
     pub world_sdf: Option<bool>,
     pub lifecycle: Option<gz_core::primitive::lifecycle::Catalog>,
     pub lifecycle_reply: Option<gz_core::primitive::lifecycle::Reply>,
+    pub replay: Option<gz_core::primitive::replay::ReplayStatus>,
     pub control_pending: bool,
     pub control_error: Option<String>,
     /// A socket is open or opening (false once it closes, until the next
@@ -140,6 +141,7 @@ impl GzStatus {
             world_sdf: None,
             lifecycle: None,
             lifecycle_reply: None,
+            replay: None,
             control_pending: false,
             control_error: None,
             attempting: false,

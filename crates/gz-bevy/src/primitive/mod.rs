@@ -22,9 +22,13 @@ pub(crate) struct PrimitiveBackend {
     pending_send_failure: Option<String>,
     start: bool,
     lifecycle: bool,
+    replay: bool,
 }
 impl PrimitiveBackend {
     pub fn new(config: &GzConfig) -> Result<Self, String> {
+        if config.replay && (!config.lifecycle || config.backend != crate::BackendKind::Primitive) {
+            return Err("Replay requires the explicit primitive lifecycle backend".into());
+        }
         if config.key.is_some() {
             return Err("primitive backend does not support authentication keys".into());
         }
@@ -46,6 +50,7 @@ impl PrimitiveBackend {
             pending_send_failure: None,
             start: true,
             lifecycle: config.lifecycle,
+            replay: config.replay,
         })
     }
     fn closed(&mut self, reason: String, io: &mut BackendIo) {
@@ -58,6 +63,7 @@ impl PrimitiveBackend {
         let reason = self.session.status.clone();
         self.previous = None;
         io.status.lifecycle = None;
+        io.status.replay = None;
         io.status.lifecycle_reply = None;
         self.pending_since = None;
         io.status.control_error = Some(reason.clone());
@@ -82,6 +88,12 @@ impl PrimitiveBackend {
 }
 // Only the primitive backend opts in; default Gazebo URLs are untouched.
 fn scan_query(query: &str) -> Result<String, String> {
+    if query
+        .split('&')
+        .any(|part| part.split('=').next() == Some("replay"))
+    {
+        return Err("Replay query requires explicit viewer opt-in".into());
+    }
     let mut flags = query
         .split('&')
         .filter(|part| part.split('=').next() == Some("scan"));
@@ -99,13 +111,46 @@ fn scan_query(query: &str) -> Result<String, String> {
     })
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+fn replay_query(query: &str) -> Result<String, String> {
+    if query
+        .split('&')
+        .any(|part| part.split('=').next() == Some("scan"))
+    {
+        return Err("Replay does not admit a scan query".into());
+    }
+    let fields: Vec<_> = query
+        .split('&')
+        .filter(|part| part.split('=').next() == Some("replay"))
+        .collect();
+    if !fields.is_empty() && fields != ["replay=1"] {
+        return Err("Replay query must contain exactly one replay=1".into());
+    }
+    Ok(if fields.is_empty() {
+        if query.is_empty() {
+            "replay=1".into()
+        } else {
+            format!("{query}&replay=1")
+        }
+    } else {
+        query.into()
+    })
+}
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn scan_url(url: &str) -> Result<String, String> {
+    protocol_url(url, false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn protocol_url(url: &str, replay: bool) -> Result<String, String> {
     use tungstenite::http::{uri::PathAndQuery, Uri};
     let uri: Uri = url
         .parse()
         .map_err(|e| format!("Invalid primitive URL: {e}"))?;
-    let query = scan_query(uri.query().unwrap_or(""))?;
+    let query = if replay {
+        replay_query(uri.query().unwrap_or(""))?
+    } else {
+        scan_query(uri.query().unwrap_or(""))?
+    };
     let path = if uri.path().is_empty() {
         "/"
     } else {
@@ -122,13 +167,18 @@ fn scan_url(url: &str) -> Result<String, String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn scan_url(url: &str) -> Result<String, String> {
+fn protocol_url(url: &str, replay: bool) -> Result<String, String> {
     let parsed = web_sys::Url::new(url).map_err(|_| "Invalid primitive URL".to_string())?;
     if !parsed.hash().is_empty() {
         return Err("Primitive URL must not have a fragment".into());
     }
     let search = parsed.search();
-    let query = scan_query(search.strip_prefix('?').unwrap_or(&search))?;
+    let query = search.strip_prefix('?').unwrap_or(&search);
+    let query = if replay {
+        replay_query(query)?
+    } else {
+        scan_query(query)?
+    };
     parsed.set_search(&query);
     Ok(parsed.href())
 }
@@ -180,7 +230,11 @@ impl SimBackend for PrimitiveBackend {
             self.closed(error, io);
             return;
         }
-        let scan_url = match scan_url(&self.url) {
+        if let Err(error) = self.session.enable_replay(self.replay) {
+            self.closed(error, io);
+            return;
+        }
+        let scan_url = match protocol_url(&self.url, self.replay) {
             Ok(url) => url,
             Err(error) => {
                 self.closed(error, io);
@@ -404,6 +458,9 @@ impl SimBackend for PrimitiveBackend {
             io.status.attempts = 0;
             self.previous = Some(scene);
         }
+        if io.status.replay != self.session.replay {
+            io.status.replay = self.session.replay.clone();
+        }
         if io.status.lifecycle != self.session.catalog {
             io.status.lifecycle = self.session.catalog.clone();
         }
@@ -459,3 +516,6 @@ mod publication_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod timeout_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod replay_tests;

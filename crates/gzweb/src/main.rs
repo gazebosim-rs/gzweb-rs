@@ -119,7 +119,7 @@ struct Args {
     no_vsync: bool,
 }
 
-const USAGE: &str = "usage: gzweb [--backend gazebo|primitive] [--lifecycle] [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
+const USAGE: &str = "usage: gzweb [--backend gazebo|primitive] [--lifecycle] [--replay] [--url URL | --port N] [--key KEY] [--ca-cert PEM] \
                      [--reconnect | --no-reconnect] [--quality low|high|ultra] [--http-mirror URL] \
                      [--ui full|minimal|gallery] [--theme system|light|dark] [--ui-scale PERCENT] \
                      [--motion system|reduce|full] [--no-hud] \
@@ -239,6 +239,7 @@ fn parse_args(
     let mut http_mirror = None;
     let mut backend = gz_bevy::BackendKind::default();
     let mut lifecycle = false;
+    let mut replay = false;
     let mut ca_cert = None;
     let mut reconnect = None;
     let mut quality = gz_bevy::render::Quality::default();
@@ -281,6 +282,7 @@ fn parse_args(
         match arg.as_str() {
             "--backend" => backend = value()?.parse()?,
             "--lifecycle" => lifecycle = true,
+            "--replay" => replay = true,
             "--url" => url = Some(value()?),
             "--port" => port = value()?,
             "--key" => key = Some(value()?),
@@ -478,6 +480,9 @@ fn parse_args(
     {
         return Err("--edit needs --select MODEL".into());
     }
+    if replay && (!lifecycle || backend != gz_bevy::BackendKind::Primitive) {
+        return Err("--replay requires --backend primitive --lifecycle".into());
+    }
     if lifecycle && backend != gz_bevy::BackendKind::Primitive {
         return Err("--lifecycle requires --backend primitive".into());
     }
@@ -485,6 +490,7 @@ fn parse_args(
         config: GzConfig {
             backend,
             lifecycle,
+            replay,
             url: url.unwrap_or_else(|| format!("ws://localhost:{port}")),
             key,
             ui: if no_ui { UiMode::None } else { ui },
@@ -601,6 +607,16 @@ fn command() -> Result<Command, String> {
         get("motion").and_then(|m| m.parse().map_err(|e| bevy::log::warn!("?motion: {e}")).ok());
     Ok(Command::Run(Box::new(Args {
         config: GzConfig {
+            replay: match get("replay").as_deref() {
+                None => false,
+                Some("1")
+                    if get("backend").as_deref() == Some("primitive")
+                        && get("lifecycle").as_deref() == Some("1") =>
+                {
+                    true
+                }
+                _ => return Err("replay=1 requires backend=primitive and lifecycle=1".into()),
+            },
             lifecycle: match get("lifecycle").as_deref() {
                 None => false,
                 Some("1") if get("backend").as_deref() == Some("primitive") => true,
@@ -1529,5 +1545,31 @@ mod primitive_selection_tests {
             panic!("expected runnable viewer")
         };
         assert!(!args.config.lifecycle);
+    }
+    #[test]
+    fn replay_requires_explicit_primitive_lifecycle_and_preserves_live_defaults() {
+        let parse = |args: &[&str]| parse_args(args.iter().map(|s| (*s).to_string()), None);
+        for args in [
+            vec!["--replay"],
+            vec!["--backend", "primitive", "--replay"],
+            vec!["--backend", "gazebo", "--lifecycle", "--replay"],
+        ] {
+            assert!(parse(&args).is_err());
+        }
+        let Command::Run(replay) =
+            parse(&["--backend", "primitive", "--lifecycle", "--replay"]).unwrap()
+        else {
+            panic!("viewer")
+        };
+        assert!(replay.config.replay);
+        let Command::Run(live) = parse(&["--backend", "primitive", "--lifecycle"]).unwrap() else {
+            panic!("viewer")
+        };
+        assert!(!live.config.replay);
+        let Command::Run(defaults) = parse(&[]).unwrap() else {
+            panic!("viewer")
+        };
+        assert!(!defaults.config.replay);
+        assert_eq!(defaults.config.backend, gz_bevy::BackendKind::Gazebo);
     }
 }

@@ -105,6 +105,8 @@ pub struct GzConfig {
     pub backend: BackendKind,
     /// Explicit primitive lifecycle capability request; disabled by default.
     pub lifecycle: bool,
+    /// Explicit read-only recorded playback; requires primitive lifecycle.
+    pub replay: bool,
     /// Websocket URL, e.g. `ws://localhost:9002`.
     pub url: String,
     /// Optional auth key for the websocket server.
@@ -134,6 +136,7 @@ impl Default for GzConfig {
         Self {
             backend: BackendKind::Gazebo,
             lifecycle: false,
+            replay: false,
             url: "ws://localhost:9002".into(),
             key: None,
             enable_lights: true,

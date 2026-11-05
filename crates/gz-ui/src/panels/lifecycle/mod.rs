@@ -82,8 +82,13 @@ impl Plugin for LifecyclePanelPlugin {
         {
             return;
         }
+        let title = if app.world().resource::<GzConfig>().replay {
+            "Recording playback"
+        } else {
+            "World lifecycle"
+        };
         app.register_panel(
-            PanelDef::new(LIFECYCLE, "World lifecycle", IconId::ActivityScene)
+            PanelDef::new(LIFECYCLE, title, IconId::ActivityScene)
                 .place(WORLD_GROUP, 25)
                 .view(PanelView::Ready)
                 .content::<Body>(),
@@ -195,10 +200,31 @@ fn view(
     bodies: Query<Entity, With<Body>>,
     notes: Query<Entity, With<Note>>,
     status: Res<GzStatus>,
+    config: Option<Res<GzConfig>>,
     theme: Res<Theme>,
     mut editor: ResMut<Editor>,
 ) {
+    let replay = config.as_deref().is_some_and(|c| c.replay);
     for note in &notes {
+        if replay {
+            let provenance = status.replay.as_ref().map_or_else(
+                || "Waiting for validated playback status".into(),
+                |s| {
+                    let outcomes = s.outcomes.iter().map(|o| format!("{}{}: {}", o.action.name(), o.model_id.map_or_else(String::new, |id| format!(" #{id}")), if o.ok { "accepted" } else { "refused" })).collect::<Vec<_>>().join("; ");
+                    format!("Frame {}/{} · recorded epoch {}, {}.{:09}s · recorded {}\nCursor {}{}\nRecorded outcomes: {}", s.frame, s.frames, s.recorded_epoch, s.recorded_seconds, s.recorded_nanoseconds, if s.recorded_paused { "paused" } else { "running" }, if s.playing { "playing" } else { "paused" }, if s.finished { " (finished; Reset before Play)" } else { "" }, if outcomes.is_empty() { "none" } else { &outcomes })
+                },
+            );
+            let error = status.control_error.as_deref().unwrap_or("");
+            let pending = if status.control_pending {
+                "\nWaiting for committed reply…"
+            } else {
+                ""
+            };
+            commands.entity(note).insert(Text::new(format!(
+                "Read-only recording playback\n{provenance}{pending}\n{error}"
+            )));
+            continue;
+        }
         let message = if status.control_pending {
             "Waiting for committed reply…"
         } else if status.lifecycle.is_none() {
@@ -242,6 +268,10 @@ fn view(
                     "Lifecycle capability pending",
                 ),
             ));
+            if replay {
+                b.spawn(text(TypeStyle::BODY, ColorRole::Text, "Play/Pause controls the cursor. Reset restarts playback. Recorded operations are not resent."));
+                return;
+            }
             let Some(catalog) = &editor.catalog else {
                 return;
             };
@@ -341,6 +371,7 @@ fn view(
 fn clicked(
     ev: On<Activate>,
     buttons: Query<(&Operation, Has<bevy::ui::InteractionDisabled>)>,
+    config: Option<Res<GzConfig>>,
     status: Res<GzStatus>,
     mut editor: ResMut<Editor>,
     mut requests: MessageWriter<GzCommand>,
@@ -348,7 +379,12 @@ fn clicked(
     let Ok((action, disabled)) = buttons.get(ev.entity) else {
         return;
     };
-    if disabled || status.control_pending || status.lifecycle.is_none() {
+    if config.as_deref().is_some_and(|c| c.replay)
+        || disabled
+        || status.control_pending
+        || status.lifecycle.is_none()
+        || status.replay.is_some()
+    {
         return;
     }
     match action {
@@ -387,11 +423,14 @@ mod tests;
 fn enable_buttons(
     mut commands: Commands,
     buttons: Query<(Entity, &Operation)>,
+    config: Option<Res<GzConfig>>,
     status: Res<GzStatus>,
     editor: Res<Editor>,
 ) {
     for (entity, action) in &buttons {
-        let enabled = !status.control_pending
+        let enabled = !config.as_deref().is_some_and(|c| c.replay)
+            && status.replay.is_none()
+            && !status.control_pending
             && status.lifecycle.is_some()
             && match action {
                 Operation::Template(_) | Operation::Model(_) => true,
