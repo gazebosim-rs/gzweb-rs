@@ -246,7 +246,7 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
     if !status.is_changed() {
         return;
     }
-    let label = match &status.sim {
+    let mut label = match &status.sim {
         Some(s) => format!(
             "Sim: {} | t = {:.2} s | RTF {:.2} | iterations {}",
             if s.paused { "paused" } else { "running" },
@@ -264,6 +264,13 @@ pub fn update_sim(status: Res<GzStatus>, mut query: Query<&mut Text, With<SimTex
             None => "Sim: -".into(),
         },
     };
+    if let Some(parked) = &status.operator {
+        label.push_str(" · ");
+        label.push_str(&parked.label());
+    } else if let Some(recovery) = status.recovery.or(status.fenced_recovery) {
+        label.push_str(" | ");
+        label.push_str(&recovery.label());
+    }
     for mut text in &mut query {
         text.0.clone_from(&label);
     }

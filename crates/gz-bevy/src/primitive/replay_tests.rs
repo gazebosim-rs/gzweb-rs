@@ -84,10 +84,11 @@ fn explicit_replay_query_has_no_scan_and_preserves_legacy_live_queries() {
     );
     assert_eq!(
         protocol_url("ws://127.0.0.1:9002/", false).unwrap(),
-        "ws://127.0.0.1:9002/?scan=1"
+        "ws://127.0.0.1:9002/?scan=1&recovery=1&operator=1"
     );
     for query in [
         "scan=1",
+        "recovery=1",
         "scan=0",
         "scan",
         "replay=0",

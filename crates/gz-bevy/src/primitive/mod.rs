@@ -58,26 +58,45 @@ impl PrimitiveBackend {
         if self.driver.is_some() && reason != "Connecting" {
             bevy::log::warn!("Primitive connection closed: {reason}");
         }
+        // Fenced, refusal and close may arrive in the same render poll.
+        // Keep the terminal cut independently of the retiring session.
+        if let Some(fenced) = self
+            .session
+            .recovery
+            .filter(|r| r.phase == primitive::RecoveryPhase::Fenced)
+        {
+            io.status.fenced_recovery = Some(fenced);
+        }
         self.driver = None;
         self.session.disconnect(reason);
         let reason = self.session.status.clone();
-        self.previous = None;
+        let parked = self.session.operator.is_some();
+        if parked {
+            // Keep the last validated parked geometry during worker startup.
+            self.session.clear_scene = false;
+        } else {
+            self.previous = None;
+            io.status.partial_clock = None;
+            io.inbox.prepared_scene = Some(empty_scene());
+            io.inbox.poses.clear();
+        }
         io.status.lifecycle = None;
         io.status.replay = None;
+        io.status.recovery = None;
         io.status.lifecycle_reply = None;
         self.pending_since = None;
         io.status.control_error = Some(reason.clone());
         io.status.status = Status::Error(reason);
         io.status.attempting = false;
-        io.status.partial_clock = None;
         io.status.control_pending = false;
-        io.status.reconnect_at = io
-            .config
-            .reconnect
-            .then(|| io.now + backoff(io.status.attempts));
+        let handoff = self
+            .session
+            .operator
+            .as_ref()
+            .is_some_and(|p| p.phase == primitive::operator::OperatorPhase::Confirming);
+        io.status.reconnect_at =
+            (io.config.reconnect || handoff).then(|| io.now + backoff(io.status.attempts));
         io.status.attempts = io.status.attempts.saturating_add(1);
-        io.inbox.prepared_scene = Some(empty_scene());
-        io.inbox.poses.clear();
         io.inbox.primitive_scan = Some(None);
     }
     fn unsupported() -> Result<(), SendError> {
@@ -94,29 +113,37 @@ fn scan_query(query: &str) -> Result<String, String> {
     {
         return Err("Replay query requires explicit viewer opt-in".into());
     }
-    let mut flags = query
-        .split('&')
-        .filter(|part| part.split('=').next() == Some("scan"));
-    if let Some(first) = flags.next() {
-        return if first == "scan=1" && flags.next().is_none() {
-            Ok(query.to_string())
-        } else {
-            Err("Primitive scan query must contain exactly one scan=1".into())
-        };
+    let mut fields: Vec<_> = query.split('&').filter(|field| !field.is_empty()).collect();
+    for (key, offer) in [
+        ("scan", "scan=1"),
+        ("recovery", "recovery=1"),
+        ("operator", "operator=1"),
+    ] {
+        let mut values = fields
+            .iter()
+            .copied()
+            .filter(|part| part.split('=').next() == Some(key));
+        match values.next() {
+            None => fields.push(offer),
+            Some(value) if value == offer && values.next().is_none() => {}
+            _ => {
+                return Err(format!(
+                    "Primitive {key} query must contain exactly one {offer}"
+                ));
+            }
+        }
     }
-    Ok(if query.is_empty() {
-        "scan=1".into()
-    } else {
-        format!("{query}&scan=1")
-    })
+    Ok(fields.join("&"))
 }
 
 fn replay_query(query: &str) -> Result<String, String> {
-    if query
-        .split('&')
-        .any(|part| part.split('=').next() == Some("scan"))
-    {
-        return Err("Replay does not admit a scan query".into());
+    if query.split('&').any(|part| {
+        matches!(
+            part.split('=').next(),
+            Some("scan" | "recovery" | "operator")
+        )
+    }) {
+        return Err("Replay does not admit scan, recovery or operator queries".into());
     }
     let fields: Vec<_> = query
         .split('&')
@@ -220,10 +247,16 @@ fn empty_scene() -> gz_core::scene::SceneDesc {
 }
 impl SimBackend for PrimitiveBackend {
     fn connect(&mut self, url: Option<&str>, io: &mut BackendIo) {
-        if let Some(url) = url {
-            self.url = url.into();
+        if url.is_some_and(|u| u != self.url) {
+            self.session.operator = None;
         }
         self.closed("Connecting".into(), io);
+        if let Some(url) = url {
+            if url != self.url {
+                io.status.fenced_recovery = None;
+            }
+            self.url = url.into();
+        }
         self.pending_send_failure = None;
         self.session.enable_lifecycle(self.lifecycle);
         if let Err(error) = self.session.enable_publication_credit(self.lifecycle) {
@@ -231,6 +264,14 @@ impl SimBackend for PrimitiveBackend {
             return;
         }
         if let Err(error) = self.session.enable_replay(self.replay) {
+            self.closed(error, io);
+            return;
+        }
+        if let Err(error) = self.session.enable_recovery(!self.replay) {
+            self.closed(error, io);
+            return;
+        }
+        if let Err(error) = self.session.enable_operator(!self.replay) {
             self.closed(error, io);
             return;
         }
@@ -286,7 +327,25 @@ impl SimBackend for PrimitiveBackend {
                     let result = std::str::from_utf8(&bytes)
                         .map_err(|e| e.to_string())
                         .and_then(primitive::parse)
-                        .and_then(|m| self.session.receive(m));
+                        .and_then(|m| {
+                            let progress = match &m {
+                                primitive::ServerMessage::RecoveryStatus(r) if r.pause_pending => {
+                                    Some(*r)
+                                }
+                                _ => None,
+                            };
+                            self.session.receive(m)?;
+                            // A worker heartbeat confirms the admitted Pause is still
+                            // waiting for a real committed boundary. Unrelated traffic
+                            // cannot extend a lost command's acknowledgement deadline.
+                            if progress.is_some()
+                                && progress == self.session.recovery
+                                && self.session.waiting_for_recovery_pause()
+                            {
+                                self.pending_since = Some(io.now);
+                            }
+                            Ok(())
+                        });
                     if let Err(error) = result {
                         io.status.malformed = io.status.malformed.saturating_add(1);
                         self.closed(error, io);
@@ -382,6 +441,18 @@ impl SimBackend for PrimitiveBackend {
         self.pending_since = None;
         Ok(())
     }
+    fn recover_workers(&mut self, token: &str) -> Result<(), SendError> {
+        let driver = self.driver.as_ref().ok_or(SendError::NotConnected)?;
+        let text = self
+            .session
+            .recover_workers(token)
+            .map_err(|_| SendError::Unsendable("recovery offer changed or unavailable"))?;
+        if driver.try_send(text.into_bytes()).is_err() {
+            self.pending_send_failure = Some("Worker recovery send failed; outcome unknown".into());
+            return Err(SendError::Failed);
+        }
+        Ok(())
+    }
     fn world_control(&mut self, cmd: WorldControl) -> Result<(), SendError> {
         let action = match cmd {
             WorldControl::Play => Action::Resume,
@@ -455,9 +526,14 @@ impl SimBackend for PrimitiveBackend {
             io.inbox.last_activity_secs = io.now;
             io.status.world = Some(scene.world.clone());
             io.status.status = Status::Ready;
+            io.status.fenced_recovery = None;
             io.status.attempts = 0;
             self.previous = Some(scene);
         }
+        if io.status.operator != self.session.operator {
+            io.status.operator.clone_from(&self.session.operator);
+        }
+        io.status.recovery = self.session.recovery;
         if io.status.replay != self.session.replay {
             io.status.replay = self.session.replay.clone();
         }
@@ -470,7 +546,9 @@ impl SimBackend for PrimitiveBackend {
         if let Some(scan) = self.session.latest_scan.take() {
             io.inbox.primitive_scan = Some(scan);
         }
-        io.status.partial_clock = self.session.clock();
+        if self.session.clock().is_some() || self.session.operator.is_none() {
+            io.status.partial_clock = self.session.clock();
+        }
         let pending =
             self.session.connected && !self.session.can_control() && self.session.clock().is_some();
         if self.session.pending_control() && self.pending_since.is_none() {

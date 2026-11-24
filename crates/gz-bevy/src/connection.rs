@@ -91,6 +91,11 @@ pub struct GzStatus {
     /// Reconnect attempts since the last time the scene was ready.
     pub attempts: u32,
     pub sim: Option<SimStats>,
+    /// Present only while a live primitive server reports worker recovery.
+    pub recovery: Option<gz_core::primitive::RecoveryStatus>,
+    pub operator: Option<gz_core::primitive::operator::ParkedSession>,
+    /// Terminal diagnosis for the current address until a fresh scene arrives.
+    pub fenced_recovery: Option<gz_core::primitive::RecoveryStatus>,
     /// Primitive transport reports only committed clock/pause, never invented RTF/iterations.
     pub partial_clock: Option<(gz_core::primitive::Stamp, bool)>,
     /// This backend has clock-only telemetry, including while disconnected.
@@ -136,6 +141,9 @@ impl GzStatus {
             reconnect_at: None,
             attempts: 0,
             sim: None,
+            recovery: None,
+            operator: None,
+            fenced_recovery: None,
             partial_clock: None,
             partial_metrics: false,
             world_sdf: None,
@@ -160,6 +168,8 @@ impl GzStatus {
 pub enum GzCommand {
     /// Opt-in primitive edits; never routed through Gazebo services.
     Lifecycle(gz_core::primitive::lifecycle::Command),
+    /// Explicitly admit the checkpoint displayed by this operator.
+    RecoverWorkers(String),
     Play,
     Pause,
     /// Step a paused simulation by this many iterations.
@@ -359,6 +369,7 @@ pub fn pump(
 /// Sends `cmd` through `backend`.
 fn send_command(backend: &mut dyn SimBackend, cmd: &GzCommand) -> Result<(), SendError> {
     match cmd {
+        GzCommand::RecoverWorkers(token) => backend.recover_workers(token),
         GzCommand::Lifecycle(command) => backend.lifecycle(command.clone()),
         GzCommand::Play => backend.world_control(WorldControl::Play),
         GzCommand::Pause => backend.world_control(WorldControl::Pause),

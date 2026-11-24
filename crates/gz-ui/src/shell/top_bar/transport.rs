@@ -45,8 +45,15 @@ impl Transport {
             Some(s) if s.partial_metrics => {
                 phase == Phase::Live
                     && s.partial_clock.is_some()
+                    && s.operator.is_none()
                     && !s.control_pending
                     && self != Self::Step
+                    && s.recovery.is_none_or(|r| {
+                        self == Self::PlayPause
+                            && s.paused() == Some(false)
+                            && !r.pause_pending
+                            && r.phase != gz_core::primitive::RecoveryPhase::Fenced
+                    })
             }
             Some(s) => self.enabled(phase, s.sim.as_ref()),
             None => self.enabled(phase, None),

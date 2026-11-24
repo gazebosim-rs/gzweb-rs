@@ -85,6 +85,9 @@ pub trait SimBackend {
     /// comes back as a [`GzServiceReply`].
     fn request(&mut self, service: &str, msg_type: &str, payload: &[u8]) -> Result<(), SendError>;
     fn world_control(&mut self, cmd: WorldControl) -> Result<(), SendError>;
+    fn recover_workers(&mut self, _: &str) -> Result<(), SendError> {
+        Err(SendError::Unsendable("worker recovery unavailable"))
+    }
     /// Alternative backend capability; legacy Gazebo remains unsupported.
     fn lifecycle(&mut self, _: gz_core::primitive::lifecycle::Command) -> Result<(), SendError> {
         Err(SendError::Unsendable(

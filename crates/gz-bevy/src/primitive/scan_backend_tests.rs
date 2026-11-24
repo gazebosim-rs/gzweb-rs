@@ -15,17 +15,25 @@ fn scene(sequence: u64, epoch: u64) -> DriverEvent {
 fn primitive_scan_opt_in_uses_current_url_without_affecting_control_or_scene_identity() {
     assert_eq!(
         scan_url("ws://127.0.0.1:9002/").unwrap(),
-        "ws://127.0.0.1:9002/?scan=1"
+        "ws://127.0.0.1:9002/?scan=1&recovery=1&operator=1"
     );
     assert_eq!(
         scan_url("ws://127.0.0.1:9002/world?other=ok").unwrap(),
-        "ws://127.0.0.1:9002/world?other=ok&scan=1"
+        "ws://127.0.0.1:9002/world?other=ok&scan=1&recovery=1&operator=1"
     );
     assert_eq!(
         scan_url("ws://127.0.0.1:9002/?scan=1").unwrap(),
-        "ws://127.0.0.1:9002/?scan=1"
+        "ws://127.0.0.1:9002/?scan=1&recovery=1&operator=1"
     );
-    for query in ["scan=0", "scan=1&scan=1", "scan", "scan=2&other=ok"] {
+    for query in [
+        "scan=0",
+        "scan=1&scan=1",
+        "scan",
+        "scan=2&other=ok",
+        "recovery",
+        "recovery=0",
+        "recovery=1&recovery=1",
+    ] {
         assert!(scan_query(query).is_err());
     }
     assert!(scan_url("not a websocket URL").is_err());
@@ -37,7 +45,7 @@ fn primitive_scan_opt_in_uses_current_url_without_affecting_control_or_scene_ide
     let slot = Rc::new(RefCell::new(Some(driver)));
     let mut backend = PrimitiveBackend::new(&config).unwrap();
     backend.connector = Box::new(move |url| {
-        assert!(url.ends_with("?scan=1"));
+        assert!(url.ends_with("?scan=1&recovery=1&operator=1"));
         slot.borrow_mut().take().unwrap()
     });
     let mut world = World::new();
@@ -60,4 +68,16 @@ fn primitive_scan_opt_in_uses_current_url_without_affecting_control_or_scene_ide
         assert_eq!(io.inbox.primitive_scan.take(),Some(None));assert!(io.inbox.prepared_scene.take().unwrap().roots.is_empty());
         assert!(!backend.session.can_control());
     });
+}
+
+#[test]
+fn operator_offer_is_unique_and_excluded_from_replay() {
+    assert_eq!(
+        scan_query("operator=1&other=1").unwrap(),
+        "operator=1&other=1&scan=1&recovery=1"
+    );
+    for invalid in ["operator=0", "operator=1&operator=1", "operator"] {
+        assert!(scan_query(invalid).is_err());
+    }
+    assert!(replay_query("operator=1").is_err());
 }

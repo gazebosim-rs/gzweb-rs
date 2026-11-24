@@ -7,7 +7,7 @@ use bevy::ecs::spawn::SpawnWith;
 use bevy::prelude::*;
 use bevy::text::EditableText;
 use bevy::ui_widgets::Activate;
-use gz_bevy::connection::{GzReconnect, GzStatus};
+use gz_bevy::connection::{GzCommand, GzReconnect, GzStatus};
 use gz_core::transport::Status;
 
 use crate::assets::brand::logo;
@@ -32,6 +32,7 @@ pub(crate) const CARD_W: f32 = 420.0;
 pub(crate) enum ConnectButton {
     /// "Retry now".
     Retry,
+    Recover,
     /// "Connect to another server…": shows the card.
     Elsewhere,
     /// The card's Connect.
@@ -291,17 +292,28 @@ fn page_is_secure() -> bool {
 /// Banner and card buttons.
 pub(crate) fn on_connect_button(
     ev: On<Activate>,
-    buttons: Query<&ConnectButton>,
+    buttons: Query<(&ConnectButton, Option<&super::banner::RecoverOffer>)>,
     fields: Query<&Children, With<AddressField>>,
     inputs: Query<&mut EditableText, With<TextFieldInput>>,
     status: Option<Res<GzStatus>>,
     mut view: ResMut<ConnectionView>,
-    mut out: MessageWriter<GzReconnect>,
+    (mut out, mut commands): (MessageWriter<GzReconnect>, MessageWriter<GzCommand>),
 ) {
-    let Ok(which) = buttons.get(ev.entity) else {
+    let Ok((which, offer)) = buttons.get(ev.entity) else {
         return;
     };
     match which {
+        ConnectButton::Recover => {
+            let shown = offer.and_then(|o| o.0.as_ref());
+            if let Some(token) = shown.filter(|token| {
+                status
+                    .as_ref()
+                    .and_then(|s| s.operator.as_ref())
+                    .is_some_and(|p| p.can_recover() && p.fence.token.as_str() == token.as_str())
+            }) {
+                commands.write(GzCommand::RecoverWorkers(token.clone()));
+            }
+        }
         ConnectButton::Retry => crate::shell::connection::retry(&mut out),
         ConnectButton::Elsewhere => view.card_requested = true,
         ConnectButton::Cancel => view.switching = false,

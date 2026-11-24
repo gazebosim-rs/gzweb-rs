@@ -31,7 +31,7 @@ fn explicit_credit_queries_are_strict_and_default_urls_remain_unchanged() {
     assert_eq!(lifecycle_url(base.clone(), false).unwrap(), base);
     assert_eq!(
         lifecycle_url(base, true).unwrap(),
-        "ws://127.0.0.1:9002/?scan=1&lifecycle=1&lifecycle_credit=1"
+        "ws://127.0.0.1:9002/?scan=1&recovery=1&operator=1&lifecycle=1&lifecycle_credit=1"
     );
     for query in [
         "lifecycle=0",
@@ -55,7 +55,7 @@ fn reset_command_precedes_old_ready_and_flush_sends_that_ready_exactly_once() {
     let slot = Rc::new(RefCell::new(Some(driver)));
     let mut backend = PrimitiveBackend::new(&config).unwrap();
     backend.connector = Box::new(move |url| {
-        assert!(url.ends_with("scan=1&lifecycle=1&lifecycle_credit=1"));
+        assert!(url.ends_with("scan=1&recovery=1&operator=1&lifecycle=1&lifecycle_credit=1"));
         slot.borrow_mut().take().unwrap()
     });
     let mut world = World::new();

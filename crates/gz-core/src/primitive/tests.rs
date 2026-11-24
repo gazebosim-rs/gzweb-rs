@@ -402,3 +402,214 @@ fn mesh_uris_scales_and_dependency_scopes_are_bounded() {
     assert!(local_mesh_http_url("remote:9002/7/assets/7/a.bin").is_err());
     assert!(!local_mesh_dependency_allowed("not a base", "part.bin"));
 }
+
+#[test]
+fn recovery_reports_leave_the_clock_and_pending_control_authoritative() {
+    let report = |phase: &str, tick: u64, pending: bool| {
+        json!({"version":1,"kind":"recovery_status","phase":phase,"epoch":0,"tick":tick,
+            "attempt":1,"budget":3,"pause_pending":pending})
+    };
+    let active = report("reopening", 150, false);
+    assert!(ready()
+        .receive(parse(&active.to_string()).unwrap())
+        .is_err());
+    let mut session = Session::default();
+    session.enable_recovery(true).unwrap();
+    session.opened();
+    session.receive(ServerMessage::Scene(scene(1))).unwrap();
+    let clock = session.clock();
+    session
+        .receive(parse(&active.to_string()).unwrap())
+        .unwrap();
+    session.control(Action::Pause).unwrap();
+    assert!(!session.waiting_for_recovery_pause());
+    session
+        .receive(parse(&report("reopening", 150, true).to_string()).unwrap())
+        .unwrap();
+    assert!(session.waiting_for_recovery_pause());
+    assert_eq!(session.clock(), clock);
+    assert!(session
+        .recovery
+        .unwrap()
+        .label()
+        .contains("Pause requested"));
+    // An old idle message cannot clear a more recent report.
+    session
+        .receive(parse(&report("idle", 149, false).to_string()).unwrap())
+        .unwrap();
+    assert!(session.recovery.is_some());
+    session
+        .receive(parse(&report("idle", 150, false).to_string()).unwrap())
+        .unwrap();
+    assert!(session.recovery.is_none());
+    assert!(session.pending_control());
+    session.receive(ack(1, 0, true)).unwrap();
+    assert_eq!(session.paused(), Some(true));
+    session
+        .receive(parse(&active.to_string()).unwrap())
+        .unwrap();
+    session.disconnect("test");
+    assert!(session.recovery.is_none());
+
+    for (key, value) in [
+        ("version", json!(2)),
+        ("attempt", json!(0)),
+        ("budget", json!(0)),
+        ("budget", json!(9)),
+        ("phase", json!("unknown")),
+        ("other", json!(1)),
+    ] {
+        let mut bad = active.clone();
+        bad[key] = value;
+        assert!(parse(&bad.to_string()).is_err(), "{bad}");
+    }
+}
+
+const FENCE_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+fn operator_fence(token: &str, eligible: bool) -> ServerMessage {
+    parse(
+        &json!({"version":1,"kind":"operator_fence","epoch":3,"tick":2150,"token":token,
+        "eligible":eligible,"reason":"Transport loss at the held checkpoint"})
+        .to_string(),
+    )
+    .unwrap()
+}
+
+fn operator_scene(paused: bool) -> ServerMessage {
+    let mut scene = scene(1);
+    scene.epoch = 3;
+    scene.seconds = 2;
+    scene.nanoseconds = 150_000_000;
+    scene.paused = paused;
+    ServerMessage::Scene(scene)
+}
+
+fn parked(eligible: bool) -> Session {
+    let mut s = Session::default();
+    s.enable_operator(true).unwrap();
+    s.opened();
+    s.receive(operator_fence(FENCE_TOKEN, eligible)).unwrap();
+    assert!(s.recover_workers(FENCE_TOKEN).is_err());
+    s.receive(operator_scene(false)).unwrap();
+    s
+}
+
+#[test]
+fn a_parked_scene_refuses_control_and_a_recover_click_binds_to_its_offered_token() {
+    let mut s = parked(true);
+    for action in [Action::Pause, Action::Resume, Action::Reset] {
+        assert!(s.control(action).is_err());
+    }
+    assert!(s.recover_workers("stale offer").is_err());
+    let req: Value = serde_json::from_str(&s.recover_workers(FENCE_TOKEN).unwrap()).unwrap();
+    assert_eq!(
+        req,
+        json!({"version":1,"kind":"recover_workers","request_id":1,
+        "epoch":3,"tick":2150,"token":FENCE_TOKEN})
+    );
+    s.receive(operator_fence(FENCE_TOKEN, true)).unwrap();
+    assert!(s.recover_workers(FENCE_TOKEN).is_err());
+    for (id, accepted, error) in [(2, true, Value::Null), (1, false, json!("Reopen refused"))] {
+        let incoming = parse(&json!({"version":1,"kind":"operator_reply","request_id":id,"accepted":accepted,"error":error}).to_string()).unwrap();
+        assert_eq!(s.receive(incoming).is_ok(), id == 1);
+    }
+    assert!(s
+        .operator
+        .as_ref()
+        .unwrap()
+        .label()
+        .contains("Reopen refused"));
+    assert!(s.recover_workers(FENCE_TOKEN).is_err());
+    assert!(parked(false).recover_workers(FENCE_TOKEN).is_err());
+}
+
+#[test]
+fn admitted_recovery_requires_a_new_verified_paused_scene_or_a_new_parked_offer() {
+    for fresh_fence in [false, true] {
+        let mut s = parked(true);
+        s.recover_workers(FENCE_TOKEN).unwrap();
+        s.receive(parse(r#"{"version":1,"kind":"operator_reply","request_id":1,"accepted":true,"error":null}"#).unwrap()).unwrap();
+        assert!(!s.can_control());
+        s.disconnect("handoff");
+        s.opened();
+        assert!(s.recover_workers(FENCE_TOKEN).is_err());
+        if fresh_fence {
+            let replacement = "1123456789abcdef0123456789abcdef";
+            s.receive(operator_fence(replacement, true)).unwrap();
+            s.receive(operator_scene(false)).unwrap();
+            assert!(s.recover_workers(FENCE_TOKEN).is_err());
+            assert!(s.recover_workers(replacement).is_ok());
+        } else {
+            s.receive(restored(FENCE_TOKEN)).unwrap();
+            s.receive(operator_scene(true)).unwrap();
+            assert!(s.can_control());
+            assert!(s.operator.is_none());
+            assert_eq!(s.paused(), Some(true));
+        }
+    }
+}
+
+#[test]
+fn operator_fence_requires_negotiation_and_cannot_be_replaced_during_a_connection() {
+    let mut legacy = ready();
+    assert!(legacy.receive(operator_fence(FENCE_TOKEN, true)).is_err());
+    let mut s = parked(true);
+    assert!(s
+        .receive(operator_fence("22222222222222222222222222222222", true))
+        .is_err());
+    assert!(s.receive(operator_fence(FENCE_TOKEN, false)).is_err());
+    for token in ["", "AA", "abcd0000abcd0000abcd0000abcd000Z"] {
+        assert!(parse(&json!({"version":1,"kind":"operator_fence","epoch":3,"tick":0,"token":token,"eligible":false,"reason":"inspect"}).to_string()).is_err());
+    }
+}
+
+fn restored(token: &str) -> ServerMessage {
+    parse(
+        &json!({"version":1,"kind":"operator_restored","epoch":3,"tick":2150,"token":token})
+            .to_string(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn missing_or_mismatched_restoration_identity_leaves_a_replacement_world_read_only() {
+    for case in ["missing", "token", "clock", "running", "world"] {
+        let mut s = parked(true);
+        s.recover_workers(FENCE_TOKEN).unwrap();
+        s.disconnect("possible handoff");
+        s.opened();
+        if case != "missing" {
+            s.receive(restored(if case == "token" {
+                "1123456789abcdef0123456789abcdef"
+            } else {
+                FENCE_TOKEN
+            }))
+            .unwrap();
+        }
+        let ServerMessage::Scene(mut scene) = operator_scene(case != "running") else {
+            panic!()
+        };
+        if case == "clock" {
+            scene.nanoseconds += 1_000_000;
+        }
+        if case == "world" {
+            scene.world_id += 1;
+        }
+        s.receive(ServerMessage::Scene(scene)).unwrap();
+        assert!(s.latest.is_some());
+        assert!(!s.can_control());
+        assert!(matches!(
+            s.operator.as_ref().unwrap().phase,
+            operator::OperatorPhase::Unverified(_)
+        ));
+        assert!(s.recover_workers(FENCE_TOKEN).is_err());
+        assert!(s.receive(restored(FENCE_TOKEN)).is_err());
+    }
+    let mut ordinary = Session::default();
+    ordinary.enable_operator(true).unwrap();
+    ordinary.opened();
+    ordinary.receive(restored(FENCE_TOKEN)).unwrap();
+    ordinary.receive(operator_scene(false)).unwrap();
+    assert!(ordinary.can_control());
+}

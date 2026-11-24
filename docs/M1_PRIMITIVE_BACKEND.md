@@ -47,6 +47,36 @@ control results/errors. Disconnection clears geometry and clock. Partial clock
 information never fabricates iterations, RTF, real time or step size: those
 readouts remain unavailable. Full Gazebo statistics retain their existing path.
 
+## Live worker recovery
+
+Native and browser live primitive viewers request `recovery=1` on the
+WebSocket. A bridge with worker recovery support sends version-1
+`recovery_status` messages during an outage. The viewport banner shows the
+recovery phase and the last committed physics tick. Reopening also shows the
+current attempt and its budget. Live bridges that ignore the option continue
+to display their regular scenes. Recording replay uses its own status protocol.
+
+Press the usual Pause button during recovery to request a stop at the next
+committed boundary. The banner adds **Pause requested** when the bridge admits
+it. The clock and Play/Pause state follow committed scenes and acknowledgements.
+While that Pause is pending, recovery heartbeats renew its acknowledgement
+deadline. If communication stops, the normal timeout reports an unknown outcome.
+If the server exhausts recovery and closes the socket, the banner retains the fenced
+tick across connection retries. A fresh scene or a change of server clears it.
+
+Live primitive viewers also request `operator=1`. A parked coordinator sends
+an `operator_fence` before the scene and repeats the offer while waiting.
+The viewer enables **Recover workers** after receiving an eligible offer
+and a scene at its epoch and tick. The button submits the displayed token,
+epoch and tick in a `recover_workers` request. A positive `operator_reply`
+admits worker installation. The viewer reconnects and waits for the restored
+paused scene after an `operator_restored` notice matching its accepted token,
+epoch and tick. It displays a new fence if installation failed. A missing
+or different notice leaves the replacement scene available for read-only
+inspection with an unverified restart diagnosis. Play and Reset stay
+unavailable while the coordinator is parked. Changing the endpoint clears
+the stored operator offer.
+
 ## Browser graphics
 
 `./build.sh` produces separate preferred WebGPU and maintained WebGL2 bundles,

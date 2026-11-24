@@ -128,6 +128,7 @@ pub(crate) fn dot_role(phase: Phase, status: Option<&GzStatus>) -> ColorRole {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Banner {
     pub text: String,
+    pub reconnect: bool,
     /// Lost for a minute: `danger_soft`, and "Connect to another server…".
     pub long: bool,
 }
@@ -145,10 +146,31 @@ impl Banner {
 
 /// The banner for `phase` at real time `now`, if one shows.
 pub(crate) fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Option<Banner> {
+    let status = status?;
+    if let Some(parked) = &status.operator {
+        return Some(Banner {
+            text: parked.label(),
+            reconnect: matches!(phase, Phase::Lost { .. }),
+            long: true,
+        });
+    }
+    if let Some(fenced) = status.fenced_recovery {
+        return Some(Banner {
+            text: format!("{} · Connection lost", fenced.label()),
+            long: true,
+            reconnect: true,
+        });
+    }
+    if let (Phase::Live, Some(recovery)) = (phase, status.recovery) {
+        return Some(Banner {
+            text: recovery.label(),
+            long: recovery.phase == gz_core::primitive::RecoveryPhase::Fenced,
+            reconnect: false,
+        });
+    }
     let Phase::Lost { since } = phase else {
         return None;
     };
-    let status = status?;
     let addr = crate::format::address(&status.url);
     let trying = status.attempting || status.reconnect_at.is_some();
     let text = if trying {
@@ -162,6 +184,7 @@ pub(crate) fn banner(phase: Phase, status: Option<&GzStatus>, now: f64) -> Optio
     Some(Banner {
         text,
         long: now - since >= LOST_LONG_SECS,
+        reconnect: true,
     })
 }
 

@@ -27,7 +27,7 @@ fn opted_in_backend_retains_scene_until_actual_snapshot_and_clears_unknown_outco
     let slot = Rc::new(RefCell::new(Some(driver)));
     let mut backend = PrimitiveBackend::new(&config).unwrap();
     backend.connector = Box::new(move |url| {
-        assert!(url.contains("scan=1&lifecycle=1"));
+        assert!(url.contains("scan=1&recovery=1&operator=1&lifecycle=1"));
         slot.borrow_mut().take().unwrap()
     });
     let mut world = World::new();

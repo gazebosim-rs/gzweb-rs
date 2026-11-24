@@ -13,9 +13,9 @@ use crate::assets::fonts::text;
 use crate::assets::icons::{icon, IconId};
 use crate::shell::connection::{banner, Banner, CurrentPhase, Phase, LOST_LONG_SECS};
 use crate::theme::{ColorRole, Fill, Ink, Theme, TypeStyle, SPACE};
-use crate::widgets::layout::{flex_spacer, row, set_shown};
+use crate::widgets::layout::{clip_box, row, set_shown};
 use crate::widgets::text::set_text;
-use crate::widgets::{button, ButtonVariant};
+use crate::widgets::{button, ButtonVariant, Tooltip};
 
 /// The banner's height (§7.10).
 pub(crate) const BANNER_H: f32 = 36.0;
@@ -26,6 +26,10 @@ pub(crate) struct DisconnectBanner;
 
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct BannerText;
+
+/// The offer actually rendered in this button, checked again when activated.
+#[derive(Component, Default)]
+pub(crate) struct RecoverOffer(pub Option<String>);
 
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub(crate) struct BannerIcon;
@@ -60,9 +64,12 @@ impl BannerSource<'_, '_> {
 pub(crate) fn banner_state(
     mut source: BannerSource,
     mut banners: Query<(&mut Node, &mut Fill), With<DisconnectBanner>>,
-    mut texts: Query<(&mut Text, &mut Ink), With<BannerText>>,
+    mut texts: Query<(&mut Text, &mut Ink, &mut Tooltip), With<BannerText>>,
     mut icons: Query<&mut Ink, (With<BannerIcon>, Without<BannerText>)>,
-    mut buttons: Query<(&ConnectButton, &mut Node), Without<DisconnectBanner>>,
+    mut buttons: Query<
+        (&ConnectButton, &mut Node, Option<&mut RecoverOffer>),
+        Without<DisconnectBanner>,
+    >,
 ) {
     let Some(b) = source.changed() else {
         return;
@@ -75,7 +82,10 @@ pub(crate) fn banner_state(
     }
     if let Some(b) = &b {
         let ink = b.roles().1;
-        for (mut t, mut i) in &mut texts {
+        for (mut t, mut i, mut tooltip) in &mut texts {
+            if tooltip.title != b.text {
+                tooltip.title.clone_from(&b.text);
+            }
             set_text(&mut t, &b.text);
             i.set_if_neq(Ink(ink));
         }
@@ -83,10 +93,22 @@ pub(crate) fn banner_state(
             i.set_if_neq(Ink(ink));
         }
     }
-    let long = b.as_ref().is_some_and(|b| b.long);
-    for (which, mut node) in &mut buttons {
+    let reconnect = b.as_ref().is_some_and(|b| b.reconnect);
+    let long = reconnect && b.as_ref().is_some_and(|b| b.long);
+    let recover = source
+        .status
+        .as_ref()
+        .and_then(|s| s.operator.as_ref())
+        .filter(|p| p.can_recover());
+    for (which, mut node, offer) in &mut buttons {
+        if let Some(mut offer) = offer {
+            set_shown(&mut node, recover.is_some());
+            offer.0 = recover.map(|p| p.fence.token.clone());
+        }
         if *which == ConnectButton::Elsewhere {
             set_shown(&mut node, long);
+        } else if *which == ConnectButton::Retry {
+            set_shown(&mut node, reconnect);
         }
     }
 }
@@ -108,16 +130,23 @@ pub(super) fn disconnect_banner(theme: &Theme) -> impl Bundle {
         Fill(ColorRole::WarnSoft),
         Children::spawn(SpawnWith(move |b: &mut ChildSpawner| {
             b.spawn((icon(IconId::Warning, 15.0, ColorRole::WarnText), BannerIcon));
+            b.spawn(clip_box()).with_children(|child| {
+                child.spawn((
+                    text(
+                        TypeStyle::new(crate::theme::FontFamily::Ui, 12.0, 500),
+                        ColorRole::WarnText,
+                        "",
+                    ),
+                    BannerText,
+                    Tooltip::default(),
+                    TextLayout::no_wrap(),
+                ));
+            });
             b.spawn((
-                text(
-                    TypeStyle::new(crate::theme::FontFamily::Ui, 12.0, 500),
-                    ColorRole::WarnText,
-                    "",
-                ),
-                BannerText,
-                TextLayout::no_wrap(),
+                button(&t, "Recover workers", ButtonVariant::Normal),
+                ConnectButton::Recover,
+                RecoverOffer::default(),
             ));
-            b.spawn(flex_spacer());
             b.spawn((
                 button(&t, "Connect to another server…", ButtonVariant::Normal),
                 ConnectButton::Elsewhere,

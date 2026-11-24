@@ -840,3 +840,92 @@ fn the_snapping_readout_follows_the_pointer() {
         (px(100.0 + READOUT_OFFSET.x), px(50.0 + READOUT_OFFSET.y))
     );
 }
+
+#[test]
+fn recovery_banner_reports_the_committed_tick_and_hides_connection_actions() {
+    let mut app = shell_app((1440, 900), 1.0);
+    go_live(&mut app, false);
+    let recovery = serde_json::from_value(serde_json::json!({
+        "version":1,"phase":"reopening","epoch":0,"tick":150,
+        "attempt":2,"budget":3,"pause_pending":true
+    }))
+    .unwrap();
+    app.world_mut().resource_mut::<GzStatus>().recovery = Some(recovery);
+    frames(&mut app, 2);
+    let bar = find::<DisconnectBanner>(&mut app);
+    assert!(displayed(&app, bar));
+    assert!(all_text(&mut app)
+        .contains("Reopening physics workers (2 of 3) · committed tick 150 · Pause requested"));
+    let retry = connect_button(&mut app, ConnectButton::Retry);
+    assert!(!displayed(&app, retry));
+    app.world_mut().resource_mut::<GzStatus>().recovery = None;
+    frames(&mut app, 2);
+    assert!(!displayed(&app, bar));
+}
+
+#[test]
+fn a_fenced_connection_keeps_its_diagnosis_and_reconnect_controls() {
+    let mut app = shell_app((1440, 900), 1.0);
+    go_live(&mut app, false);
+    let fenced = serde_json::from_value(serde_json::json!({
+        "version":1, "phase":"fenced", "epoch":0, "tick":150,
+        "attempt":1, "budget":1, "pause_pending":false
+    }))
+    .unwrap();
+    {
+        let mut status = app.world_mut().resource_mut::<GzStatus>();
+        status.fenced_recovery = Some(fenced);
+        status.status = Status::Error("closed".into());
+    }
+    frames(&mut app, 2);
+    assert!(all_text(&mut app)
+        .contains("Physics workers fenced · committed tick 150 · Connection lost"));
+    let bar = find::<DisconnectBanner>(&mut app);
+    assert_eq!(
+        app.world().get::<Fill>(bar).unwrap().0,
+        ColorRole::DangerSoft
+    );
+    let retry = connect_button(&mut app, ConnectButton::Retry);
+    assert!(displayed(&app, retry));
+}
+
+#[test]
+fn operator_button_uses_the_eligible_rendered_offer_and_disables_transport() {
+    use gz_bevy::connection::GzCommand;
+    use gz_core::primitive;
+    let mut app = shell_app((1440, 900), 1.);
+    go_live(&mut app, false);
+    let mut session = primitive::Session::default();
+    session.enable_operator(true).unwrap();
+    session.opened();
+    let token = "0123456789abcdef0123456789abcdef";
+    let fence = format!(
+        r#"{{"version":1,"kind":"operator_fence","epoch":1,"tick":150,"token":"{token}","eligible":true,"reason":"Transport lost"}}"#
+    );
+    session.receive(primitive::parse(&fence).unwrap()).unwrap();
+    session.receive(primitive::parse(r#"{"version":1,"kind":"scene","world":"default","world_id":1,"epoch":1,"seconds":0,"nanoseconds":150000000,"paused":false,"sequence":2,"visuals":[]}"#).unwrap()).unwrap();
+    {
+        let mut s = app.world_mut().resource_mut::<GzStatus>();
+        s.operator = session.operator.clone();
+        s.partial_clock = session.clock();
+        s.partial_metrics = true;
+    }
+    frames(&mut app, 2);
+    let recover = connect_button(&mut app, ConnectButton::Recover);
+    assert!(displayed(&app, recover));
+    let (left, size) = rect(&app, recover);
+    let bar = find::<DisconnectBanner>(&mut app);
+    let (origin, extent) = rect(&app, bar);
+    assert!(left.x >= origin.x && left.x + size.x <= origin.x + extent.x + 0.1);
+    assert!(all_text(&mut app).contains("Workers fenced · tick 150 · Transport lost"));
+    click(&mut app, recover);
+    assert_eq!(
+        app.world().resource::<Sent>().0,
+        [GzCommand::RecoverWorkers(token.into())]
+    );
+    session.recover_workers(token).unwrap();
+    app.world_mut().resource_mut::<GzStatus>().operator = session.operator.clone();
+    frames(&mut app, 2);
+    assert!(!displayed(&app, recover));
+    assert!(all_text(&mut app).contains("Recovery requested"));
+}

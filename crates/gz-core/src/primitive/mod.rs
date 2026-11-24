@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub mod lifecycle;
+pub mod operator;
 pub mod replay;
 mod scan;
 pub use scan::{Scan, ScanFrame, MAX_SCAN_BEAMS};
@@ -204,6 +205,64 @@ pub enum ServerMessage {
     LifecycleAck(lifecycle::Reply),
     PublicationCredit(PublicationCredit),
     ReplayStatus(replay::ReplayStatus),
+    RecoveryStatus(RecoveryStatus),
+    OperatorFence(operator::OperatorFence),
+    OperatorReply(operator::OperatorReply),
+    OperatorRestored(operator::OperatorRestored),
+}
+
+/// Worker recovery reports the last committed interval independently of scene publication.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryPhase {
+    Idle,
+    Restoring,
+    Reopening,
+    Replaying,
+    Fenced,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryStatus {
+    version: u32,
+    pub phase: RecoveryPhase,
+    pub epoch: u64,
+    pub tick: u64,
+    pub attempt: u8,
+    pub budget: u8,
+    pub pause_pending: bool,
+}
+
+impl RecoveryStatus {
+    fn validate(&self) -> Result<(), String> {
+        if self.version != 1
+            || self.budget > 8
+            || self.attempt > self.budget
+            || (self.phase == RecoveryPhase::Reopening && self.attempt == 0)
+        {
+            return Err("Invalid worker recovery status".into());
+        }
+        Ok(())
+    }
+
+    pub fn label(&self) -> String {
+        let action = match self.phase {
+            RecoveryPhase::Idle => return String::new(),
+            RecoveryPhase::Restoring => "Restoring physics workers".to_owned(),
+            RecoveryPhase::Reopening => format!(
+                "Reopening physics workers ({} of {})",
+                self.attempt, self.budget
+            ),
+            RecoveryPhase::Replaying => "Replaying interrupted physics step".to_owned(),
+            RecoveryPhase::Fenced => "Physics workers fenced".to_owned(),
+        };
+        let mut label = format!("{action} · committed tick {}", self.tick);
+        if self.pause_pending {
+            label.push_str(" · Pause requested");
+        }
+        label
+    }
 }
 
 /// Opt-in, connection-scoped transport credit; not a simulation request ID.
@@ -345,6 +404,10 @@ pub fn parse(text: &str) -> Result<ServerMessage, String> {
         ServerMessage::LifecycleAck(reply) => reply.validate()?,
         ServerMessage::PublicationCredit(credit) => credit.validate()?,
         ServerMessage::ReplayStatus(status) => status.validate()?,
+        ServerMessage::RecoveryStatus(status) => status.validate()?,
+        ServerMessage::OperatorFence(fence) => fence.validate()?,
+        ServerMessage::OperatorReply(reply) => reply.validate()?,
+        ServerMessage::OperatorRestored(receipt) => receipt.validate()?,
     }
     Ok(message)
 }
@@ -382,6 +445,11 @@ pub struct Session {
     pending: Option<Pending>,
     lifecycle_enabled: bool,
     replay_enabled: bool,
+    recovery_enabled: bool,
+    operator_enabled: bool,
+    operator_restored_seen: bool,
+    pub operator: Option<operator::ParkedSession>,
+    pub recovery: Option<RecoveryStatus>,
     pub replay: Option<replay::ReplayStatus>,
     replay_frames: Option<u32>,
     pub catalog: Option<lifecycle::Catalog>,
@@ -413,6 +481,11 @@ impl Default for Session {
             pending: None,
             lifecycle_enabled: false,
             replay_enabled: false,
+            recovery_enabled: false,
+            operator_enabled: false,
+            operator_restored_seen: false,
+            operator: None,
+            recovery: None,
             replay: None,
             replay_frames: None,
             catalog: None,
@@ -432,6 +505,10 @@ impl Default for Session {
 impl Session {
     pub fn disconnect(&mut self, reason: impl Into<String>) {
         self.connected = false;
+        self.operator_restored_seen = false;
+        if let Some(parked) = &mut self.operator {
+            parked.disconnected();
+        }
         self.status = reason.into();
         if self.pending_control() {
             self.status.push_str("; pending control outcome unknown");
@@ -441,6 +518,7 @@ impl Session {
         self.latest = None;
         self.clear_scan();
         self.current = None;
+        self.recovery = None;
         self.replay_frames = None;
         self.fence = None;
         self.pending = None;
@@ -469,6 +547,9 @@ impl Session {
                 "Replay requires lifecycle and publication credit at the connection boundary"
                     .into(),
             );
+        }
+        if enabled && (self.recovery_enabled || self.operator_enabled) {
+            return Err("Worker recovery is unavailable in replay".into());
         }
         self.replay_enabled = enabled;
         self.replay = None;
@@ -500,6 +581,21 @@ impl Session {
         self.scan_time = None;
         self.acquired_time = None;
         self.cleared_acquired_time = None;
+    }
+
+    pub fn enable_recovery(&mut self, enabled: bool) -> Result<(), String> {
+        if self.connected || (enabled && self.replay_enabled) {
+            return Err("Worker recovery requires a live primitive connection boundary".into());
+        }
+        self.recovery_enabled = enabled;
+        self.recovery = None;
+        Ok(())
+    }
+
+    /// Only a confirmed pending Pause may wait beyond the normal control deadline.
+    pub fn waiting_for_recovery_pause(&self) -> bool {
+        self.pending.is_some_and(|p| p.action == Action::Pause)
+            && self.recovery.is_some_and(|r| r.pause_pending)
     }
 
     pub fn enable_lifecycle(&mut self, enabled: bool) {
@@ -574,13 +670,19 @@ impl Session {
     }
 
     pub fn pending_control(&self) -> bool {
-        self.pending.is_some() || self.pending_edit.is_some()
+        self.pending.is_some()
+            || self.pending_edit.is_some()
+            || self
+                .operator
+                .as_ref()
+                .is_some_and(|p| matches!(p.phase, operator::OperatorPhase::Requested(_)))
     }
 
     pub fn can_control(&self) -> bool {
         self.connected
             && self.current.is_some()
             && !self.pending_control()
+            && self.operator.is_none()
             && self.next_request.is_some()
             && (!self.replay_enabled || self.replay.is_some())
     }
@@ -634,6 +736,7 @@ impl Session {
         match message {
             ServerMessage::Scene(scene) => {
                 scene.validate()?;
+                self.operator_scene(&scene)?;
                 if let Some(current) = self.current {
                     if current.world_id == scene.world_id {
                         if scene.epoch < current.stamp.epoch
@@ -651,6 +754,7 @@ impl Session {
                         }
                         self.clear_scene = true;
                         self.fence = None;
+                        self.recovery = None;
                     }
                 }
                 if let Some((stamp, paused)) = self.fence {
@@ -665,6 +769,9 @@ impl Session {
                     self.clear_scan();
                 }
                 self.replay = None;
+                if self.recovery.is_some_and(|r| r.epoch < scene.epoch) {
+                    self.recovery = None;
+                }
                 self.current = Some(Current {
                     world_id: scene.world_id,
                     stamp: scene.stamp(),
@@ -694,6 +801,23 @@ impl Session {
                     self.publication_catalog = false;
                 }
                 self.latest = Some(scene);
+            }
+            ServerMessage::OperatorFence(fence) => self.operator_fence(fence)?,
+            ServerMessage::OperatorReply(reply) => self.operator_reply(reply)?,
+            ServerMessage::OperatorRestored(receipt) => self.operator_restored(receipt)?,
+            ServerMessage::RecoveryStatus(status) => {
+                status.validate()?;
+                if !self.connected || !self.recovery_enabled || self.replay_enabled {
+                    return Err("Worker recovery status without live opt-in".into());
+                }
+                if self.current.is_some_and(|c| status.epoch < c.stamp.epoch)
+                    || self
+                        .recovery
+                        .is_some_and(|r| (status.epoch, status.tick) < (r.epoch, r.tick))
+                {
+                    return Ok(());
+                }
+                self.recovery = (status.phase != RecoveryPhase::Idle).then_some(status);
             }
             ServerMessage::PublicationCredit(credit) => {
                 credit.validate()?;
